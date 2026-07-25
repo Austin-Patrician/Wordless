@@ -1,0 +1,97 @@
+{
+	"name": "@wordless/ai",
+	"version": "0.80.6-wordless.0",
+	"private": true,
+	"description": "Unified LLM API with automatic model discovery and provider configuration",
+	"type": "module",
+	"main": "./src/index.ts",
+	"types": "./src/index.ts",
+	"sideEffects": [
+		"./dist/compat.js",
+		"./dist/images.js",
+		"./dist/providers/images/register-builtins.js"
+	],
+	"exports": {
+		".": {
+			"types": "./src/index.ts",
+			"import": "./src/index.ts"
+		},
+		"./compat": {
+			"types": "./src/compat.ts",
+			"import": "./src/compat.ts"
+		},
+		"./catalog": {
+			"types": "./src/catalog.ts",
+			"import": "./src/catalog.ts"
+		},
+		"./providers/*": {
+			"types": "./src/providers/*.ts",
+			"import": "./src/providers/*.ts"
+		},
+		"./api/*": {
+			"types": "./src/api/*.ts",
+			"import": "./src/api/*.ts"
+		},
+		"./oauth": {
+			"types": "./src/oauth.ts",
+			"import": "./src/oauth.ts"
+		},
+		"./bedrock-provider": {
+			"types": "./bedrock-provider.d.ts",
+			"import": "./bedrock-provider.js"
+		}
+	},
+	"bin": {
+		"pi-ai": "./dist/cli.js"
+	},
+	"files": [
+		"dist",
+		"README.md"
+	],
+	"scripts": {
+		"clean": "shx rm -rf dist",
+		"generate-models": "node scripts/generate-models.ts",
+		"generate-image-models": "node scripts/generate-image-models.ts",
+		"build": "npm run generate-models && npm run generate-image-models && tsgo -p tsconfig.build.json",
+		"test": "vitest --run",
+		"prepublishOnly": "npm run clean && npm run build"
+	},
+	"dependencies": {
+		"@anthropic-ai/sdk": "0.91.1",
+		"@aws-sdk/client-bedrock-runtime": "3.1048.0",
+		"@google/genai": "1.52.0",
+		"@mistralai/mistralai": "2.2.6",
+		"@opentelemetry/api": "1.9.0",
+		"@smithy/node-http-handler": "4.7.3",
+		"http-proxy-agent": "7.0.2",
+		"https-proxy-agent": "7.0.6",
+		"openai": "6.26.0",
+		"partial-json": "0.1.7",
+		"typebox": "1.1.38"
+	},
+	"keywords": [
+		"ai",
+		"llm",
+		"openai",
+		"anthropic",
+		"gemini",
+		"bedrock",
+		"unified",
+		"api"
+	],
+	"author": "Mario Zechner",
+	"license": "MIT",
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/earendil-works/pi.git",
+		"directory": "packages/ai"
+	},
+	"engines": {
+		"node": ">=22.19.0"
+	},
+	"devDependencies": {
+		"@types/node": "24.12.4",
+		"canvas": "3.2.3",
+		"vitest": "4.1.9"
+	}
+}

@@ -1,0 +1,95 @@
+body {
+  overflow: hidden;
+}
+
+:root {
+  --wordless-shell-titlebar: #f6f6f5;
+  --wordless-shell-sidebar: #f1f1ee;
+  --wordless-shell-workspace: #fbfbfa;
+  --wordless-shell-context: #fbfbfa;
+  --wordless-background-scrim: rgb(248 248 246 / 0.32);
+  --wordless-background-pattern-ink: rgb(86 88 78 / 0.3);
+  --wordless-background-grain: rgb(95 96 88 / 0.22);
+  --wordless-background-fiber: rgb(121 124 109 / 0.08);
+}
+
+:root[data-theme="dark"] {
+  --wordless-shell-titlebar: #202219;
+  --wordless-shell-sidebar: #202219;
+  --wordless-shell-workspace: #151610;
+  --wordless-shell-context: #1c1d18;
+  --wordless-background-scrim: rgb(20 21 17 / 0.56);
+  --wordless-background-pattern-ink: rgb(220 225 203 / 0.2);
+  --wordless-background-grain: rgb(227 233 207 / 0.15);
+  --wordless-background-fiber: rgb(220 227 194 / 0.07);
+}
+
+:root[data-appearance-background="active"] {
+  --wordless-shell-titlebar: rgb(246 246 245 / 0.9);
+  --wordless-shell-sidebar: rgb(241 241 238 / 0.86);
+  --wordless-shell-workspace: rgb(251 251 250 / 0.88);
+  --wordless-shell-context: rgb(251 251 250 / 0.9);
+}
+
+:root[data-theme="dark"][data-appearance-background="active"] {
+  --wordless-shell-titlebar: rgb(32 34 25 / 0.9);
+  --wordless-shell-sidebar: rgb(32 34 25 / 0.87);
+  --wordless-shell-workspace: rgb(21 22 16 / 0.9);
+  --wordless-shell-context: rgb(28 29 24 / 0.92);
+}
+
+.app-background-image {
+  background-color: var(--background);
+  transition: opacity 180ms ease-out;
+}
+
+.app-background-scrim {
+  background: var(--wordless-background-scrim);
+}
+
+@keyframes wordless-assistant-status-shimmer {
+  from {
+    background-position: 100% 0;
+  }
+
+  to {
+    background-position: -100% 0;
+  }
+}
+
+.assistant-run-status-shimmer {
+  display: inline-block;
+  background: linear-gradient(100deg, #a9a9a2 24%, #a9a9a2 42%, #68784f 48%, #f3f5df 53%, #68784f 58%, #a9a9a2 64%, #a9a9a2 82%);
+  background-clip: text;
+  background-position: 100% 0;
+  background-size: 250% 100%;
+  color: transparent;
+  -webkit-background-clip: text;
+  animation: wordless-assistant-status-shimmer 2.4s ease-in-out infinite;
+}
+
+[data-theme="dark"] .assistant-run-status-shimmer {
+  background-image: linear-gradient(100deg, #8b8b84 24%, #8b8b84 42%, #b5cf76 48%, #fbffe2 53%, #b5cf76 58%, #8b8b84 64%, #8b8b84 82%);
+}
+
+[data-reduce-motion="true"] *,
+[data-reduce-motion="true"] *::before,
+[data-reduce-motion="true"] *::after {
+  animation-duration: 0.01ms !important;
+  animation-iteration-count: 1 !important;
+  scroll-behavior: auto !important;
+  transition-duration: 0.01ms !important;
+}
+
+[data-reduce-motion="true"] .assistant-run-status-shimmer {
+  animation: none;
+  background-position: 50% 0;
+}
+
+[data-reduce-motion="true"] .app-background-image {
+  transition: none;
+}
+
+#root {
+  min-height: 100vh;
+}

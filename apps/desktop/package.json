@@ -1,0 +1,59 @@
+{
+  "name": "@wordless/desktop",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "main": "dist/electron/main.cjs",
+  "config": {
+    "electron_mirror": "https://npmmirror.com/mirrors/electron/"
+  },
+  "scripts": {
+    "check": "tsc -p tsconfig.json --noEmit",
+    "dev": "vite --config vite.renderer.config.ts --host 127.0.0.1",
+    "electron:install": "node ../../node_modules/electron/install.js",
+    "build:electron": "node scripts/build-electron.mjs",
+    "dev:electron": "node scripts/build-electron.mjs && node scripts/dev-electron.mjs",
+    "test:host": "node --test test/*.test.ts"
+  },
+  "dependencies": {
+    "@lexical/react": "0.48.0",
+    "@radix-ui/react-popover": "1.1.21",
+    "@vitejs/plugin-react": "6.0.3",
+    "@wordless/agent-driver-coding": "0.0.0",
+    "@wordless/agent-driver-generic": "0.0.0",
+    "@wordless/agent-driver-sdk": "0.0.0",
+    "@wordless/agent-extension-context-compaction": "0.0.0",
+    "@wordless/agent-extension-plan-mode": "0.0.0",
+    "@wordless/agent-extension-runtime": "0.0.0",
+    "@wordless/agent-extension-sdk": "0.0.0",
+    "@wordless/agent-extension-subagent": "0.0.0",
+    "@wordless/ai": "0.80.6-wordless.0",
+    "@wordless/domain": "0.0.0",
+    "@wordless/model-config": "0.0.0",
+    "@wordless/profile-coding": "0.0.0",
+    "@wordless/profile-general": "0.0.0",
+    "@wordless/profile-sdk": "0.0.0",
+    "@wordless/protocol": "0.0.0",
+    "@wordless/runtime": "0.0.0",
+    "@wordless/skill-registry": "0.0.0",
+    "@wordless/ui-kit": "0.0.0",
+    "@xyflow/react": "12.11.2",
+    "electron": "43.1.0",
+    "lexical": "0.48.0",
+    "lucide-react": "1.24.0",
+    "react": "19.2.7",
+    "react-dom": "19.2.7",
+    "react-virtuoso": "4.18.11",
+    "recharts": "3.10.0",
+    "three": "0.185.1",
+    "vite": "8.1.4"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "4.3.2",
+    "@types/react": "19.2.17",
+    "@types/react-dom": "19.2.3",
+    "@types/three": "0.185.1",
+    "tailwindcss": "4.3.2",
+    "typescript": "5.9.3"
+  }
+}

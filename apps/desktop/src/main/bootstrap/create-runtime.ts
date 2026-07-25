@@ -1,0 +1,43 @@
+import path from "node:path";
+import { app } from "electron";
+import { AgentExtensionManager } from "@wordless/agent-extension-runtime";
+import { contextCompactionExtension } from "@wordless/agent-extension-context-compaction";
+import { planModeExtension } from "@wordless/agent-extension-plan-mode";
+import { subagentExtension } from "@wordless/agent-extension-subagent";
+import { createCodingAgentDriver } from "@wordless/agent-driver-coding";
+import { createHeadlessReadOnlyTools } from "@wordless/coding-agent";
+import { createGenericAgentDriver } from "@wordless/agent-driver-generic";
+import { createAgentDriverRegistry } from "@wordless/agent-driver-sdk";
+import { codingProfile } from "@wordless/profile-coding";
+import { generalProfile } from "@wordless/profile-general";
+import { createProfileRegistry } from "@wordless/profile-sdk";
+import { WordlessRuntime } from "@wordless/runtime";
+import { ElectronCredentialVault } from "../adapters/electron-credential-vault";
+
+export function createDesktopRuntime(userData: string): WordlessRuntime {
+  const extensions = new AgentExtensionManager({
+    path: path.join(userData, "agent-extensions.json"),
+    definitions: [planModeExtension, subagentExtension, contextCompactionExtension],
+  });
+  return new WordlessRuntime({
+    paths: {
+      dataRoot: userData,
+      databasePath: path.join(userData, "wordless.db"),
+      journalsRoot: path.join(userData, "sessions"),
+      modelConfiguration: {
+        extensionsRoot: path.join(userData, "provider-extensions"),
+        modelsPath: path.join(userData, "models.json"),
+        settingsPath: path.join(userData, "settings.json"),
+      },
+      sessionWorkspacesRoot: path.join(userData, "session-workspaces"),
+    },
+    credentialVault: new ElectronCredentialVault(path.join(userData, "credentials.json")),
+    defaultWorkspaceRoot: path.join(app.getPath("documents"), "Wordless"),
+    profiles: createProfileRegistry([generalProfile, codingProfile]),
+    extensions,
+    drivers: createAgentDriverRegistry([
+      createGenericAgentDriver({ createTools: (context) => createHeadlessReadOnlyTools(context.env) }),
+      createCodingAgentDriver({ createExtensionHost: extensions }),
+    ]),
+  });
+}

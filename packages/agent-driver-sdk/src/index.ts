@@ -1,0 +1,390 @@
+import type { AgentTool, ExecutionEnv, Session, SessionMetadata, ThinkingLevel } from "@wordless/agent";
+import type { Api, Model, Models } from "@wordless/ai";
+import type {
+  AgentExtensionEvent,
+  AgentExtensionInteraction,
+  SubagentRunner,
+} from "@wordless/agent-extension-sdk";
+import type {
+  AgentDriverId,
+  ConversationMessage,
+  ConversationUsage,
+  ContextCompactionRecord,
+  ContextCompactionTrigger,
+  MessageAttachmentBlock,
+  MessageBlock,
+  ModelCapabilities,
+  ModelReference,
+  ModelRequirements,
+  ProfileReference,
+  SecurityPolicySnapshot,
+  SessionRecord,
+  SkillSource,
+  UserPromptPart,
+  ToolOperationApproval,
+  UserRequest,
+  UserRequestResolution,
+  WorkbenchId,
+} from "@wordless/domain";
+
+export type AgentDriverFeature =
+  | "steer"
+  | "follow-up"
+  | "thinking"
+  | "compact"
+  | "branch"
+  | "commands"
+  | "artifacts"
+  | "approval"
+  | "user-request"
+  | "extensions";
+
+export interface AgentTextAttachment {
+  path: string;
+  name: string;
+  mediaType: string;
+  content: string;
+}
+
+export interface OperationApprovalRequest {
+  approvalId: string;
+  callId: string;
+  toolName: string;
+  input: Record<string, unknown>;
+  risk: ToolOperationApproval["risk"];
+  severity: ToolOperationApproval["severity"];
+  summary: string;
+  preview: ToolOperationApproval["preview"];
+  matchedRules: ToolOperationApproval["matchedRules"];
+}
+
+export interface SessionFileBaseline {
+  path: string;
+  existed: boolean;
+  content: string | null;
+}
+
+export interface OperationApprovalDefinition extends Pick<OperationApprovalRequest, "risk" | "severity" | "summary" | "preview" | "matchedRules"> {
+  sessionFileBaseline?: SessionFileBaseline;
+}
+
+export type OperationPreflightDecision =
+  | { type: "allow"; sessionFileBaseline?: SessionFileBaseline }
+  | { type: "block"; reason: string }
+  | { type: "approval"; approval: OperationApprovalDefinition };
+
+export interface ConnectorToolPolicy {
+  agentToolName: string;
+  connectorId: string;
+  connectorName: string;
+  toolName: string;
+  readOnly: boolean;
+  destructive: boolean | null;
+}
+
+export interface OperationApprovalResolution {
+  approvalId: string;
+  approved: boolean;
+  feedback?: string;
+}
+
+export const OPERATION_APPROVAL_JOURNAL_TYPE = "wordless.operation-approval";
+export const SESSION_FILE_BASELINE_JOURNAL_TYPE = "wordless.session-file-baseline";
+export const USER_REQUEST_JOURNAL_TYPE = "wordless.user-request";
+export const CONTEXT_COMPACTION_JOURNAL_TYPE = "wordless.context-compaction";
+
+export interface PersistedOperationApproval {
+  callId: string;
+  approval: OperationApprovalRequest;
+  resolution: OperationApprovalResolution;
+}
+
+export interface PersistedSessionFileBaseline {
+  callId: string;
+  baseline: SessionFileBaseline;
+}
+
+export interface PersistedUserRequest {
+  callId: string;
+  request: UserRequest;
+  resolution?: UserRequestResolution;
+}
+
+export interface PersistedContextCompaction {
+  compactionId: string;
+  trigger: ContextCompactionTrigger;
+  tokensAfter: number;
+  model: ModelReference;
+  recoveredFailureEntryId?: string;
+}
+
+const WORKSPACE_ATTACHMENT_START = "\n<wordless-workspace-attachments>\n";
+const WORKSPACE_ATTACHMENT_END = "\n</wordless-workspace-attachments>";
+const SKILL_REFERENCE_START = "<wordless-skill-reference>";
+const SKILL_REFERENCE_END = "</wordless-skill-reference>";
+
+type SerializedSkillReference = {
+  version: 1;
+  id: string;
+  skillId: string;
+  name: string;
+  source: SkillSource;
+};
+
+type SerializedPromptContext = {
+  version: 1;
+  attachments: AgentTextAttachment[];
+} | {
+  version: 2;
+  attachments: AgentTextAttachment[];
+  skills: Array<Pick<AgentRuntimeSkill, "id" | "name" | "source" | "baseDir" | "content">>;
+};
+
+export function formatPromptWithAttachments(
+  text: string,
+  attachments: readonly AgentTextAttachment[],
+): string {
+  if (attachments.length === 0) return text;
+  const serialized: SerializedPromptContext = { version: 1, attachments: [...attachments] };
+  return `${text}${WORKSPACE_ATTACHMENT_START}${JSON.stringify(serialized)}${WORKSPACE_ATTACHMENT_END}`;
+}
+
+export function formatPromptWithSkillReferences(parts: readonly UserPromptPart[]): string {
+  return parts.map((part, index) => {
+    if (part.type === "text") return part.text;
+    const reference: SerializedSkillReference = {
+      version: 1,
+      id: `${part.skillId}:${index}`,
+      skillId: part.skillId,
+      name: part.name,
+      source: part.source,
+    };
+    return `${SKILL_REFERENCE_START}${encodeURIComponent(JSON.stringify(reference))}${SKILL_REFERENCE_END}`;
+  }).join("");
+}
+
+export function selectedSkillIdsFromPromptParts(parts: readonly UserPromptPart[]): string[] {
+  const seen = new Set<string>();
+  return parts.flatMap((part) => {
+    if (part.type !== "skill-reference" || seen.has(part.skillId)) return [];
+    seen.add(part.skillId);
+    return [part.skillId];
+  });
+}
+
+function parseSkillReference(value: string): SerializedSkillReference | undefined {
+  try {
+    const parsed = JSON.parse(decodeURIComponent(value)) as unknown;
+    if (
+      typeof parsed !== "object" ||
+      parsed === null ||
+      Array.isArray(parsed) ||
+      !("version" in parsed) ||
+      !("id" in parsed) ||
+      !("skillId" in parsed) ||
+      !("name" in parsed) ||
+      !("source" in parsed) ||
+      parsed.version !== 1 ||
+      typeof parsed.id !== "string" ||
+      typeof parsed.skillId !== "string" ||
+      typeof parsed.name !== "string" ||
+      typeof parsed.source !== "string"
+    ) return undefined;
+    return parsed as SerializedSkillReference;
+  } catch {
+    return undefined;
+  }
+}
+
+export function stripPromptSkillReferences(text: string): string {
+  const pattern = new RegExp(`${SKILL_REFERENCE_START}([^<]*)${SKILL_REFERENCE_END}`, "g");
+  return text.replace(pattern, (marker, encoded: string) => parseSkillReference(encoded) ? "" : marker);
+}
+
+function projectPromptSkillReferences(text: string): MessageBlock[] {
+  const blocks: MessageBlock[] = [];
+  const pattern = new RegExp(`${SKILL_REFERENCE_START}([^<]*)${SKILL_REFERENCE_END}`, "g");
+  let cursor = 0;
+  for (const match of text.matchAll(pattern)) {
+    const reference = parseSkillReference(match[1] ?? "");
+    if (!reference) continue;
+    const index = match.index ?? 0;
+    if (index > cursor) blocks.push({ type: "text", text: text.slice(cursor, index) });
+    blocks.push({ type: "skill-reference", id: reference.id, skillId: reference.skillId, name: reference.name, source: reference.source });
+    cursor = index + match[0].length;
+  }
+  if (cursor < text.length) blocks.push({ type: "text", text: text.slice(cursor) });
+  return blocks;
+}
+
+export function splitPromptAttachments(text: string): { text: string; attachments: MessageAttachmentBlock[] } {
+  const start = text.lastIndexOf(WORKSPACE_ATTACHMENT_START);
+  if (start === -1 || !text.endsWith(WORKSPACE_ATTACHMENT_END)) return { text, attachments: [] };
+  const payload = text.slice(start + WORKSPACE_ATTACHMENT_START.length, -WORKSPACE_ATTACHMENT_END.length);
+  try {
+    const value = JSON.parse(payload) as unknown;
+    if (
+      typeof value !== "object" ||
+      value === null ||
+      !("version" in value) ||
+      !("attachments" in value) ||
+      (value.version !== 1 && value.version !== 2) ||
+      !Array.isArray(value.attachments)
+    ) {
+      return { text, attachments: [] };
+    }
+    const attachments = value.attachments.flatMap((attachment, index): MessageAttachmentBlock[] => {
+      if (
+        typeof attachment !== "object" ||
+        attachment === null ||
+        !("path" in attachment) ||
+        !("name" in attachment) ||
+        !("mediaType" in attachment) ||
+        typeof attachment.path !== "string" ||
+        typeof attachment.name !== "string" ||
+        typeof attachment.mediaType !== "string"
+      ) {
+        return [];
+      }
+      return [{ type: "attachment", id: `${attachment.path}:${index}`, name: attachment.name, mediaType: attachment.mediaType }];
+    });
+    return { text: text.slice(0, start), attachments };
+  } catch {
+    return { text, attachments: [] };
+  }
+}
+
+export function projectUserMessageContent(content: unknown): MessageBlock[] {
+  const blocks: MessageBlock[] = [];
+  const appendText = (text: string) => {
+    const parsed = splitPromptAttachments(text);
+    blocks.push(...projectPromptSkillReferences(parsed.text));
+    blocks.push(...parsed.attachments);
+  };
+
+  if (typeof content === "string") {
+    appendText(content);
+    return blocks;
+  }
+  if (!Array.isArray(content)) return blocks;
+
+  for (const item of content) {
+    if (typeof item !== "object" || item === null || Array.isArray(item) || !("type" in item) || item.type !== "text" || !("text" in item) || typeof item.text !== "string") continue;
+    appendText(item.text);
+  }
+  return blocks;
+}
+
+export interface AgentSkillReference {
+  id: string;
+  source: "built-in" | "workspace" | "future-extension";
+}
+
+export interface AgentRuntimeSkill {
+  id: string;
+  name: string;
+  description: string;
+  content: string;
+  filePath: string;
+  disableModelInvocation: boolean;
+  source: SkillSource;
+  workspaceId: string | null;
+  baseDir: string;
+}
+
+export interface AgentProfileDefinition {
+  reference: ProfileReference;
+  driverId: AgentDriverId;
+  modelRequirements: ModelRequirements;
+  systemPrompt: string;
+  activeToolNames: string[];
+  capabilityIds: string[];
+  skills: AgentSkillReference[];
+  artifactKinds: string[];
+  contextCompactionInstructions?: string;
+  workbenchId: WorkbenchId;
+}
+
+export type AgentDriverCommand =
+  | { type: "prompt"; text: string; attachments?: AgentTextAttachment[]; selectedSkills?: AgentRuntimeSkill[] }
+  | { type: "steer"; text: string; attachments?: AgentTextAttachment[] }
+  | { type: "follow-up"; text: string; attachments?: AgentTextAttachment[] }
+  | { type: "cancel" }
+  | { type: "resolve-approval"; resolution: OperationApprovalResolution }
+  | { type: "resolve-user-request"; resolution: UserRequestResolution }
+  | { type: "set-model"; model: ModelReference }
+  | { type: "set-thinking"; level: ThinkingLevel }
+  | { type: "compact"; trigger: ContextCompactionTrigger; instructions?: string }
+  | { type: "extension.interact"; interaction: AgentExtensionInteraction };
+
+export type AgentDriverEventBase =
+  | { type: "message.started"; message: ConversationMessage }
+  | { type: "message.text.delta"; messageId: string; delta: string }
+  | { type: "message.reasoning.delta"; messageId: string; delta: string }
+  | { type: "message.completed"; message: ConversationMessage }
+  | { type: "tool.started"; messageId: string; callId: string; name: string; input: Record<string, unknown> }
+  | { type: "tool.updated"; messageId: string; callId: string; output: string; details?: unknown; usage?: ConversationUsage }
+  | { type: "tool.completed"; messageId: string; callId: string; output: string; details?: unknown; usage?: ConversationUsage; isError: boolean }
+  | { type: "approval.requested"; messageId: string; approval: OperationApprovalRequest }
+  | { type: "approval.resolved"; messageId: string; resolution: OperationApprovalResolution }
+  | { type: "user-request.requested"; messageId: string; request: UserRequest }
+  | { type: "user-request.resolved"; messageId: string; resolution: UserRequestResolution }
+  | { type: "model.changed"; model: ModelReference }
+  | { type: "context.compaction.started"; trigger: ContextCompactionTrigger }
+  | { type: "context.compaction.completed"; compaction: ContextCompactionRecord }
+  | { type: "context.compaction.failed"; trigger: ContextCompactionTrigger; message: string };
+
+export type AgentDriverEvent =
+  | AgentDriverEventBase
+  | { type: "extension.event"; event: AgentExtensionEvent };
+
+export interface AgentDriverSessionContext {
+  record: SessionRecord;
+  profile: AgentProfileDefinition;
+  model: Model<Api>;
+  modelCapabilities: ModelCapabilities;
+  models: Models;
+  session: Session<SessionMetadata>;
+  env: ExecutionEnv;
+  skills: AgentRuntimeSkill[];
+  connectorTools: AgentTool[];
+  connectorToolPolicies: ConnectorToolPolicy[];
+  security: SecurityPolicySnapshot;
+  resolveModel(reference: ModelReference): Model<Api>;
+  executionKind?: "primary" | "subagent";
+  subagentRunner?: SubagentRunner;
+}
+
+export interface AgentDriverSession {
+  readonly features: readonly AgentDriverFeature[];
+  execute(command: AgentDriverCommand): Promise<void>;
+  subscribe(listener: (event: AgentDriverEvent) => void): () => void;
+  dispose(): void;
+}
+
+export interface AgentDriver {
+  readonly id: AgentDriverId;
+  readonly features: readonly AgentDriverFeature[];
+  createSession(context: AgentDriverSessionContext): Promise<AgentDriverSession>;
+}
+
+export interface AgentDriverRegistry {
+  get(id: AgentDriverId): AgentDriver | undefined;
+  list(): AgentDriver[];
+}
+
+export function createAgentDriverRegistry(drivers: AgentDriver[]): AgentDriverRegistry {
+  const byId = new Map<AgentDriverId, AgentDriver>();
+  for (const driver of drivers) {
+    if (byId.has(driver.id)) throw new Error(`Duplicate Agent Driver: ${driver.id}`);
+    byId.set(driver.id, driver);
+  }
+  return {
+    get(id) {
+      return byId.get(id);
+    },
+    list() {
+      return [...byId.values()];
+    },
+  };
+}

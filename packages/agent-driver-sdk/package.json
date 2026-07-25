@@ -1,0 +1,20 @@
+{
+  "name": "@wordless/agent-driver-sdk",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "check": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@wordless/agent": "0.80.6-wordless.0",
+    "@wordless/ai": "0.80.6-wordless.0",
+    "@wordless/domain": "0.0.0"
+  },
+  "devDependencies": {
+    "typescript": "5.9.3"
+  }
+}

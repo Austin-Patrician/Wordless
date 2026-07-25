@@ -1,0 +1,22 @@
+{
+  "name": "@wordless/capability-shell",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "check": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@wordless/agent": "0.80.6-wordless.0",
+    "@wordless/domain": "0.0.0",
+    "@wordless/platform-node": "0.0.0",
+    "@wordless/profile-sdk": "0.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "24.12.4",
+    "typescript": "5.9.3"
+  }
+}

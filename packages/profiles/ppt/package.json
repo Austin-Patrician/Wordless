@@ -1,0 +1,12 @@
+{
+  "name": "@wordless/profile-ppt",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "dependencies": {
+    "@wordless/capability-design": "0.0.0",
+    "@wordless/capability-filesystem": "0.0.0",
+    "@wordless/capability-office": "0.0.0",
+    "@wordless/profile-sdk": "0.0.0"
+  }
+}

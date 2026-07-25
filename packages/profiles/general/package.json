@@ -1,0 +1,14 @@
+{
+  "name": "@wordless/profile-general",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@wordless/capability-browser": "0.0.0",
+    "@wordless/capability-filesystem": "0.0.0",
+    "@wordless/profile-sdk": "0.0.0"
+  }
+}

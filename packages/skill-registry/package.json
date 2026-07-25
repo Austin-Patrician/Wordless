@@ -1,0 +1,24 @@
+{
+  "name": "@wordless/skill-registry",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "check": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest --run"
+  },
+  "dependencies": {
+    "@wordless/agent": "0.80.6-wordless.0",
+    "@wordless/domain": "0.0.0",
+    "extract-zip": "2.0.1",
+    "yaml": "2.9.0"
+  },
+  "devDependencies": {
+    "@types/node": "24.12.4",
+    "typescript": "5.9.3",
+    "vitest": "4.1.9"
+  }
+}

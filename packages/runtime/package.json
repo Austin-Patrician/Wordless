@@ -1,0 +1,36 @@
+{
+  "name": "@wordless/runtime",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "check": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@wordless/agent": "0.80.6-wordless.0",
+    "@wordless/agent-extension-runtime": "0.0.0",
+    "@wordless/agent-extension-sdk": "0.0.0",
+    "@wordless/agent-driver-sdk": "0.0.0",
+    "@wordless/ai": "0.80.6-wordless.0",
+    "@wordless/capability-filesystem": "0.0.0",
+    "@wordless/capability-shell": "0.0.0",
+    "@wordless/connector-registry": "0.0.0",
+    "@wordless/domain": "0.0.0",
+    "@wordless/profile-sdk": "0.0.0",
+    "@wordless/skill-registry": "0.0.0",
+    "@wordless/model-config": "0.0.0",
+    "@wordless/provider-sdk": "0.0.0",
+    "@wordless/protocol": "0.0.0",
+    "@wordless/persistence": "0.0.0",
+    "@wordless/platform-node": "0.0.0",
+    "diff": "8.0.4"
+  },
+  "devDependencies": {
+    "@types/diff": "7.0.2",
+    "@types/node": "24.12.4",
+    "typescript": "5.9.3"
+  }
+}

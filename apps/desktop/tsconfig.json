@@ -1,0 +1,22 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "allowImportingTsExtensions": false,
+    "declaration": false,
+    "declarationMap": false,
+    "jsx": "react-jsx",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "noEmit": true,
+    "baseUrl": ".",
+    "paths": {
+      "@wordless/ai": ["../../packages/runtime/src/types/ai.d.ts"],
+      "@wordless/ai/*": ["../../packages/runtime/src/types/ai-subpaths.d.ts"],
+      "@wordless/agent": ["../../packages/runtime/src/types/agent.d.ts"],
+      "@wordless/agent/*": ["../../packages/runtime/src/types/agent.d.ts"]
+    },
+    "types": ["node", "vite/client"]
+  },
+  "include": ["src/**/*.ts", "src/**/*.tsx", "vite.renderer.config.ts"]
+}

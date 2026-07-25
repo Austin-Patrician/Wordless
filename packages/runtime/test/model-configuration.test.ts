@@ -1,0 +1,60 @@
+import assert from "node:assert/strict";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import test from "node:test";
+import { createImagesModels, createModels, type Credential, type CredentialStore } from "@wordless/ai";
+import { RuntimeModelConfiguration } from "../src/model-configuration.ts";
+
+const credentials: CredentialStore = {
+  async delete(): Promise<void> {},
+  async modify(_providerId, update): Promise<Credential | undefined> {
+    return await update(undefined);
+  },
+  async read(): Promise<Credential | undefined> {
+    return undefined;
+  },
+};
+
+test("deletes only custom providers and clears their enabled models", async () => {
+  const root = await mkdtemp(join(tmpdir(), "wordless-model-config-"));
+  const modelsPath = join(root, "models.json");
+  const settingsPath = join(root, "settings.json");
+  await writeFile(modelsPath, JSON.stringify({
+    version: 1,
+    providers: {
+      "company-ai": {
+        name: "Company AI",
+        avatarId: "deepseek",
+        baseUrl: "https://ai.example.com/v1",
+        api: "openai-completions",
+        models: [{ id: "company-chat" }],
+      },
+    },
+    imageProviders: {},
+  }), "utf8");
+  await writeFile(settingsPath, JSON.stringify({ version: 1, enabledChatModels: ["company-ai/company-chat"], enabledImageModels: [] }), "utf8");
+
+  const configuration = new RuntimeModelConfiguration({
+    credentials,
+    imageModels: createImagesModels({ credentials }),
+    models: createModels({ credentials }),
+    paths: { extensionsRoot: join(root, "extensions"), modelsPath, settingsPath },
+  });
+
+  try {
+    await configuration.initialize();
+    const initial = configuration.snapshot();
+    assert.equal(initial.providers.find((provider) => provider.id === "company-ai")?.avatarId, "deepseek");
+    assert.equal(initial.models.find((model) => model.providerId === "company-ai")?.providerAvatarId, "deepseek");
+
+    await configuration.deleteCustomProvider("chat", "company-ai");
+
+    assert.equal(configuration.snapshot().providers.some((provider) => provider.id === "company-ai"), false);
+    assert.deepEqual(JSON.parse(await readFile(settingsPath, "utf8")).enabledChatModels, []);
+    await assert.rejects(async () => await configuration.deleteCustomProvider("chat", "openai"), /Only custom providers can be deleted/);
+  } finally {
+    configuration.dispose();
+    await rm(root, { force: true, recursive: true });
+  }
+});

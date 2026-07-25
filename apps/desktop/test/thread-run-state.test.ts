@@ -1,0 +1,104 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+import type { ConversationMessage, RuntimeEventEnvelope } from "@wordless/protocol";
+import { advanceAssistantRunPresentation, assistantRunActivityAt, assistantRunPresentationFromMessages, createAssistantRunPresentation, isNewerRunEvent, mergeCompletedAssistantMessage, MODEL_RESPONSE_WAIT_DELAY_MS, runEventCursor, shouldRefreshSnapshotAfterEvent } from "../src/renderer/features/thread/thread-run-state.ts";
+
+function event(sequence: number, runId: string, payload: RuntimeEventEnvelope["event"]): RuntimeEventEnvelope {
+  return { event: payload, eventId: `event-${sequence}`, protocolVersion: 10, runId, runtimeInstanceId: "test", sequence, sessionId: "session-1", timestamp: 1_700_000_000_000 };
+}
+
+function assistant(id: string, blocks: ConversationMessage["blocks"]): ConversationMessage {
+  return { blocks, id, model: null, role: "assistant", status: "streaming", timestamp: 1_700_000_000_000 };
+}
+
+test("starts in thinking and changes to waiting after one second", () => {
+  const startedAt = 1_000;
+  assert.deepEqual(assistantRunActivityAt({ type: "thinking", since: startedAt }, startedAt), { type: "thinking", since: startedAt });
+  assert.deepEqual(assistantRunActivityAt({ type: "thinking", since: startedAt }, startedAt + MODEL_RESPONSE_WAIT_DELAY_MS - 1), { type: "thinking", since: startedAt });
+  assert.deepEqual(assistantRunActivityAt({ type: "thinking", since: startedAt }, startedAt + MODEL_RESPONSE_WAIT_DELAY_MS), { type: "waiting", since: startedAt });
+});
+
+test("binds a local run presentation to the real assistant message", () => {
+  const started = createAssistantRunPresentation(1_000);
+  const running = advanceAssistantRunPresentation(started, event(1, "run-1", { type: "run.started", runId: "run-1" }));
+  const bound = advanceAssistantRunPresentation(running, event(2, "run-1", { type: "message.started", message: assistant("assistant-1", []) }));
+
+  assert.deepEqual(bound, { assistantMessageId: "assistant-1", activity: { type: "thinking", since: 1_700_000_000_000 }, runId: "run-1", startedAt: 1_000 });
+});
+
+test("tracks response, tool, and user-interaction activity for the current assistant", () => {
+  const started = { ...createAssistantRunPresentation(1_000), assistantMessageId: "assistant-1", runId: "run-1" };
+  const generating = advanceAssistantRunPresentation(started, event(1, "run-1", { type: "message.text.delta", messageId: "assistant-1", delta: "Hello" }));
+  assert.deepEqual(generating?.activity, { type: "generating", since: 1_700_000_000_000 });
+
+  const preparingCommand = advanceAssistantRunPresentation(generating, event(2, "run-1", { type: "tool.started", messageId: "assistant-1", callId: "call-1", name: "bash", input: { command: "npm test" } }));
+  assert.deepEqual(preparingCommand?.activity, { type: "tool", tool: "command", phase: "preparing", since: 1_700_000_000_000 });
+
+  const awaitingApproval = advanceAssistantRunPresentation(preparingCommand, event(3, "run-1", { type: "approval.requested", messageId: "assistant-1", approval: { approvalId: "approval-1", callId: "call-1", toolName: "bash", risk: "command", severity: "normal", summary: "Run tests", preview: { type: "command", command: "npm test", cwd: ".", timeoutSeconds: undefined }, matchedRules: [] } }));
+  assert.deepEqual(awaitingApproval?.activity, { type: "awaiting-approval", since: 1_700_000_000_000 });
+
+  const awaitingInput = advanceAssistantRunPresentation(awaitingApproval, event(4, "run-1", { type: "user-request.requested", messageId: "assistant-1", request: { requestId: "request-1", callId: "call-1", toolName: "request_user_input", title: "Need input", fields: [] } }));
+  assert.deepEqual(awaitingInput?.activity, { type: "awaiting-user-input", since: 1_700_000_000_000 });
+});
+
+test("keeps tool completion feedback visible until the next assistant activity", () => {
+  const started = { ...createAssistantRunPresentation(1_000), assistantMessageId: "assistant-1", runId: "run-1" };
+  const command = advanceAssistantRunPresentation(started, event(1, "run-1", { type: "tool.started", messageId: "assistant-1", callId: "call-1", name: "bash", input: { command: "npm test" } }));
+  const completed = advanceAssistantRunPresentation(command, event(2, "run-1", { type: "tool.completed", messageId: "assistant-1", callId: "call-1", output: "ok", isError: false }));
+  assert.deepEqual(completed?.activity, { type: "tool-result", tool: "command", outcome: "success", since: 1_700_000_000_000 });
+
+  const generating = advanceAssistantRunPresentation(completed, event(3, "run-1", { type: "message.text.delta", messageId: "assistant-1", delta: "Done" }));
+  assert.deepEqual(generating?.activity, { type: "generating", since: 1_700_000_000_000 });
+
+  const failedCommand = advanceAssistantRunPresentation(generating, event(4, "run-1", { type: "tool.started", messageId: "assistant-1", callId: "call-2", name: "bash", input: { command: "exit 1" } }));
+  const failed = advanceAssistantRunPresentation(failedCommand, event(5, "run-1", { type: "tool.completed", messageId: "assistant-1", callId: "call-2", output: "failed", isError: true }));
+  assert.deepEqual(failed?.activity, { type: "tool-result", tool: "command", outcome: "failure", since: 1_700_000_000_000 });
+});
+
+test("restores an active tool status from a running snapshot", () => {
+  const restored = assistantRunPresentationFromMessages([assistant("assistant-1", [{ type: "tool", callId: "call-1", name: "edit", state: "running" }])], 5_000);
+  assert.deepEqual(restored, { assistantMessageId: "assistant-1", activity: { type: "tool", tool: "edit", phase: "running", since: 5_000 }, runId: null, startedAt: 5_000 });
+});
+
+test("restores the latest completed tool result for an active session", () => {
+  const restored = assistantRunPresentationFromMessages([assistant("assistant-1", [{ type: "tool", callId: "call-1", name: "bash", state: "error" }])], 5_000);
+  assert.deepEqual(restored, { assistantMessageId: "assistant-1", activity: { type: "tool-result", tool: "command", outcome: "failure", since: 5_000 }, runId: null, startedAt: 5_000 });
+});
+
+test("ignores stale events and refreshes only after session idle", () => {
+  const firstRun = event(3, "run-1", { type: "run.completed", runId: "run-1" });
+  assert.equal(isNewerRunEvent(event(4, "run-1", { type: "session.idle" }), runEventCursor(firstRun)), true);
+  assert.equal(isNewerRunEvent(event(3, "run-1", { type: "run.completed", runId: "run-1" }), runEventCursor(firstRun)), false);
+  assert.equal(isNewerRunEvent(event(1, "run-2", { type: "run.started", runId: "run-2" }), runEventCursor(firstRun)), true);
+  assert.equal(isNewerRunEvent(event(2, "run-2", { type: "message.completed", message: assistant("assistant-2", []) }), runEventCursor(firstRun)), false);
+  assert.equal(shouldRefreshSnapshotAfterEvent(event(4, "run-1", { type: "message.completed", message: assistant("assistant-1", []) })), false);
+  assert.equal(shouldRefreshSnapshotAfterEvent(event(5, "run-1", { type: "session.idle" })), true);
+});
+
+test("completion keeps local tool details without replacing terminal state", () => {
+  const previous = assistant("assistant-1", [{
+    type: "tool",
+    callId: "call-1",
+    name: "read",
+    input: { path: "README.md" },
+    output: "local output",
+    state: "running",
+  }]);
+  const completed = {
+    ...assistant("assistant-1", [{
+      type: "tool" as const,
+      callId: "call-1",
+      name: "read",
+      state: "complete" as const,
+    }]),
+    status: "complete" as const,
+  };
+
+  const merged = mergeCompletedAssistantMessage(previous, completed);
+  const tool = merged.blocks[0];
+  assert.equal(tool?.type, "tool");
+  if (tool?.type !== "tool") throw new Error("Expected a tool block");
+  assert.equal(tool.state, "complete");
+  assert.deepEqual(tool.input, { path: "README.md" });
+  assert.equal(tool.output, "local output");
+});

@@ -1,0 +1,19 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "allowImportingTsExtensions": true,
+    "declaration": false,
+    "declarationMap": false,
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "noEmit": true,
+    "baseUrl": ".",
+    "paths": {
+      "@wordless/ai": ["src/types/ai.d.ts"],
+      "@wordless/ai/*": ["src/types/ai-subpaths.d.ts"],
+      "@wordless/agent": ["src/types/agent.d.ts"],
+      "@wordless/agent/*": ["src/types/agent.d.ts"]
+    }
+  },
+  "include": ["src/**/*.ts"]
+}

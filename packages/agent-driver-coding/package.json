@@ -1,0 +1,23 @@
+{
+  "name": "@wordless/agent-driver-coding",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "check": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@wordless/agent-extension-sdk": "0.0.0",
+    "@wordless/agent-driver-generic": "0.0.0",
+    "@wordless/agent-driver-sdk": "0.0.0",
+    "@wordless/capability-filesystem": "0.0.0",
+    "@wordless/capability-shell": "0.0.0",
+    "@wordless/coding-agent": "0.0.0"
+  },
+  "devDependencies": {
+    "typescript": "5.9.3"
+  }
+}

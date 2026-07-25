@@ -1,0 +1,16 @@
+node_modules/
+dist/
+out/
+coverage/
+.vite/
+.electron-vite/
+.DS_Store
+*.log
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+Agent app UI design/

@@ -1,0 +1,11 @@
+{
+  "name": "@wordless/capability-design",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "dependencies": {
+    "@wordless/agent": "0.80.6-wordless.0",
+    "@wordless/domain": "0.0.0",
+    "@wordless/profile-sdk": "0.0.0"
+  }
+}
