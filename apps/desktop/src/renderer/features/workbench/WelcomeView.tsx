@@ -1,6 +1,6 @@
 import { cn } from "@wordless/ui-kit";
 import { useEffect, useMemo, useState } from "react";
-import type { AgentInteractionModeId, ModelReference, SessionAccessLevel, UserPromptPart, WorkbenchEntryDefinition, WorkbenchMode } from "@wordless/domain";
+import type { AgentInteractionModeId, ModelReference, SessionAccessLevel, ToolApprovalMode, UserPromptPart, WorkbenchEntryDefinition, WorkbenchMode } from "@wordless/domain";
 import codeDevelopmentIcon from "../../../icons/common-icons/代码开发.svg";
 import spreadsheetIcon from "../../../icons/common-icons/电子表格.svg";
 import everydayOfficeIcon from "../../../icons/common-icons/日常办公.svg";
@@ -59,6 +59,7 @@ export function WelcomeView({ onOpenModels, onOpenSkillImport, onOpenSkills, onS
   const [modelOpen, setModelOpen] = useState(false);
   const [connectorIds, setConnectorIds] = useState<string[]>([]);
   const [interactionMode, setInteractionMode] = useState<AgentInteractionModeId>("default");
+  const [toolApprovalMode, setToolApprovalMode] = useState<ToolApprovalMode>("manual");
   const [submitting, setSubmitting] = useState(false);
 
   const entries = snapshot?.entries ?? [];
@@ -94,11 +95,11 @@ export function WelcomeView({ onOpenModels, onOpenSkillImport, onOpenSkills, onS
     if (interactionMode === "plan" && !canPlan) setInteractionMode("default");
   }, [canPlan, interactionMode]);
 
-  const send = async (parts: UserPromptPart[], _attachments: WorkspaceAttachment[]) => {
+  const send = async (parts: UserPromptPart[], nextAttachments: WorkspaceAttachment[]) => {
     if (!entry || entry.availability !== "available" || !model) return;
     setSubmitting(true);
     try {
-      const session = await client.createAndPrompt({ mode, entryId: entry.id, workspaceId, accessLevel, model, connectorIds, interactionMode }, parts);
+      const session = await client.createAndPrompt({ mode, entryId: entry.id, workspaceId, accessLevel, model, connectorIds, interactionMode, toolApprovalMode }, parts, nextAttachments.map((attachment) => ({ path: attachment.path })));
       await refresh();
       onSessionCreated(session.id);
     } finally {
@@ -180,6 +181,8 @@ export function WelcomeView({ onOpenModels, onOpenSkillImport, onOpenSkills, onS
               modelProviderAvatarId={selectedConnection?.avatarId}
               modelProviderId={model?.connectionId}
               onAccessLevelChange={setAccessLevel}
+              onToolApprovalModeChange={setToolApprovalMode}
+              toolApprovalMode={toolApprovalMode}
               onConnectorIdsChange={setConnectorIds}
               onImportSkill={onOpenSkillImport}
               onInteractionModeChange={(nextMode) => {
@@ -193,6 +196,8 @@ export function WelcomeView({ onOpenModels, onOpenSkillImport, onOpenSkills, onS
               onOpenModelPicker={() => setModelOpen(true)}
               onOpenWorkspacePicker={() => setWorkspaceOpen(true)}
               onSend={send}
+              searchWorkspaceReferences={workspaceId ? (query) => client.searchWorkspace(workspaceId, query) : undefined}
+              workspaceSearchScope={workspaceId ?? "no-workspace"}
               sendDisabled={!canSend}
               skillContextWindow={selectedModel?.capabilities.contextWindow}
               selectedConnectorIds={connectorIds}

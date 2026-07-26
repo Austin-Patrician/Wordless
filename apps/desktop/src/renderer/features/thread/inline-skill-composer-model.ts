@@ -18,7 +18,7 @@ export function countSkillTokenOccurrences(skillIds: readonly string[]): Record<
 export function normalizeUserPromptParts(parts: readonly UserPromptPart[]): UserPromptPart[] {
   const normalized: UserPromptPart[] = [];
   for (const part of parts) {
-    if (part.type === "skill-reference") {
+    if (part.type === "skill-reference" || part.type === "workspace-reference") {
       normalized.push(part);
       continue;
     }

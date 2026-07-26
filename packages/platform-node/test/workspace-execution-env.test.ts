@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -35,5 +35,34 @@ test("default access rejects an absolute write path outside the workspace", asyn
 
     assert.equal(result.ok, false);
     if (!result.ok) assert.match(result.error.message, /inside the workspace/);
+  });
+});
+
+test("workspace search skips ignored folders and returns portable paths", async () => {
+  await withWorkspace(async (rootPath) => {
+    await mkdir(path.join(rootPath, "src", "components"), { recursive: true });
+    await mkdir(path.join(rootPath, "node_modules", "hidden"), { recursive: true });
+    await writeFile(path.join(rootPath, "src", "components", "Button.tsx"), "export {};");
+    await writeFile(path.join(rootPath, "node_modules", "hidden", "Button.tsx"), "ignored");
+
+    const entries = await new WorkspacePathService().searchWorkspace(rootPath, "button", 50);
+
+    assert.deepEqual(entries.map((entry) => entry.path), ["src/components/Button.tsx"]);
+    assert.equal(entries[0]?.kind, "file");
+  });
+});
+
+test("workspace search honors .gitignore rules when present", async () => {
+  await withWorkspace(async (rootPath) => {
+    await mkdir(path.join(rootPath, "src"), { recursive: true });
+    await mkdir(path.join(rootPath, "generated"), { recursive: true });
+    await writeFile(path.join(rootPath, ".gitignore"), "generated/\n*.secret\n");
+    await writeFile(path.join(rootPath, "src", "visible.ts"), "export {};");
+    await writeFile(path.join(rootPath, "src", "credentials.secret"), "hidden");
+    await writeFile(path.join(rootPath, "generated", "output.ts"), "hidden");
+
+    const entries = await new WorkspacePathService().searchWorkspace(rootPath, "", 50);
+
+    assert.deepEqual(entries.map((entry) => entry.path), ["src", ".gitignore", "src/visible.ts"]);
   });
 });

@@ -26,3 +26,15 @@ test("preserves duplicate skill references while joining adjacent text segments"
     { type: "text", text: " finish" },
   ]);
 });
+
+test("keeps workspace references as structured parts between text", () => {
+  assert.deepEqual(normalizeUserPromptParts([
+    { type: "text", text: "Review " },
+    { type: "workspace-reference", path: "src/app.ts", name: "app.ts", kind: "file" },
+    { type: "text", text: " carefully" },
+  ]), [
+    { type: "text", text: "Review " },
+    { type: "workspace-reference", path: "src/app.ts", name: "app.ts", kind: "file" },
+    { type: "text", text: " carefully" },
+  ]);
+});

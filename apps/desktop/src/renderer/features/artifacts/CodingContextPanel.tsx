@@ -1,5 +1,6 @@
-import { ArrowLeft, ChevronDown, MoreHorizontal } from "lucide-react";
-import { useCallback, useEffect, useState, type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
+import { Button, Dialog, DialogContent, DialogTitle, DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@wordless/ui-kit";
+import { ArrowLeft, ChevronDown, FilePlus2, FolderOpen, MoreHorizontal, Save, Trash2 } from "lucide-react";
+import { useCallback, useEffect, useState, type ReactNode } from "react";
 import type { SessionArtifactDiff, SessionArtifactFile, SessionContextSnapshot, SessionWorkspaceTextFile, WorkspaceFileEntry } from "@wordless/protocol";
 import { getFileIcon, getFolderIcon } from "../../shared/fileIcons";
 import { usePreferences } from "../../shared/preferences";
@@ -14,12 +15,6 @@ type CodingContextPanelProps = {
   onViewChange: (view: ContextPanelView) => void;
   sessionId: string;
   view: ContextPanelView;
-};
-
-type ContextMenuState = {
-  entry: WorkspaceFileEntry;
-  x: number;
-  y: number;
 };
 
 type PreviewState =
@@ -52,12 +47,14 @@ function DiffPreview({ diff, name, onBack }: { diff: SessionArtifactDiff | null;
 
 export function CodingContextPanel({ onAttachFile, onViewChange, sessionId, view }: CodingContextPanelProps) {
   const client = useRuntimeClient();
-  const { t } = usePreferences();
+  const { locale, t } = usePreferences();
   const [context, setContext] = useState<SessionContextSnapshot>(emptyContext);
   const [directories, setDirectories] = useState<Record<string, WorkspaceFileEntry[]>>({});
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set([""]));
   const [selectedPath, setSelectedPath] = useState<string | null>(null);
-  const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
+  const [deletingEntry, setDeletingEntry] = useState<WorkspaceFileEntry | null>(null);
+  const [deleting, setDeleting] = useState(false);
+  const [isRunning, setIsRunning] = useState(false);
   const [preview, setPreview] = useState<PreviewState | null>(null);
   const [filePreview, setFilePreview] = useState<SessionWorkspaceTextFile | null>(null);
   const [diffPreview, setDiffPreview] = useState<SessionArtifactDiff | null>(null);
@@ -90,20 +87,18 @@ export function CodingContextPanel({ onAttachFile, onViewChange, sessionId, view
     setPreview(null);
     setFilePreview(null);
     setDiffPreview(null);
+    setDeletingEntry(null);
     void refreshContext();
     void loadDirectory("");
+    void client.getSessionSnapshot(sessionId).then((snapshot) => setIsRunning(snapshot.isRunning)).catch(() => {});
     const unsubscribe = client.subscribe((event) => {
       if (event.sessionId !== sessionId) return;
       if (event.event.type === "tool.completed" || event.event.type === "session.idle") void refreshContext();
+      if (event.event.type === "session.idle") setIsRunning(false);
+      if (event.event.type === "message.started") setIsRunning(true);
     });
     return unsubscribe;
   }, [client, loadDirectory, refreshContext, sessionId]);
-
-  useEffect(() => {
-    const close = () => setContextMenu(null);
-    window.addEventListener("pointerdown", close);
-    return () => window.removeEventListener("pointerdown", close);
-  }, []);
 
   useEffect(() => {
     if (!preview) return;
@@ -130,16 +125,32 @@ export function CodingContextPanel({ onAttachFile, onViewChange, sessionId, view
     });
   };
 
-  const action = async (name: "open" | "reveal" | "save") => {
-    if (!contextMenu) return;
-    const path = contextMenu.entry.path;
-    setContextMenu(null);
+  const action = async (entry: WorkspaceFileEntry, name: "open" | "reveal" | "save") => {
+    const path = entry.path;
     try {
       if (name === "open") await client.openSessionWorkspaceFile(sessionId, path);
       if (name === "reveal") await client.revealSessionWorkspaceFile(sessionId, path);
       if (name === "save") await client.saveSessionWorkspaceFileAs(sessionId, path);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
+    }
+  };
+
+  const deleteEntry = async () => {
+    if (!deletingEntry || isRunning) return;
+    setDeleting(true);
+    try {
+      await client.trashSessionWorkspaceEntry(sessionId, deletingEntry.path);
+      setPreview((current) => current?.path === deletingEntry.path ? null : current);
+      setSelectedPath((current) => current === deletingEntry.path ? null : current);
+      setDirectories({});
+      setExpanded(new Set([""]));
+      await loadDirectory("");
+      setDeletingEntry(null);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause));
+    } finally {
+      setDeleting(false);
     }
   };
 
@@ -160,13 +171,38 @@ export function CodingContextPanel({ onAttachFile, onViewChange, sessionId, view
     return <div className="p-4"><p className="text-[12px] font-semibold text-[#4c4c47] dark:text-foreground">{t("fileChanges")}</p><div className="mt-3 space-y-0.5">{context.changes.length === 0 ? <p className="px-1 text-[11px] text-muted-foreground">{t("noSessionChanges")}</p> : context.changes.map((change) => <button className="flex h-7 w-full items-center gap-2 rounded-[5px] px-1 text-left text-[12px] text-[#454540] hover:bg-[#f0f0ec] dark:text-foreground dark:hover:bg-muted" key={change.path} onClick={() => setPreview({ kind: "diff", path: change.path, name: change.name })} type="button"><FileIcon entry={{ kind: "file", name: change.name }} /><span className="min-w-0 flex-1 truncate">{change.name}</span><span className={`font-mono text-[9px] ${change.kind === "created" ? "text-[#5d823e]" : "text-[#8a8a83]"}`}>{change.kind === "created" ? "A" : "M"}</span></button>)}</div></div>;
   }
 
-  return <div className="relative p-3"><WorkspaceTree directories={directories} expanded={expanded} onContextMenu={(entry, event) => { event.preventDefault(); setSelectedPath(entry.path); setContextMenu({ entry, x: event.clientX, y: event.clientY }); }} onPreview={previewFile} onToggleDirectory={toggleDirectory} selectedPath={selectedPath} />{error ? <p className="mt-3 px-2 text-[10px] text-destructive">{error}</p> : null}{contextMenu ? <div className="fixed z-[100] w-[148px] rounded-[7px] border border-[#e4e4df] bg-white py-1 text-[11px] text-[#4c4c47] shadow-[0_8px_18px_rgba(0,0,0,0.12)] dark:border-border dark:bg-card dark:text-foreground" onPointerDown={(event) => event.stopPropagation()} style={{ left: contextMenu.x, top: contextMenu.y }}><button className="block w-full px-3 py-1.5 text-left hover:bg-[#f3f3f0] dark:hover:bg-muted" onClick={() => void action("open")} type="button">{t("openFile")}</button><button className="block w-full px-3 py-1.5 text-left hover:bg-[#f3f3f0] dark:hover:bg-muted" onClick={() => void action("reveal")} type="button">{t("openFileLocation")}</button><button className="block w-full px-3 py-1.5 text-left hover:bg-[#f3f3f0] dark:hover:bg-muted" onClick={() => void action("save")} type="button">{t("saveAs")}</button><button className="block w-full px-3 py-1.5 text-left hover:bg-[#f3f3f0] dark:hover:bg-muted" onClick={() => { onAttachFile({ path: contextMenu.entry.path, name: contextMenu.entry.name }); setContextMenu(null); }} type="button">{t("addToConversation")}</button></div> : null}</div>;
+  return <div className="relative p-3"><WorkspaceTree directories={directories} expanded={expanded} isRunning={isRunning} onAction={(entry, name) => void action(entry, name)} onAttach={onAttachFile} onDelete={setDeletingEntry} onPreview={previewFile} onToggleDirectory={toggleDirectory} selectedPath={selectedPath} />{error ? <p className="mt-3 px-2 text-[10px] text-destructive">{error}</p> : null}<Dialog onOpenChange={(open) => { if (!open && !deleting) setDeletingEntry(null); }} open={deletingEntry !== null}><DialogContent className="w-[min(25rem,calc(100vw-2rem))] rounded-[10px] border-[#d9d9d4] px-5 py-5 shadow-[0_18px_42px_rgba(20,20,17,0.18)]" showCloseButton={false}><DialogTitle className="text-[15px] font-bold text-foreground">{locale === "zh-CN" ? "移到废纸篓" : "Move to Trash"}</DialogTitle><p className="mt-2 text-[12px] leading-5 text-muted-foreground">{locale === "zh-CN" ? `将“${deletingEntry?.name ?? ""}”移到系统废纸篓？` : `Move “${deletingEntry?.name ?? ""}” to the system Trash?`}</p><div className="mt-5 flex justify-end gap-2"><Button className="h-8 px-3 text-[11px]" disabled={deleting} onClick={() => setDeletingEntry(null)} type="button" variant="outline">{locale === "zh-CN" ? "取消" : "Cancel"}</Button><Button className="h-8 bg-destructive px-3 text-[11px] text-destructive-foreground hover:bg-destructive/90" disabled={deleting || isRunning} onClick={() => void deleteEntry()} type="button">{deleting ? "..." : locale === "zh-CN" ? "移到废纸篓" : "Move to Trash"}</Button></div></DialogContent></Dialog></div>;
 }
 
-function WorkspaceTree({ directories, expanded, onContextMenu, onPreview, onToggleDirectory, selectedPath }: { directories: Record<string, WorkspaceFileEntry[]>; expanded: Set<string>; onContextMenu: (entry: WorkspaceFileEntry, event: ReactMouseEvent<HTMLButtonElement>) => void; onPreview: (entry: Pick<WorkspaceFileEntry, "path" | "name">) => void; onToggleDirectory: (entry: WorkspaceFileEntry) => void; selectedPath: string | null }) {
+function WorkspaceTree({ directories, expanded, isRunning, onAction, onAttach, onDelete, onPreview, onToggleDirectory, selectedPath }: { directories: Record<string, WorkspaceFileEntry[]>; expanded: Set<string>; isRunning: boolean; onAction: (entry: WorkspaceFileEntry, name: "open" | "reveal" | "save") => void; onAttach: (attachment: WorkspaceAttachment) => void; onDelete: (entry: WorkspaceFileEntry) => void; onPreview: (entry: Pick<WorkspaceFileEntry, "path" | "name">) => void; onToggleDirectory: (entry: WorkspaceFileEntry) => void; selectedPath: string | null }) {
   const renderEntries = (path: string, depth: number): ReactNode[] => (directories[path] ?? []).flatMap((entry) => {
     const open = entry.kind === "directory" && expanded.has(entry.path);
-    const row = <button className={`flex h-7 w-full items-center gap-2 rounded-[5px] px-2 text-left text-[8px] text-[#4b4b46] hover:bg-[#f0f0ec] dark:text-muted-foreground dark:hover:bg-muted ${selectedPath === entry.path ? "border border-[#2bc6b2] bg-[#f0faf8] dark:bg-[#17312e]" : ""}`} key={entry.path} onClick={() => entry.kind === "directory" ? onToggleDirectory(entry) : onPreview(entry)} onContextMenu={(event) => entry.kind === "file" ? onContextMenu(entry, event) : undefined} style={{ paddingLeft: `${8 + depth * 14}px` }} type="button"><FileIcon entry={entry} open={open} /><span className="min-w-0 flex-1 truncate">{entry.name}</span>{entry.kind === "file" ? <MoreHorizontal className="h-3.5 w-3.5 text-[#aaa9a3]" /> : null}</button>;
+    const row = (
+      <div
+        className={`group relative h-7 w-full rounded-[5px] pr-7 text-[12px] text-[#4b4b46] hover:bg-[#f0f0ec] dark:text-muted-foreground dark:hover:bg-muted ${selectedPath === entry.path ? "border border-[#2bc6b2] bg-[#f0faf8] dark:bg-[#17312e]" : ""}`}
+        key={entry.path}
+        style={{ paddingLeft: `${8 + depth * 14}px` }}
+      >
+        <button className="flex h-full min-w-0 w-full items-center gap-2 px-1 text-left" onClick={() => entry.kind === "directory" ? onToggleDirectory(entry) : onPreview(entry)} type="button">
+          <FileIcon entry={entry} open={open} />
+          <span className="min-w-0 flex-1 truncate">{entry.name}</span>
+        </button>
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <button aria-label={`${entry.name} actions`} className="absolute right-1 top-1 grid h-5 w-5 place-items-center rounded-[4px] text-[#8b8b84] transition-colors hover:bg-white hover:text-[#42423d] focus:bg-white focus:text-[#42423d] dark:hover:bg-card dark:focus:bg-card" onClick={(event) => event.stopPropagation()} type="button">
+              <MoreHorizontal className="h-3.5 w-3.5" />
+            </button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" className="w-44" onCloseAutoFocus={(event) => event.preventDefault()}>
+            <DropdownMenuItem onSelect={() => onAttach({ path: entry.path, name: entry.name, kind: entry.kind })}><FilePlus2 className="h-3.5 w-3.5" />Add reference</DropdownMenuItem>
+            {entry.kind === "file" ? <><DropdownMenuItem onSelect={() => onAction(entry, "open")}><FolderOpen className="h-3.5 w-3.5" />Open</DropdownMenuItem><DropdownMenuItem onSelect={() => onAction(entry, "save")}><Save className="h-3.5 w-3.5" />Save as</DropdownMenuItem></> : null}
+            <DropdownMenuItem onSelect={() => onAction(entry, "reveal")}><FolderOpen className="h-3.5 w-3.5" />Reveal in Finder</DropdownMenuItem>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem className="text-destructive focus:bg-[#f8efeb] focus:text-destructive dark:focus:bg-destructive/15" disabled={isRunning} onSelect={() => onDelete(entry)}><Trash2 className="h-3.5 w-3.5" />Move to Trash</DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+      </div>
+    );
     return open ? [row, ...renderEntries(entry.path, depth + 1)] : [row];
   });
   return <div className="space-y-0.5">{renderEntries("", 0)}</div>;

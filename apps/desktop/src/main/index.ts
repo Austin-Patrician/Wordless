@@ -1,5 +1,5 @@
 import path from "node:path";
-import { app, BrowserWindow, dialog, Menu, nativeTheme } from "electron";
+import { app, BrowserWindow, dialog, nativeTheme } from "electron";
 import { createDesktopRuntime } from "./bootstrap/create-runtime";
 import { prepareUserDataPath } from "./bootstrap/user-data";
 import { registerRuntimeIpc } from "./ipc/register-runtime-ipc";
@@ -8,6 +8,10 @@ import { AppearanceAssetService } from "./appearance/appearance-asset-service";
 import { registerAppearanceProtocol } from "./protocols/appearance";
 import { registerMediaProtocol } from "./protocols/media";
 import { createMainWindow, updateTitleBarOverlays } from "./windows/main-window";
+import { createDesktopHostInfo } from "./platform/desktop-platform";
+import { ApplicationMenuController } from "./menu/application-menu";
+import { hydrateShellEnvironment } from "./environment/shell-environment";
+import { DesktopUpdateService } from "./update/update-service";
 
 app.setName("Wordless");
 app.setAppUserModelId("com.wordless.desktop");
@@ -15,8 +19,28 @@ const userData = prepareUserDataPath();
 app.setPath("userData", userData.path);
 
 let runtime: ReturnType<typeof createDesktopRuntime> | undefined;
+const hostInfo = createDesktopHostInfo();
+let mainWindow: BrowserWindow | undefined;
+const hasSingleInstance = app.requestSingleInstanceLock();
+
+if (!hasSingleInstance) {
+  app.quit();
+} else {
+  app.on("second-instance", () => {
+    if (!mainWindow || mainWindow.isDestroyed()) return;
+    if (mainWindow.isMinimized()) mainWindow.restore();
+    mainWindow.show();
+    mainWindow.focus();
+  });
+  app.on("open-url", (event, url) => {
+    event.preventDefault();
+    for (const window of BrowserWindow.getAllWindows()) window.webContents.send("wordless:host-event", { type: "deep-link", url });
+  });
+}
 
 app.whenReady().then(async () => {
+  if (!hasSingleInstance) return;
+  await hydrateShellEnvironment(hostInfo);
   const appearanceAssets = new AppearanceAssetService(path.join(userData.path, "appearance", "backgrounds"));
   registerAppearanceProtocol(path.join(userData.path, "appearance", "backgrounds"));
   registerMediaProtocol(path.join(userData.path, "media-assets"));
@@ -27,18 +51,32 @@ app.whenReady().then(async () => {
     notifications.handle(event, runtime!.getSnapshot().preferences);
     for (const window of BrowserWindow.getAllWindows()) window.webContents.send("wordless:event", event);
   });
-  Menu.setApplicationMenu(null);
+  const applicationMenu = new ApplicationMenuController(hostInfo);
+  applicationMenu.install();
+  const updateService = new DesktopUpdateService((event) => {
+    for (const window of BrowserWindow.getAllWindows()) window.webContents.send("wordless:host-event", event);
+  });
+  updateService.initialize();
   nativeTheme.on("updated", () => {
     const preferences = runtime?.getSnapshot().preferences;
     if (preferences) updateTitleBarOverlays(preferences);
   });
-  registerRuntimeIpc(runtime, appearanceAssets);
-  createMainWindow(path.join(__dirname, "preload.cjs"), runtime.getSnapshot().preferences);
+  registerRuntimeIpc(runtime, appearanceAssets, {
+    hostInfo,
+    showApplicationMenu: (menuId, window) => applicationMenu.show(menuId, window),
+    checkForUpdates: () => updateService.check(),
+    downloadUpdate: () => updateService.download(),
+    installUpdate: () => updateService.install(),
+  });
+  mainWindow = createMainWindow(path.join(__dirname, "preload.cjs"), runtime.getSnapshot().preferences);
+  mainWindow.on("focus", () => notifications.clearBadge());
+  setTimeout(() => void updateService.check(), 12_000);
   if (userData.notice) await dialog.showMessageBox({ type: "warning", message: userData.notice });
 
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0 && runtime) {
-      createMainWindow(path.join(__dirname, "preload.cjs"), runtime.getSnapshot().preferences);
+      mainWindow = createMainWindow(path.join(__dirname, "preload.cjs"), runtime.getSnapshot().preferences);
+      mainWindow.on("focus", () => notifications.clearBadge());
     }
   });
 });

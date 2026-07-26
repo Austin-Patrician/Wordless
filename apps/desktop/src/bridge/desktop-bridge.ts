@@ -1,16 +1,23 @@
 import type { AgentInteractionModeId, AppearanceBackgroundAsset, AppPreferences, ConfiguredModelKind, ConnectorConfiguration, ConnectorPromptSummary, ConnectorResourceSummary, ConnectorSummary, MediaInlineImage, MediaLayoutUpdate, MediaOperationRequest, MediaProject, ModelReference, SessionAccessLevel, SessionDraft, SessionRecord, UsageReport, UsageReportQuery, UserPromptPart, WorkspaceRecord } from "@wordless/domain";
 import type { AgentExtensionSnapshot, JsonObject } from "@wordless/agent-extension-sdk";
-import type { AppSnapshot, RuntimeEventEnvelope, SessionArtifactDiff, SessionContextSnapshot, SessionHistoryPage, SessionHistoryPageRequest, SessionSnapshot, SessionViewSnapshot, SessionWorkspaceTextFile, WorkspaceFileEntry } from "@wordless/protocol";
+import type { AppSnapshot, DesktopHostEvent, DesktopHostInfo, DesktopMenuId, RuntimeEventEnvelope, SessionArtifactDiff, SessionContextSnapshot, SessionHistoryPage, SessionHistoryPageRequest, SessionMessageSearchRequest, SessionMessageSearchResponse, SessionSnapshot, SessionViewSnapshot, SessionWorkspaceTextFile, WorkspaceFileEntry } from "@wordless/protocol";
+import type { ToolApprovalMode } from "@wordless/domain";
 
-export const DESKTOP_BRIDGE_VERSION = 16;
+export const DESKTOP_BRIDGE_VERSION = 19;
 
 export interface DesktopBridge {
   readonly version: typeof DESKTOP_BRIDGE_VERSION;
+  getHostInfo(): Promise<DesktopHostInfo>;
+  openApplicationMenu(menuId: DesktopMenuId): Promise<void>;
+  checkForUpdates(): Promise<void>;
+  downloadUpdate(): Promise<void>;
+  installUpdate(): Promise<void>;
   getSnapshot(): Promise<AppSnapshot>;
   getUsageReport(query: UsageReportQuery): Promise<UsageReport>;
   getSessionSnapshot(sessionId: string): Promise<SessionSnapshot>;
   getSessionView(sessionId: string): Promise<SessionViewSnapshot>;
   getSessionHistoryPage(sessionId: string, request: SessionHistoryPageRequest): Promise<SessionHistoryPage>;
+  searchSessionMessages(sessionId: string, request: SessionMessageSearchRequest): Promise<SessionMessageSearchResponse>;
   getSessionToolOutput(sessionId: string, callId: string): Promise<string>;
   renameSession(sessionId: string, title: string): Promise<SessionRecord>;
   setSessionPinned(sessionId: string, pinned: boolean): Promise<SessionRecord>;
@@ -30,17 +37,21 @@ export interface DesktopBridge {
   createManagedWorkspace(name: string): Promise<WorkspaceRecord>;
   openWorkspace(path: string): Promise<WorkspaceRecord>;
   pickWorkspace(): Promise<WorkspaceRecord | null>;
-  createAndPrompt(draft: SessionDraft, parts: UserPromptPart[]): Promise<SessionRecord>;
+  createAndPrompt(draft: SessionDraft, parts: UserPromptPart[], attachments?: Array<{ path: string }>): Promise<SessionRecord>;
   promptSession(sessionId: string, parts: UserPromptPart[], attachments?: Array<{ path: string }>): Promise<void>;
   compactSession(sessionId: string): Promise<void>;
   getSessionContext(sessionId: string): Promise<SessionContextSnapshot>;
   getSessionArtifactDiff(sessionId: string, path: string): Promise<SessionArtifactDiff>;
   listSessionWorkspaceDirectory(sessionId: string, path: string): Promise<WorkspaceFileEntry[]>;
+  searchSessionWorkspace(sessionId: string, query: string): Promise<WorkspaceFileEntry[]>;
+  searchWorkspace(workspaceId: string, query: string): Promise<WorkspaceFileEntry[]>;
   readSessionWorkspaceTextFile(sessionId: string, path: string): Promise<SessionWorkspaceTextFile>;
   openSessionWorkspaceFile(sessionId: string, path: string): Promise<void>;
   revealSessionWorkspaceFile(sessionId: string, path: string): Promise<void>;
   saveSessionWorkspaceFileAs(sessionId: string, path: string): Promise<void>;
+  trashSessionWorkspaceEntry(sessionId: string, path: string): Promise<void>;
   resolveOperationApproval(sessionId: string, approvalId: string, approved: boolean, feedback?: string): Promise<void>;
+  setSessionToolApprovalMode(sessionId: string, mode: ToolApprovalMode): Promise<void>;
   resolveUserRequest(
     sessionId: string,
     requestId: string,
@@ -82,14 +93,21 @@ export interface DesktopBridge {
   interactWithSessionExtension(sessionId: string, extensionId: string, action: string, payload?: unknown): Promise<void>;
   setSessionExtensionState(sessionId: string, extensionId: string, state: JsonObject): Promise<void>;
   subscribe(listener: (event: RuntimeEventEnvelope) => void): () => void;
+  subscribeHost(listener: (event: DesktopHostEvent) => void): () => void;
 }
 
 const requiredMethods: Array<Exclude<keyof DesktopBridge, "version">> = [
+  "getHostInfo",
+  "openApplicationMenu",
+  "checkForUpdates",
+  "downloadUpdate",
+  "installUpdate",
   "getSnapshot",
   "getUsageReport",
   "getSessionSnapshot",
   "getSessionView",
   "getSessionHistoryPage",
+  "searchSessionMessages",
   "getSessionToolOutput",
   "renameSession",
   "setSessionPinned",
@@ -115,11 +133,15 @@ const requiredMethods: Array<Exclude<keyof DesktopBridge, "version">> = [
   "getSessionContext",
   "getSessionArtifactDiff",
   "listSessionWorkspaceDirectory",
+  "searchSessionWorkspace",
+  "searchWorkspace",
   "readSessionWorkspaceTextFile",
   "openSessionWorkspaceFile",
   "revealSessionWorkspaceFile",
   "saveSessionWorkspaceFileAs",
+  "trashSessionWorkspaceEntry",
   "resolveOperationApproval",
+  "setSessionToolApprovalMode",
   "resolveUserRequest",
   "cancelSession",
   "setSessionModel",
@@ -157,6 +179,7 @@ const requiredMethods: Array<Exclude<keyof DesktopBridge, "version">> = [
   "interactWithSessionExtension",
   "setSessionExtensionState",
   "subscribe",
+  "subscribeHost",
 ];
 
 export function desktopBridgeError(value: unknown): string | undefined {

@@ -81,6 +81,7 @@ export interface SessionStorage<TMetadata extends SessionMetadata = SessionMetad
 
 export class Session<TMetadata extends SessionMetadata = SessionMetadata> {
   constructor(storage: SessionStorage<TMetadata>);
+  getLeafId(): Promise<string | null>;
   getEntries(): Promise<SessionTreeEntry[]>;
   getBranch(): Promise<SessionTreeEntry[]>;
   moveTo(entryId: string | null): Promise<string | undefined>;

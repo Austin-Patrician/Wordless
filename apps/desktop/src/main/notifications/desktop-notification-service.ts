@@ -1,4 +1,4 @@
-import { BrowserWindow, Notification } from "electron";
+import { app, BrowserWindow, Notification } from "electron";
 import type { AppPreferences } from "@wordless/domain";
 import type { RuntimeEventEnvelope } from "@wordless/protocol";
 
@@ -42,12 +42,28 @@ function focusWordless(): void {
 }
 
 export class DesktopNotificationService {
+  private pendingActions = 0;
+
+  clearBadge(): void {
+    this.pendingActions = 0;
+    if (process.platform === "darwin" && app.dock) app.dock.setBadge("");
+  }
+
+  private updateBadge(): void {
+    if (process.platform === "darwin" && app.dock) app.dock.setBadge(this.pendingActions > 0 ? String(this.pendingActions) : "");
+  }
+
   handle(event: RuntimeEventEnvelope, preferences: AppPreferences): void {
     const kind = notificationKind(event);
-    if (!kind || !isEnabled(preferences, kind) || hasFocusedWindow() || !Notification.isSupported()) return;
+    if (!kind || !isEnabled(preferences, kind)) return;
+    if (kind === "action-required") {
+      this.pendingActions += 1;
+      this.updateBadge();
+    }
+    if (hasFocusedWindow() || !Notification.isSupported()) return;
     try {
       const notification = new Notification({ title: "Wordless", body: notificationBody(preferences.locale, kind) });
-      notification.on("click", focusWordless);
+      notification.on("click", () => { this.clearBadge(); focusWordless(); });
       notification.show();
     } catch {
       // Native notifications must never interrupt an Agent run.

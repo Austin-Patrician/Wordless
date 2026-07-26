@@ -4,7 +4,7 @@ import type { SubagentResult, SubagentRoleDefinition, SubagentRunner, SubagentTa
 import type { AgentDriver, AgentDriverEvent, AgentDriverSession, AgentDriverSessionContext, AgentProfileDefinition, AgentRuntimeSkill, ConnectorToolPolicy } from "@wordless/agent-driver-sdk";
 import type { AgentTool, ExecutionEnv } from "@wordless/agent";
 import type { Api, Model, Models } from "@wordless/ai";
-import { mergeConversationUsage, type ModelCapabilities, type ModelReference, type SecurityPolicySnapshot, type SessionRecord } from "@wordless/domain";
+import { mergeConversationUsage, type ModelCapabilities, type ModelReference, type SecurityPolicySnapshot, type SessionRecord, type ToolApprovalMode } from "@wordless/domain";
 import { createWordlessSession, openWordlessSession } from "@wordless/persistence";
 
 type SubagentTaskEntry = {
@@ -28,6 +28,7 @@ export interface SessionSubagentRunnerOptions {
   resolveModel(reference: ModelReference): Model<Api>;
   resolveCapabilities(reference: ModelReference): ModelCapabilities;
   onFilesChanged(changes: SubagentFileChange[]): Promise<void>;
+  toolApprovalMode: ToolApprovalMode;
 }
 
 export interface SubagentFileChange {
@@ -92,6 +93,11 @@ export class SessionSubagentRunner implements SubagentRunner, SubagentTaskExecut
     return false;
   }
 
+  async setToolApprovalMode(mode: ToolApprovalMode): Promise<void> {
+    this.options.toolApprovalMode = mode;
+    await Promise.all([...this.active.values()].map((entry) => entry.session.execute({ type: "set-tool-approval-mode", mode })));
+  }
+
   async resolveUserRequest(
     requestId: string,
     resolution: { status: "submitted" | "cancelled"; answers?: Record<string, string | string[] | boolean>; feedback?: string },
@@ -147,6 +153,7 @@ export class SessionSubagentRunner implements SubagentRunner, SubagentTaskExecut
       security: this.options.security,
       resolveModel: this.options.resolveModel,
       executionKind: "subagent",
+      toolApprovalMode: this.options.toolApprovalMode,
     };
     const session = await this.options.driver.createSession(childContext);
     const entry: SubagentTaskEntry = { session, unsubscribe: () => {}, approvals: new Map(), userRequests: new Map() };

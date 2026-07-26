@@ -1,26 +1,37 @@
-import { Archive, ArrowDown, CircleAlert, Command, Copy, LoaderCircle } from "lucide-react";
+import { Archive, ArrowDown, CircleAlert, Command, Copy, FileText, Folder, LoaderCircle } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Virtuoso, type VirtuosoHandle } from "react-virtuoso";
 import type { ConversationMessage, RuntimeEventEnvelope, SessionHistoryPage, SessionSnapshot, SessionTurnSummary, SessionViewSnapshot } from "@wordless/protocol";
-import { calculateCurrentTurnUsage, type ContextCompactionRecord, type MessageToolBlock, type MessageUserRequest, type ModelReference, type ToolOperationApproval, type UserPromptPart, type UserRequestAnswer, type WorkbenchId } from "@wordless/domain";
+import { calculateCurrentTurnUsage, type ContextCompactionRecord, type MessageToolBlock, type MessageUserRequest, type ModelReference, type ToolApprovalMode, type ToolOperationApproval, type UserPromptPart, type UserRequestAnswer, type WorkbenchId } from "@wordless/domain";
 import { usePreferences } from "../../shared/preferences";
 import { useRuntime, useRuntimeClient } from "../../shared/runtime";
 import { ModelPicker } from "../workbench/ModelPicker";
 import { workbenchRendererRegistry } from "../workbench/renderer-registry";
 import { Composer, type WorkspaceAttachment } from "./Composer";
+import type { InlineWorkspaceReferenceToken } from "./InlineSkillComposer";
 import { ConversationDensityRail } from "./ConversationDensityRail";
+import { createThreadTimeline, dataIndexFromReportedIndex, firstItemIndexAfterPrepend, threadTimelineItemCount, type ThreadTimelineItem } from "./thread-virtual-list";
 import { advanceAssistantRunPresentation, assistantRunActivityAt, assistantRunPresentationFromMessages, createAssistantRunPresentation, isNewerRunEvent, mergeCompletedAssistantMessage, nextAssistantRunActivityUpdateAt, runEventCursor, type AssistantRunActivity, type AssistantRunPresentation, type RunEventCursor } from "./thread-run-state";
 import { TurnTokenUsageRow } from "./TurnTokenUsageRow";
 import wordlessIcon from "../../../icons/common-icons/wordless.png";
 
 type ThreadViewProps = {
-  attachments: WorkspaceAttachment[];
-  onAttachmentsConsumed: () => void;
+  messageNavigationTarget?: ThreadMessageNavigationTarget | null;
+  onMessageNavigationConsumed?: (requestId: number) => void;
+  pendingWorkspaceReferences: InlineWorkspaceReferenceToken[];
+  onPendingWorkspaceReferencesConsumed: () => void;
   onOpenModels: () => void;
   onOpenSkillImport: () => void;
   onOpenSkills: () => void;
-  onRemoveAttachment: (path: string) => void;
   sessionId: string;
+};
+
+export type ThreadMessageNavigationTarget = {
+  matchText: string;
+  messageId: string;
+  requestId: number;
+  sessionId: string;
+  turnId: string;
 };
 
 const SESSION_VIEW_CACHE_LIMIT = 3;
@@ -211,6 +222,7 @@ function applyEvent(snapshot: SessionSnapshot, event: RuntimeEventEnvelope): Ses
       ...snapshot,
       isRunning: false,
       isCompacting: false,
+      toolApprovalMode: "manual",
     };
   }
   if (payload.type === "run.started") {
@@ -221,7 +233,7 @@ function applyEvent(snapshot: SessionSnapshot, event: RuntimeEventEnvelope): Ses
 
 function ThinkingBlock({ text }: { text: string }) {
   return (
-    <details className="mt-4 border-l-2 border-[#d9dfca] pl-3.5 dark:border-[#4c5939]">
+    <details className="mt-4 border-l-2 border-[#d9dfca] pl-3.5 dark:border-[#4c5939]" data-thread-search-exclude>
       <summary className="cursor-pointer select-none text-[13px] font-semibold text-[#5a6250] marker:text-[#89957a] dark:text-[#c3cbb4]">深度思考</summary>
       <p className="mt-2 whitespace-pre-wrap text-[13px] leading-5 text-[#74746d] dark:text-muted-foreground">{text}</p>
     </details>
@@ -336,7 +348,7 @@ function AssistantMessageBlocks({ message, onHandoffClarification, onLoadToolOut
       }
       index -= 1;
       rendered.push(
-        <div className="mt-4 divide-y divide-[#e7e7e2] border-y border-[#e7e7e2] dark:divide-border dark:border-border" key={`tools-${tools[0]?.callId}`}>
+        <div className="mt-4 divide-y divide-[#e7e7e2] border-y border-[#e7e7e2] dark:divide-border dark:border-border" data-thread-search-exclude key={`tools-${tools[0]?.callId}`}>
           {tools.map((tool) => {
             const ToolActivity = workbenchRendererRegistry.resolveTool(workbenchId, tool.name);
             return <ToolActivity block={tool} canPlan={canPlan} key={tool.callId} onHandoffClarification={onHandoffClarification} onLoadToolOutput={onLoadToolOutput} onResolveApproval={onResolveApproval} onResolveClarificationQuestion={onResolveClarificationQuestion} onResolveUserRequest={onResolveUserRequest} />;
@@ -356,7 +368,7 @@ function AssistantResponseError({ message }: { message: ConversationMessage }) {
   const { t } = usePreferences();
   if (message.status !== "error" || !message.errorMessage) return null;
   return (
-    <div className="mt-4 flex items-start gap-2.5 border-y border-[#ead5cf] bg-[#fdf8f6] px-3 py-2.5 text-[#8d5448] dark:border-[#5c3d36] dark:bg-[#2b201d] dark:text-[#efb0a3]" role="alert">
+    <div className="mt-4 flex items-start gap-2.5 border-y border-[#ead5cf] bg-[#fdf8f6] px-3 py-2.5 text-[#8d5448] dark:border-[#5c3d36] dark:bg-[#2b201d] dark:text-[#efb0a3]" data-thread-search-exclude role="alert">
       <CircleAlert className="mt-0.5 h-3.5 w-3.5 shrink-0" />
       <div className="min-w-0">
         <p className="text-[12px] font-semibold">{t("assistantResponseFailed")}</p>
@@ -454,46 +466,30 @@ function AssistantMessageBody({ messages, onHandoffClarification, onLoadToolOutp
   );
 }
 
-function MessageBody({ messages, onHandoffClarification, onLoadToolOutput, onResolveApproval, onResolveClarificationQuestion, onResolveUserRequest, onResolvePlanResult, canPlan, planMode, runPresentation, showFooter, workbenchId }: { messages: ConversationMessage[]; onHandoffClarification: (interactionMode: "default" | "clarify" | "plan") => Promise<void>; onLoadToolOutput: (callId: string) => Promise<void>; onResolveApproval: (approvalId: string, approved: boolean, feedback?: string) => void; onResolveClarificationQuestion: (callId: string, value: string | boolean) => Promise<void>; onResolveUserRequest: (requestId: string, resolution: { status: "submitted" | "cancelled"; answers?: Record<string, UserRequestAnswer>; feedback?: string }) => void; onResolvePlanResult: (action: "implement" | "stay") => Promise<void>; canPlan: boolean; planMode: "off" | "planning" | "executing"; runPresentation: AssistantRunPresentation | null; showFooter: boolean; workbenchId: WorkbenchId }) {
+function MessageBody({ messages, onHandoffClarification, onLoadToolOutput, onResolveApproval, onResolveClarificationQuestion, onResolveUserRequest, onResolvePlanResult, canPlan, isFirstMessage, planMode, runPresentation, showFooter, workbenchId }: { messages: ConversationMessage[]; onHandoffClarification: (interactionMode: "default" | "clarify" | "plan") => Promise<void>; onLoadToolOutput: (callId: string) => Promise<void>; onResolveApproval: (approvalId: string, approved: boolean, feedback?: string) => void; onResolveClarificationQuestion: (callId: string, value: string | boolean) => Promise<void>; onResolveUserRequest: (requestId: string, resolution: { status: "submitted" | "cancelled"; answers?: Record<string, UserRequestAnswer>; feedback?: string }) => void; onResolvePlanResult: (action: "implement" | "stay") => Promise<void>; canPlan: boolean; isFirstMessage: boolean; planMode: "off" | "planning" | "executing"; runPresentation: AssistantRunPresentation | null; showFooter: boolean; workbenchId: WorkbenchId }) {
   const { t } = usePreferences();
   const message = messages[0]!;
   if (message.role === "user") {
-    const contentBlocks = message.blocks.filter((block) => block.type === "text" || block.type === "skill-reference");
+    const contentBlocks = message.blocks.filter((block) => block.type === "text" || block.type === "skill-reference" || block.type === "workspace-reference");
     const attachments = message.blocks.filter((block) => block.type === "attachment");
     return (
-      <div className={`group relative min-h-px pt-8 outline-none focus-visible:ring-2 focus-visible:ring-ring ${contentBlocks.length > 0 ? "pb-7" : ""}`} data-thread-message-id={message.id} tabIndex={-1}>
+      <div className={`group relative min-h-px ${isFirstMessage ? "pt-4" : "pt-8"} outline-none focus-visible:ring-2 focus-visible:ring-ring ${contentBlocks.length > 0 ? "pb-7" : ""}`} data-thread-message-id={message.id} tabIndex={-1}>
         <div className="ml-auto max-w-[560px]">
           {contentBlocks.length > 0 ? <div className="rounded-[10px] bg-[#f0f0ed] px-3.5 py-2.5 text-[14px] leading-6 text-[#343431] dark:bg-muted dark:text-foreground">{contentBlocks.map((block, index) => block.type === "text"
             ? <span className="whitespace-pre-wrap" key={`text-${index}`}>{block.text}</span>
+            : block.type === "workspace-reference" ? <span className="mx-1.5 inline-flex h-6 max-w-[230px] select-none items-center gap-1 rounded-[5px] border border-[#bed7cf] bg-[#eef8f5] px-1.5 align-middle text-[13px] font-normal leading-6 text-[#34574d] shadow-[inset_0_1px_0_rgba(255,255,255,0.65)] dark:border-[#3b675c] dark:bg-[#20332d] dark:text-[#c5e3d9]" key={block.id} title={block.path}>{block.kind === "directory" ? <Folder aria-hidden className="h-3 w-3 shrink-0 text-[#4f8b79]" /> : <FileText aria-hidden className="h-3 w-3 shrink-0 text-[#4f8b79]" />}<span className="min-w-0 truncate">@{block.name}</span></span>
             : <span className="mx-1.5 inline-flex h-6 max-w-[210px] select-none items-center gap-1 rounded-[5px] border border-[#deded9] bg-[#f8f8f6] px-1.5 align-middle text-[13px] font-normal leading-6 text-[#45453f] shadow-[inset_0_1px_0_rgba(255,255,255,0.65)] dark:border-[#4b4c45] dark:bg-[#2b2c27] dark:text-[#deded8]" key={block.id} title={block.name}><Command aria-hidden className="h-3 w-3 shrink-0 text-[#686861] dark:text-[#b7b8ae]" /><span className="min-w-0 truncate">{block.name}</span></span>)}</div> : null}
           {attachments.length > 0 ? <div className="mt-1 flex flex-wrap justify-end gap-1.5">{attachments.map((attachment) => <span className="rounded-[5px] bg-[#f0f0ed] px-2 py-1 font-mono text-[11px] text-[#6d6d67] dark:bg-muted" key={attachment.id}>{attachment.name}</span>)}</div> : null}
         </div>
-        {contentBlocks.length > 0 ? <button aria-label={t("copyMessage")} className="pointer-events-none absolute bottom-0 right-0 grid h-6 w-6 place-items-center rounded-[5px] text-[#898981] opacity-0 transition-opacity hover:bg-[#efefeb] hover:text-[#454540] focus-visible:pointer-events-auto focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100 dark:hover:bg-muted" onClick={() => void navigator.clipboard.writeText(contentBlocks.map((block) => block.type === "text" ? block.text : `@${block.name}`).join(""))} title={t("copyMessage")} type="button"><Copy className="h-3.5 w-3.5" /></button> : null}
+        {contentBlocks.length > 0 ? <button aria-label={t("copyMessage")} className="pointer-events-none absolute bottom-0 right-0 grid h-6 w-6 place-items-center rounded-[5px] text-[#898981] opacity-0 transition-opacity hover:bg-[#efefeb] hover:text-[#454540] focus-visible:pointer-events-auto focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-hover:opacity-100 group-focus-within:opacity-100 dark:hover:bg-muted" onClick={() => void navigator.clipboard.writeText(contentBlocks.map((block) => block.type === "text" ? block.text : `@${block.name}`).join(""))} title={t("copyMessage")} type="button"><Copy className="h-3.5 w-3.5" /></button> : null}
       </div>
     );
   }
   return <AssistantMessageBody canPlan={canPlan} messages={messages} onHandoffClarification={onHandoffClarification} onLoadToolOutput={onLoadToolOutput} onResolveApproval={onResolveApproval} onResolveClarificationQuestion={onResolveClarificationQuestion} onResolvePlanResult={onResolvePlanResult} onResolveUserRequest={onResolveUserRequest} planMode={planMode} runPresentation={runPresentation} showFooter={showFooter} workbenchId={workbenchId} />;
 }
 
-function groupMessages(messages: ConversationMessage[]): ConversationMessage[][] {
-  const groups: ConversationMessage[][] = [];
-  for (const message of messages) {
-    const previous = groups.at(-1);
-    if (message.role === "assistant" && previous?.[0]?.role === "assistant") previous.push(message);
-    else groups.push([message]);
-  }
-  return groups;
-}
-
-type ThreadTimelineItem =
-  | { type: "messages"; timestamp: number; messages: ConversationMessage[] }
-  | { type: "compaction"; timestamp: number; compaction: ContextCompactionRecord };
-
 function createTimeline(snapshot: SessionSnapshot): ThreadTimelineItem[] {
-  return [
-    ...groupMessages(snapshot.messages).map((messages) => ({ type: "messages" as const, timestamp: messages[0]!.timestamp, messages })),
-    ...snapshot.contextCompactions.map((compaction) => ({ type: "compaction" as const, timestamp: compaction.timestamp, compaction })),
-  ].sort((left, right) => left.timestamp - right.timestamp);
+  return createThreadTimeline(snapshot.messages, snapshot.contextCompactions);
 }
 
 type LoadedHistory = {
@@ -525,6 +521,7 @@ function snapshotFromSessionView(view: SessionViewSnapshot): SessionSnapshot {
     compactionTrigger: view.compactionTrigger,
     compactionError: view.compactionError,
     extensions: view.extensions,
+    toolApprovalMode: view.toolApprovalMode,
   };
 }
 
@@ -551,7 +548,61 @@ function mergeCompactions(current: ContextCompactionRecord[], incoming: ContextC
   return [...compactions.values()].sort((left, right) => left.timestamp - right.timestamp);
 }
 
-export function ThreadView({ attachments, onAttachmentsConsumed, onOpenModels, onOpenSkillImport, onOpenSkills, onRemoveAttachment, sessionId }: ThreadViewProps) {
+function applySearchHighlight(element: HTMLElement, matchText: string): () => void {
+  const query = matchText.trim();
+  if (!query) return () => {};
+  const normalizedQuery = query.toLocaleLowerCase();
+  const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT, {
+    acceptNode(node) {
+      const parent = node.parentElement;
+      if (!parent || parent.closest("script, style, [data-thread-search-highlight], [data-thread-search-exclude]")) return NodeFilter.FILTER_REJECT;
+      return node.textContent?.toLocaleLowerCase().includes(normalizedQuery) ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_SKIP;
+    },
+  });
+  const match = walker.nextNode();
+  if (!match || match.nodeType !== Node.TEXT_NODE) return () => {};
+  const text = match.textContent ?? "";
+  const start = text.toLocaleLowerCase().indexOf(normalizedQuery);
+  if (start === -1) return () => {};
+  const mark = document.createElement("mark");
+  mark.dataset.threadSearchHighlight = "true";
+  mark.className = "rounded-[2px] bg-[#dfe9b7] px-0.5 text-inherit shadow-[inset_0_-1px_0_rgba(113,136,57,0.5)] dark:bg-[#687b39]";
+  mark.textContent = text.slice(start, start + query.length);
+  const fragment = document.createDocumentFragment();
+  if (start > 0) fragment.append(document.createTextNode(text.slice(0, start)));
+  fragment.append(mark);
+  if (start + query.length < text.length) fragment.append(document.createTextNode(text.slice(start + query.length)));
+  (match as Text).replaceWith(fragment);
+  return () => {
+    if (mark.isConnected) mark.replaceWith(document.createTextNode(mark.textContent ?? ""));
+  };
+}
+
+function waitForScrollSettled(element: HTMLElement, reduceMotion: boolean, onSettled: () => void): () => void {
+  let frame = 0;
+  let cancelled = false;
+  let stableFrames = 0;
+  let attempts = 0;
+  let previousTop = element.getBoundingClientRect().top;
+  const check = () => {
+    if (cancelled || !element.isConnected) return;
+    const top = element.getBoundingClientRect().top;
+    stableFrames = Math.abs(top - previousTop) < 0.5 ? stableFrames + 1 : 0;
+    previousTop = top;
+    if (reduceMotion || stableFrames >= 4 || attempts++ >= 120) {
+      onSettled();
+      return;
+    }
+    frame = window.requestAnimationFrame(check);
+  };
+  frame = window.requestAnimationFrame(check);
+  return () => {
+    cancelled = true;
+    window.cancelAnimationFrame(frame);
+  };
+}
+
+export function ThreadView({ messageNavigationTarget, onMessageNavigationConsumed, onOpenModels, onOpenSkillImport, onOpenSkills, pendingWorkspaceReferences, onPendingWorkspaceReferencesConsumed, sessionId }: ThreadViewProps) {
   const client = useRuntimeClient();
   const { snapshot: appSnapshot } = useRuntime();
   const { reduceMotion, t } = usePreferences();
@@ -561,6 +612,8 @@ export function ThreadView({ attachments, onAttachmentsConsumed, onOpenModels, o
   const [isAtBottom, setIsAtBottom] = useState(true);
   const [activeTurnId, setActiveTurnId] = useState<string | null>(null);
   const [firstItemIndex, setFirstItemIndex] = useState(100_000);
+  const [pendingNavigation, setPendingNavigation] = useState<{ matchText?: string; messageId?: string; turnId: string } | null>(null);
+  const [virtualListVersion, setVirtualListVersion] = useState(0);
   const [runPresentation, setRunPresentation] = useState<AssistantRunPresentation | null>(null);
   const followLatestRef = useRef(true);
   const virtuosoRef = useRef<VirtuosoHandle>(null);
@@ -571,14 +624,16 @@ export function ThreadView({ attachments, onAttachmentsConsumed, onOpenModels, o
   const lastSequenceRef = useRef<RunEventCursor | undefined>(undefined);
   const loadingBeforeRef = useRef(false);
   const loadingAfterRef = useRef(false);
-  const pendingTurnIdRef = useRef<string | null>(null);
+  const navigationSequenceRef = useRef(0);
+  const searchHighlightCleanupRef = useRef<(() => void) | null>(null);
+  const searchHighlightTimerRef = useRef<number | null>(null);
 
   const scrollToBottom = useCallback((behavior: "auto" | "smooth" = "smooth") => {
     followLatestRef.current = true;
     setIsAtBottom(true);
     const count = timelineRef.current.length;
-    if (count > 0) virtuosoRef.current?.scrollToIndex({ index: firstItemIndex + count - 1, align: "end", behavior });
-  }, [firstItemIndex]);
+    if (count > 0) virtuosoRef.current?.scrollToIndex({ index: count - 1, align: "end", behavior });
+  }, []);
 
   const timeline = useMemo(() => snapshot ? createTimeline(snapshot) : [], [snapshot]);
   const timelineRef = useRef<ThreadTimelineItem[]>([]);
@@ -589,6 +644,12 @@ export function ThreadView({ attachments, onAttachmentsConsumed, onOpenModels, o
     setIsAtBottom(true);
     setActiveTurnId(null);
     setFirstItemIndex(100_000);
+    if (searchHighlightTimerRef.current !== null) window.clearTimeout(searchHighlightTimerRef.current);
+    searchHighlightTimerRef.current = null;
+    searchHighlightCleanupRef.current?.();
+    searchHighlightCleanupRef.current = null;
+    setPendingNavigation(null);
+    setVirtualListVersion(0);
     setHistory(null);
     setSnapshot(null);
     setRunPresentation(null);
@@ -598,11 +659,12 @@ export function ThreadView({ attachments, onAttachmentsConsumed, onOpenModels, o
     if (textFrameRef.current !== null) window.cancelAnimationFrame(textFrameRef.current);
     textFrameRef.current = null;
     lastSequenceRef.current = undefined;
+    navigationSequenceRef.current += 1;
     const cached = sessionViewCache.get(sessionId);
     if (cached) {
       setSnapshot(snapshotFromSessionView(cached));
       setHistory(loadedHistoryFromView(cached));
-      setFirstItemIndex(100_000 - cached.history.items.length);
+      setFirstItemIndex(100_000 - threadTimelineItemCount(cached.history));
     }
     let active = true;
     const updateRunPresentation = (event: RuntimeEventEnvelope) => {
@@ -653,6 +715,7 @@ export function ThreadView({ attachments, onAttachmentsConsumed, onOpenModels, o
             compactionTrigger: view.compactionTrigger,
             compactionError: view.compactionError,
             extensions: view.extensions,
+            toolApprovalMode: view.toolApprovalMode,
           } : snapshotFromSessionView(view));
           setHistory(loadedHistoryFromView(view));
         }).catch(() => {});
@@ -678,7 +741,7 @@ export function ThreadView({ attachments, onAttachmentsConsumed, onOpenModels, o
         return current;
       });
       setHistory(loadedHistoryFromView(view));
-      setFirstItemIndex(100_000 - view.history.items.length);
+      setFirstItemIndex(100_000 - threadTimelineItemCount(view.history));
       setRunPresentation((current) => {
         let presentation = current ?? (view.isRunning ? assistantRunPresentationFromMessages(messagesFromHistoryPage(view.history), Date.now()) : null);
         for (const event of pendingEvents) {
@@ -703,19 +766,69 @@ export function ThreadView({ attachments, onAttachmentsConsumed, onOpenModels, o
   }, [client, sessionId]);
 
   useEffect(() => {
-    const pendingTurnId = pendingTurnIdRef.current;
-    if (!pendingTurnId) return;
-    const index = timeline.findIndex((item) => item.type === "messages" && `turn:${item.messages[0]!.id}` === pendingTurnId);
+    if (!pendingNavigation) return;
+    const index = timeline.findIndex((item) => item.type === "messages" && `turn:${item.messages[0]!.id}` === pendingNavigation.turnId);
     if (index === -1) return;
-    pendingTurnIdRef.current = null;
     followLatestRef.current = false;
-    virtuosoRef.current?.scrollToIndex({ index: firstItemIndex + index, align: "center", behavior: reduceMotion ? "auto" : "smooth" });
-  }, [reduceMotion, timeline]);
+    setIsAtBottom(false);
+    setActiveTurnId(pendingNavigation.turnId);
+    virtuosoRef.current?.scrollToIndex({ index, align: "start", behavior: reduceMotion ? "auto" : "smooth" });
+    if (!pendingNavigation.messageId) {
+      setPendingNavigation(null);
+      return;
+    }
+    const messageId = pendingNavigation.messageId;
+    const matchText = pendingNavigation.matchText;
+    let frame = 0;
+    let attempts = 0;
+    let cancelWaitForScroll = () => {};
+    const focusMessage = () => {
+      const element = document.querySelector<HTMLElement>(`[data-thread-message-id="${CSS.escape(messageId)}"]`);
+      if (!element && attempts++ < 20) {
+        frame = window.requestAnimationFrame(focusMessage);
+        return;
+      }
+      if (element) {
+        element.scrollIntoView({ block: "center", behavior: reduceMotion ? "auto" : "smooth" });
+        element.focus({ preventScroll: true });
+        cancelWaitForScroll = waitForScrollSettled(element, reduceMotion, () => {
+          if (searchHighlightTimerRef.current !== null) window.clearTimeout(searchHighlightTimerRef.current);
+          searchHighlightTimerRef.current = null;
+          searchHighlightCleanupRef.current?.();
+          const cleanup = matchText ? applySearchHighlight(element, matchText) : null;
+          searchHighlightCleanupRef.current = cleanup;
+          if (cleanup) {
+            searchHighlightTimerRef.current = window.setTimeout(() => {
+              if (searchHighlightCleanupRef.current !== cleanup) return;
+              cleanup();
+              searchHighlightCleanupRef.current = null;
+              searchHighlightTimerRef.current = null;
+            }, reduceMotion ? 1_400 : 2_800);
+          }
+          setPendingNavigation((current) => current?.messageId === messageId ? null : current);
+        });
+        return;
+      }
+      setPendingNavigation((current) => current?.messageId === messageId ? null : current);
+    };
+    frame = window.requestAnimationFrame(focusMessage);
+    return () => {
+      window.cancelAnimationFrame(frame);
+      cancelWaitForScroll();
+    };
+  }, [pendingNavigation, reduceMotion, timeline, virtualListVersion]);
+
+  useEffect(() => {
+    return () => {
+      if (searchHighlightTimerRef.current !== null) window.clearTimeout(searchHighlightTimerRef.current);
+      searchHighlightCleanupRef.current?.();
+    };
+  }, []);
 
   useEffect(() => {
     if (!followLatestRef.current || timeline.length === 0) return;
-    virtuosoRef.current?.scrollToIndex({ index: firstItemIndex + timeline.length - 1, align: "end", behavior: "auto" });
-  }, [firstItemIndex, timeline.length, snapshot?.messages]);
+    virtuosoRef.current?.scrollToIndex({ index: timeline.length - 1, align: "end", behavior: "auto" });
+  }, [timeline.length, snapshot?.messages, virtualListVersion]);
 
   const currentModel = snapshot?.session.model ?? null;
   const currentEnabledModel = appSnapshot?.models.find((model) => model.connectionId === currentModel?.connectionId && model.modelId === currentModel.modelId);
@@ -737,8 +850,7 @@ export function ThreadView({ attachments, onAttachmentsConsumed, onOpenModels, o
   const send = async (parts: UserPromptPart[], nextAttachments: WorkspaceAttachment[]) => {
     setRunPresentation(createAssistantRunPresentation(Date.now()));
     try {
-      await client.promptSession(sessionId, parts, nextAttachments.map((attachment) => ({ path: attachment.path })));
-      onAttachmentsConsumed();
+      await client.promptSession(sessionId, parts, nextAttachments.filter((attachment) => attachment.kind !== "directory").map((attachment) => ({ path: attachment.path })));
     } catch (cause) {
       setRunPresentation(null);
       throw cause;
@@ -762,6 +874,11 @@ export function ThreadView({ attachments, onAttachmentsConsumed, onOpenModels, o
     const view = await client.getSessionView(sessionId);
     setSnapshot((current) => current ? { ...current, session, extensions: view.extensions } : snapshotFromSessionView(view));
     setHistory(loadedHistoryFromView(view));
+  };
+
+  const setToolApprovalMode = async (mode: ToolApprovalMode) => {
+    await client.setSessionToolApprovalMode(sessionId, mode);
+    setSnapshot((current) => current ? { ...current, toolApprovalMode: mode } : current);
   };
 
   const resolveClarificationQuestion = async (callId: string, value: string | boolean) => {
@@ -842,6 +959,7 @@ export function ThreadView({ attachments, onAttachmentsConsumed, onOpenModels, o
     setIsAtBottom(false);
     try {
       const page = await client.getSessionHistoryPage(sessionId, { before: history.nextBeforeCursor, limit: 24 });
+      const prependedItemCount = threadTimelineItemCount(page);
       setSnapshot((current) => current ? {
         ...current,
         messages: mergeMessages(current.messages, messagesFromHistoryPage(page)),
@@ -853,7 +971,7 @@ export function ThreadView({ attachments, onAttachmentsConsumed, onOpenModels, o
         nextBeforeCursor: page.nextBeforeCursor,
         revision: page.revision,
       } : current);
-      setFirstItemIndex((current) => current - page.items.length);
+      setFirstItemIndex((current) => firstItemIndexAfterPrepend(current, prependedItemCount));
     } finally {
       loadingBeforeRef.current = false;
     }
@@ -880,17 +998,21 @@ export function ThreadView({ attachments, onAttachmentsConsumed, onOpenModels, o
     }
   }, [client, history, sessionId]);
 
-  const navigateToTurn = useCallback(async (turnId: string) => {
+  const navigateToTurn = useCallback(async (turnId: string, messageId?: string, matchText?: string) => {
+    const sequence = ++navigationSequenceRef.current;
     const existing = timelineRef.current.findIndex((item) => item.type === "messages" && `turn:${item.messages[0]!.id}` === turnId);
-    if (existing !== -1) {
-      followLatestRef.current = false;
-      virtuosoRef.current?.scrollToIndex({ index: firstItemIndex + existing, align: "center", behavior: reduceMotion ? "auto" : "smooth" });
-      return;
-    }
-    pendingTurnIdRef.current = turnId;
     followLatestRef.current = false;
     setIsAtBottom(false);
+    if (searchHighlightTimerRef.current !== null) window.clearTimeout(searchHighlightTimerRef.current);
+    searchHighlightTimerRef.current = null;
+    searchHighlightCleanupRef.current?.();
+    searchHighlightCleanupRef.current = null;
+    setPendingNavigation({ turnId, messageId, matchText });
+    if (existing !== -1) {
+      return;
+    }
     const page = await client.getSessionHistoryPage(sessionId, { aroundTurnId: turnId, limit: 24 });
+    if (sequence !== navigationSequenceRef.current) return;
     setSnapshot((current) => current ? {
       ...current,
       messages: messagesFromHistoryPage(page),
@@ -904,8 +1026,16 @@ export function ThreadView({ attachments, onAttachmentsConsumed, onOpenModels, o
       nextBeforeCursor: page.nextBeforeCursor,
       revision: page.revision,
     } : current);
-    setFirstItemIndex(100_000 - page.items.length);
-  }, [client, reduceMotion, sessionId]);
+    setFirstItemIndex(100_000 - threadTimelineItemCount(page));
+    setVirtualListVersion((current) => current + 1);
+  }, [client, sessionId]);
+
+  useEffect(() => {
+    if (!messageNavigationTarget) return;
+    if (messageNavigationTarget.sessionId !== sessionId) return;
+    onMessageNavigationConsumed?.(messageNavigationTarget.requestId);
+    void navigateToTurn(messageNavigationTarget.turnId, messageNavigationTarget.messageId, messageNavigationTarget.matchText);
+  }, [messageNavigationTarget, navigateToTurn, onMessageNavigationConsumed, sessionId]);
 
   if (!snapshot || snapshot.session.id !== sessionId || !appSnapshot || !entry) return <div className="grid min-h-0 flex-1 place-items-center text-[13px] text-muted-foreground">Loading session</div>;
 
@@ -913,6 +1043,7 @@ export function ThreadView({ attachments, onAttachmentsConsumed, onOpenModels, o
     <div className="flex min-h-0 flex-1 flex-col">
       <div className="relative min-h-0 flex-1">
         <Virtuoso
+          key={`${sessionId}:${virtualListVersion}`}
           atBottomStateChange={(atBottom) => { followLatestRef.current = atBottom; setIsAtBottom(atBottom); }}
           className="h-full"
           components={{ Header: () => planExtensionEnabled && planMode !== "off" ? <div className="mx-auto w-full max-w-[820px] px-5 pb-7 pt-6 sm:px-8"><PlanModePanel mode={planMode} snapshot={snapshot} /></div> : <div className="h-6" />, Footer: () => <div className={showDensityRail ? "mx-auto w-full max-w-[820px] pb-10 pl-[58px] pr-5 sm:pl-[70px] sm:pr-8" : "mx-auto w-full max-w-[820px] px-5 pb-10 sm:px-8"}>{runPresentation && !snapshot.isCompacting && (runPresentation.assistantMessageId === null || !snapshot.messages.some((message) => message.id === runPresentation.assistantMessageId)) ? <AssistantRunPlaceholder presentation={runPresentation} /> : null}{snapshot.isCompacting ? <ContextCompactionPending trigger={snapshot.compactionTrigger} /> : null}{snapshot.compactionError ? <ContextCompactionFailure message={snapshot.compactionError} onRetry={() => void compactContext()} trigger={snapshot.compactionTrigger} /> : null}</div> }}
@@ -923,9 +1054,10 @@ export function ThreadView({ attachments, onAttachmentsConsumed, onOpenModels, o
           followOutput={isAtBottom ? "auto" : false}
           itemContent={(index, item) => <div className={showDensityRail ? "mx-auto w-full max-w-[820px] pl-[58px] pr-5 sm:pl-[70px] sm:pr-8" : "mx-auto w-full max-w-[820px] px-5 sm:px-8"}>{item.type === "compaction"
             ? <ContextCompactionActivity compaction={item.compaction} />
-            : <MessageBody canPlan={canPlan} messages={item.messages} onHandoffClarification={handoffClarification} onLoadToolOutput={loadToolOutput} onResolveApproval={resolveApproval} onResolveClarificationQuestion={resolveClarificationQuestion} onResolvePlanResult={resolvePlanResult} onResolveUserRequest={resolveUserRequest} planMode={planMode} runPresentation={runPresentation} showFooter={!snapshot.isRunning && index === firstItemIndex + timeline.length - 1} workbenchId={snapshot.session.workbenchId} />}</div>}
+            : <MessageBody canPlan={canPlan} isFirstMessage={item.messages[0]?.id === snapshot.messages[0]?.id} messages={item.messages} onHandoffClarification={handoffClarification} onLoadToolOutput={loadToolOutput} onResolveApproval={resolveApproval} onResolveClarificationQuestion={resolveClarificationQuestion} onResolvePlanResult={resolvePlanResult} onResolveUserRequest={resolveUserRequest} planMode={planMode} runPresentation={runPresentation} showFooter={!snapshot.isRunning && index === firstItemIndex + timeline.length - 1} workbenchId={snapshot.session.workbenchId} />}</div>}
           rangeChanged={(range) => {
-            const item = timeline[range.startIndex - firstItemIndex + Math.floor((range.endIndex - range.startIndex) / 2)];
+            const middleReportedIndex = range.startIndex + Math.floor((range.endIndex - range.startIndex) / 2);
+            const item = timeline[dataIndexFromReportedIndex(middleReportedIndex, firstItemIndex)];
             if (item?.type === "messages") setActiveTurnId(`turn:${item.messages[0]!.id}`);
           }}
           ref={virtuosoRef}
@@ -939,7 +1071,6 @@ export function ThreadView({ attachments, onAttachmentsConsumed, onOpenModels, o
           <div className="relative">
             <Composer
               accessLevel={snapshot.session.accessLevel}
-              attachments={attachments}
               compact
               compacting={snapshot.isCompacting}
               connectors={availableConnectors}
@@ -960,12 +1091,17 @@ export function ThreadView({ attachments, onAttachmentsConsumed, onOpenModels, o
               }}
               onOpenModelPicker={() => setModelOpen(true)}
               onAccessLevelChange={setAccessLevel}
+              onToolApprovalModeChange={setToolApprovalMode}
+              toolApprovalMode={snapshot?.toolApprovalMode ?? "manual"}
               onCompactContext={compactContext}
               onConnectorIdsChange={setConnectors}
               onImportSkill={onOpenSkillImport}
               onOpenSkills={onOpenSkills}
-              onRemoveAttachment={onRemoveAttachment}
               onSend={send}
+              pendingWorkspaceReferences={pendingWorkspaceReferences}
+              onPendingWorkspaceReferencesConsumed={onPendingWorkspaceReferencesConsumed}
+              searchWorkspaceReferences={(query) => client.searchSessionWorkspace(sessionId, query)}
+              workspaceSearchScope={sessionId}
               onStop={() => client.cancelSession(sessionId)}
               planMode={planMode}
               running={snapshot.isRunning}

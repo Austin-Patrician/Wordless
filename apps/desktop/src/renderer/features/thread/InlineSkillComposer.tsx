@@ -9,11 +9,13 @@ import { PlainTextPlugin } from "@lexical/react/LexicalPlainTextPlugin";
 import {
   $applyNodeReplacement,
   $createParagraphNode,
+  $createTextNode,
   $getNodeByKey,
   $getRoot,
   $getSelection,
   $isElementNode,
   $isRangeSelection,
+  $isTextNode,
   $setSelection,
   COMMAND_PRIORITY_HIGH,
   DecoratorNode,
@@ -30,8 +32,8 @@ import {
   type SerializedLexicalNode,
   type Spread,
 } from "lexical";
-import { Command, X } from "lucide-react";
-import { forwardRef, useEffect, useImperativeHandle, useRef, useState, type JSX, type MutableRefObject } from "react";
+import { Command, FileText, Folder, X } from "lucide-react";
+import { forwardRef, useEffect, useImperativeHandle, useRef, useState, type JSX, type KeyboardEvent as ReactKeyboardEvent, type MutableRefObject } from "react";
 import type { SkillSource, UserPromptPart } from "@wordless/domain";
 import { countSkillTokenOccurrences, normalizeUserPromptParts, uniqueSkillIdsInDocumentOrder } from "./inline-skill-composer-model";
 
@@ -41,17 +43,27 @@ export type InlineSkillToken = {
   source: SkillSource;
 };
 
+export type InlineWorkspaceReferenceToken = {
+  path: string;
+  name: string;
+  kind: "file" | "directory";
+};
+
 export type InlineSkillComposerValue = {
   parts: UserPromptPart[];
   skillIds: string[];
   skillTokenCounts: Record<string, number>;
   text: string;
+  workspaceReferenceCount: number;
+  workspaceQuery: string | null;
 };
 
 export type InlineSkillComposerHandle = {
   clear(): void;
   focus(): void;
+  getCursorRect(): DOMRect | null;
   insertSkill(skill: InlineSkillToken): void;
+  insertWorkspaceReference(reference: InlineWorkspaceReferenceToken): void;
 };
 
 type InlineSkillComposerProps = {
@@ -63,6 +75,7 @@ type InlineSkillComposerProps = {
   onSubmit(): void;
   placeholder: string;
   readOnly?: boolean;
+  onWorkspaceReferenceKeyDown?(event: ReactKeyboardEvent<HTMLDivElement>): boolean;
 };
 
 type SerializedSkillTokenNode = Spread<
@@ -71,6 +84,11 @@ type SerializedSkillTokenNode = Spread<
     skillName: string;
     source: SkillSource;
   },
+  SerializedLexicalNode
+>;
+
+type SerializedWorkspaceReferenceNode = Spread<
+  { path: string; name: string; kind: "file" | "directory" },
   SerializedLexicalNode
 >;
 
@@ -158,21 +176,63 @@ function $isSkillTokenNode(node: LexicalNode | null | undefined): node is SkillT
   return node instanceof SkillTokenNode;
 }
 
+class WorkspaceReferenceNode extends DecoratorNode<JSX.Element> {
+  __path: string;
+  __name: string;
+  __kind: "file" | "directory";
+
+  static getType(): string { return "wordless-workspace-reference"; }
+  static clone(node: WorkspaceReferenceNode): WorkspaceReferenceNode { return new WorkspaceReferenceNode(node.__path, node.__name, node.__kind, node.__key); }
+  static importJSON(serializedNode: SerializedWorkspaceReferenceNode): WorkspaceReferenceNode { return $createWorkspaceReferenceNode(serializedNode.path, serializedNode.name, serializedNode.kind); }
+  constructor(path: string, name: string, kind: "file" | "directory", key?: NodeKey) { super(key); this.__path = path; this.__name = name; this.__kind = kind; }
+  createDOM(): HTMLElement { return document.createElement("span"); }
+  decorate(): JSX.Element { return <WorkspaceReferenceToken nodeKey={this.__key} name={this.__name} path={this.__path} kind={this.__kind} />; }
+  exportJSON(): SerializedWorkspaceReferenceNode { return { ...super.exportJSON(), path: this.__path, name: this.__name, kind: this.__kind, type: "wordless-workspace-reference", version: 1 }; }
+  getPath(): string { return this.getLatest().__path; }
+  getName(): string { return this.getLatest().__name; }
+  getKind(): "file" | "directory" { return this.getLatest().__kind; }
+  getTextContent(): string { return ""; }
+  isInline(): true { return true; }
+  isIsolated(): true { return true; }
+  isKeyboardSelectable(): true { return true; }
+  updateDOM(): false { return false; }
+}
+
+function $createWorkspaceReferenceNode(path: string, name: string, kind: "file" | "directory"): WorkspaceReferenceNode {
+  return $applyNodeReplacement(new WorkspaceReferenceNode(path, name, kind));
+}
+
+function $isWorkspaceReferenceNode(node: LexicalNode | null | undefined): node is WorkspaceReferenceNode {
+  return node instanceof WorkspaceReferenceNode;
+}
+
 function SkillToken({ nodeKey, skillName }: { nodeKey: NodeKey; skillName: string }) {
   const [editor] = useLexicalComposerContext();
   return (
-    <span className="group mx-1.5 inline-flex h-7 max-w-[210px] select-none items-center gap-1 rounded-[6px] border border-[#deded9] bg-[#f1f1ef] px-2 align-middle font-sans text-[16px] font-normal leading-7 text-[#45453f] shadow-[inset_0_1px_0_rgba(255,255,255,0.65)] dark:border-[#4b4c45] dark:bg-[#2b2c27] dark:text-[#deded8]" contentEditable={false}>
-      <Command aria-hidden className="h-3.5 w-3.5 shrink-0 text-[#686861] dark:text-[#b7b8ae]" />
+    <span className="group ml-1 mr-1.5 my-0.5 inline-flex h-6 max-w-[220px] select-none items-center gap-1 rounded-[5px] border border-[#d7d8d2] bg-[#f5f5f2] px-1.5 align-middle font-sans text-[12px] font-medium leading-none text-[#454640] shadow-[inset_0_1px_0_rgba(255,255,255,0.8)] transition-colors duration-150 hover:border-[#c6c8bd] hover:bg-[#eeeeea] dark:border-[#4b4c45] dark:bg-[#2b2c27] dark:text-[#deded8] dark:hover:border-[#5b5c54] dark:hover:bg-[#31322d]" contentEditable={false} title={skillName}>
+      <Command aria-hidden className="h-3 w-3 shrink-0 text-[#73746c] dark:text-[#b7b8ae]" />
       <span className="min-w-0 truncate">{skillName}</span>
       <button
         aria-label={`Remove ${skillName}`}
-        className="grid h-4 w-4 shrink-0 place-items-center rounded-[3px] text-[#777770] opacity-0 pointer-events-none transition-opacity group-focus-within:opacity-100 group-focus-within:pointer-events-auto group-hover:opacity-100 group-hover:pointer-events-auto hover:bg-[#ddddda] hover:text-[#22221f] dark:hover:bg-[#464740] dark:hover:text-white"
+        className="grid h-4 w-4 shrink-0 place-items-center rounded-[3px] text-[#7b7c74] opacity-0 pointer-events-none transition-opacity duration-150 group-focus-within:pointer-events-auto group-focus-within:opacity-100 group-hover:pointer-events-auto group-hover:opacity-100 hover:bg-[#dedfd9] hover:text-[#292a26] focus-visible:pointer-events-auto focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[#9da890] dark:hover:bg-[#464740] dark:hover:text-white"
         onClick={() => editor.update(() => $getNodeByKey(nodeKey)?.remove())}
         onMouseDown={(event) => event.preventDefault()}
         type="button"
       >
         <X className="h-3 w-3" />
       </button>
+    </span>
+  );
+}
+
+function WorkspaceReferenceToken({ nodeKey, name, path, kind }: { nodeKey: NodeKey; name: string; path: string; kind: "file" | "directory" }) {
+  const [editor] = useLexicalComposerContext();
+  const Icon = kind === "directory" ? Folder : FileText;
+  return (
+    <span className="group ml-1 mr-1.5 my-0.5 inline-flex h-6 max-w-[250px] select-none items-center gap-1 rounded-[5px] border border-[#c2d9d1] bg-[#f0f8f5] px-1.5 align-middle font-sans text-[12px] font-medium leading-none text-[#34574d] shadow-[inset_0_1px_0_rgba(255,255,255,0.8)] transition-colors duration-150 hover:border-[#a9cbbf] hover:bg-[#e7f4ef] dark:border-[#3b675c] dark:bg-[#20332d] dark:text-[#c5e3d9] dark:hover:border-[#4a786c] dark:hover:bg-[#274036]" contentEditable={false} title={path}>
+      <Icon aria-hidden className="h-3 w-3 shrink-0 text-[#4f8b79] dark:text-[#9ccfbd]" />
+      <span className="min-w-0 truncate">@{name}</span>
+      <button aria-label={`Remove ${name}`} className="grid h-4 w-4 shrink-0 place-items-center rounded-[3px] text-[#5e8278] opacity-0 pointer-events-none transition-opacity duration-150 group-focus-within:pointer-events-auto group-focus-within:opacity-100 group-hover:pointer-events-auto group-hover:opacity-100 hover:bg-[#cfe9e1] hover:text-[#23483d] focus-visible:pointer-events-auto focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[#6eaa99] dark:hover:bg-[#36554a] dark:hover:text-white" onClick={() => editor.update(() => $getNodeByKey(nodeKey)?.remove())} onMouseDown={(event) => event.preventDefault()} type="button"><X className="h-3 w-3" /></button>
     </span>
   );
 }
@@ -190,6 +250,10 @@ function editorValue(editorState: EditorState): InlineSkillComposerValue {
         parts.push({ type: "skill-reference", skillId: node.getSkillId(), name: node.getSkillName(), source: node.getSource() });
         return;
       }
+      if ($isWorkspaceReferenceNode(node)) {
+        parts.push({ type: "workspace-reference", path: node.getPath(), name: node.getName(), kind: node.getKind() });
+        return;
+      }
       if ($isElementNode(node)) {
         node.getChildren().forEach(visit);
         return;
@@ -202,11 +266,15 @@ function editorValue(editorState: EditorState): InlineSkillComposerValue {
       if (index < rootChildren.length - 1) appendText("\n");
     });
     const normalizedParts = normalizeUserPromptParts(parts);
+    const text = normalizedParts.flatMap((part) => part.type === "text" ? [part.text] : []).join("");
+    const atMatch = /(?:^|\s)@([^\s@]*)$/.exec(text);
     return {
       parts: normalizedParts,
       skillIds: uniqueSkillIdsInDocumentOrder(tokenIds),
       skillTokenCounts: countSkillTokenOccurrences(tokenIds),
-      text: normalizedParts.flatMap((part) => part.type === "text" ? [part.text] : []).join(""),
+      text,
+      workspaceReferenceCount: normalizedParts.filter((part) => part.type === "workspace-reference").length,
+      workspaceQuery: atMatch ? atMatch[1] ?? "" : null,
     };
   });
 }
@@ -249,7 +317,7 @@ function EditorCommandsPlugin({ onStop, onSubmit, readOnly, selectionRef }: { on
       } else if ($isElementNode(node)) {
         adjacent = node.getChildAtIndex(direction === "backward" ? point.offset - 1 : point.offset);
       }
-      if (!$isSkillTokenNode(adjacent)) return false;
+      if (!$isSkillTokenNode(adjacent) && !$isWorkspaceReferenceNode(adjacent)) return false;
       adjacent.remove();
       let nextSelection = $getSelection();
       if (!$isRangeSelection(nextSelection)) {
@@ -305,14 +373,14 @@ function SelectionMemoryPlugin({ selectionRef }: { selectionRef: MutableRefObjec
 
 const initialConfig = {
   namespace: "wordless-inline-skill-composer",
-  nodes: [SkillTokenNode],
+  nodes: [SkillTokenNode, WorkspaceReferenceNode],
   onError(error: Error): void {
     throw error;
   },
 };
 
 export const InlineSkillComposer = forwardRef<InlineSkillComposerHandle, InlineSkillComposerProps>(function InlineSkillComposer(
-  { ariaLabel, className, disabled = false, onChange, onStop, onSubmit, placeholder, readOnly = false },
+  { ariaLabel, className, disabled = false, onChange, onStop, onSubmit, placeholder, readOnly = false, onWorkspaceReferenceKeyDown },
   ref,
 ) {
   const editorRef = useRef<LexicalEditor | null>(null);
@@ -336,6 +404,11 @@ export const InlineSkillComposer = forwardRef<InlineSkillComposerHandle, InlineS
     focus() {
       editorRef.current?.focus();
     },
+    getCursorRect() {
+      const selection = window.getSelection();
+      if (!selection || selection.rangeCount === 0) return null;
+      return selection.getRangeAt(0).getBoundingClientRect();
+    },
     insertSkill(skill) {
       const editor = editorRef.current;
       if (!editor || disabled || readOnly) return;
@@ -347,10 +420,11 @@ export const InlineSkillComposer = forwardRef<InlineSkillComposerHandle, InlineS
           $getRoot().selectEnd();
         }
         const token = $createSkillTokenNode(skill.id, skill.name, skill.source);
+        const spacer = $createTextNode(" ");
         const selection = $getSelection();
         if ($isRangeSelection(selection)) {
-          selection.insertNodes([token]);
-          token.selectNext();
+          selection.insertNodes([token, spacer]);
+          spacer.selectEnd();
           return;
         }
         const root = $getRoot();
@@ -358,6 +432,34 @@ export const InlineSkillComposer = forwardRef<InlineSkillComposerHandle, InlineS
         const parent = lastChild && $isElementNode(lastChild) ? lastChild : root.append($createParagraphNode());
         parent.append(token);
         token.selectNext();
+      });
+      editor.focus();
+    },
+    insertWorkspaceReference(reference) {
+      const editor = editorRef.current;
+      if (!editor || disabled || readOnly) return;
+      editor.update(() => {
+        const savedSelection = selectionRef.current;
+        if (savedSelection && $getNodeByKey(savedSelection.anchor.key) && $getNodeByKey(savedSelection.focus.key)) $setSelection(savedSelection.clone());
+        else $getRoot().selectEnd();
+        const selection = $getSelection();
+        if ($isRangeSelection(selection)) {
+          const node = selection.anchor.getNode();
+          if (selection.isCollapsed() && $isTextNode(node)) {
+            const value = node.getTextContent();
+            const prefix = value.slice(0, selection.anchor.offset);
+            const match = /(?:^|\s)@[^\s@]*$/.exec(prefix);
+            if (match) {
+              const start = prefix.length - match[0].length + (match[0].startsWith(" ") ? 1 : 0);
+              node.setTextContent(`${value.slice(0, start)}${value.slice(selection.anchor.offset)}`);
+              selection.setTextNodeRange(node, start, node, start);
+            }
+          }
+          const token = $createWorkspaceReferenceNode(reference.path, reference.name, reference.kind);
+          const spacer = $createTextNode(" ");
+          selection.insertNodes([token, spacer]);
+          spacer.selectEnd();
+        }
       });
       editor.focus();
     },
@@ -373,6 +475,10 @@ export const InlineSkillComposer = forwardRef<InlineSkillComposerHandle, InlineS
               aria-label={ariaLabel}
               className={className}
               onKeyDownCapture={(event) => {
+                if (onWorkspaceReferenceKeyDown?.(event)) {
+                  event.preventDefault();
+                  return;
+                }
                 if (event.key === "Escape" && readOnly) {
                   event.preventDefault();
                   onStop?.();
@@ -394,7 +500,7 @@ export const InlineSkillComposer = forwardRef<InlineSkillComposerHandle, InlineS
         ignoreSelectionChange
         onChange={(nextEditorState) => {
           const value = editorValue(nextEditorState);
-          const nextHasContent = value.text.length > 0 || value.skillIds.length > 0;
+          const nextHasContent = value.text.length > 0 || value.skillIds.length > 0 || value.workspaceReferenceCount > 0;
           if (nextHasContent !== hasContentRef.current) {
             hasContentRef.current = nextHasContent;
             setHasContent(nextHasContent);

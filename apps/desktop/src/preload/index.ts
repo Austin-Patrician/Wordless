@@ -3,11 +3,17 @@ import { DESKTOP_BRIDGE_VERSION, type DesktopBridge } from "../bridge/desktop-br
 
 const wordlessBridge: DesktopBridge = {
   version: DESKTOP_BRIDGE_VERSION,
+  getHostInfo: () => ipcRenderer.invoke("wordless:host:info"),
+  openApplicationMenu: (menuId) => ipcRenderer.invoke("wordless:menu:open", { menuId }),
+  checkForUpdates: () => ipcRenderer.invoke("wordless:update:check"),
+  downloadUpdate: () => ipcRenderer.invoke("wordless:update:download"),
+  installUpdate: () => ipcRenderer.invoke("wordless:update:install"),
   getSnapshot: () => ipcRenderer.invoke("wordless:snapshot"),
   getUsageReport: (query) => ipcRenderer.invoke("wordless:usage:report", query),
   getSessionSnapshot: (sessionId) => ipcRenderer.invoke("wordless:session:snapshot", sessionId),
   getSessionView: (sessionId) => ipcRenderer.invoke("wordless:session:view", sessionId),
   getSessionHistoryPage: (sessionId, request) => ipcRenderer.invoke("wordless:session:history", { sessionId, ...request }),
+  searchSessionMessages: (sessionId, request) => ipcRenderer.invoke("wordless:session:message-search", { sessionId, ...request }),
   getSessionToolOutput: (sessionId, callId) => ipcRenderer.invoke("wordless:session:tool-output", { sessionId, callId }),
   renameSession: (sessionId, title) => ipcRenderer.invoke("wordless:session:rename", { sessionId, title }),
   setSessionPinned: (sessionId, pinned) => ipcRenderer.invoke("wordless:session:pin", { sessionId, pinned }),
@@ -31,17 +37,21 @@ const wordlessBridge: DesktopBridge = {
   createManagedWorkspace: (name) => ipcRenderer.invoke("wordless:workspace:create", { name }),
   openWorkspace: (path) => ipcRenderer.invoke("wordless:workspace:open", { path }),
   pickWorkspace: () => ipcRenderer.invoke("wordless:workspace:pick"),
-  createAndPrompt: (draft, parts) => ipcRenderer.invoke("wordless:session:create-and-prompt", { draft, parts }),
+  createAndPrompt: (draft, parts, attachments) => ipcRenderer.invoke("wordless:session:create-and-prompt", { draft, parts, attachments }),
   promptSession: (sessionId, parts, attachments) => ipcRenderer.invoke("wordless:session:prompt", { sessionId, parts, attachments }),
   compactSession: (sessionId) => ipcRenderer.invoke("wordless:session:compact", { sessionId }),
   getSessionContext: (sessionId) => ipcRenderer.invoke("wordless:session:context", sessionId),
   getSessionArtifactDiff: (sessionId, path) => ipcRenderer.invoke("wordless:session:artifact:diff", { sessionId, path }),
   listSessionWorkspaceDirectory: (sessionId, path) => ipcRenderer.invoke("wordless:session:workspace:list", { sessionId, path }),
+  searchSessionWorkspace: (sessionId, query) => ipcRenderer.invoke("wordless:session:workspace:search", { sessionId, query }),
+  searchWorkspace: (workspaceId, query) => ipcRenderer.invoke("wordless:workspace:search", { workspaceId, query }),
   readSessionWorkspaceTextFile: (sessionId, path) => ipcRenderer.invoke("wordless:session:workspace:read", { sessionId, path }),
   openSessionWorkspaceFile: (sessionId, path) => ipcRenderer.invoke("wordless:session:workspace:open", { sessionId, path }),
   revealSessionWorkspaceFile: (sessionId, path) => ipcRenderer.invoke("wordless:session:workspace:reveal", { sessionId, path }),
   saveSessionWorkspaceFileAs: (sessionId, path) => ipcRenderer.invoke("wordless:session:workspace:save-as", { sessionId, path }),
+  trashSessionWorkspaceEntry: (sessionId, path) => ipcRenderer.invoke("wordless:session:workspace:trash", { sessionId, path }),
   resolveOperationApproval: (sessionId, approvalId, approved, feedback) => ipcRenderer.invoke("wordless:session:approval", { sessionId, approvalId, approved, feedback }),
+  setSessionToolApprovalMode: (sessionId, mode) => ipcRenderer.invoke("wordless:session:approval-mode", { sessionId, mode }),
   resolveUserRequest: (sessionId, requestId, resolution) => ipcRenderer.invoke("wordless:session:user-request", { sessionId, requestId, ...resolution }),
   cancelSession: (sessionId) => ipcRenderer.invoke("wordless:session:cancel", sessionId),
   setSessionModel: (sessionId, model) => ipcRenderer.invoke("wordless:session:model", { sessionId, model }),
@@ -90,6 +100,11 @@ const wordlessBridge: DesktopBridge = {
     const handler = (_event: Electron.IpcRendererEvent, event: Parameters<typeof listener>[0]) => listener(event);
     ipcRenderer.on("wordless:event", handler);
     return () => ipcRenderer.removeListener("wordless:event", handler);
+  },
+  subscribeHost: (listener) => {
+    const handler = (_event: Electron.IpcRendererEvent, event: Parameters<typeof listener>[0]) => listener(event);
+    ipcRenderer.on("wordless:host-event", handler);
+    return () => ipcRenderer.removeListener("wordless:host-event", handler);
   },
 };
 

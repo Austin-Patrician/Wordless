@@ -127,6 +127,22 @@ describe("selected skills", () => {
     ]);
   });
 
+  it("preserves workspace file and folder references in history", () => {
+    const parts = [
+      { type: "text" as const, text: "Review " },
+      { type: "workspace-reference" as const, path: "src/app.ts", name: "app.ts", kind: "file" as const },
+      { type: "text" as const, text: " and " },
+      { type: "workspace-reference" as const, path: "src/components", name: "components", kind: "directory" as const },
+    ];
+
+    expect(projectUserMessageContent(formatPromptWithSkillReferences(parts))).toEqual([
+      { type: "text", text: "Review " },
+      { type: "workspace-reference", id: "src/app.ts:1", path: "src/app.ts", name: "app.ts", kind: "file" },
+      { type: "text", text: " and " },
+      { type: "workspace-reference", id: "src/components:3", path: "src/components", name: "components", kind: "directory" },
+    ]);
+  });
+
   it("injects an explicitly selected skill into this run only", async () => {
     const systemPrompts: string[] = [];
     const { driverSession, session } = await createDriverSession([
@@ -145,11 +161,16 @@ describe("selected skills", () => {
     await driverSession.execute({ type: "prompt", text: "Prepare the release notes.", selectedSkills: [selectedSkill()] });
 
     const userStart = events.find((event) => event.type === "message.started" && event.message.role === "user");
+    const userCompleted = events.find((event) => event.type === "message.completed" && event.message.role === "user");
+    const persistedUserEntry = (await session.getEntries()).find((entry) => entry.type === "message" && entry.message.role === "user");
+    expect(persistedUserEntry).toBeDefined();
     expect(userStart).toMatchObject({
       message: {
         blocks: [{ type: "text", text: "Prepare the release notes." }],
       },
     });
+    expect(userCompleted).toMatchObject({ message: { id: persistedUserEntry?.id } });
+    expect(userStart).toMatchObject({ message: { id: persistedUserEntry?.id } });
     expect(systemPrompts[0]).toContain("Use the release note structure from this skill.");
 
     const firstUserMessage = (await session.buildContext()).messages.find((message) => message.role === "user");

@@ -22,6 +22,7 @@ import type {
   SkillSource,
   UserPromptPart,
   ToolOperationApproval,
+  ToolApprovalMode,
   UserRequest,
   UserRequestResolution,
   WorkbenchId,
@@ -122,6 +123,8 @@ const WORKSPACE_ATTACHMENT_START = "\n<wordless-workspace-attachments>\n";
 const WORKSPACE_ATTACHMENT_END = "\n</wordless-workspace-attachments>";
 const SKILL_REFERENCE_START = "<wordless-skill-reference>";
 const SKILL_REFERENCE_END = "</wordless-skill-reference>";
+const WORKSPACE_REFERENCE_START = "<wordless-workspace-reference>";
+const WORKSPACE_REFERENCE_END = "</wordless-workspace-reference>";
 
 type SerializedSkillReference = {
   version: 1;
@@ -129,6 +132,14 @@ type SerializedSkillReference = {
   skillId: string;
   name: string;
   source: SkillSource;
+};
+
+type SerializedWorkspaceReference = {
+  version: 1;
+  id: string;
+  path: string;
+  name: string;
+  kind: "file" | "directory";
 };
 
 type SerializedPromptContext = {
@@ -152,6 +163,10 @@ export function formatPromptWithAttachments(
 export function formatPromptWithSkillReferences(parts: readonly UserPromptPart[]): string {
   return parts.map((part, index) => {
     if (part.type === "text") return part.text;
+    if (part.type === "workspace-reference") {
+      const reference: SerializedWorkspaceReference = { version: 1, id: `${part.path}:${index}`, path: part.path, name: part.name, kind: part.kind };
+      return `${WORKSPACE_REFERENCE_START}${encodeURIComponent(JSON.stringify(reference))}${WORKSPACE_REFERENCE_END}`;
+    }
     const reference: SerializedSkillReference = {
       version: 1,
       id: `${part.skillId}:${index}`,
@@ -217,6 +232,34 @@ function projectPromptSkillReferences(text: string): MessageBlock[] {
   return blocks;
 }
 
+function parseWorkspaceReference(value: string): SerializedWorkspaceReference | undefined {
+  try {
+    const parsed = JSON.parse(decodeURIComponent(value)) as unknown;
+    if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) return undefined;
+    const valueRecord = parsed as Record<string, unknown>;
+    if (valueRecord.version !== 1 || typeof valueRecord.id !== "string" || typeof valueRecord.path !== "string" || typeof valueRecord.name !== "string" || (valueRecord.kind !== "file" && valueRecord.kind !== "directory")) return undefined;
+    return valueRecord as SerializedWorkspaceReference;
+  } catch {
+    return undefined;
+  }
+}
+
+function projectPromptWorkspaceReferences(text: string): MessageBlock[] {
+  const blocks: MessageBlock[] = [];
+  const pattern = new RegExp(`${WORKSPACE_REFERENCE_START}([^<]*)${WORKSPACE_REFERENCE_END}`, "g");
+  let cursor = 0;
+  for (const match of text.matchAll(pattern)) {
+    const reference = parseWorkspaceReference(match[1] ?? "");
+    if (!reference) continue;
+    const index = match.index ?? 0;
+    if (index > cursor) blocks.push({ type: "text", text: text.slice(cursor, index) });
+    blocks.push({ type: "workspace-reference", id: reference.id, path: reference.path, name: reference.name, kind: reference.kind });
+    cursor = index + match[0].length;
+  }
+  if (cursor < text.length) blocks.push({ type: "text", text: text.slice(cursor) });
+  return blocks;
+}
+
 export function splitPromptAttachments(text: string): { text: string; attachments: MessageAttachmentBlock[] } {
   const start = text.lastIndexOf(WORKSPACE_ATTACHMENT_START);
   if (start === -1 || !text.endsWith(WORKSPACE_ATTACHMENT_END)) return { text, attachments: [] };
@@ -258,7 +301,10 @@ export function projectUserMessageContent(content: unknown): MessageBlock[] {
   const blocks: MessageBlock[] = [];
   const appendText = (text: string) => {
     const parsed = splitPromptAttachments(text);
-    blocks.push(...projectPromptSkillReferences(parsed.text));
+    for (const block of projectPromptWorkspaceReferences(parsed.text)) {
+      if (block.type === "text") blocks.push(...projectPromptSkillReferences(block.text));
+      else blocks.push(block);
+    }
     blocks.push(...parsed.attachments);
   };
 
@@ -311,6 +357,7 @@ export type AgentDriverCommand =
   | { type: "follow-up"; text: string; attachments?: AgentTextAttachment[] }
   | { type: "cancel" }
   | { type: "resolve-approval"; resolution: OperationApprovalResolution }
+  | { type: "set-tool-approval-mode"; mode: ToolApprovalMode }
   | { type: "resolve-user-request"; resolution: UserRequestResolution }
   | { type: "set-model"; model: ModelReference }
   | { type: "set-thinking"; level: ThinkingLevel }
@@ -353,6 +400,7 @@ export interface AgentDriverSessionContext {
   resolveModel(reference: ModelReference): Model<Api>;
   executionKind?: "primary" | "subagent";
   subagentRunner?: SubagentRunner;
+  toolApprovalMode?: ToolApprovalMode;
 }
 
 export interface AgentDriverSession {

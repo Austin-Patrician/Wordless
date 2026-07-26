@@ -2,6 +2,8 @@
   "name": "@wordless/desktop",
   "private": true,
   "version": "0.0.0",
+  "description": "Wordless local-first desktop Agent workspace",
+  "author": "Wordless Contributors",
   "type": "module",
   "main": "dist/electron/main.cjs",
   "config": {
@@ -12,10 +14,18 @@
     "dev": "vite --config vite.renderer.config.ts --host 127.0.0.1",
     "electron:install": "node ../../node_modules/electron/install.js",
     "build:electron": "node scripts/build-electron.mjs",
+    "build:renderer": "vite build --config vite.renderer.config.ts",
+    "build:desktop": "npm run build:renderer && npm run build:electron",
     "dev:electron": "node scripts/build-electron.mjs && node scripts/dev-electron.mjs",
-    "test:host": "node --test test/*.test.ts"
+    "test:host": "node --test test/*.test.ts",
+    "dist:mac": "npm run build:desktop && electron-builder --config electron-builder.yml --mac --universal",
+    "dist:mac:preview": "npm run build:desktop && CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --config electron-builder.yml --mac --universal"
   },
   "dependencies": {
+    "ajv": "^8.20.0",
+    "ajv-formats": "^3.0.1"
+  },
+  "devDependencies": {
     "@lexical/react": "0.48.0",
     "@radix-ui/react-popover": "1.1.21",
     "@vitejs/plugin-react": "6.0.3",
@@ -38,7 +48,7 @@
     "@wordless/skill-registry": "0.0.0",
     "@wordless/ui-kit": "0.0.0",
     "@xyflow/react": "12.11.2",
-    "electron": "43.1.0",
+    "electron-updater": "^6.8.9",
     "lexical": "0.48.0",
     "lucide-react": "1.24.0",
     "react": "19.2.7",
@@ -46,14 +56,15 @@
     "react-virtuoso": "4.18.11",
     "recharts": "3.10.0",
     "three": "0.185.1",
-    "vite": "8.1.4"
-  },
-  "devDependencies": {
+    "typebox": "1.1.38",
     "@tailwindcss/vite": "4.3.2",
     "@types/react": "19.2.17",
     "@types/react-dom": "19.2.3",
     "@types/three": "0.185.1",
+    "electron": "43.1.0",
+    "electron-builder": "^26.15.3",
     "tailwindcss": "4.3.2",
-    "typescript": "5.9.3"
+    "typescript": "5.9.3",
+    "vite": "8.1.4"
   }
 }

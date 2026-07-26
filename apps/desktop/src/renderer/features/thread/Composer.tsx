@@ -1,17 +1,18 @@
 import { Button, cn, Tooltip, TooltipContent, TooltipTrigger } from "@wordless/ui-kit";
-import { Archive, ChevronDown, ChevronRight, CircleHelp, Command, Folder, ListChecks, Mic, Network, Pin, PinOff, Plus, Send, Sparkles, Square, X } from "lucide-react";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { Archive, ChevronDown, ChevronRight, CircleHelp, Command, FileText, Folder, ListChecks, Mic, Network, Pin, PinOff, Plus, Send, ShieldCheck, Sparkles, Square, X } from "lucide-react";
+import { useCallback, useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import { usePreferences } from "../../shared/preferences";
-import type { AgentInteractionModeId, ConnectorSummary, ProviderAvatarId, SessionAccessLevel, SessionContextUsage, SkillSummary, UserPromptPart } from "@wordless/domain";
+import type { AgentInteractionModeId, ConnectorSummary, ProviderAvatarId, SessionAccessLevel, SessionContextUsage, SkillSummary, ToolApprovalMode, UserPromptPart } from "@wordless/domain";
 import planIcon from "../../../icons/common-icons/plan.svg";
 import { AccessPicker } from "./AccessPicker";
 import { ContextUsageIndicator } from "./ContextUsageIndicator";
-import { InlineSkillComposer, type InlineSkillComposerHandle, type InlineSkillComposerValue } from "./InlineSkillComposer";
+import { InlineSkillComposer, type InlineSkillComposerHandle, type InlineSkillComposerValue, type InlineWorkspaceReferenceToken } from "./InlineSkillComposer";
 import { ProviderIcon } from "../settings/provider-icons";
+import type { WorkspaceFileEntry } from "@wordless/protocol";
 
 type ComposerProps = {
-  attachments?: WorkspaceAttachment[];
   accessLevel?: SessionAccessLevel;
+  toolApprovalMode?: ToolApprovalMode;
   compact?: boolean;
   compacting?: boolean;
   connectors?: ConnectorSummary[];
@@ -28,12 +29,12 @@ type ComposerProps = {
   onOpenModelPicker: () => void;
   onOpenWorkspacePicker?: () => void;
   onAccessLevelChange?: (accessLevel: SessionAccessLevel) => void | Promise<void>;
+  onToolApprovalModeChange?: (mode: ToolApprovalMode) => void | Promise<void>;
   onCompactContext?: () => void | Promise<void>;
   onConnectorIdsChange?: (connectorIds: string[]) => void | Promise<void>;
   onImportSkill?: () => void | Promise<void>;
   onInteractionModeChange?: (interactionMode: AgentInteractionModeId) => void | Promise<void>;
   onOpenSkills?: () => void;
-  onRemoveAttachment?: (path: string) => void;
   onSend: (parts: UserPromptPart[], attachments: WorkspaceAttachment[]) => void | Promise<void>;
   onStop?: () => void | Promise<void>;
   running?: boolean;
@@ -45,14 +46,19 @@ type ComposerProps = {
   showAccessControl?: boolean;
   workspaceLocked?: boolean;
   workspaceLabel?: string;
+  searchWorkspaceReferences?: (query: string) => Promise<WorkspaceFileEntry[]>;
+  workspaceSearchScope?: string;
+  pendingWorkspaceReferences?: InlineWorkspaceReferenceToken[];
+  onPendingWorkspaceReferencesConsumed?: () => void;
 };
 
 export type WorkspaceAttachment = {
   path: string;
   name: string;
+  kind?: "file" | "directory";
 };
 
-const EMPTY_INLINE_SKILL_COMPOSER_VALUE: InlineSkillComposerValue = { parts: [], skillIds: [], skillTokenCounts: {}, text: "" };
+const EMPTY_INLINE_SKILL_COMPOSER_VALUE: InlineSkillComposerValue = { parts: [], skillIds: [], skillTokenCounts: {}, text: "", workspaceReferenceCount: 0, workspaceQuery: null };
 
 export function Composer({
   compact = false,
@@ -63,8 +69,8 @@ export function Composer({
   canPlan = false,
   contextCompactionAvailable = false,
   disabled = false,
-  attachments = [],
   accessLevel = "default",
+  toolApprovalMode = "manual",
   modelLabel,
   modelProviderAvatarId,
   modelProviderId,
@@ -73,12 +79,12 @@ export function Composer({
   onOpenModelPicker,
   onOpenWorkspacePicker,
   onAccessLevelChange,
+  onToolApprovalModeChange,
   onCompactContext,
   onConnectorIdsChange,
   onImportSkill,
   onInteractionModeChange,
   onOpenSkills,
-  onRemoveAttachment,
   onSend,
   onStop,
   running = false,
@@ -90,14 +96,25 @@ export function Composer({
   showAccessControl = false,
   workspaceLocked = false,
   workspaceLabel,
+  searchWorkspaceReferences,
+  workspaceSearchScope = "default",
+  pendingWorkspaceReferences = [],
+  onPendingWorkspaceReferencesConsumed,
 }: ComposerProps) {
   const [draft, setDraft] = useState<InlineSkillComposerValue>(EMPTY_INLINE_SKILL_COMPOSER_VALUE);
   const [menuOpen, setMenuOpen] = useState(false);
   const [modeOpen, setModeOpen] = useState(false);
   const [skillsOpen, setSkillsOpen] = useState(false);
   const [connectorsOpen, setConnectorsOpen] = useState(false);
+  const [approvalOpen, setApprovalOpen] = useState(false);
+  const [approvalChanging, setApprovalChanging] = useState(false);
+  const [approvalError, setApprovalError] = useState<string | null>(null);
   const [skillQuery, setSkillQuery] = useState("");
   const [connectorQuery, setConnectorQuery] = useState("");
+  const [workspaceMatches, setWorkspaceMatches] = useState<WorkspaceFileEntry[]>([]);
+  const [workspacePickerIndex, setWorkspacePickerIndex] = useState(0);
+  const [workspacePickerOpen, setWorkspacePickerOpen] = useState(false);
+  const [workspacePickerPosition, setWorkspacePickerPosition] = useState({ left: 12, bottom: 52 });
   const [pinnedSkillIds, setPinnedSkillIds] = useState<string[]>(() => {
     try {
       const value = localStorage.getItem("wordless.pinned-skill-ids");
@@ -116,8 +133,11 @@ export function Composer({
   const resizeStart = useRef<{ height: number; y: number } | null>(null);
   const draftRef = useRef<InlineSkillComposerValue>(EMPTY_INLINE_SKILL_COMPOSER_VALUE);
   const draftFrameRef = useRef<number | undefined>(undefined);
+  const workspaceSearchReferencesRef = useRef(searchWorkspaceReferences);
+  const workspaceSearchCacheRef = useRef(new Map<string, { expiresAt: number; results?: WorkspaceFileEntry[]; promise?: Promise<WorkspaceFileEntry[]> }>());
   const { locale, t } = usePreferences();
-  const hasActionMenu = Boolean(onInteractionModeChange || onTogglePlanMode || onCompactContext || onImportSkill || onOpenSkills || skills.length > 0 || connectors.length > 0);
+  workspaceSearchReferencesRef.current = searchWorkspaceReferences;
+  const hasActionMenu = Boolean(onInteractionModeChange || onTogglePlanMode || onCompactContext || onImportSkill || onOpenSkills || onToolApprovalModeChange || skills.length > 0 || connectors.length > 0);
   const interactionDisabled = disabled || compacting;
   const effectiveInteractionMode = interactionMode ?? (planMode === "off" ? "default" : "plan");
   const interactionModes: Array<{ id: AgentInteractionModeId; description: string; icon: "default" | "clarify" | "plan"; label: string }> = [
@@ -179,8 +199,43 @@ export function Composer({
     if (draftFrameRef.current !== undefined) cancelAnimationFrame(draftFrameRef.current);
   }, []);
 
+  useEffect(() => {
+    const query = draft.workspaceQuery;
+    if (query === null || !searchWorkspaceReferences || disabled || running) {
+      setWorkspacePickerOpen(false);
+      setWorkspaceMatches([]);
+      return;
+    }
+    let active = true;
+    const timer = window.setTimeout(() => {
+      void searchWorkspace(query).then((matches) => {
+        if (!active) return;
+        setWorkspaceMatches(matches.filter((entry) => entry.kind === "directory" || entry.size <= 64 * 1024));
+        setWorkspacePickerIndex(0);
+        setWorkspacePickerOpen(true);
+      }).catch(() => {
+        if (active) setWorkspacePickerOpen(false);
+      });
+    }, 120);
+    return () => { active = false; window.clearTimeout(timer); };
+  }, [disabled, draft.workspaceQuery, running, workspaceSearchScope]);
+
+  useEffect(() => {
+    if (pendingWorkspaceReferences.length === 0 || disabled || running) return;
+    for (const reference of pendingWorkspaceReferences) inputRef.current?.insertWorkspaceReference(reference);
+    onPendingWorkspaceReferencesConsumed?.();
+  }, [disabled, onPendingWorkspaceReferencesConsumed, pendingWorkspaceReferences, running]);
+
   const updateDraft = useCallback((nextDraft: InlineSkillComposerValue) => {
     draftRef.current = nextDraft;
+    const cursor = inputRef.current?.getCursorRect();
+    const container = composerRef.current?.getBoundingClientRect();
+    if (cursor && container) {
+      setWorkspacePickerPosition({
+        left: Math.max(8, Math.min(cursor.left - container.left, Math.max(8, container.width - 440))),
+        bottom: Math.max(48, container.bottom - cursor.top + 8),
+      });
+    }
     if (draftFrameRef.current !== undefined) return;
     draftFrameRef.current = requestAnimationFrame(() => {
       draftFrameRef.current = undefined;
@@ -188,10 +243,30 @@ export function Composer({
     });
   }, []);
 
+  async function searchWorkspace(query: string): Promise<WorkspaceFileEntry[]> {
+    const normalizedQuery = query.trim().toLocaleLowerCase();
+    const key = `${workspaceSearchScope}:${normalizedQuery}`;
+    const now = Date.now();
+    const cached = workspaceSearchCacheRef.current.get(key);
+    if (cached?.results && cached.expiresAt > now) return cached.results;
+    if (cached?.promise) return await cached.promise;
+    const request = workspaceSearchReferencesRef.current?.(query) ?? Promise.resolve([]);
+    const promise = request.then((results) => {
+      workspaceSearchCacheRef.current.set(key, { results, expiresAt: Date.now() + 5_000 });
+      return results;
+    }).catch((error) => {
+      workspaceSearchCacheRef.current.delete(key);
+      throw error;
+    });
+    workspaceSearchCacheRef.current.set(key, { expiresAt: 0, promise });
+    return await promise;
+  }
+
   const send = async () => {
     const currentDraft = draftRef.current;
-    if (!currentDraft.text.trim() || interactionDisabled || running || sendDisabled) return;
-    await onSend(currentDraft.parts, attachments);
+    if (currentDraft.parts.length === 0 || interactionDisabled || running || sendDisabled) return;
+    const referenceAttachments = currentDraft.parts.flatMap((part) => part.type === "workspace-reference" && part.kind === "file" ? [{ path: part.path, name: part.name }] : []);
+    await onSend(currentDraft.parts, referenceAttachments);
     inputRef.current?.clear();
     if (draftFrameRef.current !== undefined) cancelAnimationFrame(draftFrameRef.current);
     draftFrameRef.current = undefined;
@@ -243,6 +318,36 @@ export function Composer({
     window.setTimeout(() => inputRef.current?.focus(), 0);
   };
 
+  const changeToolApprovalMode = async (mode: ToolApprovalMode) => {
+    if (!onToolApprovalModeChange || mode === toolApprovalMode || approvalChanging) return;
+    setApprovalChanging(true);
+    setApprovalError(null);
+    try {
+      await onToolApprovalModeChange(mode);
+      setApprovalOpen(false);
+      setMenuOpen(false);
+    } catch {
+      setApprovalError(locale === "zh-CN" ? "工具审批设置失败" : "Could not update tool approval mode");
+    } finally {
+      setApprovalChanging(false);
+    }
+  };
+
+  const insertWorkspaceReference = (entry: WorkspaceFileEntry) => {
+    inputRef.current?.insertWorkspaceReference({ path: entry.path, name: entry.name, kind: entry.kind });
+    setWorkspacePickerOpen(false);
+    window.setTimeout(() => inputRef.current?.focus(), 0);
+  };
+
+  const workspacePickerKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>): boolean => {
+    if (!workspacePickerOpen) return false;
+    if (event.key === "ArrowDown") { setWorkspacePickerIndex((index) => Math.min(index + 1, Math.max(0, workspaceMatches.length - 1))); return true; }
+    if (event.key === "ArrowUp") { setWorkspacePickerIndex((index) => Math.max(0, index - 1)); return true; }
+    if ((event.key === "Enter" || event.key === "Tab") && workspaceMatches[workspacePickerIndex]) { insertWorkspaceReference(workspaceMatches[workspacePickerIndex]!); return true; }
+    if (event.key === "Escape") { setWorkspacePickerOpen(false); return true; }
+    return false;
+  };
+
   return (
     <div
       ref={composerRef}
@@ -276,30 +381,26 @@ export function Composer({
           className="min-h-[40px] w-full min-w-0 flex-1 resize-none overflow-y-auto bg-transparent px-0.5 text-[16px] font-medium leading-7 text-[#353532] caret-[#252624] outline-none placeholder:font-normal placeholder:text-[#a2a29b] selection:bg-[#dff09b] disabled:cursor-not-allowed read-only:cursor-default dark:text-foreground dark:caret-foreground dark:placeholder:text-muted-foreground dark:selection:bg-[#4a5a26]"
           disabled={interactionDisabled}
           onChange={updateDraft}
+          onWorkspaceReferenceKeyDown={workspacePickerKeyDown}
           onStop={() => void onStop?.()}
           onSubmit={() => void send()}
           placeholder={effectiveInteractionMode === "plan" ? t("planPromptPlaceholder") : effectiveInteractionMode === "clarify" ? locale === "zh-CN" ? "输入想要理清的问题..." : "Describe what you want to clarify..." : compact ? t("compactPromptPlaceholder") : t("promptPlaceholder")}
           readOnly={running}
           ref={inputRef}
         />
+        {workspacePickerOpen ? <div className="absolute z-40 w-[min(520px,calc(100vw-3rem))] overflow-hidden rounded-[8px] border border-[#cadbd5] bg-white p-1 shadow-[0_14px_34px_rgba(27,46,40,0.16)] dark:border-[#3c655a] dark:bg-card" style={{ left: workspacePickerPosition.left, bottom: workspacePickerPosition.bottom }}>
+          <div className="px-2 py-1.5 font-mono text-[9px] uppercase tracking-[0.08em] text-[#688278] dark:text-[#9bbfb2]">Workspace files</div>
+          <div className="max-h-52 overflow-y-auto">{workspaceMatches.length > 0 ? workspaceMatches.map((entry, index) => { const Icon = entry.kind === "directory" ? Folder : FileText; return <button className={cn("flex w-full min-w-0 items-center gap-2 rounded-[5px] px-2 py-1.5 text-left", index === workspacePickerIndex ? "bg-[#eaf5f1] dark:bg-[#28443b]" : "hover:bg-[#f2f6f4] dark:hover:bg-muted")} key={entry.path} onMouseDown={(event) => event.preventDefault()} onMouseEnter={() => setWorkspacePickerIndex(index)} onClick={() => insertWorkspaceReference(entry)} title={entry.path} type="button"><Icon className="h-3.5 w-3.5 shrink-0 text-[#5b9280]" /><span className="w-32 shrink-0 truncate text-[12px] font-medium text-[#3a4d47] dark:text-foreground">{entry.name}</span><span className="min-w-0 flex-1 truncate font-mono text-[10px] text-[#788982] dark:text-muted-foreground">{entry.path}</span><span className="w-9 shrink-0 text-right font-mono text-[10px] uppercase text-[#6f897f] dark:text-[#9bbfb2]">{entry.kind === "directory" ? "Dir" : "File"}</span></button>; }) : <p className="px-2 py-3 text-[11px] text-muted-foreground">No workspace matches</p>}</div>
+        </div> : null}
       </div>
-      {attachments.length > 0 ? (
-        <div className="mt-2 flex shrink-0 flex-wrap gap-1.5">
-          {attachments.map((attachment) => (
-            <span className="inline-flex max-w-full items-center gap-1 rounded-md border border-[#dcdcd6] bg-[#f7f7f4] px-2 py-1 font-mono text-[11px] text-[#5d5d57] dark:border-border dark:bg-muted" key={attachment.path}>
-              <span className="truncate">{attachment.name}</span>
-              <button aria-label={`Remove ${attachment.name}`} className="grid h-3.5 w-3.5 shrink-0 place-items-center rounded text-[#777770] hover:bg-[#e7e7e2] hover:text-[#343431] disabled:cursor-not-allowed disabled:opacity-50" disabled={interactionDisabled || running} onClick={() => onRemoveAttachment?.(attachment.path)} type="button">
-                <X className="h-3 w-3" />
-              </button>
-            </span>
-          ))}
-        </div>
-      ) : null}
       {skillWarning ? <p className="mt-1 shrink-0 text-[10px] text-[#9b6c2d] dark:text-[#d7b47d]">{t("skillContextWarning")}</p> : null}
-      {hasActionMenu && menuOpen ? <div className="absolute bottom-[48px] left-2 z-30 flex items-end gap-1.5" onMouseLeave={() => { setModeOpen(false); setSkillsOpen(false); setConnectorsOpen(false); }} ref={menuRef}>
+      {hasActionMenu && menuOpen ? <div className="absolute bottom-[48px] left-2 z-30 flex items-end gap-1.5" onMouseLeave={() => { setModeOpen(false); setSkillsOpen(false); setConnectorsOpen(false); setApprovalOpen(false); }} ref={menuRef}>
         <div className="w-[188px] rounded-[10px] border border-[#dfdfdb] bg-white p-1.5 shadow-[0_14px_34px_rgba(28,28,25,0.12)] dark:border-border dark:bg-card">
           {onInteractionModeChange || onTogglePlanMode ? <button className={cn("flex w-full items-center gap-2 rounded-[7px] px-2.5 py-2 text-left text-[12px] text-[#3f3f3a] hover:bg-[#f3f3f0] dark:text-foreground dark:hover:bg-muted", modeOpen && "bg-[#eeeeeb] dark:bg-muted")} onClick={() => { setModeOpen(true); setSkillsOpen(false); }} onFocus={() => { setModeOpen(true); setSkillsOpen(false); }} onMouseEnter={() => { setModeOpen(true); setSkillsOpen(false); }} type="button">
             <Sparkles className="h-4 w-4 text-[#62625d]" /><span className="flex-1">{t("mode")}</span><ChevronRight className="h-3 w-3 text-[#898981]" />
+          </button> : null}
+          {onToolApprovalModeChange ? <button aria-expanded={approvalOpen} className={cn("flex w-full items-center gap-2 rounded-[7px] px-2.5 py-2 text-left text-[12px] text-[#3f3f3a] hover:bg-[#f3f3f0] dark:text-foreground dark:hover:bg-muted", approvalOpen && "bg-[#eeeeeb] dark:bg-muted")} onClick={() => { setApprovalOpen(true); setModeOpen(false); setSkillsOpen(false); setConnectorsOpen(false); }} onFocus={() => { setApprovalOpen(true); setModeOpen(false); setSkillsOpen(false); setConnectorsOpen(false); }} onMouseEnter={() => { setApprovalOpen(true); setModeOpen(false); setSkillsOpen(false); setConnectorsOpen(false); }} type="button">
+            <ShieldCheck className={cn("h-4 w-4", toolApprovalMode === "auto" ? "text-[#a47a2a]" : "text-[#62625d]")} /><span className="min-w-0 flex-1 truncate">{locale === "zh-CN" ? "工具审批" : "Tool approval"}</span><span className="max-w-[92px] truncate text-[10px] text-[#85857e] dark:text-muted-foreground">{toolApprovalMode === "auto" ? (locale === "zh-CN" ? "自动" : "Auto") : (locale === "zh-CN" ? "手动" : "Manual")}</span><ChevronRight className="h-3 w-3 shrink-0 text-[#898981]" />
           </button> : null}
           {onCompactContext ? <button className="flex w-full items-center gap-2 rounded-[7px] px-2.5 py-2 text-left text-[12px] text-[#3f3f3a] hover:bg-[#f3f3f0] disabled:cursor-not-allowed disabled:opacity-45 dark:text-foreground dark:hover:bg-muted" disabled={interactionDisabled || running || !contextCompactionAvailable} onClick={() => { setMenuOpen(false); setModeOpen(false); void onCompactContext(); }} onMouseEnter={() => { setModeOpen(false); setSkillsOpen(false); }} type="button"><Archive className="h-4 w-4 shrink-0 text-[#62625d]" /><span>{t("compressContext")}</span></button> : null}
           <button className={cn("flex w-full items-center gap-2 rounded-[7px] px-2.5 py-2 text-left text-[12px] text-[#3f3f3a] hover:bg-[#f3f3f0] dark:text-foreground dark:hover:bg-muted", skillsOpen && "bg-[#eeeeeb] dark:bg-muted")} onClick={() => { setSkillsOpen(true); setModeOpen(false); setConnectorsOpen(false); }} onFocus={() => { setSkillsOpen(true); setModeOpen(false); setConnectorsOpen(false); }} onMouseEnter={() => { setSkillsOpen(true); setModeOpen(false); setConnectorsOpen(false); }} type="button"><Command className="h-4 w-4 text-[#62625d]" /><span>{t("skills")}</span><ChevronRight className="ml-auto h-3 w-3 text-[#898981]" /></button>
@@ -310,6 +411,13 @@ export function Composer({
           const selected = effectiveInteractionMode === option.id;
           return <button className={cn("flex w-full items-start gap-2 rounded-[7px] px-2.5 py-2 text-left hover:bg-[#f3f3f0] dark:hover:bg-muted", selected && "bg-[#edf2df] dark:bg-[#313d20]")} key={option.id} onClick={() => { if (onInteractionModeChange) void Promise.resolve(onInteractionModeChange(option.id)).catch(() => {}); else if (option.id === "plan") onTogglePlanMode?.(); setMenuOpen(false); setModeOpen(false); }} type="button"><span className={cn("mt-0.5 grid h-3.5 w-3.5 shrink-0 place-items-center rounded-[3px] border text-[9px]", selected ? "border-[#61792e] bg-[#6d8438] text-white dark:border-[#b7d76d] dark:bg-[#b8dc69] dark:text-[#263015]" : "border-[#bdbdb6] text-transparent dark:border-muted-foreground")}>✓</span><Icon className="mt-0.5 h-3.5 w-3.5 shrink-0 text-[#62625d] dark:text-muted-foreground" /><span className="min-w-0"><span className="block text-[12px] font-medium text-[#42423d] dark:text-foreground">{option.label}</span><span className="mt-0.5 block text-[10px] leading-4 text-[#85857e] dark:text-muted-foreground">{option.description}</span></span></button>;
         })}</div> : null}
+        {approvalOpen && onToolApprovalModeChange ? <div className="w-[276px] rounded-[10px] border border-[#dfdfdb] bg-white p-1.5 shadow-[0_14px_34px_rgba(28,28,25,0.14)] dark:border-border dark:bg-card" role="radiogroup" aria-label={locale === "zh-CN" ? "工具审批方式" : "Tool approval mode"}>
+          {approvalError ? <p className="px-2.5 pb-1 text-[10px] text-[#a0522d] dark:text-[#e5a47d]" role="alert">{approvalError}</p> : null}
+          {([
+            { id: "manual" as const, label: locale === "zh-CN" ? "手动审批" : "Manual approval", description: locale === "zh-CN" ? "每次工具操作都需要确认" : "Ask before each tool action" },
+            { id: "auto" as const, label: locale === "zh-CN" ? "本次自动审批" : "Auto-approve for this session", description: locale === "zh-CN" ? "普通操作自动通过，高风险操作仍需确认" : "Normal actions auto-approve; high-risk actions still ask" },
+          ]).map((option) => <button aria-checked={toolApprovalMode === option.id} className={cn("flex w-full items-start gap-2 rounded-[7px] px-2.5 py-2 text-left hover:bg-[#f3f3f0] dark:hover:bg-muted", toolApprovalMode === option.id && "bg-[#edf2df] dark:bg-[#313d20]")} disabled={approvalChanging} key={option.id} onClick={() => void changeToolApprovalMode(option.id)} role="radio" type="button"><span className={cn("mt-0.5 grid h-3.5 w-3.5 shrink-0 place-items-center rounded-full border text-[9px]", toolApprovalMode === option.id ? "border-[#6d8438] bg-[#6d8438] text-white" : "border-[#bdbdb6] text-transparent dark:border-muted-foreground")}>✓</span><span className="min-w-0"><span className="block text-[12px] font-medium text-[#42423d] dark:text-foreground">{option.label}</span><span className="mt-0.5 block text-[10px] leading-4 text-[#85857e] dark:text-muted-foreground">{option.description}</span></span></button>)}
+        </div> : null}
         {skillsOpen ? <div className="w-[294px] rounded-[10px] border border-[#dfdfdb] bg-white p-2 shadow-[0_14px_34px_rgba(28,28,25,0.12)] dark:border-border dark:bg-card">
           <input aria-label={t("searchSkills")} autoFocus className="h-8 w-full rounded-[6px] border border-[#e4e4df] bg-[#fafaf8] px-2 text-[12px] text-[#3f3f3a] outline-none placeholder:text-[#9b9b94] focus:border-[#9dad75] dark:border-border dark:bg-muted dark:text-foreground" onChange={(event) => setSkillQuery(event.target.value)} placeholder={t("searchSkills")} value={skillQuery} />
           <div className="mt-1 max-h-[232px] overflow-y-auto">
@@ -360,7 +468,7 @@ export function Composer({
             </TooltipTrigger>
             <TooltipContent>{t("useVoice")}</TooltipContent>
           </Tooltip>
-          <Button aria-label={running ? "Stop agent" : t("send")} className="rounded-full disabled:bg-[#b5b5b1]" disabled={running ? false : interactionDisabled || sendDisabled || !draft.text.trim()} onClick={() => running ? void onStop?.() : void send()} size="icon" type="button">
+          <Button aria-label={running ? "Stop agent" : t("send")} className="rounded-full disabled:bg-[#b5b5b1]" disabled={running ? false : interactionDisabled || sendDisabled || draft.parts.length === 0} onClick={() => running ? void onStop?.() : void send()} size="icon" type="button">
             {running ? <Square className="h-3.5 w-3.5 fill-current" /> : <Send className="h-4 w-4" />}
           </Button>
         </div>

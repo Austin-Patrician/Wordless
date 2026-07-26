@@ -27,11 +27,39 @@ import type {
   WorkbenchEntryDefinition,
   WorkspaceRecord,
   ConnectorCatalogSnapshot,
+  ToolApprovalMode,
 } from "@wordless/domain";
 
 export type { ConversationMessage } from "@wordless/domain";
 
 export const PROTOCOL_VERSION = 1;
+
+export const DesktopHostInfoSchema = Type.Object({
+  platform: Type.Union([Type.Literal("darwin"), Type.Literal("win32"), Type.Literal("linux")]),
+  arch: Type.Union([Type.Literal("arm64"), Type.Literal("x64"), Type.Literal("ia32")]),
+  windowChrome: Type.Union([Type.Literal("mac-hidden-inset"), Type.Literal("overlay"), Type.Literal("framed")]),
+  menuPresentation: Type.Union([Type.Literal("system"), Type.Literal("in-window")]),
+  modifier: Type.Union([Type.Literal("meta"), Type.Literal("control")]),
+  shellFamily: Type.Union([Type.Literal("zsh"), Type.Literal("bash"), Type.Literal("powershell"), Type.Literal("sh")]),
+  capabilities: Type.Object({
+    dockBadge: Type.Boolean(),
+    nativeNotifications: Type.Boolean(),
+    titleBarOverlay: Type.Boolean(),
+  }),
+});
+
+export type DesktopHostInfo = Static<typeof DesktopHostInfoSchema>;
+
+export type DesktopMenuId = "file" | "edit" | "window" | "help";
+
+export type DesktopCommand = "new-thread" | "open-settings" | "search" | "show-about";
+
+export type DesktopHostEvent =
+  | { type: "command"; command: DesktopCommand }
+  | { type: "deep-link"; url: string }
+  | { type: "update"; state: "available" | "downloading" | "ready" | "error"; version?: string; progress?: number; message?: string };
+
+export type DesktopUpdateState = Extract<DesktopHostEvent, { type: "update" }>;
 
 export interface ProtocolFailure {
   code: string;
@@ -54,6 +82,8 @@ export const AgentInteractionModeSchema = Type.Union([
   Type.Literal("plan"),
 ]);
 
+export const ToolApprovalModeSchema = Type.Union([Type.Literal("manual"), Type.Literal("auto")]);
+
 const SkillSourceSchema = Type.Union([
   Type.Literal("wordless"),
   Type.Literal("pi"),
@@ -73,6 +103,12 @@ export const UserPromptPartSchema = Type.Union([
     name: Type.String({ minLength: 1, maxLength: 256 }),
     source: SkillSourceSchema,
   }),
+  Type.Object({
+    type: Type.Literal("workspace-reference"),
+    path: Type.String({ minLength: 1, maxLength: 1024 }),
+    name: Type.String({ minLength: 1, maxLength: 256 }),
+    kind: Type.Union([Type.Literal("file"), Type.Literal("directory")]),
+  }),
 ]);
 
 export const UserPromptPartsSchema = Type.Array(UserPromptPartSchema, { minItems: 1, maxItems: 1_024 });
@@ -86,6 +122,7 @@ export const SessionDraftSchema = Type.Object({
   model: Type.Union([ModelReferenceSchema, Type.Null()]),
   connectorIds: Type.Optional(Type.Array(Type.String({ minLength: 1 }), { maxItems: 64 })),
   interactionMode: Type.Optional(AgentInteractionModeSchema),
+  toolApprovalMode: Type.Optional(ToolApprovalModeSchema),
 });
 
 export const CreateWorkspaceSchema = Type.Object({
@@ -99,6 +136,9 @@ export const OpenWorkspaceSchema = Type.Object({
 export const CreateAndPromptSchema = Type.Object({
   draft: SessionDraftSchema,
   parts: UserPromptPartsSchema,
+  attachments: Type.Optional(
+    Type.Array(Type.Object({ path: Type.String({ minLength: 1, maxLength: 1024 }) }), { maxItems: 8 }),
+  ),
 });
 
 export const PromptSessionSchema = Type.Object({
@@ -112,6 +152,21 @@ export const PromptSessionSchema = Type.Object({
       { maxItems: 8 },
     ),
   ),
+});
+
+export const WorkspaceReferenceSearchSchema = Type.Object({
+  workspaceId: Type.String({ minLength: 1 }),
+  query: Type.String({ maxLength: 256 }),
+});
+
+export const SessionWorkspaceReferenceSearchSchema = Type.Object({
+  sessionId: Type.String({ minLength: 1 }),
+  query: Type.String({ maxLength: 256 }),
+});
+
+export const WorkspaceDeleteSchema = Type.Object({
+  sessionId: Type.String({ minLength: 1 }),
+  path: Type.String({ minLength: 1, maxLength: 1024 }),
 });
 
 export const SetSkillEnabledSchema = Type.Object({
@@ -163,6 +218,13 @@ export const SessionHistoryPageRequestSchema = Type.Object({
   limit: Type.Optional(Type.Number({ minimum: 1, maximum: 48 })),
 });
 
+export const SessionMessageSearchRequestSchema = Type.Object({
+  sessionId: Type.String({ minLength: 1 }),
+  query: Type.String({ minLength: 1, maxLength: 500 }),
+  role: Type.Optional(Type.Union([Type.Literal("user"), Type.Literal("assistant")])),
+  limit: Type.Optional(Type.Number({ minimum: 1, maximum: 50 })),
+});
+
 export const SessionToolOutputRequestSchema = Type.Object({
   sessionId: Type.String({ minLength: 1 }),
   callId: Type.String({ minLength: 1 }),
@@ -183,6 +245,11 @@ export const ResolveOperationApprovalSchema = Type.Object({
   approvalId: Type.String({ minLength: 1 }),
   approved: Type.Boolean(),
   feedback: Type.Optional(Type.String({ maxLength: 4_000 })),
+});
+
+export const SetSessionToolApprovalModeSchema = Type.Object({
+  sessionId: Type.String({ minLength: 1 }),
+  mode: ToolApprovalModeSchema,
 });
 
 export const ResolveUserRequestSchema = Type.Object({
@@ -431,6 +498,7 @@ export type CreateAndPromptDto = Static<typeof CreateAndPromptSchema>;
 export type PromptSessionDto = Static<typeof PromptSessionSchema>;
 export type CompactSessionDto = Static<typeof CompactSessionSchema>;
 export type SessionHistoryPageRequestDto = Static<typeof SessionHistoryPageRequestSchema>;
+export type SessionMessageSearchRequestDto = Static<typeof SessionMessageSearchRequestSchema>;
 export type SessionToolOutputRequestDto = Static<typeof SessionToolOutputRequestSchema>;
 export type WorkspaceFileRequestDto = Static<typeof WorkspaceFileRequestSchema>;
 export type ListWorkspaceDirectoryDto = Static<typeof ListWorkspaceDirectorySchema>;
@@ -499,6 +567,7 @@ export interface SessionSnapshot {
   compactionTrigger?: ContextCompactionRecord["trigger"];
   compactionError?: string;
   extensions: AgentExtensionSessionState[];
+  toolApprovalMode: ToolApprovalMode;
 }
 
 export interface SessionHistoryTurn {
@@ -537,6 +606,30 @@ export interface SessionHistoryPageRequest {
   limit?: number;
 }
 
+export type SessionMessageSearchRole = "user" | "assistant";
+
+export interface SessionMessageSearchRequest {
+  limit?: number;
+  query: string;
+  role?: SessionMessageSearchRole;
+}
+
+export interface SessionMessageSearchResult {
+  matchEnd: number;
+  matchStart: number;
+  messageId: string;
+  role: SessionMessageSearchRole;
+  snippet: string;
+  timestamp: number;
+  turnId: string;
+}
+
+export interface SessionMessageSearchResponse {
+  results: SessionMessageSearchResult[];
+  total: number;
+  truncated: boolean;
+}
+
 export interface SessionViewSnapshot {
   compactionError?: string;
   compactionTrigger?: ContextCompactionRecord["trigger"];
@@ -548,6 +641,7 @@ export interface SessionViewSnapshot {
   session: SessionRecord;
   turnSummaries: SessionTurnSummary[];
   turnUsage?: SessionTurnUsage;
+  toolApprovalMode: ToolApprovalMode;
 }
 
 export interface SessionWorkspaceSummary {

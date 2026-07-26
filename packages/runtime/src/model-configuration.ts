@@ -82,7 +82,9 @@ const IMAGE_PROTOCOLS = new Map<string, ProviderImages>([
   ["openai-images", openaiImagesApi() as ProviderImages],
   ["openrouter-images", openrouterImagesApi() as ProviderImages],
 ]);
-const requireExtension = createRequire(import.meta.url);
+// The Electron main bundle is CommonJS, where Rolldown lowers import.meta.url to an empty
+// object. Prefer the native CommonJS filename and keep the ESM fallback for package consumers.
+const requireExtension = createRequire(typeof __filename === "string" ? __filename : import.meta.url);
 
 function stripJsonComments(source: string): string {
   let result = "";

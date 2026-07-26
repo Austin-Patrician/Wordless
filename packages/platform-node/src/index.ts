@@ -1,7 +1,9 @@
 import { lstat, mkdir, readFile, readdir, realpath, stat } from "node:fs/promises";
-import { basename, dirname, isAbsolute, relative, resolve } from "node:path";
+import type { Dirent } from "node:fs";
+import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { NodeExecutionEnv } from "@wordless/agent/node";
 import type { SessionAccessLevel } from "@wordless/domain";
+import ignore from "ignore";
 
 export interface WorkspaceDirectoryEntry {
   path: string;
@@ -112,6 +114,7 @@ class WorkspaceExecutionEnv {
 }
 
 export class WorkspacePathService {
+  private static readonly ignoredDirectoryNames = new Set([".git", "node_modules", "dist", "build", "out", "coverage", ".next", ".turbo", ".cache"]);
   async createManagedWorkspace(root: string, name: string): Promise<{ rootPath: string; canonicalRootPath: string }> {
     const rootPath = resolve(root, name);
     await mkdir(rootPath, { recursive: false });
@@ -174,6 +177,83 @@ export class WorkspacePathService {
     const details = await stat(path);
     if (!details.isFile()) throw new Error("Selected path is not a file");
     return path;
+  }
+
+  async resolveWorkspaceEntry(rootPath: string, relativePath: string): Promise<string> {
+    return await this.resolveExistingPath(rootPath, relativePath, false);
+  }
+
+  async searchWorkspace(rootPath: string, query: string, maximumResults = 50): Promise<WorkspaceDirectoryEntry[]> {
+    const root = await realpath(rootPath);
+    const normalizedQuery = query.trim().toLocaleLowerCase();
+    const matches: WorkspaceDirectoryEntry[] = [];
+    const gitignoreRules: Array<{ basePath: string; matcher: ReturnType<typeof ignore> }> = [];
+    let scanned = 0;
+
+    const loadGitignore = async (directory: string): Promise<void> => {
+      try {
+        const contents = await readFile(join(directory, ".gitignore"), "utf8");
+        if (contents.trim()) gitignoreRules.push({ basePath: directory, matcher: ignore().add(contents) });
+      } catch {
+        // A workspace does not need to be a Git repository.
+      }
+    };
+
+    const isGitignored = (candidate: string, kind: WorkspaceDirectoryEntry["kind"]): boolean => {
+      let ignored = false;
+      for (const ruleSet of gitignoreRules) {
+        const path = toPortablePath(relative(ruleSet.basePath, candidate));
+        if (!path || path === ".." || path.startsWith("../")) continue;
+        const result = ruleSet.matcher.test(kind === "directory" ? `${path}/` : path);
+        if (result.ignored) ignored = true;
+        if (result.unignored) ignored = false;
+      }
+      return ignored;
+    };
+
+    const visit = async (directory: string, depth: number): Promise<void> => {
+      if (matches.length >= maximumResults || scanned >= 20_000 || depth > 32) return;
+      await loadGitignore(directory);
+      let entries: Dirent<string>[];
+      try {
+        entries = await readdir(directory, { withFileTypes: true, encoding: "utf8" });
+      } catch {
+        return;
+      }
+      for (const entry of entries) {
+        if (matches.length >= maximumResults || scanned >= 20_000) return;
+        if (entry.isDirectory() && WorkspacePathService.ignoredDirectoryNames.has(entry.name)) continue;
+        const candidate = resolve(directory, entry.name);
+        let details;
+        try {
+          details = await lstat(candidate);
+        } catch {
+          continue;
+        }
+        if (details.isSymbolicLink() || (!details.isFile() && !details.isDirectory())) continue;
+        let canonical: string;
+        try {
+          canonical = await realpath(candidate);
+        } catch {
+          continue;
+        }
+        if (!this.isWithinRoot(root, canonical)) continue;
+        scanned += 1;
+        const path = toPortablePath(relative(root, canonical));
+        const kind = details.isDirectory() ? "directory" : "file";
+        if (isGitignored(canonical, kind)) continue;
+        if (!normalizedQuery || `${entry.name} ${path}`.toLocaleLowerCase().includes(normalizedQuery)) {
+          matches.push({ path, name: entry.name, kind, size: details.size, mtimeMs: details.mtimeMs });
+        }
+        if (details.isDirectory()) await visit(canonical, depth + 1);
+      }
+    };
+
+    await visit(root, 0);
+    return matches.sort((left, right) => {
+      if (left.kind !== right.kind) return left.kind === "directory" ? -1 : 1;
+      return left.path.localeCompare(right.path, undefined, { numeric: true, sensitivity: "base" });
+    });
   }
 
   async readWorkspaceTextFile(rootPath: string, relativePath: string, maximumBytes: number): Promise<{ path: string; name: string; content: string }> {

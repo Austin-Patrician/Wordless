@@ -1,6 +1,6 @@
 import { copyFile } from "node:fs/promises";
 import path from "node:path";
-import { app, dialog, ipcMain, shell } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, shell } from "electron";
 import { Type } from "typebox";
 import { Value } from "typebox/value";
 import type { TSchema } from "typebox";
@@ -22,6 +22,7 @@ import {
   ImportMediaImagesSchema,
   ImportAppearanceBackgroundSchema,
   SessionHistoryPageRequestSchema,
+  SessionMessageSearchRequestSchema,
   SessionToolOutputRequestSchema,
   ListWorkspaceDirectorySchema,
   OpenWorkspaceSchema,
@@ -38,6 +39,7 @@ import {
   SetExtensionEnabledSchema,
   SetSessionAccessSchema,
   SetSessionInteractionModeSchema,
+  SetSessionToolApprovalModeSchema,
   SetSessionExtensionStateSchema,
   SetConfiguredModelEnabledSchema,
   SetConnectorEnabledSchema,
@@ -51,9 +53,14 @@ import {
   UpdateMediaLayoutSchema,
   UsageReportQuerySchema,
   WorkspaceFileRequestSchema,
+  WorkspaceDeleteSchema,
+  WorkspaceReferenceSearchSchema,
+  SessionWorkspaceReferenceSearchSchema,
   CancelMediaOperationSchema,
   StartMediaOperationSchema,
   HandoffClarificationSchema,
+  type DesktopHostInfo,
+  type DesktopMenuId,
 } from "@wordless/protocol";
 import { WordlessRuntime } from "@wordless/runtime";
 import { AppearanceAssetService } from "../appearance/appearance-asset-service";
@@ -92,7 +99,30 @@ function isAppPreferences(value: unknown): value is AppPreferences {
   return typeof notifications === "object" && notifications !== null && "enabled" in notifications && "onActionRequired" in notifications && "onRunCompleted" in notifications && "onRunFailed" in notifications && typeof notifications.enabled === "boolean" && typeof notifications.onActionRequired === "boolean" && typeof notifications.onRunCompleted === "boolean" && typeof notifications.onRunFailed === "boolean" && typeof security === "object" && security !== null && "customFileRules" in security && "customCommandRules" in security && isSecurityRuleList(security.customFileRules, "pattern") && isSecurityRuleList(security.customCommandRules, "command") && isAppearancePreferences(value.appearance);
 }
 
-export function registerRuntimeIpc(runtime: WordlessRuntime, appearanceAssets: AppearanceAssetService): void {
+type DesktopIpcOptions = {
+  hostInfo: DesktopHostInfo;
+  showApplicationMenu: (menuId: DesktopMenuId, window: BrowserWindow) => void;
+  checkForUpdates: () => Promise<void>;
+  downloadUpdate: () => Promise<void>;
+  installUpdate: () => void;
+};
+
+function isDesktopMenuId(value: unknown): value is DesktopMenuId {
+  return value === "file" || value === "edit" || value === "window" || value === "help";
+}
+
+export function registerRuntimeIpc(runtime: WordlessRuntime, appearanceAssets: AppearanceAssetService, options: DesktopIpcOptions): void {
+  ipcMain.handle("wordless:host:info", () => options.hostInfo);
+  ipcMain.handle("wordless:menu:open", (event, payload: unknown) => {
+    const menuId = isRecord(payload) ? payload.menuId : undefined;
+    if (!isDesktopMenuId(menuId)) throw new Error("Invalid application menu");
+    const window = BrowserWindow.fromWebContents(event.sender);
+    if (!window) throw new Error("Application window is unavailable");
+    options.showApplicationMenu(menuId, window);
+  });
+  ipcMain.handle("wordless:update:check", () => options.checkForUpdates());
+  ipcMain.handle("wordless:update:download", () => options.downloadUpdate());
+  ipcMain.handle("wordless:update:install", () => options.installUpdate());
   ipcMain.handle("wordless:snapshot", () => runtime.getSnapshot());
   ipcMain.handle("wordless:usage:report", async (_event, payload: unknown) => {
     const input = parsePayload<{ startAt: number; endAt: number; groupBy: "provider" | "model" }>(UsageReportQuerySchema, payload);
@@ -103,6 +133,10 @@ export function registerRuntimeIpc(runtime: WordlessRuntime, appearanceAssets: A
   ipcMain.handle("wordless:session:history", (_event, payload: unknown) => {
     const input = parsePayload<{ sessionId: string; after?: string; before?: string; aroundTurnId?: string; limit?: number }>(SessionHistoryPageRequestSchema, payload);
     return runtime.getSessionHistoryPage(input.sessionId, { after: input.after, before: input.before, aroundTurnId: input.aroundTurnId, limit: input.limit });
+  });
+  ipcMain.handle("wordless:session:message-search", (_event, payload: unknown) => {
+    const input = parsePayload<{ sessionId: string; query: string; role?: "user" | "assistant"; limit?: number }>(SessionMessageSearchRequestSchema, payload);
+    return runtime.searchSessionMessages(input.sessionId, { query: input.query, role: input.role, limit: input.limit });
   });
   ipcMain.handle("wordless:session:tool-output", (_event, payload: unknown) => {
     const input = parsePayload<{ sessionId: string; callId: string }>(SessionToolOutputRequestSchema, payload);
@@ -182,8 +216,8 @@ export function registerRuntimeIpc(runtime: WordlessRuntime, appearanceAssets: A
     return await runtime.openLinkedWorkspace(result.filePaths[0]);
   });
   ipcMain.handle("wordless:session:create-and-prompt", async (_event, payload: unknown) => {
-    const input = parsePayload<{ draft: Parameters<WordlessRuntime["createAndPrompt"]>[0]; parts: UserPromptPart[] }>(CreateAndPromptSchema, payload);
-    return await runtime.createAndPrompt(input.draft, formatPromptWithSkillReferences(input.parts), selectedSkillIdsFromPromptParts(input.parts));
+    const input = parsePayload<{ draft: Parameters<WordlessRuntime["createAndPrompt"]>[0]; parts: UserPromptPart[]; attachments?: Array<{ path: string }> }>(CreateAndPromptSchema, payload);
+    return await runtime.createAndPrompt(input.draft, formatPromptWithSkillReferences(input.parts), selectedSkillIdsFromPromptParts(input.parts), input.attachments?.map((attachment) => attachment.path));
   });
   ipcMain.handle("wordless:session:prompt", async (_event, payload: unknown) => {
     const input = parsePayload<{ sessionId: string; parts: UserPromptPart[]; attachments?: Array<{ path: string }> }>(PromptSessionSchema, payload);
@@ -201,6 +235,14 @@ export function registerRuntimeIpc(runtime: WordlessRuntime, appearanceAssets: A
   ipcMain.handle("wordless:session:workspace:list", async (_event, payload: unknown) => {
     const input = parsePayload<{ sessionId: string; path: string }>(ListWorkspaceDirectorySchema, payload);
     return await runtime.listSessionWorkspaceDirectory(input.sessionId, input.path);
+  });
+  ipcMain.handle("wordless:session:workspace:search", async (_event, payload: unknown) => {
+    const input = parsePayload<{ sessionId: string; query: string }>(SessionWorkspaceReferenceSearchSchema, payload);
+    return await runtime.searchSessionWorkspace(input.sessionId, input.query);
+  });
+  ipcMain.handle("wordless:workspace:search", async (_event, payload: unknown) => {
+    const input = parsePayload<{ workspaceId: string; query: string }>(WorkspaceReferenceSearchSchema, payload);
+    return await runtime.searchWorkspace(input.workspaceId, input.query);
   });
   ipcMain.handle("wordless:session:workspace:read", async (_event, payload: unknown) => {
     const input = parsePayload<{ sessionId: string; path: string }>(WorkspaceFileRequestSchema, payload);
@@ -221,9 +263,19 @@ export function registerRuntimeIpc(runtime: WordlessRuntime, appearanceAssets: A
     const result = await dialog.showSaveDialog({ defaultPath: path.basename(source) });
     if (!result.canceled && result.filePath) await copyFile(source, result.filePath);
   });
+  ipcMain.handle("wordless:session:workspace:trash", async (_event, payload: unknown) => {
+    const input = parsePayload<{ sessionId: string; path: string }>(WorkspaceDeleteSchema, payload);
+    const source = await runtime.resolveSessionWorkspaceEntry(input.sessionId, input.path);
+    await shell.trashItem(source);
+    runtime.invalidateSessionWorkspaceSearch(input.sessionId);
+  });
   ipcMain.handle("wordless:session:approval", async (_event, payload: unknown) => {
     const input = parsePayload<{ sessionId: string; approvalId: string; approved: boolean; feedback?: string }>(ResolveOperationApprovalSchema, payload);
     await runtime.resolveOperationApproval(input.sessionId, input.approvalId, input.approved, input.feedback);
+  });
+  ipcMain.handle("wordless:session:approval-mode", async (_event, payload: unknown) => {
+    const input = parsePayload<{ sessionId: string; mode: "manual" | "auto" }>(SetSessionToolApprovalModeSchema, payload);
+    await runtime.setSessionToolApprovalMode(input.sessionId, input.mode);
   });
   ipcMain.handle("wordless:session:user-request", async (_event, payload: unknown) => {
     const input = parsePayload<{

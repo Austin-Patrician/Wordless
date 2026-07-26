@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { ConversationMessage } from "@wordless/domain";
-import { createSessionHistoryPage, createSessionHistoryProjection } from "../src/session-history.ts";
+import { createSessionHistoryPage, createSessionHistoryProjection, searchSessionHistoryMessages } from "../src/session-history.ts";
 
 function user(id: string, timestamp: number, text: string): ConversationMessage {
   return { id, role: "user", status: "complete", blocks: [{ type: "text", text }], model: null, timestamp };
@@ -83,4 +83,50 @@ test("history pages preview oversized tool output while retaining the complete o
   assert.equal(block.outputTruncated, true);
   assert.ok((block.output?.length ?? 0) < output.length);
   assert.equal(projection.toolOutputs.get("tool-1"), output);
+});
+
+test("searches visible message text and references without exposing reasoning or tool output", () => {
+  const projection = createSessionHistoryProjection([
+    user("u1", 1, "Discuss the component search experience"),
+    {
+      id: "a1",
+      role: "assistant",
+      status: "complete",
+      blocks: [
+        { type: "reasoning", text: "The hidden implementation uses an internal-only token" },
+        { type: "tool", callId: "tool-1", name: "search", state: "complete", output: "The secret-tool-output value" },
+        { type: "workspace-reference", id: "ref-1", name: "ConversationSearchDialog.tsx", path: "src/ConversationSearchDialog.tsx", kind: "file" },
+      ],
+      model: { connectionId: "test", modelId: "test" },
+      timestamp: 2,
+    },
+    user("u2", 3, "Search should locate a concrete message"),
+  ], []);
+
+  const textSearch = searchSessionHistoryMessages(projection, { query: "SEARCH" });
+  assert.equal(textSearch.total, 3);
+  assert.deepEqual(textSearch.results.map((result) => result.messageId), ["u2", "a1", "u1"]);
+  assert.equal(textSearch.results[0]?.turnId, "turn:u2");
+  assert.ok(textSearch.results[0]?.snippet.includes("Search"));
+
+  const referenceSearch = searchSessionHistoryMessages(projection, { query: "dialog", role: "assistant" });
+  assert.equal(referenceSearch.total, 1);
+  assert.equal(referenceSearch.results[0]?.messageId, "a1");
+  assert.equal(referenceSearch.results[0]?.turnId, "turn:u1");
+
+  assert.equal(searchSessionHistoryMessages(projection, { query: "internal-only" }).total, 0);
+  assert.equal(searchSessionHistoryMessages(projection, { query: "secret-tool-output" }).total, 0);
+});
+
+test("reports a complete count while limiting returned message search results", () => {
+  const projection = createSessionHistoryProjection([
+    user("u1", 1, "needle one"),
+    user("u2", 2, "needle two"),
+    user("u3", 3, "needle three"),
+  ], []);
+
+  const response = searchSessionHistoryMessages(projection, { query: "needle", limit: 2 });
+  assert.equal(response.total, 3);
+  assert.equal(response.truncated, true);
+  assert.deepEqual(response.results.map((result) => result.messageId), ["u3", "u2"]);
 });

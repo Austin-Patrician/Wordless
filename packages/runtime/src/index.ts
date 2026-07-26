@@ -71,6 +71,7 @@ import type {
   SecurityPolicySnapshot,
   SessionDraft,
   SessionRecord,
+  ToolApprovalMode,
   ToolSecurityRuleMatch,
   UsageReport,
   UsageReportQuery,
@@ -88,6 +89,8 @@ import {
   type SessionContextSnapshot,
   type SessionHistoryPage,
   type SessionHistoryPageRequest,
+  type SessionMessageSearchRequest,
+  type SessionMessageSearchResponse,
   type SessionSnapshot,
   type SessionViewSnapshot,
   type SessionWorkspaceTextFile,
@@ -100,7 +103,7 @@ import { SkillRegistry } from "@wordless/skill-registry";
 import { RuntimeModelConfiguration, type ModelConfigurationPaths } from "./model-configuration.ts";
 import { SessionSubagentRunner, type SubagentFileChange } from "./subagent-runner.ts";
 import { estimateSessionContextUsage } from "./context-usage.ts";
-import { createSessionHistoryPage, createSessionHistoryProjection, type SessionHistoryProjection } from "./session-history.ts";
+import { createSessionHistoryPage, createSessionHistoryProjection, searchSessionHistoryMessages, type SessionHistoryProjection } from "./session-history.ts";
 import { UsageReportService, conversationUsageFromAiUsage } from "./usage-report.ts";
 
 const SUBAGENT_FILE_CHANGE_JOURNAL_TYPE = "wordless.subagent-file-change";
@@ -666,6 +669,12 @@ type CachedSessionHistory = {
   snapshot: SessionSnapshot;
 };
 
+type WorkspaceSearchCache = {
+  entries?: WorkspaceFileEntry[];
+  expiresAt: number;
+  loading?: Promise<WorkspaceFileEntry[]>;
+};
+
 export class WordlessRuntime {
   private readonly database: WordlessDatabase;
   private readonly modelConfiguration: RuntimeModelConfiguration;
@@ -679,7 +688,9 @@ export class WordlessRuntime {
   private readonly usageReport: UsageReportService;
   private readonly listeners = new Set<(event: RuntimeEventEnvelope) => void>();
   private readonly historyCache = new Map<string, CachedSessionHistory>();
+  private readonly workspaceSearchCache = new Map<string, WorkspaceSearchCache>();
   private readonly runs = new Map<string, ActiveRun>();
+  private readonly toolApprovalModes = new Map<string, ToolApprovalMode>();
   private readonly mediaOperations = new Map<string, AbortController>();
   private readonly runtimeInstanceId = randomUUID();
   private appSequence = 0;
@@ -746,8 +757,10 @@ export class WordlessRuntime {
       active.driverSession.dispose();
     }
     this.runs.clear();
+    this.toolApprovalModes.clear();
     for (const controller of this.mediaOperations.values()) controller.abort();
     this.mediaOperations.clear();
+    this.workspaceSearchCache.clear();
     this.skillRegistry.dispose();
     this.modelConfiguration.dispose();
     this.database.close();
@@ -960,6 +973,7 @@ export class WordlessRuntime {
       isRunning: active?.kind === "prompt",
       isCompacting: active?.isCompacting ?? false,
       compactionTrigger: active?.compactionTrigger,
+      toolApprovalMode: this.toolApprovalModes.get(sessionId) ?? "manual",
       extensions,
     };
   }
@@ -977,6 +991,7 @@ export class WordlessRuntime {
       isRunning: active?.kind === "prompt",
       isCompacting: active?.isCompacting ?? false,
       compactionTrigger: active?.compactionTrigger,
+      toolApprovalMode: this.toolApprovalModes.get(sessionId) ?? "manual",
       compactionError: cached.snapshot.compactionError,
       extensions: cached.snapshot.extensions,
     };
@@ -985,6 +1000,11 @@ export class WordlessRuntime {
   async getSessionHistoryPage(sessionId: string, request: SessionHistoryPageRequest): Promise<SessionHistoryPage> {
     const cached = await this.getCachedSessionHistory(sessionId);
     return createSessionHistoryPage(cached.projection, cached.revision, request);
+  }
+
+  async searchSessionMessages(sessionId: string, request: SessionMessageSearchRequest): Promise<SessionMessageSearchResponse> {
+    const cached = await this.getCachedSessionHistory(sessionId);
+    return searchSessionHistoryMessages(cached.projection, request);
   }
 
   async getSessionToolOutput(sessionId: string, callId: string): Promise<string> {
@@ -1123,9 +1143,32 @@ export class WordlessRuntime {
     return await this.pathService.listDirectory(record.runtimeRootPath, path);
   }
 
+  async searchSessionWorkspace(sessionId: string, query: string): Promise<WorkspaceFileEntry[]> {
+    const record = this.requireWorkspaceSession(sessionId);
+    return await this.searchWorkspaceRoot(record.runtimeRootPath, query);
+  }
+
+  async searchWorkspace(workspaceId: string, query: string): Promise<WorkspaceFileEntry[]> {
+    const workspace = this.requireWorkspace(workspaceId);
+    if (workspace.availability !== "available") throw new Error("The selected workspace is unavailable");
+    return await this.searchWorkspaceRoot(workspace.canonicalRootPath, query);
+  }
+
+  invalidateSessionWorkspaceSearch(sessionId: string): void {
+    const record = this.requireSession(sessionId);
+    if (!record.workspaceId) return;
+    this.workspaceSearchCache.delete(record.runtimeRootPath);
+  }
+
   async resolveSessionWorkspaceFile(sessionId: string, path: string): Promise<string> {
     const record = this.requireWorkspaceSession(sessionId);
     return await this.pathService.resolveWorkspaceFile(record.runtimeRootPath, path);
+  }
+
+  async resolveSessionWorkspaceEntry(sessionId: string, path: string): Promise<string> {
+    if (this.runs.has(sessionId)) throw new Error("Workspace entries cannot be moved to Trash while the agent is running");
+    const record = this.requireWorkspaceSession(sessionId);
+    return await this.pathService.resolveWorkspaceEntry(record.runtimeRootPath, path);
   }
 
   async createManagedWorkspace(name: string): Promise<WorkspaceRecord> {
@@ -1180,7 +1223,7 @@ export class WordlessRuntime {
     return workspace;
   }
 
-  async createAndPrompt(draft: SessionDraft, prompt: string, skillIds: string[] = []): Promise<SessionRecord> {
+  async createAndPrompt(draft: SessionDraft, prompt: string, skillIds: string[] = [], attachmentPaths: string[] = []): Promise<SessionRecord> {
     const entry = this.getEntry(draft.entryId);
     if (entry.mode !== draft.mode) throw new Error("Selected entry does not belong to the selected mode");
     const profile = entry.profile ? this.profiles.get(entry.profile) : undefined;
@@ -1236,8 +1279,9 @@ export class WordlessRuntime {
     await journal.appendModelChange(model.connectionId, model.modelId);
     if (record.interactionMode === "plan") await this.persistPlanModeState(record, "planning");
     this.database.upsertSession(record);
+    this.toolApprovalModes.set(id, draft.toolApprovalMode ?? "manual");
     this.rememberEntryModel(entry.id, model);
-    void this.promptSession(id, prompt, [], skillIds).catch(() => {});
+    void this.promptSession(id, prompt, attachmentPaths, skillIds).catch(() => {});
     return this.requireSession(id);
   }
 
@@ -1290,6 +1334,21 @@ export class WordlessRuntime {
     const next = { ...session, accessLevel, updatedAt: Date.now() };
     this.database.upsertSession(next);
     return next;
+  }
+
+  async setSessionToolApprovalMode(sessionId: string, mode: ToolApprovalMode): Promise<void> {
+    this.requireSession(sessionId);
+    const active = this.runs.get(sessionId);
+    const previous = this.toolApprovalModes.get(sessionId) ?? "manual";
+    this.toolApprovalModes.set(sessionId, mode);
+    if (!active) return;
+    try {
+      await active.driverSession.execute({ type: "set-tool-approval-mode", mode });
+    } catch (error) {
+      this.toolApprovalModes.set(sessionId, previous);
+      await active.driverSession.execute({ type: "set-tool-approval-mode", mode: previous }).catch(() => {});
+      throw error;
+    }
   }
 
   async setSessionInteractionMode(sessionId: string, interactionMode: AgentInteractionModeId): Promise<SessionRecord> {
@@ -1896,6 +1955,7 @@ export class WordlessRuntime {
       resolveModel: (reference) => this.requireRuntimeModel(reference),
       resolveCapabilities: (reference) => this.requireEnabledModel(reference).capabilities,
       onFilesChanged: async (changes) => await this.persistSubagentFileChanges(record, changes),
+      toolApprovalMode: this.toolApprovalModes.get(sessionId) ?? "manual",
     });
     const driverSession = await driver.createSession({
       record,
@@ -1912,6 +1972,7 @@ export class WordlessRuntime {
       resolveModel: (reference) => this.requireRuntimeModel(reference),
       executionKind: "primary",
       subagentRunner: subagents,
+      toolApprovalMode: this.toolApprovalModes.get(sessionId) ?? "manual",
     });
     const active: ActiveRun = {
       driverSession,
@@ -1933,6 +1994,7 @@ export class WordlessRuntime {
     active.driverSession.dispose();
     void active.subagents.dispose();
     this.runs.delete(sessionId);
+    this.toolApprovalModes.delete(sessionId);
     this.emit(sessionId, active, { type: "session.idle" });
     const current = this.requireSession(sessionId);
     this.database.upsertSession({ ...current, updatedAt: Date.now() });
@@ -1946,6 +2008,31 @@ export class WordlessRuntime {
     }
   }
 
+  private async searchWorkspaceRoot(rootPath: string, query: string): Promise<WorkspaceFileEntry[]> {
+    const now = Date.now();
+    let cache = this.workspaceSearchCache.get(rootPath);
+    if (!cache || cache.expiresAt <= now) {
+      if (!cache?.loading) {
+        const loading = this.pathService.searchWorkspace(rootPath, "", 20_000);
+        cache = { expiresAt: 0, loading };
+        this.workspaceSearchCache.set(rootPath, cache);
+        void loading.then((entries) => {
+          const current = this.workspaceSearchCache.get(rootPath);
+          if (current?.loading !== loading) return;
+          this.workspaceSearchCache.set(rootPath, { entries, expiresAt: Date.now() + 30_000 });
+        }).catch(() => {
+          if (this.workspaceSearchCache.get(rootPath)?.loading === loading) this.workspaceSearchCache.delete(rootPath);
+        });
+      }
+    }
+    const entries = cache.entries ?? await cache.loading;
+    if (!entries) return [];
+    const normalizedQuery = query.trim().toLocaleLowerCase();
+    return entries
+      .filter((entry) => !normalizedQuery || `${entry.name} ${entry.path}`.toLocaleLowerCase().includes(normalizedQuery))
+      .slice(0, 50);
+  }
+
   private handleDriverEvent(sessionId: string, active: ActiveRun, event: AgentDriverEvent): void {
     if (event.type === "message.started") this.emit(sessionId, active, { type: "message.started", message: event.message });
     if (event.type === "message.text.delta") this.emit(sessionId, active, event);
@@ -1953,7 +2040,10 @@ export class WordlessRuntime {
     if (event.type === "message.completed") this.emit(sessionId, active, { type: "message.completed", message: event.message });
     if (event.type === "tool.started") this.emit(sessionId, active, event);
     if (event.type === "tool.updated") this.emit(sessionId, active, event);
-    if (event.type === "tool.completed") this.emit(sessionId, active, event);
+    if (event.type === "tool.completed") {
+      this.invalidateSessionWorkspaceSearch(sessionId);
+      this.emit(sessionId, active, event);
+    }
     if (event.type === "approval.requested") this.emit(sessionId, active, event);
     if (event.type === "approval.resolved") this.emit(sessionId, active, event);
     if (event.type === "user-request.requested") this.emit(sessionId, active, event);

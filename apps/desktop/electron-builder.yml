@@ -1,0 +1,36 @@
+appId: com.wordless.desktop
+productName: Wordless
+artifactName: Wordless-${version}-${os}-${arch}.${ext}
+directories:
+  output: release
+  buildResources: build
+icon: src/icons/common-icons/wordless.png
+files:
+  - dist/**
+  - package.json
+asar: true
+extraMetadata:
+  dependencies:
+    ajv: '^8.20.0'
+    ajv-formats: '^3.0.1'
+mac:
+  category: public.app-category.developer-tools
+  minimumSystemVersion: '13.0.0'
+  target:
+    - target: dmg
+      arch:
+        - universal
+    - target: zip
+      arch:
+        - universal
+  identity: '-'
+  hardenedRuntime: false
+  gatekeeperAssess: false
+dmg:
+  title: Wordless
+  sign: false
+publish:
+  provider: github
+  owner: Austin-Patrician
+  repo: Wordless
+  releaseType: release

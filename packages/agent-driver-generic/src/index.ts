@@ -50,6 +50,7 @@ import type {
   UserRequestAnswer,
   UserRequestField,
   UserRequestResolution,
+  ToolApprovalMode,
 } from "@wordless/domain";
 
 export interface AgentHarnessDriverOptions {
@@ -578,6 +579,7 @@ function toConversationMessage(message: AgentMessage, model: ConversationMessage
 class AgentHarnessDriverSession implements AgentDriverSession {
   private readonly harness: AgentHarness;
   private readonly context: AgentDriverSessionContext;
+  private toolApprovalMode: ToolApprovalMode;
   private readonly clarificationMode: boolean;
   private readonly listeners = new Set<(event: AgentDriverEvent) => void>();
   private readonly unsubscribe: () => void;
@@ -618,6 +620,7 @@ class AgentHarnessDriverSession implements AgentDriverSession {
     persistedFileBaselinePaths: Set<string>,
   ) {
     this.context = context;
+    this.toolApprovalMode = context.toolApprovalMode ?? "manual";
     this.features = features;
     this.persistedFileBaselinePaths = persistedFileBaselinePaths;
     this.clarificationMode = isClarificationMode(context);
@@ -700,6 +703,9 @@ class AgentHarnessDriverSession implements AgentDriverSession {
         const resolution = await new Promise<OperationApprovalResolution>((resolve) => {
           this.pendingApprovals.set(request.approvalId, { messageId, request, resolve });
           this.emit({ type: "approval.requested", messageId, approval: request });
+          if (this.toolApprovalMode === "auto" && request.severity === "normal") {
+            this.resolvePendingApproval(request.approvalId, true);
+          }
         });
         const persisted: PersistedOperationApproval = { callId: event.toolCallId, approval: request, resolution };
         this.approvalResults.set(event.toolCallId, persisted);
@@ -851,6 +857,11 @@ class AgentHarnessDriverSession implements AgentDriverSession {
         this.emit({ type: "approval.resolved", messageId: pending.messageId, resolution: command.resolution });
         return;
       }
+      case "set-tool-approval-mode":
+        this.toolApprovalMode = command.mode;
+        if (command.mode === "auto") this.resolvePendingNormalApprovals();
+        await this.context.subagentRunner?.setToolApprovalMode?.(command.mode);
+        return;
       case "resolve-user-request": {
         const pending = this.pendingUserRequests.get(command.resolution.requestId);
         if (!pending) throw new Error("User request is no longer pending");
@@ -1035,6 +1046,22 @@ class AgentHarnessDriverSession implements AgentDriverSession {
     }
   }
 
+  private resolvePendingApproval(approvalId: string, approved: boolean, feedback?: string): void {
+    const pending = this.pendingApprovals.get(approvalId);
+    if (!pending) return;
+    this.pendingApprovals.delete(approvalId);
+    const resolution: OperationApprovalResolution = { approvalId, approved, ...(feedback ? { feedback } : {}) };
+    pending.resolve(resolution);
+    this.emit({ type: "approval.resolved", messageId: pending.messageId, resolution });
+  }
+
+  private resolvePendingNormalApprovals(): void {
+    for (const [approvalId, pending] of this.pendingApprovals) {
+      if (pending.request.severity !== "normal") continue;
+      this.resolvePendingApproval(approvalId, true, "Automatically approved for this session");
+    }
+  }
+
   private resolvePendingUserRequests(feedback: string): void {
     for (const [requestId, pending] of this.pendingUserRequests) {
       this.pendingUserRequests.delete(requestId);
@@ -1061,8 +1088,13 @@ class AgentHarnessDriverSession implements AgentDriverSession {
     };
   }
 
-  private handleHarnessEvent(event: AgentHarnessEvent): void {
+  private async handleHarnessEvent(event: AgentHarnessEvent): Promise<void> {
     if (event.type === "message_start" && (event.message.role === "assistant" || event.message.role === "user")) {
+      // User messages are persisted by AgentHarness before message_end is
+      // emitted. Wait for that event so the UI receives the durable journal
+      // entry id instead of a driver-local id that cannot be reconciled with
+      // a session snapshot during hydration.
+      if (event.message.role === "user") return;
       const id = this.messageId(event.message);
       if (event.message.role === "assistant") {
         this.activeAssistantMessageId = id;
@@ -1126,8 +1158,17 @@ class AgentHarnessDriverSession implements AgentDriverSession {
       return;
     }
     if (event.type === "message_end" && (event.message.role === "assistant" || event.message.role === "user")) {
-      const id = event.message.role === "assistant" ? this.activeAssistantMessageId ?? this.messageId(event.message) : this.messageId(event.message);
+      const id = event.message.role === "assistant"
+        ? this.activeAssistantMessageId ?? this.messageId(event.message)
+        : await this.context.session.getLeafId() ?? this.messageId(event.message);
       const completed = toConversationMessage(event.message, this.context.record.model, id);
+      if (event.message.role === "user") {
+        if (completed) {
+          this.emit({ type: "message.started", message: completed });
+          this.emit({ type: "message.completed", message: completed });
+        }
+        return;
+      }
       const suppressForRecovery =
         isAssistantMessage(event.message) &&
         event.message.stopReason !== "stop" &&

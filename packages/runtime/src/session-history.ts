@@ -1,8 +1,9 @@
 import type { ContextCompactionRecord, ConversationMessage, MessageBlock, MessageToolBlock } from "@wordless/domain";
-import type { SessionHistoryPage, SessionHistoryPageRequest, SessionHistoryTimelineItem, SessionHistoryTurn, SessionTurnSummary } from "@wordless/protocol";
+import type { SessionHistoryPage, SessionHistoryPageRequest, SessionHistoryTimelineItem, SessionHistoryTurn, SessionMessageSearchRequest, SessionMessageSearchResponse, SessionTurnSummary } from "@wordless/protocol";
 
 const DEFAULT_HISTORY_TURN_LIMIT = 24;
 const TOOL_OUTPUT_PREVIEW_CHARS = 4_096;
+const SEARCH_SNIPPET_CHARS = 220;
 
 export type SessionHistoryProjection = {
   timeline: SessionHistoryTimelineItem[];
@@ -16,6 +17,27 @@ function textFromBlocks(blocks: readonly MessageBlock[]): string {
     if (block.type === "skill-reference" || block.type === "attachment" || block.type === "artifact") return [block.name];
     return [];
   }).join(" ");
+}
+
+function searchableTextFromBlocks(blocks: readonly MessageBlock[]): string {
+  return blocks.flatMap((block) => {
+    if (block.type === "text") return [block.text];
+    if (block.type === "skill-reference" || block.type === "workspace-reference" || block.type === "attachment" || block.type === "artifact") return [block.name];
+    return [];
+  }).join(" ").replace(/\s+/g, " ").trim();
+}
+
+function searchSnippet(text: string, matchStart: number, matchEnd: number): { matchEnd: number; matchStart: number; snippet: string } {
+  const snippetChars = Math.max(SEARCH_SNIPPET_CHARS, matchEnd - matchStart);
+  const start = Math.max(0, matchStart - Math.floor((snippetChars - (matchEnd - matchStart)) / 2));
+  const end = Math.min(text.length, start + snippetChars);
+  const prefix = start > 0 ? "..." : "";
+  const suffix = end < text.length ? "..." : "";
+  return {
+    matchStart: prefix.length + matchStart - start,
+    matchEnd: prefix.length + matchEnd - start,
+    snippet: `${prefix}${text.slice(start, end)}${suffix}`,
+  };
 }
 
 function estimateMessageTokens(message: ConversationMessage): number {
@@ -116,6 +138,32 @@ export function createSessionHistoryProjection(messages: readonly ConversationMe
     }
   }
   return { timeline, toolOutputs, turnSummaries };
+}
+
+export function searchSessionHistoryMessages(projection: SessionHistoryProjection, request: SessionMessageSearchRequest): SessionMessageSearchResponse {
+  const query = request.query.replace(/\s+/g, " ").trim();
+  if (!query) return { results: [], total: 0, truncated: false };
+  const normalizedQuery = query.toLocaleLowerCase();
+  const limit = Math.min(50, Math.max(1, request.limit ?? 50));
+  const results = projection.timeline.flatMap((item) => {
+    if (item.type !== "turn") return [];
+    return item.turn.messages.flatMap((message) => {
+      if ((message.role !== "user" && message.role !== "assistant") || (request.role && message.role !== request.role)) return [];
+      const text = searchableTextFromBlocks(message.blocks);
+      const matchStart = text.toLocaleLowerCase().indexOf(normalizedQuery);
+      if (matchStart === -1) return [];
+      const matchEnd = matchStart + query.length;
+      const snippet = searchSnippet(text, matchStart, matchEnd);
+      return [{
+        messageId: message.id,
+        role: message.role,
+        timestamp: message.timestamp,
+        turnId: item.turn.id,
+        ...snippet,
+      }];
+    });
+  }).sort((left, right) => right.timestamp - left.timestamp);
+  return { results: results.slice(0, limit), total: results.length, truncated: results.length > limit };
 }
 
 export function createSessionHistoryPage(projection: SessionHistoryProjection, revision: string, request: SessionHistoryPageRequest = {}): SessionHistoryPage {

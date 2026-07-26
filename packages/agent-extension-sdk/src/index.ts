@@ -1,5 +1,5 @@
 import type { AgentHarness, AgentTool, ExecutionEnv, Session } from "@wordless/agent";
-import type { AgentDriverId, ConversationUsage, SessionRecord } from "@wordless/domain";
+import type { AgentDriverId, ConversationUsage, SessionRecord, ToolApprovalMode } from "@wordless/domain";
 
 export type JsonObject = Record<string, unknown>;
 
@@ -129,6 +129,7 @@ export interface SubagentResult {
 export interface SubagentRunner {
   run(task: SubagentTask, options?: { signal?: AbortSignal; onUpdate?: (progress: SubagentTaskProgress) => void }): Promise<SubagentResult>;
   cancel(taskId: string): Promise<void>;
+  setToolApprovalMode?(mode: ToolApprovalMode): Promise<void>;
 }
 
 export const AGENT_EXTENSION_STATE_JOURNAL_TYPE = "wordless.agent-extension.state";

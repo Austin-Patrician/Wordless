@@ -1,0 +1,62 @@
+name: Release Desktop
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Release version without the v prefix"
+        required: true
+        type: string
+      release_notes:
+        description: "Optional release notes"
+        required: false
+        default: ""
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  build-macos:
+    name: macOS Universal preview
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Install dependencies
+        run: npm ci
+      - name: Set release version
+        run: npm pkg set version="${{ inputs.version }}" --workspace=@wordless/desktop
+      - name: Typecheck
+        run: npm run check --workspace=@wordless/desktop
+      - name: Build unsigned/ad-hoc macOS artifacts
+        run: npm run dist:mac:preview --workspace=@wordless/desktop
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: wordless-macos-universal
+          path: apps/desktop/release/*
+
+  publish:
+    name: Publish GitHub Release
+    needs: build-macos
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: wordless-macos-universal
+          path: release
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ -n "${{ inputs.release_notes }}" ]; then
+            printf '%s\n' '${{ inputs.release_notes }}' > release-notes.md
+          else
+            printf '%s\n' '- macOS Universal preview build.' '- This build is not notarized; macOS may require allowing Wordless in Privacy & Security on first launch.' > release-notes.md
+          fi
+          gh release create "v${{ inputs.version }}" release/* --title "Wordless ${{ inputs.version }}" --notes-file release-notes.md --repo "${{ github.repository }}"

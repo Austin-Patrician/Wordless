@@ -135,6 +135,8 @@ export interface SkillCatalogSnapshot {
 
 export type SessionAccessLevel = "default" | "full";
 
+export type ToolApprovalMode = "manual" | "auto";
+
 export type ProviderConnectionKind = "builtin" | "openai-compatible";
 
 export type ProviderAuthStatus = "configured" | "missing" | "expired" | "error";
@@ -572,6 +574,7 @@ export interface SessionDraft {
   model: ModelReference | null;
   connectorIds?: string[];
   interactionMode?: AgentInteractionModeId;
+  toolApprovalMode?: ToolApprovalMode;
 }
 
 export type ClarificationQuestionAnswerType = "choice" | "text" | "confirm";
@@ -628,6 +631,12 @@ export type UserPromptPart =
       skillId: string;
       name: string;
       source: SkillSource;
+    }
+  | {
+      type: "workspace-reference";
+      path: string;
+      name: string;
+      kind: "file" | "directory";
     };
 
 export interface MessageTextBlock {
@@ -777,6 +786,14 @@ export interface MessageSkillReferenceBlock {
   source: SkillSource;
 }
 
+export interface MessageWorkspaceReferenceBlock {
+  type: "workspace-reference";
+  id: string;
+  path: string;
+  name: string;
+  kind: "file" | "directory";
+}
+
 export interface MessageArtifactBlock {
   type: "artifact";
   artifactId: string;
@@ -790,6 +807,7 @@ export type MessageBlock =
   | MessageToolBlock
   | MessageAttachmentBlock
   | MessageSkillReferenceBlock
+  | MessageWorkspaceReferenceBlock
   | MessageArtifactBlock;
 
 export interface ConversationUsage {
