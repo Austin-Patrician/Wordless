@@ -10,11 +10,14 @@ import { createGenericAgentDriver } from "@wordless/agent-driver-generic";
 import { createAgentDriverRegistry } from "@wordless/agent-driver-sdk";
 import { codingProfile } from "@wordless/profile-coding";
 import { generalProfile } from "@wordless/profile-general";
+import { pptProfile } from "@wordless/profile-ppt";
 import { createProfileRegistry } from "@wordless/profile-sdk";
 import { WordlessRuntime } from "@wordless/runtime";
 import { ElectronCredentialVault } from "../adapters/electron-credential-vault";
+import { OfficeCliService } from "../office/office-cli-service";
+import { createPresentationAgentDriver } from "../office/presentation-driver";
 
-export function createDesktopRuntime(userData: string): WordlessRuntime {
+export function createDesktopRuntime(userData: string, office: OfficeCliService): WordlessRuntime {
   const extensions = new AgentExtensionManager({
     path: path.join(userData, "agent-extensions.json"),
     definitions: [planModeExtension, subagentExtension, contextCompactionExtension],
@@ -33,11 +36,12 @@ export function createDesktopRuntime(userData: string): WordlessRuntime {
     },
     credentialVault: new ElectronCredentialVault(path.join(userData, "credentials.json")),
     defaultWorkspaceRoot: path.join(app.getPath("documents"), "Wordless"),
-    profiles: createProfileRegistry([generalProfile, codingProfile]),
+    profiles: createProfileRegistry([generalProfile, codingProfile, pptProfile]),
     extensions,
     drivers: createAgentDriverRegistry([
       createGenericAgentDriver({ createTools: (context) => createHeadlessReadOnlyTools(context.env) }),
       createCodingAgentDriver({ createExtensionHost: extensions }),
+      createPresentationAgentDriver(office),
     ]),
   });
 }

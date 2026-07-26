@@ -109,6 +109,15 @@ export const UserPromptPartSchema = Type.Union([
     name: Type.String({ minLength: 1, maxLength: 256 }),
     kind: Type.Union([Type.Literal("file"), Type.Literal("directory")]),
   }),
+  Type.Object({
+    type: Type.Literal("artifact-reference"),
+    artifactId: Type.String({ minLength: 1, maxLength: 128 }),
+    kind: Type.Union([Type.Literal("presentation"), Type.Literal("document"), Type.Literal("spreadsheet"), Type.Literal("browser")]),
+    name: Type.String({ minLength: 1, maxLength: 256 }),
+    revision: Type.Integer({ minimum: 1 }),
+    surfaceId: Type.String({ minLength: 1, maxLength: 512 }),
+    locator: Type.String({ minLength: 1, maxLength: 2_048 }),
+  }),
 ]);
 
 export const UserPromptPartsSchema = Type.Array(UserPromptPartSchema, { minItems: 1, maxItems: 1_024 });
@@ -123,6 +132,10 @@ export const SessionDraftSchema = Type.Object({
   connectorIds: Type.Optional(Type.Array(Type.String({ minLength: 1 }), { maxItems: 64 })),
   interactionMode: Type.Optional(AgentInteractionModeSchema),
   toolApprovalMode: Type.Optional(ToolApprovalModeSchema),
+  presentation: Type.Optional(Type.Object({
+    generationMode: Type.Union([Type.Literal("guided"), Type.Literal("quick")]),
+    templateId: Type.Union([Type.String({ minLength: 1, maxLength: 128 }), Type.Null()]),
+  })),
 });
 
 export const CreateWorkspaceSchema = Type.Object({
@@ -669,6 +682,65 @@ export interface SessionContextSnapshot {
   workspace: SessionWorkspaceSummary | null;
   artifacts: SessionArtifactFile[];
   changes: SessionArtifactFile[];
+}
+
+export type ArtifactKind = "presentation" | "document" | "spreadsheet" | "browser";
+
+export interface ArtifactDescriptor {
+  id: string;
+  sessionId: string;
+  kind: ArtifactKind;
+  sourcePath: string;
+  displayName: string;
+  mimeType: string;
+  revision: number;
+  status: "creating" | "ready" | "updating" | "failed";
+  capabilities: Array<"preview" | "select" | "validate" | "export" | "open">;
+  updatedAt: number;
+}
+
+export interface ArtifactIssue {
+  severity: "warning" | "error";
+  message: string;
+  locator?: string;
+}
+
+export interface ArtifactPreviewSurface {
+  id: string;
+  kind: "slide" | "page" | "sheet" | "browser-frame";
+  label: string;
+  thumbnailUrl?: string;
+}
+
+export interface ArtifactPreviewManifest {
+  artifactId: string;
+  revision: number;
+  htmlUrl?: string;
+  watchUrl?: string;
+  surfaces: ArtifactPreviewSurface[];
+  issues: ArtifactIssue[];
+}
+
+export interface ArtifactSelection {
+  artifactId: string;
+  revision: number;
+  surfaceId: string;
+  locator: string;
+  label: string;
+}
+
+export interface PresentationTemplate {
+  id: string;
+  name: string;
+  description: string;
+  tags: string[];
+}
+
+export interface OfficeEngineHealth {
+  status: "ready" | "missing" | "error";
+  version?: string;
+  message?: string;
+  bundled: boolean;
 }
 
 export type SessionWorkspaceTextFile =

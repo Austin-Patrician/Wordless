@@ -7,11 +7,13 @@ import { DesktopNotificationService } from "./notifications/desktop-notification
 import { AppearanceAssetService } from "./appearance/appearance-asset-service";
 import { registerAppearanceProtocol } from "./protocols/appearance";
 import { registerMediaProtocol } from "./protocols/media";
+import { registerPresentationProtocol } from "./protocols/presentation";
 import { createMainWindow, updateTitleBarOverlays } from "./windows/main-window";
 import { createDesktopHostInfo } from "./platform/desktop-platform";
 import { ApplicationMenuController } from "./menu/application-menu";
 import { hydrateShellEnvironment } from "./environment/shell-environment";
 import { DesktopUpdateService } from "./update/update-service";
+import { OfficeCliService } from "./office/office-cli-service";
 
 app.setName("Wordless");
 app.setAppUserModelId("com.wordless.desktop");
@@ -19,6 +21,7 @@ const userData = prepareUserDataPath();
 app.setPath("userData", userData.path);
 
 let runtime: ReturnType<typeof createDesktopRuntime> | undefined;
+let office: OfficeCliService | undefined;
 const hostInfo = createDesktopHostInfo();
 let mainWindow: BrowserWindow | undefined;
 const hasSingleInstance = app.requestSingleInstanceLock();
@@ -44,7 +47,11 @@ app.whenReady().then(async () => {
   const appearanceAssets = new AppearanceAssetService(path.join(userData.path, "appearance", "backgrounds"));
   registerAppearanceProtocol(path.join(userData.path, "appearance", "backgrounds"));
   registerMediaProtocol(path.join(userData.path, "media-assets"));
-  runtime = createDesktopRuntime(userData.path);
+  const presentationArtifactsRoot = path.join(userData.path, "presentation-artifacts");
+  registerPresentationProtocol(presentationArtifactsRoot);
+  const officeResourcesPath = app.isPackaged ? process.resourcesPath : path.resolve(__dirname, "../../resources");
+  office = new OfficeCliService({ artifactsRoot: presentationArtifactsRoot, resourcesPath: officeResourcesPath });
+  runtime = createDesktopRuntime(userData.path, office);
   await runtime.initialize();
   const notifications = new DesktopNotificationService();
   runtime.subscribe((event) => {
@@ -67,6 +74,7 @@ app.whenReady().then(async () => {
     checkForUpdates: () => updateService.check(),
     downloadUpdate: () => updateService.download(),
     installUpdate: () => updateService.install(),
+    office,
   });
   mainWindow = createMainWindow(path.join(__dirname, "preload.cjs"), runtime.getSnapshot().preferences);
   mainWindow.on("focus", () => notifications.clearBadge());
@@ -85,4 +93,7 @@ app.on("window-all-closed", () => {
   if (process.platform !== "darwin") app.quit();
 });
 
-app.on("before-quit", () => runtime?.dispose());
+app.on("before-quit", () => {
+  void office?.dispose();
+  runtime?.dispose();
+});

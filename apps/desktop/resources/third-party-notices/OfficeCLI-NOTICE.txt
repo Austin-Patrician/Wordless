@@ -1,0 +1,9 @@
+OfficeCLI
+Copyright 2026 OfficeCLI (https://OfficeCLI.AI)
+
+Created and maintained by goworm.
+
+This product is licensed under the Apache License, Version 2.0.
+You may obtain a copy of the License in the OfficeCLI source distribution.
+
+This NOTICE file is retained for the OfficeCLI binary and templates bundled by Wordless.

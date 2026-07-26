@@ -241,7 +241,7 @@ export const BUILTIN_ENTRIES: WorkbenchEntryDefinition[] = [
     iconKey: "presentation",
     profile: { id: "ppt", version: "1" },
     workbenchId: "presentation",
-    availability: "unavailable",
+    availability: "available",
     modelRequirements: { requiresToolUse: true },
   },
   {
@@ -1149,8 +1149,7 @@ export class WordlessRuntime {
   }
 
   async searchWorkspace(workspaceId: string, query: string): Promise<WorkspaceFileEntry[]> {
-    const workspace = this.requireWorkspace(workspaceId);
-    if (workspace.availability !== "available") throw new Error("The selected workspace is unavailable");
+    const workspace = await this.resolveAvailableWorkspace(workspaceId);
     return await this.searchWorkspaceRoot(workspace.canonicalRootPath, query);
   }
 
@@ -1232,8 +1231,7 @@ export class WordlessRuntime {
     }
     const model = this.resolveSessionModel(draft, entry);
     this.assertInteractionModeAvailable(draft.interactionMode ?? "default", profile.driverId, model);
-    const workspace = draft.workspaceId ? this.requireWorkspace(draft.workspaceId) : undefined;
-    if (workspace?.availability !== "available") throw new Error("The selected workspace is unavailable");
+    const workspace = draft.workspaceId ? await this.resolveAvailableWorkspace(draft.workspaceId) : undefined;
     if (entry.workbenchId === "code" && !workspace) throw new Error("Coding sessions require a workspace");
 
     const now = Date.now();
@@ -1281,7 +1279,10 @@ export class WordlessRuntime {
     this.database.upsertSession(record);
     this.toolApprovalModes.set(id, draft.toolApprovalMode ?? "manual");
     this.rememberEntryModel(entry.id, model);
-    void this.promptSession(id, prompt, attachmentPaths, skillIds).catch(() => {});
+    const initialPrompt = entry.workbenchId === "presentation"
+      ? `${prompt}\n\n<wordless-presentation mode="${draft.presentation?.generationMode ?? "guided"}" template="${draft.presentation?.templateId ?? "auto"}">\nUse the Presentation workflow. In guided mode, inspect the request, propose a slide outline, and wait for confirmation before creating the deck. In quick mode, create the first complete draft directly.\n</wordless-presentation>`
+      : prompt;
+    void this.promptSession(id, initialPrompt, attachmentPaths, skillIds).catch(() => {});
     return this.requireSession(id);
   }
 
@@ -2486,6 +2487,24 @@ export class WordlessRuntime {
     const workspace = this.database.listWorkspaces().find((candidate) => candidate.id === id);
     if (!workspace) throw new Error("Workspace not found");
     return workspace;
+  }
+
+  private async resolveAvailableWorkspace(id: string): Promise<WorkspaceRecord> {
+    const workspace = this.requireWorkspace(id);
+    let available = false;
+    try {
+      available = (await stat(workspace.canonicalRootPath)).isDirectory();
+    } catch {
+      available = false;
+    }
+    const availability = available ? "available" as const : "missing" as const;
+    const current = workspace.availability === availability ? workspace : { ...workspace, availability, updatedAt: Date.now() };
+    if (current !== workspace) {
+      this.database.upsertWorkspace(current);
+      await this.skillRegistry.refresh(this.database.listWorkspaces());
+    }
+    if (!available) throw new Error("The selected workspace is unavailable. Select an available folder and try again.");
+    return current;
   }
 
   private requireWorkspaceSession(sessionId: string): SessionRecord {

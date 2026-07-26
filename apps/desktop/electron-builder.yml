@@ -9,6 +9,13 @@ files:
   - dist/**
   - package.json
 asar: true
+extraResources:
+  - from: resources/officecli/${os}-${arch}
+    to: officecli/${os}-${arch}
+  - from: resources/presentation-templates
+    to: presentation-templates
+  - from: resources/third-party-notices
+    to: third-party-notices
 extraMetadata:
   dependencies:
     ajv: '^8.20.0'
@@ -19,10 +26,12 @@ mac:
   target:
     - target: dmg
       arch:
-        - universal
+        - arm64
+        - x64
     - target: zip
       arch:
-        - universal
+        - arm64
+        - x64
   identity: '-'
   hardenedRuntime: false
   gatekeeperAssess: false

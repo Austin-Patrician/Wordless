@@ -1,9 +1,9 @@
 import type { AgentInteractionModeId, AppearanceBackgroundAsset, AppPreferences, ConfiguredModelKind, ConnectorConfiguration, ConnectorPromptSummary, ConnectorResourceSummary, ConnectorSummary, MediaInlineImage, MediaLayoutUpdate, MediaOperationRequest, MediaProject, ModelReference, SessionAccessLevel, SessionDraft, SessionRecord, UsageReport, UsageReportQuery, UserPromptPart, WorkspaceRecord } from "@wordless/domain";
 import type { AgentExtensionSnapshot, JsonObject } from "@wordless/agent-extension-sdk";
-import type { AppSnapshot, DesktopHostEvent, DesktopHostInfo, DesktopMenuId, RuntimeEventEnvelope, SessionArtifactDiff, SessionContextSnapshot, SessionHistoryPage, SessionHistoryPageRequest, SessionMessageSearchRequest, SessionMessageSearchResponse, SessionSnapshot, SessionViewSnapshot, SessionWorkspaceTextFile, WorkspaceFileEntry } from "@wordless/protocol";
+import type { AppSnapshot, ArtifactDescriptor, ArtifactIssue, ArtifactPreviewManifest, ArtifactSelection, DesktopHostEvent, DesktopHostInfo, DesktopMenuId, OfficeEngineHealth, PresentationTemplate, RuntimeEventEnvelope, SessionArtifactDiff, SessionContextSnapshot, SessionHistoryPage, SessionHistoryPageRequest, SessionMessageSearchRequest, SessionMessageSearchResponse, SessionSnapshot, SessionViewSnapshot, SessionWorkspaceTextFile, WorkspaceFileEntry } from "@wordless/protocol";
 import type { ToolApprovalMode } from "@wordless/domain";
 
-export const DESKTOP_BRIDGE_VERSION = 19;
+export const DESKTOP_BRIDGE_VERSION = 20;
 
 export interface DesktopBridge {
   readonly version: typeof DESKTOP_BRIDGE_VERSION;
@@ -41,6 +41,15 @@ export interface DesktopBridge {
   promptSession(sessionId: string, parts: UserPromptPart[], attachments?: Array<{ path: string }>): Promise<void>;
   compactSession(sessionId: string): Promise<void>;
   getSessionContext(sessionId: string): Promise<SessionContextSnapshot>;
+  getOfficeEngineHealth(): Promise<OfficeEngineHealth>;
+  listPresentationTemplates(): Promise<PresentationTemplate[]>;
+  listPresentationArtifacts(sessionId: string): Promise<ArtifactDescriptor[]>;
+  createPresentationArtifact(sessionId: string, input?: { name?: string; templateId?: string | null }): Promise<ArtifactDescriptor>;
+  getPresentationPreview(sessionId: string, artifactId: string, force?: boolean): Promise<ArtifactPreviewManifest>;
+  getPresentationSelection(sessionId: string, artifactId: string, surfaceId?: string): Promise<ArtifactSelection | null>;
+  validatePresentationArtifact(sessionId: string, artifactId: string): Promise<ArtifactIssue[]>;
+  openPresentationArtifact(sessionId: string, artifactId: string): Promise<void>;
+  revealPresentationArtifact(sessionId: string, artifactId: string): Promise<void>;
   getSessionArtifactDiff(sessionId: string, path: string): Promise<SessionArtifactDiff>;
   listSessionWorkspaceDirectory(sessionId: string, path: string): Promise<WorkspaceFileEntry[]>;
   searchSessionWorkspace(sessionId: string, query: string): Promise<WorkspaceFileEntry[]>;
@@ -131,6 +140,15 @@ const requiredMethods: Array<Exclude<keyof DesktopBridge, "version">> = [
   "promptSession",
   "compactSession",
   "getSessionContext",
+  "getOfficeEngineHealth",
+  "listPresentationTemplates",
+  "listPresentationArtifacts",
+  "createPresentationArtifact",
+  "getPresentationPreview",
+  "getPresentationSelection",
+  "validatePresentationArtifact",
+  "openPresentationArtifact",
+  "revealPresentationArtifact",
   "getSessionArtifactDiff",
   "listSessionWorkspaceDirectory",
   "searchSessionWorkspace",

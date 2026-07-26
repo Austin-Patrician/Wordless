@@ -64,6 +64,7 @@ import {
 } from "@wordless/protocol";
 import { WordlessRuntime } from "@wordless/runtime";
 import { AppearanceAssetService } from "../appearance/appearance-asset-service";
+import { OfficeCliService } from "../office/office-cli-service";
 import { updateTitleBarOverlays } from "../windows/main-window";
 
 function parsePayload<T>(schema: TSchema, payload: unknown): T {
@@ -105,6 +106,7 @@ type DesktopIpcOptions = {
   checkForUpdates: () => Promise<void>;
   downloadUpdate: () => Promise<void>;
   installUpdate: () => void;
+  office: OfficeCliService;
 };
 
 function isDesktopMenuId(value: unknown): value is DesktopMenuId {
@@ -228,6 +230,41 @@ export function registerRuntimeIpc(runtime: WordlessRuntime, appearanceAssets: A
     await runtime.compactSession(input.sessionId);
   });
   ipcMain.handle("wordless:session:context", (_event, sessionId: unknown) => runtime.getSessionContext(String(sessionId)));
+  ipcMain.handle("wordless:presentation:health", () => options.office.health());
+  ipcMain.handle("wordless:presentation:templates", () => options.office.listTemplates());
+  ipcMain.handle("wordless:presentation:list", async (_event, payload: unknown) => {
+    const input = parsePayload<{ sessionId: string }>(Type.Object({ sessionId: Type.String({ minLength: 1 }) }), payload);
+    return await options.office.list(input.sessionId);
+  });
+  ipcMain.handle("wordless:presentation:create", async (_event, payload: unknown) => {
+    const input = parsePayload<{ sessionId: string; name?: string; templateId?: string | null }>(Type.Object({
+      sessionId: Type.String({ minLength: 1 }),
+      name: Type.Optional(Type.String({ minLength: 1, maxLength: 120 })),
+      templateId: Type.Optional(Type.Union([Type.String({ minLength: 1, maxLength: 128 }), Type.Null()])),
+    }), payload);
+    return await options.office.create(input.sessionId, runtime.getSessionRuntimeRoot(input.sessionId), { name: input.name, templateId: input.templateId });
+  });
+  ipcMain.handle("wordless:presentation:preview", async (_event, payload: unknown) => {
+    const input = parsePayload<{ sessionId: string; artifactId: string; force?: boolean }>(Type.Object({ sessionId: Type.String({ minLength: 1 }), artifactId: Type.String({ minLength: 1 }), force: Type.Optional(Type.Boolean()) }), payload);
+    return await options.office.preview(input.sessionId, runtime.getSessionRuntimeRoot(input.sessionId), input.artifactId, { force: input.force });
+  });
+  ipcMain.handle("wordless:presentation:selection", async (_event, payload: unknown) => {
+    const input = parsePayload<{ sessionId: string; artifactId: string; surfaceId?: string }>(Type.Object({ sessionId: Type.String({ minLength: 1 }), artifactId: Type.String({ minLength: 1 }), surfaceId: Type.Optional(Type.String({ minLength: 1 })) }), payload);
+    return await options.office.selection(input.sessionId, runtime.getSessionRuntimeRoot(input.sessionId), input.artifactId, input.surfaceId);
+  });
+  ipcMain.handle("wordless:presentation:validate", async (_event, payload: unknown) => {
+    const input = parsePayload<{ sessionId: string; artifactId: string }>(Type.Object({ sessionId: Type.String({ minLength: 1 }), artifactId: Type.String({ minLength: 1 }) }), payload);
+    return await options.office.validate(input.sessionId, runtime.getSessionRuntimeRoot(input.sessionId), input.artifactId);
+  });
+  ipcMain.handle("wordless:presentation:open", async (_event, payload: unknown) => {
+    const input = parsePayload<{ sessionId: string; artifactId: string }>(Type.Object({ sessionId: Type.String({ minLength: 1 }), artifactId: Type.String({ minLength: 1 }) }), payload);
+    const failure = await shell.openPath(await options.office.sourceForOpen(input.sessionId, runtime.getSessionRuntimeRoot(input.sessionId), input.artifactId));
+    if (failure) throw new Error(failure);
+  });
+  ipcMain.handle("wordless:presentation:reveal", async (_event, payload: unknown) => {
+    const input = parsePayload<{ sessionId: string; artifactId: string }>(Type.Object({ sessionId: Type.String({ minLength: 1 }), artifactId: Type.String({ minLength: 1 }) }), payload);
+    shell.showItemInFolder(await options.office.sourceForOpen(input.sessionId, runtime.getSessionRuntimeRoot(input.sessionId), input.artifactId));
+  });
   ipcMain.handle("wordless:session:artifact:diff", async (_event, payload: unknown) => {
     const input = parsePayload<{ sessionId: string; path: string }>(WorkspaceFileRequestSchema, payload);
     return await runtime.getSessionArtifactDiff(input.sessionId, input.path);

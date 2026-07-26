@@ -7,8 +7,9 @@ import { usePreferences } from "../../shared/preferences";
 import { useRuntimeClient } from "../../shared/runtime";
 import type { WorkspaceAttachment } from "../thread/Composer";
 import { DocumentPreview } from "./DocumentPreview";
+import type { ContextPanelView } from "../workbench/context-panel-types";
 
-export type ContextPanelView = "overview" | "files" | "changes";
+export type { ContextPanelView } from "../workbench/context-panel-types";
 
 type CodingContextPanelProps = {
   onAttachFile: (attachment: WorkspaceAttachment) => void;

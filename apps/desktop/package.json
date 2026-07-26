@@ -15,11 +15,12 @@
     "electron:install": "node ../../node_modules/electron/install.js",
     "build:electron": "node scripts/build-electron.mjs",
     "build:renderer": "vite build --config vite.renderer.config.ts",
-    "build:desktop": "npm run build:renderer && npm run build:electron",
-    "dev:electron": "node scripts/build-electron.mjs && node scripts/dev-electron.mjs",
+    "prepare:officecli": "node scripts/prepare-officecli-assets.mjs",
+    "build:desktop": "npm run prepare:officecli && npm run build:renderer && npm run build:electron",
+    "dev:electron": "npm run prepare:officecli && node scripts/build-electron.mjs && node scripts/dev-electron.mjs",
     "test:host": "node --test test/*.test.ts",
-    "dist:mac": "npm run build:desktop && electron-builder --config electron-builder.yml --mac --universal",
-    "dist:mac:preview": "npm run build:desktop && CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --config electron-builder.yml --mac --universal"
+    "dist:mac": "npm run build:desktop && electron-builder --config electron-builder.yml --mac",
+    "dist:mac:preview": "npm run build:desktop && CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --config electron-builder.yml --mac"
   },
   "dependencies": {
     "ajv": "^8.20.0",
@@ -42,6 +43,7 @@
     "@wordless/model-config": "0.0.0",
     "@wordless/profile-coding": "0.0.0",
     "@wordless/profile-general": "0.0.0",
+    "@wordless/profile-ppt": "0.0.0",
     "@wordless/profile-sdk": "0.0.0",
     "@wordless/protocol": "0.0.0",
     "@wordless/runtime": "0.0.0",

@@ -8,6 +8,8 @@ export type SessionJournalFormat = "wordless-agent-v1" | "wordless-coding-v1";
 
 export type WorkbenchId = "conversation" | "code" | "presentation" | "workbook" | "analysis" | "ui-preview" | "media-canvas";
 
+export type ArtifactKind = "presentation" | "document" | "spreadsheet" | "browser";
+
 export type WorkspaceKind = "managed" | "linked";
 
 export type WorkspaceAvailability = "available" | "missing";
@@ -136,6 +138,13 @@ export interface SkillCatalogSnapshot {
 export type SessionAccessLevel = "default" | "full";
 
 export type ToolApprovalMode = "manual" | "auto";
+
+export type PresentationGenerationMode = "guided" | "quick";
+
+export interface PresentationLaunchOptions {
+  generationMode: PresentationGenerationMode;
+  templateId: string | null;
+}
 
 export type ProviderConnectionKind = "builtin" | "openai-compatible";
 
@@ -575,6 +584,7 @@ export interface SessionDraft {
   connectorIds?: string[];
   interactionMode?: AgentInteractionModeId;
   toolApprovalMode?: ToolApprovalMode;
+  presentation?: PresentationLaunchOptions;
 }
 
 export type ClarificationQuestionAnswerType = "choice" | "text" | "confirm";
@@ -637,6 +647,15 @@ export type UserPromptPart =
       path: string;
       name: string;
       kind: "file" | "directory";
+    }
+  | {
+      type: "artifact-reference";
+      artifactId: string;
+      kind: ArtifactKind;
+      name: string;
+      revision: number;
+      surfaceId: string;
+      locator: string;
     };
 
 export interface MessageTextBlock {
@@ -799,6 +818,9 @@ export interface MessageArtifactBlock {
   artifactId: string;
   kind: string;
   name: string;
+  revision?: number;
+  surfaceId?: string;
+  locator?: string;
 }
 
 export type MessageBlock =

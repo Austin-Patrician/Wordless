@@ -125,6 +125,8 @@ const SKILL_REFERENCE_START = "<wordless-skill-reference>";
 const SKILL_REFERENCE_END = "</wordless-skill-reference>";
 const WORKSPACE_REFERENCE_START = "<wordless-workspace-reference>";
 const WORKSPACE_REFERENCE_END = "</wordless-workspace-reference>";
+const ARTIFACT_REFERENCE_START = "<wordless-artifact-reference>";
+const ARTIFACT_REFERENCE_END = "</wordless-artifact-reference>";
 
 type SerializedSkillReference = {
   version: 1;
@@ -140,6 +142,17 @@ type SerializedWorkspaceReference = {
   path: string;
   name: string;
   kind: "file" | "directory";
+};
+
+type SerializedArtifactReference = {
+  version: 1;
+  id: string;
+  artifactId: string;
+  kind: "presentation" | "document" | "spreadsheet" | "browser";
+  name: string;
+  revision: number;
+  surfaceId: string;
+  locator: string;
 };
 
 type SerializedPromptContext = {
@@ -166,6 +179,10 @@ export function formatPromptWithSkillReferences(parts: readonly UserPromptPart[]
     if (part.type === "workspace-reference") {
       const reference: SerializedWorkspaceReference = { version: 1, id: `${part.path}:${index}`, path: part.path, name: part.name, kind: part.kind };
       return `${WORKSPACE_REFERENCE_START}${encodeURIComponent(JSON.stringify(reference))}${WORKSPACE_REFERENCE_END}`;
+    }
+    if (part.type === "artifact-reference") {
+      const reference: SerializedArtifactReference = { version: 1, id: `${part.artifactId}:${part.surfaceId}:${index}`, artifactId: part.artifactId, kind: part.kind, name: part.name, revision: part.revision, surfaceId: part.surfaceId, locator: part.locator };
+      return `${ARTIFACT_REFERENCE_START}${encodeURIComponent(JSON.stringify(reference))}${ARTIFACT_REFERENCE_END}`;
     }
     const reference: SerializedSkillReference = {
       version: 1,
@@ -260,6 +277,35 @@ function projectPromptWorkspaceReferences(text: string): MessageBlock[] {
   return blocks;
 }
 
+function parseArtifactReference(value: string): SerializedArtifactReference | undefined {
+  try {
+    const parsed = JSON.parse(decodeURIComponent(value)) as unknown;
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return undefined;
+    const record = parsed as Record<string, unknown>;
+    if (record.version !== 1 || typeof record.id !== "string" || typeof record.artifactId !== "string" || typeof record.name !== "string" || typeof record.revision !== "number" || !Number.isInteger(record.revision) || record.revision < 1 || typeof record.surfaceId !== "string" || typeof record.locator !== "string") return undefined;
+    if (record.kind !== "presentation" && record.kind !== "document" && record.kind !== "spreadsheet" && record.kind !== "browser") return undefined;
+    return record as SerializedArtifactReference;
+  } catch {
+    return undefined;
+  }
+}
+
+function projectPromptArtifactReferences(text: string): MessageBlock[] {
+  const blocks: MessageBlock[] = [];
+  const pattern = new RegExp(`${ARTIFACT_REFERENCE_START}([^<]*)${ARTIFACT_REFERENCE_END}`, "g");
+  let cursor = 0;
+  for (const match of text.matchAll(pattern)) {
+    const reference = parseArtifactReference(match[1] ?? "");
+    if (!reference) continue;
+    const index = match.index ?? 0;
+    if (index > cursor) blocks.push({ type: "text", text: text.slice(cursor, index) });
+    blocks.push({ type: "artifact", artifactId: reference.artifactId, kind: reference.kind, name: reference.name, revision: reference.revision, surfaceId: reference.surfaceId, locator: reference.locator });
+    cursor = index + match[0].length;
+  }
+  if (cursor < text.length) blocks.push({ type: "text", text: text.slice(cursor) });
+  return blocks;
+}
+
 export function splitPromptAttachments(text: string): { text: string; attachments: MessageAttachmentBlock[] } {
   const start = text.lastIndexOf(WORKSPACE_ATTACHMENT_START);
   if (start === -1 || !text.endsWith(WORKSPACE_ATTACHMENT_END)) return { text, attachments: [] };
@@ -301,9 +347,15 @@ export function projectUserMessageContent(content: unknown): MessageBlock[] {
   const blocks: MessageBlock[] = [];
   const appendText = (text: string) => {
     const parsed = splitPromptAttachments(text);
-    for (const block of projectPromptWorkspaceReferences(parsed.text)) {
-      if (block.type === "text") blocks.push(...projectPromptSkillReferences(block.text));
-      else blocks.push(block);
+    for (const artifactBlock of projectPromptArtifactReferences(parsed.text)) {
+      if (artifactBlock.type !== "text") {
+        blocks.push(artifactBlock);
+        continue;
+      }
+      for (const block of projectPromptWorkspaceReferences(artifactBlock.text)) {
+        if (block.type === "text") blocks.push(...projectPromptSkillReferences(block.text));
+        else blocks.push(block);
+      }
     }
     blocks.push(...parsed.attachments);
   };

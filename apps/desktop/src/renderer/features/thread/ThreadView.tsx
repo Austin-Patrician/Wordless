@@ -1,7 +1,7 @@
-import { Archive, ArrowDown, CircleAlert, Command, Copy, FileText, Folder, LoaderCircle } from "lucide-react";
+import { Archive, ArrowDown, CircleAlert, Command, Copy, FileText, Folder, Layers3, LoaderCircle } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Virtuoso, type VirtuosoHandle } from "react-virtuoso";
-import type { ConversationMessage, RuntimeEventEnvelope, SessionHistoryPage, SessionSnapshot, SessionTurnSummary, SessionViewSnapshot } from "@wordless/protocol";
+import type { ArtifactSelection, ConversationMessage, RuntimeEventEnvelope, SessionHistoryPage, SessionSnapshot, SessionTurnSummary, SessionViewSnapshot } from "@wordless/protocol";
 import { calculateCurrentTurnUsage, type ContextCompactionRecord, type MessageToolBlock, type MessageUserRequest, type ModelReference, type ToolApprovalMode, type ToolOperationApproval, type UserPromptPart, type UserRequestAnswer, type WorkbenchId } from "@wordless/domain";
 import { usePreferences } from "../../shared/preferences";
 import { useRuntime, useRuntimeClient } from "../../shared/runtime";
@@ -13,10 +13,13 @@ import { ConversationDensityRail } from "./ConversationDensityRail";
 import { createThreadTimeline, dataIndexFromReportedIndex, firstItemIndexAfterPrepend, threadTimelineItemCount, type ThreadTimelineItem } from "./thread-virtual-list";
 import { advanceAssistantRunPresentation, assistantRunActivityAt, assistantRunPresentationFromMessages, createAssistantRunPresentation, isNewerRunEvent, mergeCompletedAssistantMessage, nextAssistantRunActivityUpdateAt, runEventCursor, type AssistantRunActivity, type AssistantRunPresentation, type RunEventCursor } from "./thread-run-state";
 import { TurnTokenUsageRow } from "./TurnTokenUsageRow";
+import { ThreadContentFrame } from "./ThreadContentFrame";
 import wordlessIcon from "../../../icons/common-icons/wordless.png";
 
 type ThreadViewProps = {
+  artifactSelection?: ArtifactSelection | null;
   messageNavigationTarget?: ThreadMessageNavigationTarget | null;
+  onArtifactSelectionConsumed?: () => void;
   onMessageNavigationConsumed?: (requestId: number) => void;
   pendingWorkspaceReferences: InlineWorkspaceReferenceToken[];
   onPendingWorkspaceReferencesConsumed: () => void;
@@ -470,16 +473,17 @@ function MessageBody({ messages, onHandoffClarification, onLoadToolOutput, onRes
   const { t } = usePreferences();
   const message = messages[0]!;
   if (message.role === "user") {
-    const contentBlocks = message.blocks.filter((block) => block.type === "text" || block.type === "skill-reference" || block.type === "workspace-reference");
+    const contentBlocks = message.blocks.filter((block) => block.type === "text" || block.type === "skill-reference" || block.type === "workspace-reference" || block.type === "artifact");
     const attachments = message.blocks.filter((block) => block.type === "attachment");
     return (
       <div className={`group relative min-h-px ${isFirstMessage ? "pt-4" : "pt-8"} outline-none focus-visible:ring-2 focus-visible:ring-ring ${contentBlocks.length > 0 ? "pb-7" : ""}`} data-thread-message-id={message.id} tabIndex={-1}>
-        <div className="ml-auto max-w-[560px]">
-          {contentBlocks.length > 0 ? <div className="rounded-[10px] bg-[#f0f0ed] px-3.5 py-2.5 text-[14px] leading-6 text-[#343431] dark:bg-muted dark:text-foreground">{contentBlocks.map((block, index) => block.type === "text"
-            ? <span className="whitespace-pre-wrap" key={`text-${index}`}>{block.text}</span>
+        <div className="ml-auto flex w-fit max-w-[88%] flex-col items-end sm:max-w-[560px]">
+          {contentBlocks.length > 0 ? <div className="w-fit max-w-full break-words rounded-[10px] bg-[#f0f0ed] px-3.5 py-2.5 text-[14px] leading-6 text-[#343431] dark:bg-muted dark:text-foreground">{contentBlocks.map((block, index) => block.type === "text"
+            ? <span className="whitespace-pre-wrap break-words" key={`text-${index}`}>{block.text}</span>
             : block.type === "workspace-reference" ? <span className="mx-1.5 inline-flex h-6 max-w-[230px] select-none items-center gap-1 rounded-[5px] border border-[#bed7cf] bg-[#eef8f5] px-1.5 align-middle text-[13px] font-normal leading-6 text-[#34574d] shadow-[inset_0_1px_0_rgba(255,255,255,0.65)] dark:border-[#3b675c] dark:bg-[#20332d] dark:text-[#c5e3d9]" key={block.id} title={block.path}>{block.kind === "directory" ? <Folder aria-hidden className="h-3 w-3 shrink-0 text-[#4f8b79]" /> : <FileText aria-hidden className="h-3 w-3 shrink-0 text-[#4f8b79]" />}<span className="min-w-0 truncate">@{block.name}</span></span>
+            : block.type === "artifact" ? <span className="mx-1.5 inline-flex h-6 max-w-[250px] select-none items-center gap-1 rounded-[5px] border border-[#b8d6cb] bg-[#edf8f4] px-1.5 align-middle text-[13px] font-normal leading-6 text-[#345f53] shadow-[inset_0_1px_0_rgba(255,255,255,0.65)] dark:border-[#416b5e] dark:bg-[#20372f] dark:text-[#bae2d3]" key={`${block.artifactId}:${block.surfaceId ?? block.name}`} title={block.locator ?? block.name}><Layers3 aria-hidden className="h-3 w-3 shrink-0 text-[#4f8b79] dark:text-[#9ccfbd]" /><span className="min-w-0 truncate">{block.name}</span></span>
             : <span className="mx-1.5 inline-flex h-6 max-w-[210px] select-none items-center gap-1 rounded-[5px] border border-[#deded9] bg-[#f8f8f6] px-1.5 align-middle text-[13px] font-normal leading-6 text-[#45453f] shadow-[inset_0_1px_0_rgba(255,255,255,0.65)] dark:border-[#4b4c45] dark:bg-[#2b2c27] dark:text-[#deded8]" key={block.id} title={block.name}><Command aria-hidden className="h-3 w-3 shrink-0 text-[#686861] dark:text-[#b7b8ae]" /><span className="min-w-0 truncate">{block.name}</span></span>)}</div> : null}
-          {attachments.length > 0 ? <div className="mt-1 flex flex-wrap justify-end gap-1.5">{attachments.map((attachment) => <span className="rounded-[5px] bg-[#f0f0ed] px-2 py-1 font-mono text-[11px] text-[#6d6d67] dark:bg-muted" key={attachment.id}>{attachment.name}</span>)}</div> : null}
+          {attachments.length > 0 ? <div className="mt-1 flex w-fit max-w-full flex-wrap justify-end gap-1.5">{attachments.map((attachment) => <span className="max-w-full truncate rounded-[5px] bg-[#f0f0ed] px-2 py-1 font-mono text-[11px] text-[#6d6d67] dark:bg-muted" key={attachment.id}>{attachment.name}</span>)}</div> : null}
         </div>
         {contentBlocks.length > 0 ? <button aria-label={t("copyMessage")} className="pointer-events-none absolute bottom-0 right-0 grid h-6 w-6 place-items-center rounded-[5px] text-[#898981] opacity-0 transition-opacity hover:bg-[#efefeb] hover:text-[#454540] focus-visible:pointer-events-auto focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-hover:opacity-100 group-focus-within:opacity-100 dark:hover:bg-muted" onClick={() => void navigator.clipboard.writeText(contentBlocks.map((block) => block.type === "text" ? block.text : `@${block.name}`).join(""))} title={t("copyMessage")} type="button"><Copy className="h-3.5 w-3.5" /></button> : null}
       </div>
@@ -602,7 +606,7 @@ function waitForScrollSettled(element: HTMLElement, reduceMotion: boolean, onSet
   };
 }
 
-export function ThreadView({ messageNavigationTarget, onMessageNavigationConsumed, onOpenModels, onOpenSkillImport, onOpenSkills, pendingWorkspaceReferences, onPendingWorkspaceReferencesConsumed, sessionId }: ThreadViewProps) {
+export function ThreadView({ artifactSelection, messageNavigationTarget, onArtifactSelectionConsumed, onMessageNavigationConsumed, onOpenModels, onOpenSkillImport, onOpenSkills, pendingWorkspaceReferences, onPendingWorkspaceReferencesConsumed, sessionId }: ThreadViewProps) {
   const client = useRuntimeClient();
   const { snapshot: appSnapshot } = useRuntime();
   const { reduceMotion, t } = usePreferences();
@@ -1046,15 +1050,15 @@ export function ThreadView({ messageNavigationTarget, onMessageNavigationConsume
           key={`${sessionId}:${virtualListVersion}`}
           atBottomStateChange={(atBottom) => { followLatestRef.current = atBottom; setIsAtBottom(atBottom); }}
           className="h-full"
-          components={{ Header: () => planExtensionEnabled && planMode !== "off" ? <div className="mx-auto w-full max-w-[820px] px-5 pb-7 pt-6 sm:px-8"><PlanModePanel mode={planMode} snapshot={snapshot} /></div> : <div className="h-6" />, Footer: () => <div className={showDensityRail ? "mx-auto w-full max-w-[820px] pb-10 pl-[58px] pr-5 sm:pl-[70px] sm:pr-8" : "mx-auto w-full max-w-[820px] px-5 pb-10 sm:px-8"}>{runPresentation && !snapshot.isCompacting && (runPresentation.assistantMessageId === null || !snapshot.messages.some((message) => message.id === runPresentation.assistantMessageId)) ? <AssistantRunPlaceholder presentation={runPresentation} /> : null}{snapshot.isCompacting ? <ContextCompactionPending trigger={snapshot.compactionTrigger} /> : null}{snapshot.compactionError ? <ContextCompactionFailure message={snapshot.compactionError} onRetry={() => void compactContext()} trigger={snapshot.compactionTrigger} /> : null}</div> }}
+          components={{ Header: () => planExtensionEnabled && planMode !== "off" ? <ThreadContentFrame className="pb-7 pt-6" densityRail={showDensityRail}><PlanModePanel mode={planMode} snapshot={snapshot} /></ThreadContentFrame> : <div className="h-6" />, Footer: () => <ThreadContentFrame className="pb-10" densityRail={showDensityRail}>{runPresentation && !snapshot.isCompacting && (runPresentation.assistantMessageId === null || !snapshot.messages.some((message) => message.id === runPresentation.assistantMessageId)) ? <AssistantRunPlaceholder presentation={runPresentation} /> : null}{snapshot.isCompacting ? <ContextCompactionPending trigger={snapshot.compactionTrigger} /> : null}{snapshot.compactionError ? <ContextCompactionFailure message={snapshot.compactionError} onRetry={() => void compactContext()} trigger={snapshot.compactionTrigger} /> : null}</ThreadContentFrame> }}
           computeItemKey={(_index, item) => item.type === "compaction" ? item.compaction.id : item.messages[0]!.id}
           data={timeline}
           endReached={() => void loadNewer()}
           firstItemIndex={firstItemIndex}
           followOutput={isAtBottom ? "auto" : false}
-          itemContent={(index, item) => <div className={showDensityRail ? "mx-auto w-full max-w-[820px] pl-[58px] pr-5 sm:pl-[70px] sm:pr-8" : "mx-auto w-full max-w-[820px] px-5 sm:px-8"}>{item.type === "compaction"
+          itemContent={(index, item) => <ThreadContentFrame densityRail={showDensityRail}>{item.type === "compaction"
             ? <ContextCompactionActivity compaction={item.compaction} />
-            : <MessageBody canPlan={canPlan} isFirstMessage={item.messages[0]?.id === snapshot.messages[0]?.id} messages={item.messages} onHandoffClarification={handoffClarification} onLoadToolOutput={loadToolOutput} onResolveApproval={resolveApproval} onResolveClarificationQuestion={resolveClarificationQuestion} onResolvePlanResult={resolvePlanResult} onResolveUserRequest={resolveUserRequest} planMode={planMode} runPresentation={runPresentation} showFooter={!snapshot.isRunning && index === firstItemIndex + timeline.length - 1} workbenchId={snapshot.session.workbenchId} />}</div>}
+            : <MessageBody canPlan={canPlan} isFirstMessage={item.messages[0]?.id === snapshot.messages[0]?.id} messages={item.messages} onHandoffClarification={handoffClarification} onLoadToolOutput={loadToolOutput} onResolveApproval={resolveApproval} onResolveClarificationQuestion={resolveClarificationQuestion} onResolvePlanResult={resolvePlanResult} onResolveUserRequest={resolveUserRequest} planMode={planMode} runPresentation={runPresentation} showFooter={!snapshot.isRunning && index === firstItemIndex + timeline.length - 1} workbenchId={snapshot.session.workbenchId} />}</ThreadContentFrame>}
           rangeChanged={(range) => {
             const middleReportedIndex = range.startIndex + Math.floor((range.endIndex - range.startIndex) / 2);
             const item = timeline[dataIndexFromReportedIndex(middleReportedIndex, firstItemIndex)];
@@ -1066,8 +1070,8 @@ export function ThreadView({ messageNavigationTarget, onMessageNavigationConsume
         <ConversationDensityRail activeTurnId={activeTurnId} fallbackExcerpt={t("unnamedMessage")} navigationLabel={t("conversationNavigation")} onNavigate={(turnId) => void navigateToTurn(turnId)} summaries={history?.turnSummaries ?? []} />
         {!isAtBottom ? <button aria-label="Jump to latest message" className="absolute bottom-4 left-1/2 grid h-8 w-8 -translate-x-1/2 place-items-center rounded-full border border-[#deded8] bg-white text-[#4d4d48] shadow-[0_4px_12px_rgba(0,0,0,0.10)] hover:bg-[#f5f5f2] dark:border-border dark:bg-card dark:text-foreground dark:hover:bg-muted" onClick={() => scrollToBottom()} type="button"><ArrowDown className="h-4 w-4" /></button> : null}
       </div>
-      <div className="bg-[var(--wordless-shell-workspace)] px-5 pb-3 pt-5 sm:px-8">
-        <div className={showDensityRail ? "mx-auto w-full max-w-[820px] pl-[58px] pr-5 sm:pl-[70px] sm:pr-8" : "mx-auto max-w-[756px]"}>
+      <div className="bg-[var(--wordless-shell-workspace)] pb-3 pt-5">
+        <ThreadContentFrame densityRail={showDensityRail}>
           <div className="relative">
             <Composer
               accessLevel={snapshot.session.accessLevel}
@@ -1098,6 +1102,8 @@ export function ThreadView({ messageNavigationTarget, onMessageNavigationConsume
               onImportSkill={onOpenSkillImport}
               onOpenSkills={onOpenSkills}
               onSend={send}
+              artifactSelection={artifactSelection}
+              onArtifactSelectionConsumed={onArtifactSelectionConsumed}
               pendingWorkspaceReferences={pendingWorkspaceReferences}
               onPendingWorkspaceReferencesConsumed={onPendingWorkspaceReferencesConsumed}
               searchWorkspaceReferences={(query) => client.searchSessionWorkspace(sessionId, query)}
@@ -1116,7 +1122,7 @@ export function ThreadView({ messageNavigationTarget, onMessageNavigationConsume
           </div>
           <TurnTokenUsageRow usage={snapshot.turnUsage} />
           <p className="mt-2 text-center text-[11px] text-[#96968e] dark:text-muted-foreground">{t("aiContentNotice")}</p>
-        </div>
+        </ThreadContentFrame>
       </div>
     </div>
   );

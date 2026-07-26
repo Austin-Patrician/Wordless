@@ -1,6 +1,7 @@
 import { cn } from "@wordless/ui-kit";
 import { useEffect, useMemo, useState } from "react";
-import type { AgentInteractionModeId, ModelReference, SessionAccessLevel, ToolApprovalMode, UserPromptPart, WorkbenchEntryDefinition, WorkbenchMode } from "@wordless/domain";
+import type { AgentInteractionModeId, ModelReference, PresentationGenerationMode, SessionAccessLevel, ToolApprovalMode, UserPromptPart, WorkbenchEntryDefinition, WorkbenchMode } from "@wordless/domain";
+import type { PresentationTemplate } from "@wordless/protocol";
 import codeDevelopmentIcon from "../../../icons/common-icons/代码开发.svg";
 import spreadsheetIcon from "../../../icons/common-icons/电子表格.svg";
 import everydayOfficeIcon from "../../../icons/common-icons/日常办公.svg";
@@ -60,12 +61,17 @@ export function WelcomeView({ onOpenModels, onOpenSkillImport, onOpenSkills, onS
   const [connectorIds, setConnectorIds] = useState<string[]>([]);
   const [interactionMode, setInteractionMode] = useState<AgentInteractionModeId>("default");
   const [toolApprovalMode, setToolApprovalMode] = useState<ToolApprovalMode>("manual");
+  const [presentationMode, setPresentationMode] = useState<PresentationGenerationMode>("guided");
+  const [presentationTemplateId, setPresentationTemplateId] = useState("auto");
+  const [presentationTemplates, setPresentationTemplates] = useState<PresentationTemplate[]>([]);
   const [submitting, setSubmitting] = useState(false);
+  const [submissionError, setSubmissionError] = useState<string | null>(null);
 
   const entries = snapshot?.entries ?? [];
   const modeEntries = useMemo(() => entries.filter((entry) => entry.mode === mode), [entries, mode]);
   const entry = entries.find((candidate) => candidate.id === entryId) ?? defaultEntry(entries, mode);
   const selectedWorkspace = snapshot?.workspaces.find((workspace) => workspace.id === workspaceId);
+  const selectedWorkspaceAvailable = workspaceId === null || selectedWorkspace?.availability === "available";
   const selectedModel = snapshot?.models.find((candidate) => candidate.connectionId === model?.connectionId && candidate.modelId === model.modelId);
   const selectedConnection = snapshot?.connections.find((connection) => connection.id === model?.connectionId);
   const workspaceRequired = entry?.workbenchId === "code";
@@ -95,13 +101,31 @@ export function WelcomeView({ onOpenModels, onOpenSkillImport, onOpenSkills, onS
     if (interactionMode === "plan" && !canPlan) setInteractionMode("default");
   }, [canPlan, interactionMode]);
 
+  useEffect(() => {
+    if (workspaceId && !selectedWorkspaceAvailable) setWorkspaceId(null);
+  }, [selectedWorkspaceAvailable, workspaceId]);
+
+  useEffect(() => {
+    if (entry?.workbenchId !== "presentation") return;
+    void client.listPresentationTemplates().then(setPresentationTemplates).catch(() => setPresentationTemplates([]));
+  }, [client, entry?.workbenchId]);
+
   const send = async (parts: UserPromptPart[], nextAttachments: WorkspaceAttachment[]) => {
     if (!entry || entry.availability !== "available" || !model) return;
+    if (!selectedWorkspaceAvailable) {
+      setSubmissionError(t("unavailable"));
+      setWorkspaceId(null);
+      return;
+    }
     setSubmitting(true);
+    setSubmissionError(null);
     try {
-      const session = await client.createAndPrompt({ mode, entryId: entry.id, workspaceId, accessLevel, model, connectorIds, interactionMode, toolApprovalMode }, parts, nextAttachments.map((attachment) => ({ path: attachment.path })));
+      const session = await client.createAndPrompt({ mode, entryId: entry.id, workspaceId, accessLevel, model, connectorIds, interactionMode, toolApprovalMode, ...(entry.workbenchId === "presentation" ? { presentation: { generationMode: presentationMode, templateId: presentationTemplateId === "auto" ? null : presentationTemplateId } } : {}) }, parts, nextAttachments.map((attachment) => ({ path: attachment.path })));
       await refresh();
       onSessionCreated(session.id);
+    } catch (cause) {
+      setSubmissionError(cause instanceof Error ? cause.message : String(cause));
+      await refresh();
     } finally {
       setSubmitting(false);
     }
@@ -115,7 +139,7 @@ export function WelcomeView({ onOpenModels, onOpenSkillImport, onOpenSkills, onS
     setAccessLevel("default");
   };
 
-  const canSend = Boolean(entry && entry.availability === "available" && model && !submitting && (!workspaceRequired || workspaceId) && (interactionMode !== "clarify" || selectedModel?.capabilities.supportsToolUse !== false));
+  const canSend = Boolean(entry && entry.availability === "available" && model && !submitting && selectedWorkspaceAvailable && (!workspaceRequired || workspaceId) && (interactionMode !== "clarify" || selectedModel?.capabilities.supportsToolUse !== false));
 
   return (
     <div className="flex min-h-0 flex-1 items-center justify-center overflow-y-auto px-6 py-8 sm:px-12 lg:px-16">
@@ -170,6 +194,7 @@ export function WelcomeView({ onOpenModels, onOpenSkillImport, onOpenSkills, onS
               );
             })}
           </div>
+          {entry?.workbenchId === "presentation" ? <div className="mb-4 border-y border-[#e4e4df] py-3 dark:border-border"><div className="flex flex-wrap items-center gap-x-5 gap-y-2"><div><p className="text-[11px] font-semibold text-[#464641] dark:text-foreground">Creation flow</p><div className="mt-1.5 inline-flex rounded-[6px] bg-[#ededeb] p-0.5 dark:bg-muted">{(["guided", "quick"] as const).map((candidate) => <button className={cn("h-6 rounded-[4px] px-2.5 text-[10px] font-semibold transition-colors", presentationMode === candidate ? "bg-white text-[#39491d] shadow-[0_1px_2px_rgba(0,0,0,0.12)] dark:bg-card dark:text-[#d7ef99]" : "text-[#777770] hover:text-[#42423d] dark:text-muted-foreground dark:hover:text-foreground")} key={candidate} onClick={() => setPresentationMode(candidate)} type="button">{candidate === "guided" ? "Guided" : "Quick"}</button>)}</div></div><label className="min-w-[180px]"><span className="text-[11px] font-semibold text-[#464641] dark:text-foreground">Starting point</span><select className="ml-2 h-7 max-w-[180px] rounded-[5px] border border-[#deded9] bg-white px-2 text-[10px] text-[#565650] outline-none focus:border-[#91a963] dark:border-border dark:bg-muted dark:text-foreground" onChange={(event) => setPresentationTemplateId(event.target.value)} value={presentationTemplateId}>{presentationTemplates.map((template) => <option key={template.id} value={template.id}>{template.name}</option>)}{presentationTemplates.length === 0 ? <option value="auto">Auto</option> : null}</select></label></div><p className="mt-2 text-[10px] leading-4 text-muted-foreground">{presentationMode === "guided" ? "Confirm an outline before the agent creates the deck." : "Generate the first complete deck immediately, then iterate in the workspace."}</p></div> : null}
           <div className="relative">
             <Composer
               accessLevel={accessLevel}
@@ -238,6 +263,7 @@ export function WelcomeView({ onOpenModels, onOpenSkillImport, onOpenSkills, onS
               </>
             ) : null}
           </div>
+          {submissionError ? <p className="mt-3 text-[11px] leading-5 text-destructive" role="alert">{submissionError}</p> : null}
           <p className="mt-3 text-xs text-muted-foreground">{t("caution")}</p>
         </div>
       </div>

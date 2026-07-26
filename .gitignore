@@ -15,3 +15,7 @@ coverage/
 *.p12
 *.pfx
 Agent app UI design/
+apps/desktop/resources/officecli/*
+!apps/desktop/resources/officecli/.gitkeep
+apps/desktop/resources/presentation-templates/*
+!apps/desktop/resources/presentation-templates/.gitkeep

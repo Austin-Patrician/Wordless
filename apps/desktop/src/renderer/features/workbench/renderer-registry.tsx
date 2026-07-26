@@ -1,14 +1,21 @@
-import type { ComponentType } from "react";
+import type { ComponentType, ReactNode } from "react";
 import {
   Check,
+  CheckCircle2,
   CircleAlert,
   Code2,
+  FileOutput,
   FilePenLine,
   FolderSearch,
+  Image,
   ListTree,
   LoaderCircle,
+  Presentation,
+  ScanSearch,
+  ShieldCheck,
   Terminal,
   UsersRound,
+  WandSparkles,
   Wrench,
   X,
 } from "lucide-react";
@@ -73,7 +80,7 @@ function textValue(value: unknown): string | undefined {
 function activityIcon(block: MessageToolBlock) {
   if (block.state === "running" || block.state === "pending" || block.state === "awaiting-user-input") return <LoaderCircle className="h-3.5 w-3.5 animate-spin" />;
   if (block.state === "error") return <CircleAlert className="h-3.5 w-3.5" />;
-  return <Check className="h-3.5 w-3.5" />;
+  return <CheckCircle2 className="h-3.5 w-3.5" />;
 }
 
 function activityState(block: MessageToolBlock): string | undefined {
@@ -91,6 +98,27 @@ function activityStatusClass(block: MessageToolBlock): string {
   return "text-muted-foreground";
 }
 
+function ToolActivityRow({ block, detail, icon, runningLabel, summary }: { block: MessageToolBlock; detail?: string; icon: ReactNode; runningLabel?: string; summary?: string }) {
+  const stateLabel = block.state === "complete"
+    ? summary ?? "Completed"
+    : block.state === "error"
+      ? "Failed"
+      : block.state === "running" && runningLabel
+        ? runningLabel
+        : activityState(block);
+  const statusClass = activityStatusClass(block);
+
+  return (
+    <div className="flex min-h-5 items-center gap-3 text-[13px]">
+      <span className={block.state === "error" ? "text-destructive" : "text-[#70842f] dark:text-[#c2df6b]"}>{icon}</span>
+      <span className="shrink-0 font-mono text-[12px] text-[#2d2d2a] dark:text-foreground">{block.name}</span>
+      <span className="min-w-0 flex-1 truncate font-mono text-[11px] text-[#777770] dark:text-muted-foreground">{detail ?? ""}</span>
+      {stateLabel ? <span className={`hidden shrink-0 text-[12px] sm:block ${block.state === "error" ? statusClass : "text-[#8a8a83] dark:text-muted-foreground"}`}>{stateLabel}</span> : null}
+      <span aria-label={stateLabel ?? "Tool status"} className={`shrink-0 ${statusClass}`} role="img">{activityIcon(block)}</span>
+    </div>
+  );
+}
+
 function ToolOutput({ block, onLoadToolOutput }: Pick<ToolActivityProps, "block" | "onLoadToolOutput">) {
   const [loading, setLoading] = useState(false);
   const load = () => {
@@ -102,16 +130,13 @@ function ToolOutput({ block, onLoadToolOutput }: Pick<ToolActivityProps, "block"
   return <details className="mt-2" onToggle={(event) => { if ((event.currentTarget as HTMLDetailsElement).open) load(); }}><summary className="cursor-pointer font-mono text-[11px] text-[#777770]">{loading ? "Loading output" : "View output"}</summary><pre className="m-0 mt-2 max-h-52 overflow-auto border-y border-[#e1e1dc] bg-[#fafaf9] px-3 py-2 font-mono text-[11px] leading-5 text-[#4d4d47] dark:border-border dark:bg-muted dark:text-muted-foreground">{block.output}</pre></details>;
 }
 
-function GenericToolActivity({ block, onLoadToolOutput }: ToolActivityProps) {
+function GenericToolActivity({ block, onLoadToolOutput, onResolveApproval }: ToolActivityProps) {
+  if (block.state === "awaiting-approval" && block.approval) return <ToolApprovalCard block={block} onResolveApproval={onResolveApproval} />;
   return (
-    <div className="overflow-hidden rounded-[7px] border border-border bg-muted/35">
-      <div className="flex min-h-9 items-center gap-2 px-3 text-[12px] font-semibold text-muted-foreground">
-        <span className="text-accent-foreground"><Wrench className="h-3.5 w-3.5" /></span>
-        <span className="min-w-0 flex-1 truncate">{block.name}</span>
-        {activityState(block) ? <span className={activityStatusClass(block)}>{activityState(block)}</span> : null}
-      </div>
-      <div className="px-3 pb-2"><ToolOutput block={block} onLoadToolOutput={onLoadToolOutput} /></div>
-    </div>
+    <section className="py-3">
+      <ToolActivityRow block={block} icon={<Wrench className="h-3.5 w-3.5" />} />
+      <ToolOutput block={block} onLoadToolOutput={onLoadToolOutput} />
+    </section>
   );
 }
 
@@ -197,7 +222,7 @@ function SubagentToolActivity({ block, onLoadToolOutput, onResolveApproval, onRe
         const nestedBlock: MessageToolBlock = { type: "tool", callId: task.id, name: task.tool?.name ?? "delegate_task", state: task.status === "awaiting-approval" ? "awaiting-approval" : task.status === "awaiting-user-input" ? "awaiting-user-input" : task.status === "failed" ? "error" : task.status === "completed" ? "complete" : "running", ...(approval ? { approval } : {}), ...(userRequest ? { userRequest } : {}) };
         return <div className="px-1 py-3" key={task.id}>
           <div className="flex items-start gap-2.5"><span className="mt-0.5">{subagentState(task)}</span><div className="min-w-0 flex-1"><div className="flex items-center gap-2"><span className="font-mono text-[11px] font-semibold text-[#4c4c47] dark:text-foreground">{task.role}</span><span className="truncate text-[11px] text-[#82827b] dark:text-muted-foreground">{task.scope}</span><span className="ml-auto shrink-0 font-mono text-[10px] text-[#999991]">{task.status}</span></div><p className="mt-1 text-[12px] leading-5 text-[#5b5b55] dark:text-muted-foreground">{task.task}</p>{task.tool ? <p className="mt-1 font-mono text-[10px] text-[#888880] dark:text-muted-foreground">{task.tool.name}{task.tool.output ? ` · ${task.tool.output.slice(-120)}` : ""}</p> : null}</div></div>
-          {approval && task.status === "awaiting-approval" ? <CodingApproval block={nestedBlock} onResolveApproval={onResolveApproval} /> : null}
+          {approval && task.status === "awaiting-approval" ? <ToolApprovalCard block={nestedBlock} onResolveApproval={onResolveApproval} /> : null}
           {userRequest && task.status === "awaiting-user-input" ? <UserRequestToolActivity block={nestedBlock} onResolveUserRequest={onResolveUserRequest} /> : null}
           {task.output ? <details className="mt-2"><summary className="cursor-pointer font-mono text-[10px] text-[#777770]">View result</summary><pre className="m-0 mt-2 max-h-60 overflow-auto border-y border-[#e1e1dc] bg-[#fafaf9] px-3 py-2 whitespace-pre-wrap font-mono text-[11px] leading-5 text-[#4d4d47] dark:border-border dark:bg-muted dark:text-muted-foreground">{task.output}</pre></details> : null}
           {task.error ? <p className="mt-2 text-[11px] text-destructive">{task.error}</p> : null}
@@ -219,7 +244,7 @@ function CodeToolActivity({ block, onLoadToolOutput, onResolveApproval }: ToolAc
   const newText = textValue(changed?.newText);
   const exitCode = typeof details?.exitCode === "number" ? details.exitCode : undefined;
   const icon = block.name === "bash" ? <Terminal className="h-3.5 w-3.5" /> : block.name === "edit" || block.name === "write" ? <FilePenLine className="h-3.5 w-3.5" /> : block.name === "read" ? <img alt="" className="h-3.5 w-3.5 dark:invert" src={readFileIcon} /> : block.name === "grep" ? <img alt="" className="h-3.5 w-3.5 dark:invert" src={grepIcon} /> : block.name === "ls" || block.name === "find" ? <FolderSearch className="h-3.5 w-3.5" /> : <Code2 className="h-3.5 w-3.5" />;
-  if (block.state === "awaiting-approval" && block.approval) return <CodingApproval block={block} onResolveApproval={onResolveApproval} />;
+  if (block.state === "awaiting-approval" && block.approval) return <ToolApprovalCard block={block} onResolveApproval={onResolveApproval} />;
   const summary = block.name === "read" && typeof details?.lineCount === "number"
     ? `${details.lineCount} lines read`
     : block.name === "grep" && typeof details?.count === "number"
@@ -227,17 +252,10 @@ function CodeToolActivity({ block, onLoadToolOutput, onResolveApproval }: ToolAc
       : block.name === "find" && typeof details?.count === "number"
         ? `${details.count} files found`
         : activityState(block);
-  const statusClass = activityStatusClass(block);
 
   return (
     <section className="py-3">
-      <div className="flex min-h-5 items-center gap-3 text-[13px]">
-        <span className={block.state === "error" ? "text-destructive" : "text-[#70842f] dark:text-[#c2df6b]"}>{icon}</span>
-        <span className="font-mono text-[12px] text-[#2d2d2a] dark:text-foreground">{block.name}</span>
-        <span className="min-w-0 flex-1 truncate font-mono text-[11px] text-[#777770] dark:text-muted-foreground">{command ?? path ?? ""}</span>
-        {summary ? <span className={`hidden text-[12px] sm:block ${block.state === "error" ? statusClass : "text-[#8a8a83] dark:text-muted-foreground"}`}>{summary}</span> : null}
-        <span className={statusClass}>{activityIcon(block)}</span>
-      </div>
+      <ToolActivityRow block={block} detail={command ?? path} icon={icon} summary={summary} />
       {oldText !== undefined && newText !== undefined ? <details className="mt-2"><summary className="cursor-pointer font-mono text-[11px] text-[#777770]">View change</summary><div className="mt-2 grid overflow-hidden border-y border-[#e1e1dc] font-mono text-[11px] leading-5 dark:border-border"><pre className="m-0 max-h-40 overflow-auto bg-[#fbefec] px-3 text-[#9a564b] dark:bg-[#3a211d] dark:text-[#ffb4a8]">- {oldText}</pre><pre className="m-0 max-h-40 overflow-auto bg-[#eff7e7] px-3 text-[#547c36] dark:bg-[#29351d] dark:text-[#d8f28a]">+ {newText}</pre></div></details> : null}
       <ToolOutput block={block} onLoadToolOutput={onLoadToolOutput} />
       {exitCode !== undefined ? <p className="mt-1 flex items-center gap-1.5 font-mono text-[11px] text-muted-foreground"><ListTree className="h-3 w-3" />Exit {exitCode}</p> : null}
@@ -245,7 +263,57 @@ function CodeToolActivity({ block, onLoadToolOutput, onResolveApproval }: ToolAc
   );
 }
 
-function CodingApproval({ block, onResolveApproval }: ToolActivityProps) {
+function jsonRecord(value: string | undefined): Record<string, unknown> | undefined {
+  if (!value) return undefined;
+  try {
+    return readRecord(JSON.parse(value));
+  } catch {
+    return undefined;
+  }
+}
+
+function PresentationToolActivity({ block, onLoadToolOutput, onResolveApproval }: ToolActivityProps) {
+  if (block.state === "awaiting-approval" && block.approval) return <ToolApprovalCard block={block} onResolveApproval={onResolveApproval} />;
+
+  const details = readRecord(block.details);
+  const artifact = readRecord(details?.artifact);
+  const outline = block.name === "presentation_inspect" ? jsonRecord(block.output) : undefined;
+  const surfaces = Array.isArray(details?.surfaces) ? details.surfaces : [];
+  const issues = Array.isArray(details?.issues) ? details.issues : [];
+  const artifacts = Array.isArray(details?.artifacts) ? details.artifacts : [];
+  const revision = typeof details?.revision === "number"
+    ? details.revision
+    : typeof artifact?.revision === "number" ? artifact.revision : undefined;
+  const displayName = textValue(artifact?.displayName) ?? textValue(block.input?.name);
+  const operationCount = typeof details?.operationCount === "number"
+    ? details.operationCount
+    : Array.isArray(block.input?.operations) ? block.input.operations.length : undefined;
+  const slideCount = typeof outline?.totalSlides === "number" ? outline.totalSlides : undefined;
+
+  const presentation = block.name === "presentation_create"
+    ? { icon: <Presentation className="h-3.5 w-3.5" />, running: "Creating presentation", detail: displayName, summary: displayName ? `Created ${displayName}` : "Presentation created" }
+    : block.name === "presentation_apply"
+      ? { icon: <WandSparkles className="h-3.5 w-3.5" />, running: "Applying changes", detail: displayName, summary: [operationCount === undefined ? undefined : `${operationCount} changes`, revision === undefined ? undefined : `revision ${revision}`].filter(Boolean).join(" · ") || "Changes applied" }
+      : block.name === "presentation_render"
+        ? { icon: <Image className="h-3.5 w-3.5" />, running: "Rendering slides", detail: revision === undefined ? undefined : `revision ${revision}`, summary: [surfaces.length > 0 ? `${surfaces.length} slides` : undefined, revision === undefined ? undefined : `revision ${revision}`].filter(Boolean).join(" · ") || "Preview rendered" }
+        : block.name === "presentation_inspect"
+          ? { icon: <ScanSearch className="h-3.5 w-3.5" />, running: "Inspecting presentation", detail: textValue(block.input?.artifactId), summary: slideCount === undefined ? "Inspection complete" : `${slideCount} slides inspected` }
+          : block.name === "presentation_validate"
+            ? { icon: <ShieldCheck className="h-3.5 w-3.5" />, running: "Checking presentation", detail: textValue(block.input?.artifactId), summary: issues.length === 0 ? "Validation passed" : `${issues.length} issue${issues.length === 1 ? "" : "s"}` }
+            : block.name === "presentation_publish"
+              ? { icon: <FileOutput className="h-3.5 w-3.5" />, running: "Preparing output", detail: undefined, summary: artifacts.length === 0 ? "Output ready" : `${artifacts.length} presentation${artifacts.length === 1 ? "" : "s"} ready` }
+              : { icon: <Presentation className="h-3.5 w-3.5" />, running: "Running presentation tool", detail: undefined, summary: "Completed" };
+
+  return (
+    <section className="py-3">
+      <ToolActivityRow block={block} detail={presentation.detail} icon={presentation.icon} runningLabel={presentation.running} summary={presentation.summary} />
+      {block.state === "error" && block.output ? <p className="mt-2 max-h-10 overflow-hidden whitespace-pre-wrap break-words font-mono text-[10px] leading-5 text-destructive">{block.output}</p> : null}
+      <ToolOutput block={block} onLoadToolOutput={onLoadToolOutput} />
+    </section>
+  );
+}
+
+function ToolApprovalCard({ block, onResolveApproval }: ToolActivityProps) {
   const { t } = usePreferences();
   const [rejected, setRejected] = useState(false);
   const [feedback, setFeedback] = useState("");
@@ -313,6 +381,7 @@ export const workbenchRendererRegistry = createWorkbenchRendererRegistry(
     { toolName: "request_user_input", component: UserRequestToolActivity },
     { toolName: "delegate_task", component: SubagentToolActivity },
     { workbenchId: "code", component: CodeToolActivity },
+    { workbenchId: "presentation", component: PresentationToolActivity },
   ],
   [{ component: GenericArtifactActivity }],
 );

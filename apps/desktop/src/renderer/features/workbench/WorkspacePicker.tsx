@@ -74,13 +74,15 @@ export function WorkspacePicker({ allowNoWorkspace = true, onCreate, onOpenChang
             />
           </label>
           <div className="my-1 max-h-[190px] overflow-y-auto border-b border-[#eeeeef] pb-1 dark:border-[#3b3e42]">
-            {visibleWorkspaces.map((workspace) => (
-              <button className="flex h-[32px] w-full items-center gap-2 rounded-[7px] px-2 text-left text-[13px] font-medium text-[#272a30] transition hover:bg-[#f5f6f7] dark:text-[#edf0f2] dark:hover:bg-[#2a2d31]" key={workspace.id} onClick={() => chooseWorkspace(workspace.id)} type="button">
+            {visibleWorkspaces.map((workspace) => {
+              const available = workspace.availability === "available";
+              return <button className="flex h-[32px] w-full items-center gap-2 rounded-[7px] px-2 text-left text-[13px] font-medium text-[#272a30] transition hover:bg-[#f5f6f7] disabled:cursor-not-allowed disabled:opacity-45 dark:text-[#edf0f2] dark:hover:bg-[#2a2d31]" disabled={!available} key={workspace.id} onClick={() => chooseWorkspace(workspace.id)} title={available ? undefined : t("unavailable")} type="button">
                 <FolderOpen className="shrink-0 text-[#4b4f55] dark:text-[#c5c9cd]" size={16} strokeWidth={1.8} />
                 <span className="min-w-0 flex-1 truncate">{workspace.name}</span>
-                {selectedWorkspaceId === workspace.id ? <span className="size-1.5 shrink-0 rounded-full bg-[#8eb526]" /> : null}
+                {available && selectedWorkspaceId === workspace.id ? <span className="size-1.5 shrink-0 rounded-full bg-[#8eb526]" /> : null}
+                {!available ? <span className="shrink-0 text-[10px] text-[#8d675f] dark:text-[#d5a199]">{t("unavailable")}</span> : null}
               </button>
-            ))}
+            })}
             {query.trim() && visibleWorkspaces.length === 0 ? <p className="px-2 py-2 text-[12px] text-[#989ba0]">{t("noMatchingWorkspace")}</p> : null}
           </div>
           <div className="space-y-0.5">

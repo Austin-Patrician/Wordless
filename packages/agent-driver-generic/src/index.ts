@@ -645,6 +645,7 @@ class AgentHarnessDriverSession implements AgentDriverSession {
       : supportsUserRequests
         ? [...context.profile.activeToolNames, ...context.connectorTools.map((tool) => tool.name), ...skillTools.map((tool) => tool.name), "request_user_input"]
         : [...context.profile.activeToolNames, ...context.connectorTools.map((tool) => tool.name)];
+    const toolContract = `Only call tools exposed for this session: ${activeToolNames.join(", ") || "none"}. Never invent or call tools outside this list.`;
     this.harness = new AgentHarness<Skill>({
       env: context.env,
       session: context.session,
@@ -659,7 +660,7 @@ class AgentHarnessDriverSession implements AgentDriverSession {
     this.harness.on("before_agent_start", (event) => {
       const selectedSkillsPrompt = formatSelectedSkillsForSystemPrompt(this.selectedSkillsForRun);
       const prompt = selectedSkillsPrompt ? `${event.systemPrompt}\n\n${selectedSkillsPrompt}` : event.systemPrompt;
-      return clarificationMode ? { systemPrompt: `${prompt}\n\n${CLARIFICATION_MODE_PROMPT}` } : selectedSkillsPrompt ? { systemPrompt: prompt } : undefined;
+      return { systemPrompt: clarificationMode ? `${prompt}\n\n${CLARIFICATION_MODE_PROMPT}\n\n${toolContract}` : `${prompt}\n\n${toolContract}` };
     });
     const hookableHarness = this.harness as unknown as HookableHarness;
     hookableHarness.on("context", (event) => {

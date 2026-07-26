@@ -6,10 +6,11 @@ import { SettingsDialog, type SettingsPage } from "../settings/SettingsDialog";
 import { ConversationSearchDialog } from "../thread/ConversationSearchDialog";
 import { ThreadView, type ThreadMessageNavigationTarget } from "../thread/ThreadView";
 import type { InlineWorkspaceReferenceToken } from "../thread/InlineSkillComposer";
+import type { ArtifactSelection } from "@wordless/protocol";
 import { usePreferences } from "../../shared/preferences";
 import { useRuntime } from "../../shared/runtime";
 import { workbenchContextPanelRegistry } from "./context-panel-registry";
-import type { ContextPanelView } from "../artifacts/CodingContextPanel";
+import type { ContextPanelView } from "./context-panel-types";
 import { WelcomeView } from "./WelcomeView";
 import { Sidebar } from "./Sidebar";
 import { SkillsView } from "../skills/SkillsView";
@@ -19,6 +20,11 @@ import { MediaLibrary } from "../media/MediaLibrary";
 import { AppBackgroundLayer } from "../appearance/AppBackgroundLayer";
 import wordlessIcon from "../../../icons/common-icons/wordless.png";
 import { DesktopChrome } from "./DesktopChrome";
+
+const THREAD_COLUMN_MIN_WIDTH = 640;
+const SIDEBAR_COLLAPSED_WIDTH = 58;
+const SIDEBAR_EXPANDED_WIDTH = 238;
+const CONTEXT_PANEL_MIN_WIDTH = 240;
 
 export function WorkbenchShell() {
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -30,6 +36,7 @@ export function WorkbenchShell() {
   const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null);
   const [mainView, setMainView] = useState<"thread" | "skills" | "media">("thread");
   const [pendingWorkspaceReferences, setPendingWorkspaceReferences] = useState<InlineWorkspaceReferenceToken[]>([]);
+  const [pendingArtifactSelection, setPendingArtifactSelection] = useState<ArtifactSelection | null>(null);
   const [skillImportOpen, setSkillImportOpen] = useState(false);
   const [conversationSearchOpen, setConversationSearchOpen] = useState(false);
   const [messageNavigationTarget, setMessageNavigationTarget] = useState<ThreadMessageNavigationTarget | null>(null);
@@ -40,6 +47,7 @@ export function WorkbenchShell() {
 
   const newThread = () => {
     setPendingWorkspaceReferences([]);
+    setPendingArtifactSelection(null);
     setSelectedSessionId(null);
     setMainView("thread");
     setRightOpen(false);
@@ -64,7 +72,15 @@ export function WorkbenchShell() {
   useEffect(() => {
     setConversationSearchOpen(false);
     setMessageNavigationTarget(null);
+    setPendingArtifactSelection(null);
   }, [selectedSessionId]);
+
+  useEffect(() => {
+    const session = snapshot?.sessions.find((candidate) => candidate.id === selectedSessionId);
+    const definition = workbenchContextPanelRegistry.resolve(session?.workbenchId);
+    setContextView(definition.tabs[0]?.id ?? "overview");
+    if (session?.workbenchId === "presentation") setRightOpen(true);
+  }, [selectedSessionId, snapshot?.sessions]);
 
   useEffect(() => {
     if (!hasSelectedThread) return;
@@ -77,6 +93,17 @@ export function WorkbenchShell() {
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [hasSelectedThread]);
+
+  useEffect(() => {
+    if (!rightOpen || rightFullscreen || !leftOpen) return;
+    const preserveThreadWidth = () => {
+      const requiredWidth = SIDEBAR_EXPANDED_WIDTH + THREAD_COLUMN_MIN_WIDTH + CONTEXT_PANEL_MIN_WIDTH;
+      if (window.innerWidth >= 1024 && window.innerWidth < requiredWidth) setLeftOpen(false);
+    };
+    preserveThreadWidth();
+    window.addEventListener("resize", preserveThreadWidth);
+    return () => window.removeEventListener("resize", preserveThreadWidth);
+  }, [leftOpen, rightFullscreen, rightOpen]);
   const importSkill = async (file?: File): Promise<boolean> => {
     if (!client) return false;
     if (file) {
@@ -111,7 +138,8 @@ export function WorkbenchShell() {
   const activeSession = snapshot.sessions.find((session) => session.id === selectedSessionId);
   const showSessionTools = mainView === "thread" && activeSession !== undefined;
 
-  const ContextPanelContent = workbenchContextPanelRegistry.resolve(activeSession?.workbenchId);
+  const contextPanelDefinition = workbenchContextPanelRegistry.resolve(activeSession?.workbenchId);
+  const ContextPanelContent = contextPanelDefinition.component;
   const addAttachment = (attachment: { path: string; name: string; kind?: "file" | "directory" }) => {
     setPendingWorkspaceReferences((current) => current.some((item) => item.path === attachment.path) ? current : [...current, { path: attachment.path, name: attachment.name, kind: attachment.kind ?? "file" }]);
     setRightOpen(true);
@@ -120,14 +148,17 @@ export function WorkbenchShell() {
     <SessionContextPanel
       collapsed={!rightOpen}
       fullscreen={rightFullscreen}
+      leftSidebarWidth={leftOpen ? SIDEBAR_EXPANDED_WIDTH : SIDEBAR_COLLAPSED_WIDTH}
+      minimumMainWidth={THREAD_COLUMN_MIN_WIDTH}
       onFullscreen={() => setRightFullscreen((value) => !value)}
       onViewChange={setContextView}
       onToggle={() => {
         setRightFullscreen(false);
         setRightOpen(false);
       }}
+      tabs={contextPanelDefinition.tabs}
       renderContent={(view) => activeSession
-        ? <ContextPanelContent onAttachFile={addAttachment} onViewChange={setContextView} sessionId={activeSession.id} view={view} />
+        ? <ContextPanelContent onArtifactSelection={(selection) => { setPendingArtifactSelection(selection); setRightOpen(true); }} onAttachFile={addAttachment} onViewChange={setContextView} sessionId={activeSession.id} view={view} />
         : <div className="p-4 text-[12px] text-muted-foreground">Select a session to view its context.</div>}
       view={contextView}
     />
@@ -140,8 +171,8 @@ export function WorkbenchShell() {
       <DesktopChrome onNewThread={newThread} onOpenSettings={() => openSettings()} />
       <div className="flex h-[calc(100dvh-var(--wordless-chrome-height))] overflow-hidden">
         {showSessionTools && rightFullscreen ? contextPanel : <>
-        <Sidebar collapsed={!leftOpen} mediaActive={mainView === "media"} onNewThread={newThread} onOpenMedia={openMedia} onOpenSession={(sessionId) => { const session = snapshot.sessions.find((candidate) => candidate.id === sessionId); setPendingWorkspaceReferences([]); setSelectedSessionId(sessionId); setMainView(session?.workbenchId === "media-canvas" ? "media" : "thread"); setRightFullscreen(false); }} onOpenSettings={() => openSettings()} onOpenSkills={openSkills} onSessionDeleted={(sessionId) => { if (selectedSessionId === sessionId) newThread(); }} onToggle={() => setLeftOpen((value) => !value)} selectedSessionId={selectedSessionId} skillsActive={mainView === "skills"} />
-        <section className="relative flex min-w-0 flex-1 flex-col overflow-hidden bg-[var(--wordless-shell-workspace)]">
+        <Sidebar collapsed={!leftOpen} mediaActive={mainView === "media"} onNewThread={newThread} onOpenMedia={openMedia} onOpenSession={(sessionId) => { const session = snapshot.sessions.find((candidate) => candidate.id === sessionId); setPendingWorkspaceReferences([]); setPendingArtifactSelection(null); setSelectedSessionId(sessionId); setMainView(session?.workbenchId === "media-canvas" ? "media" : "thread"); setRightFullscreen(false); }} onOpenSettings={() => openSettings()} onOpenSkills={openSkills} onSessionDeleted={(sessionId) => { if (selectedSessionId === sessionId) newThread(); }} onToggle={() => setLeftOpen((value) => !value)} selectedSessionId={selectedSessionId} skillsActive={mainView === "skills"} />
+        <section className="relative flex min-w-0 flex-1 flex-col overflow-hidden bg-[var(--wordless-shell-workspace)] lg:min-w-[640px]">
           {showSessionTools ? <header className="flex h-[62px] shrink-0 items-center justify-between px-4 sm:px-5">
             <div className="flex min-w-0 items-center gap-2">
               <div className="flex items-center gap-2 lg:hidden"><img alt="" className="h-7 w-7 shrink-0 rounded-[8px] object-cover" draggable={false} src={wordlessIcon} /><span className="text-sm font-bold tracking-[-0.04em]">wordless</span></div>
@@ -157,7 +188,7 @@ export function WorkbenchShell() {
               <Button aria-label={t("settings")} onClick={() => openSettings()} size="icon" type="button" variant="ghost"><Settings className="h-4 w-4" /></Button>
             </div>
           </header> : null}
-          {mainView === "skills" ? <SkillsView onOpenImport={() => setSkillImportOpen(true)} /> : mainView === "media" ? selectedSessionId && activeSession?.workbenchId === "media-canvas" ? <MediaCanvas leftOpen={leftOpen} onBackToLibrary={() => setSelectedSessionId(null)} onOpenModels={() => openSettings("models")} onToggleLeft={() => setLeftOpen((value) => !value)} sessionId={selectedSessionId} /> : <MediaLibrary onOpenProject={(sessionId) => { setSelectedSessionId(sessionId); setMainView("media"); }} /> : selectedSessionId ? <ThreadView messageNavigationTarget={messageNavigationTarget} onMessageNavigationConsumed={(requestId) => setMessageNavigationTarget((current) => current?.requestId === requestId ? null : current)} onOpenModels={() => openSettings("models")} onOpenSkillImport={() => setSkillImportOpen(true)} onOpenSkills={openSkills} onPendingWorkspaceReferencesConsumed={() => setPendingWorkspaceReferences([])} pendingWorkspaceReferences={pendingWorkspaceReferences} sessionId={selectedSessionId} /> : <WelcomeView onOpenModels={() => openSettings("models")} onOpenSkillImport={() => setSkillImportOpen(true)} onOpenSkills={openSkills} onSessionCreated={(sessionId) => { setPendingWorkspaceReferences([]); setSelectedSessionId(sessionId); }} />}
+          {mainView === "skills" ? <SkillsView onOpenImport={() => setSkillImportOpen(true)} /> : mainView === "media" ? selectedSessionId && activeSession?.workbenchId === "media-canvas" ? <MediaCanvas leftOpen={leftOpen} onBackToLibrary={() => setSelectedSessionId(null)} onOpenModels={() => openSettings("models")} onToggleLeft={() => setLeftOpen((value) => !value)} sessionId={selectedSessionId} /> : <MediaLibrary onOpenProject={(sessionId) => { setSelectedSessionId(sessionId); setMainView("media"); }} /> : selectedSessionId ? <ThreadView artifactSelection={pendingArtifactSelection} messageNavigationTarget={messageNavigationTarget} onArtifactSelectionConsumed={() => setPendingArtifactSelection(null)} onMessageNavigationConsumed={(requestId) => setMessageNavigationTarget((current) => current?.requestId === requestId ? null : current)} onOpenModels={() => openSettings("models")} onOpenSkillImport={() => setSkillImportOpen(true)} onOpenSkills={openSkills} onPendingWorkspaceReferencesConsumed={() => setPendingWorkspaceReferences([])} pendingWorkspaceReferences={pendingWorkspaceReferences} sessionId={selectedSessionId} /> : <WelcomeView onOpenModels={() => openSettings("models")} onOpenSkillImport={() => setSkillImportOpen(true)} onOpenSkills={openSkills} onSessionCreated={(sessionId) => { setPendingWorkspaceReferences([]); setPendingArtifactSelection(null); setSelectedSessionId(sessionId); }} />}
         </section>
         {showSessionTools ? contextPanel : null}
         </>}
