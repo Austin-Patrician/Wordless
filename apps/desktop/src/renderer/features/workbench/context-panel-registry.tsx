@@ -1,7 +1,8 @@
 import type { WorkbenchId } from "@wordless/domain";
-import { CircleAlert, File, LayoutDashboard, PanelTop, Presentation, Sparkles } from "lucide-react";
+import { CircleAlert, File, History, LayoutDashboard, PanelTop, Presentation, Sparkles, Table2 } from "lucide-react";
 import { CodingContextPanel } from "../artifacts/CodingContextPanel";
 import { PresentationContextPanel } from "../artifacts/PresentationContextPanel";
+import { SpreadsheetContextPanel } from "../artifacts/SpreadsheetContextPanel";
 import type { WorkbenchContextPanelDefinition, WorkbenchContextPanelProps } from "./context-panel-types";
 
 function UnsupportedContextPanel(_props: WorkbenchContextPanelProps) {
@@ -38,6 +39,16 @@ export const workbenchContextPanelRegistry = new WorkbenchContextPanelRegistry([
       { id: "preview", label: "Preview", icon: PanelTop },
       { id: "slides", label: "Slides", icon: Presentation },
       { id: "assets", label: "Assets", icon: File },
+      { id: "issues", label: "Issues", icon: CircleAlert },
+    ],
+  },
+  {
+    workbenchId: "workbook",
+    component: SpreadsheetContextPanel,
+    tabs: [
+      { id: "preview", label: "Preview", icon: PanelTop },
+      { id: "sheets", label: "Sheets", icon: Table2 },
+      { id: "changes", label: "Changes", icon: History },
       { id: "issues", label: "Issues", icon: CircleAlert },
     ],
   },

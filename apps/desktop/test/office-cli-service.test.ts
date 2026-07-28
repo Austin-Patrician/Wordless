@@ -112,8 +112,41 @@ test("exposes OfficeCLI templates and reads persisted presentation artifacts wit
       /Unsafe presentation source URL/,
     );
     const migrated = JSON.parse(await readFile(path.join(root, sessionId, "manifest.json"), "utf8")) as { version: number; presentation: Record<string, { sources: unknown[] }> };
-    assert.equal(migrated.version, 2);
+    assert.equal(migrated.version, 3);
     assert.equal(migrated.presentation[artifactId]?.sources.length, 1);
+  } finally {
+    await rm(root, { force: true, recursive: true });
+  }
+});
+
+test("creates and atomically edits spreadsheet artifacts with the bundled OfficeCLI", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "wordless-spreadsheet-"));
+  const workspaceRoot = path.join(root, "workspace");
+    const resourcePlatform = process.platform === "darwin" ? "mac" : process.platform === "win32" ? "win" : process.platform;
+    const binaryPath = path.resolve("resources", "officecli", `${resourcePlatform}-${process.arch}`, process.platform === "win32" ? "officecli.exe" : "officecli");
+  try {
+    await mkdir(workspaceRoot, { recursive: true });
+    const service = new OfficeCliService({ artifactsRoot: path.join(root, "artifacts"), binaryPath });
+    const artifact = await service.createSpreadsheet(sessionId, workspaceRoot, { name: "quarterly-plan.xlsx", locale: "en-US" });
+    assert.equal(artifact.kind, "spreadsheet");
+    assert.equal(artifact.revision, 1);
+
+    const updated = await service.applySpreadsheet(sessionId, workspaceRoot, artifact.id, [
+      { command: "set", path: "/Sheet1/A1", props: { value: "Revenue", "font.bold": true } },
+      { command: "set", path: "/Sheet1/B1", props: { value: 120 } },
+    ]);
+    assert.equal(updated.revision, 2);
+    assert.match(await service.readSpreadsheet(sessionId, workspaceRoot, artifact.id, { kind: "get", path: "/Sheet1/A1" }), /Revenue/);
+    const report = await service.qualityScanSpreadsheet(sessionId, workspaceRoot, artifact.id);
+    assert.equal(report.revision, 2);
+    assert.notEqual(report.status, "needs-fix");
+
+    await assert.rejects(service.applySpreadsheet(sessionId, workspaceRoot, artifact.id, [
+      { command: "set", path: "/MissingSheet/A1", props: { value: "invalid" } },
+    ]));
+    assert.match(await service.readSpreadsheet(sessionId, workspaceRoot, artifact.id, { kind: "get", path: "/Sheet1/A1" }), /Revenue/);
+    assert.equal((await service.spreadsheetChanges(sessionId, artifact.id)).length, 1);
+    await service.dispose();
   } finally {
     await rm(root, { force: true, recursive: true });
   }

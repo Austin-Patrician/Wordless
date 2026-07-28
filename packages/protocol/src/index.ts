@@ -751,6 +751,17 @@ export interface ArtifactSelection {
   label: string;
 }
 
+export interface SpreadsheetSelection extends ArtifactSelection {
+  displayValue?: string;
+  formula?: string;
+}
+
+export interface SpreadsheetChangeRecord {
+  revision: number;
+  updatedAt: number;
+  operations: Array<{ command: string; locator?: string; elementType?: string }>;
+}
+
 export interface PresentationTemplate {
   id: string;
   name: string;

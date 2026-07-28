@@ -45,7 +45,7 @@ export interface AgentTextAttachment {
   path: string;
   name: string;
   mediaType: string;
-  content: string;
+  content?: string;
 }
 
 export interface OperationApprovalRequest {

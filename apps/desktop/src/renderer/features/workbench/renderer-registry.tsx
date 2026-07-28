@@ -14,6 +14,7 @@ import {
   ScanSearch,
   ShieldCheck,
   Terminal,
+  Table2,
   UsersRound,
   WandSparkles,
   Wrench,
@@ -318,6 +319,34 @@ function PresentationToolActivity({ block, onLoadToolOutput, onResolveApproval }
   );
 }
 
+function SpreadsheetToolActivity({ block, onLoadToolOutput, onResolveApproval }: ToolActivityProps) {
+  if (block.state === "awaiting-approval" && block.approval) return <ToolApprovalCard block={block} onResolveApproval={onResolveApproval} />;
+  const details = readRecord(block.details);
+  const artifact = readRecord(details?.artifact);
+  const quality = readRecord(details?.quality);
+  const displayName = textValue(artifact?.displayName) ?? textValue(block.input?.name);
+  const operationCount = typeof details?.operationCount === "number" ? details.operationCount : Array.isArray(block.input?.operations) ? block.input.operations.length : undefined;
+  const issues = Array.isArray(quality?.issues) ? quality.issues : [];
+  const activity = block.name === "spreadsheet_create"
+    ? { running: "Creating workbook", summary: displayName ? `Created ${displayName}` : "Workbook created", detail: displayName }
+    : block.name === "spreadsheet_open"
+      ? { running: "Opening workbook", summary: displayName ? `Opened ${displayName}` : "Workbook opened", detail: textValue(block.input?.sourcePath) }
+      : block.name === "spreadsheet_import"
+        ? { running: "Importing tabular data", summary: "Data imported", detail: textValue(block.input?.sourcePath) }
+        : block.name === "spreadsheet_edit"
+          ? { running: "Updating workbook", summary: operationCount === undefined ? "Workbook updated" : `${operationCount} changes applied`, detail: displayName }
+          : block.name === "spreadsheet_render"
+            ? { running: "Rendering workbook range", summary: "Range rendered", detail: [textValue(block.input?.sheet), textValue(block.input?.range)].filter(Boolean).join("!") }
+            : block.name === "spreadsheet_quality_scan"
+              ? { running: "Checking workbook", summary: issues.length ? `${issues.length} issue${issues.length === 1 ? "" : "s"}` : "Workbook check complete", detail: textValue(block.input?.artifactId) }
+              : block.name === "spreadsheet_publish"
+                ? { running: "Preparing workbook", summary: displayName ? `${displayName} ready` : "Workbook ready", detail: displayName }
+                : block.name === "spreadsheet_read"
+                  ? { running: "Reading workbook", summary: "Workbook inspected", detail: textValue(block.input?.artifactId) }
+                  : { running: "Loading spreadsheet schema", summary: "Spreadsheet operation complete", detail: textValue(block.input?.element) };
+  return <section className="py-3"><ToolActivityRow block={block} detail={activity.detail} icon={<Table2 className="h-3.5 w-3.5" />} runningLabel={activity.running} summary={activity.summary} />{block.state === "error" && block.output ? <p className="mt-2 max-h-10 overflow-hidden whitespace-pre-wrap break-words font-mono text-[10px] leading-5 text-destructive">{block.output}</p> : null}<ToolOutput block={block} onLoadToolOutput={onLoadToolOutput} /></section>;
+}
+
 function ToolApprovalCard({ block, onResolveApproval }: ToolActivityProps) {
   const { t } = usePreferences();
   const [rejected, setRejected] = useState(false);
@@ -387,6 +416,7 @@ export const workbenchRendererRegistry = createWorkbenchRendererRegistry(
     { toolName: "delegate_task", component: SubagentToolActivity },
     { workbenchId: "code", component: CodeToolActivity },
     { workbenchId: "presentation", component: PresentationToolActivity },
+    { workbenchId: "workbook", component: SpreadsheetToolActivity },
   ],
   [{ component: GenericArtifactActivity }],
 );

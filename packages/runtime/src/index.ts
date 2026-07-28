@@ -253,7 +253,7 @@ export const BUILTIN_ENTRIES: WorkbenchEntryDefinition[] = [
     iconKey: "table",
     profile: { id: "excel", version: "1" },
     workbenchId: "workbook",
-    availability: "unavailable",
+    availability: "available",
     modelRequirements: { requiresToolUse: true },
   },
   {
@@ -1287,7 +1287,7 @@ export class WordlessRuntime {
     const initialPrompt = entry.workbenchId === "presentation"
       ? `${prompt}\n\n<wordless-presentation mode="${draft.presentation?.generationMode ?? "guided"}" template="${draft.presentation?.templateId ?? "auto"}">\nUse the Presentation workflow. In guided mode, inspect the request, propose a slide outline, and wait for confirmation before creating the deck. In quick mode, create the first complete draft directly.\n</wordless-presentation>`
       : prompt;
-    void this.promptSession(id, initialPrompt, attachmentPaths, skillIds, submission).catch(() => {});
+    await this.promptSession(id, initialPrompt, attachmentPaths, skillIds, submission);
     return this.requireSession(id);
   }
 
@@ -1302,7 +1302,9 @@ export class WordlessRuntime {
       return;
     }
     const selectedSkills = this.resolveSelectedSkills(record.workspaceId, skillIds);
-    void this.runSession(sessionId, prompt, attachments, selectedSkills, submission).catch(() => {});
+    const automaticCompaction = this.isAutomaticContextCompactionEnabled();
+    const run = await this.createActiveRun(sessionId, automaticCompaction ? "compaction" : "prompt", submission?.messageId);
+    void this.executeActiveRun(sessionId, run, prompt, attachments, selectedSkills, automaticCompaction, submission).catch(() => {});
   }
 
   async cancelSession(sessionId: string): Promise<void> {
@@ -1904,9 +1906,7 @@ export class WordlessRuntime {
     await this.runCompaction(sessionId);
   }
 
-  private async runSession(sessionId: string, prompt: string, attachments: AgentTextAttachment[], selectedSkills: ReturnType<SkillRegistry["getSessionSkills"]>, submission?: UserMessageSubmission): Promise<void> {
-    const automaticCompaction = this.isAutomaticContextCompactionEnabled();
-    const active = await this.createActiveRun(sessionId, automaticCompaction ? "compaction" : "prompt", submission?.messageId);
+  private async executeActiveRun(sessionId: string, active: ActiveRun, prompt: string, attachments: AgentTextAttachment[], selectedSkills: ReturnType<SkillRegistry["getSessionSkills"]>, automaticCompaction: boolean, submission?: UserMessageSubmission): Promise<void> {
     try {
       if (automaticCompaction) active.compactionTrigger = "automatic";
       if (automaticCompaction) await active.driverSession.execute({ type: "compact", trigger: "automatic" });
@@ -2582,16 +2582,31 @@ export class WordlessRuntime {
     this.database.savePreferences(this.preferences);
   }
 
-  private resolveSessionAttachments(record: SessionRecord, paths: string[]): Promise<AgentTextAttachment[]> {
+  private async resolveSessionAttachments(record: SessionRecord, paths: string[]): Promise<AgentTextAttachment[]> {
     if (paths.length === 0) return Promise.resolve([]);
     if (!record.workspaceId) throw new Error("Only workspace files can be attached to a conversation");
     const workspace = this.requireWorkspace(record.workspaceId);
     if (workspace.availability !== "available") throw new Error("The selected workspace is unavailable");
-    return Promise.all(paths.map((path) => this.pathService.readWorkspaceTextFile(record.runtimeRootPath, path, 64 * 1024))).then((files) => {
-      const total = files.reduce((size, file) => size + new TextEncoder().encode(file.content).byteLength, 0);
-      if (total > 256 * 1024) throw new Error("Attached workspace files exceed the 256 KiB limit");
-      return files.map((file) => ({ ...file, mediaType: "text/plain" }));
-    });
+    const spreadsheetMediaTypes: Record<string, string> = {
+      ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      ".csv": "text/csv",
+      ".tsv": "text/tab-separated-values",
+    };
+    const files = await Promise.all(paths.map(async (path): Promise<AgentTextAttachment> => {
+      const extension = extname(path).toLowerCase();
+      const spreadsheetMediaType = record.workbenchId === "workbook" ? spreadsheetMediaTypes[extension] : undefined;
+      if (spreadsheetMediaType) {
+        const source = await this.pathService.resolveWorkspaceFile(record.runtimeRootPath, path);
+        const details = await stat(source);
+        if (details.size > 100 * 1024 * 1024) throw new Error("Spreadsheet attachments must not exceed 100 MiB");
+        return { path: path.replace(/\\/g, "/").replace(/^\.\//, ""), name: basename(source), mediaType: spreadsheetMediaType };
+      }
+      const file = await this.pathService.readWorkspaceTextFile(record.runtimeRootPath, path, 64 * 1024);
+      return { ...file, mediaType: "text/plain" };
+    }));
+    const totalTextBytes = files.reduce((size, file) => size + (file.content ? new TextEncoder().encode(file.content).byteLength : 0), 0);
+    if (totalTextBytes > 256 * 1024) throw new Error("Attached workspace text files exceed the 256 KiB limit");
+    return files;
   }
 
   private toConversationMessage(message: unknown, model: ModelReference, id: string): ConversationMessage | undefined {

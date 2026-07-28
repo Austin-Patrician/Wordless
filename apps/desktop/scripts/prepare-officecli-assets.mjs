@@ -5,7 +5,8 @@ import { createHash } from "node:crypto";
 import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
 
-const version = "v1.0.142";
+const lock = JSON.parse(await readFile(new URL("officecli.lock.json", import.meta.url), "utf8"));
+const version = lock.version;
 const root = new URL("..", import.meta.url);
 const resources = new URL("../resources/", import.meta.url);
 const args = process.argv.slice(2);
@@ -20,46 +21,11 @@ const arch = option("arch", process.arch);
 const platformName = platform === "darwin" ? "mac" : platform === "win32" ? "win" : "linux";
 const executable = platform === "win32" ? "officecli.exe" : "officecli";
 const asset = platform === "linux" ? `officecli-linux-${arch}` : `officecli-${platformName}-${arch}${platform === "win32" ? ".exe" : ""}`;
-const releaseBase = `https://github.com/iOfficeAI/OfficeCLI/releases/download/${version}`;
+const lockedAsset = lock.assets[asset];
+if (!lockedAsset) throw new Error(`OfficeCLI ${version} does not provide a locked asset for ${asset}`);
 const preparedVersion = `${version}:${asset}`;
 const execFile = promisify(execFileCallback);
 const downloadTimeoutMs = 120_000;
-
-async function fetchBytes(url) {
-  const resourceName = new URL(url).pathname.split("/").at(-1) ?? url;
-  const curl = platform === "win32" ? "curl.exe" : "curl";
-  try {
-    console.log(`Downloading ${resourceName}...`);
-    const { stdout } = await execFile(curl, [
-      "--http1.1",
-      "--fail",
-      "--location",
-      "--silent",
-      "--show-error",
-      "--retry",
-      "6",
-      "--retry-all-errors",
-      "--retry-delay",
-      "2",
-      "--connect-timeout",
-      "15",
-      "--max-time",
-      String(downloadTimeoutMs / 1_000),
-      url,
-    ], { encoding: "buffer", maxBuffer: 100 * 1024 * 1024 });
-    const bytes = Buffer.isBuffer(stdout) ? stdout : Buffer.from(stdout);
-    console.log(`Downloaded ${resourceName} (${bytes.byteLength.toLocaleString()} bytes).`);
-    return bytes;
-  } catch (cause) {
-    if (cause?.code !== "ENOENT") throw cause;
-  }
-  console.log(`Downloading ${resourceName} with Node fetch...`);
-  const response = await fetch(url, { signal: AbortSignal.timeout(downloadTimeoutMs) });
-  if (!response.ok) throw new Error(`Download failed (${response.status}) for ${url}`);
-  const bytes = Buffer.from(await response.arrayBuffer());
-  console.log(`Downloaded ${resourceName} (${bytes.byteLength.toLocaleString()} bytes).`);
-  return bytes;
-}
 
 async function downloadFile(url, temporaryDestination) {
   const resourceName = new URL(url).pathname.split("/").at(-1) ?? url;
@@ -104,13 +70,6 @@ async function downloadFile(url, temporaryDestination) {
   console.log(`Downloaded ${resourceName} (${bytes.byteLength.toLocaleString()} bytes).`);
 }
 
-function expectedHash(sums, name) {
-  const line = sums.split(/\r?\n/).find((candidate) => candidate.trim().endsWith(` ${name}`) || candidate.trim().endsWith(` *${name}`));
-  const match = line?.match(/^([a-fA-F0-9]{64})\s+\*?.+$/);
-  if (!match) throw new Error(`No SHA-256 checksum found for ${name}`);
-  return match[1].toLowerCase();
-}
-
 async function fetchTemplate(target, source) {
   const destination = new URL(`presentation-templates/${target}`, resources);
   const temporaryDestination = new URL(`presentation-templates/${target}.part`, resources);
@@ -150,13 +109,12 @@ const templateSources = [
 await mkdir(new URL(`officecli/${platformName}-${arch}/`, resources), { recursive: true });
 await mkdir(new URL("presentation-templates/", resources), { recursive: true });
 const currentVersion = await readFile(versionFile, "utf8").catch(() => "");
-if (currentVersion.trim() !== preparedVersion || !(await exists(destination))) {
-  const sums = (await fetchBytes(`${releaseBase}/SHA256SUMS`)).toString("utf8");
-  const expected = expectedHash(sums, asset);
-  const current = await readFile(destination).catch(() => undefined);
-  const actual = current ? createHash("sha256").update(current).digest("hex") : undefined;
+const expected = lockedAsset.sha256;
+const current = await readFile(destination).catch(() => undefined);
+const actual = current ? createHash("sha256").update(current).digest("hex") : undefined;
+if (currentVersion.trim() !== preparedVersion || actual !== expected) {
   if (actual !== expected) {
-    await downloadFile(`${releaseBase}/${asset}`, temporaryDestination);
+    await downloadFile(lockedAsset.url, temporaryDestination);
     const binary = await readFile(temporaryDestination);
     if (createHash("sha256").update(binary).digest("hex") !== expected) {
       await rm(temporaryDestination, { force: true });

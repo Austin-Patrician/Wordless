@@ -65,6 +65,54 @@ export interface PresentationCatalog {
   guidance: string[];
 }
 
+export type SpreadsheetReadRequest =
+  | { kind: "view"; mode: "outline" | "stats" | "issues" | "text" | "annotated"; sheet?: string; range?: string; start?: number; end?: number; limit?: number }
+  | { kind: "get"; path: string; depth?: number }
+  | { kind: "query"; selector: string; limit?: number };
+
+export interface SpreadsheetRenderedImage {
+  surfaceId: string;
+  sheet: string;
+  range?: string;
+  mimeType: "image/png";
+  data: string;
+}
+
+export interface SpreadsheetQualityIssue {
+  code: string;
+  category: "schema" | "formula" | "reference" | "structure" | "format";
+  severity: "warning" | "error";
+  message: string;
+  locator?: string;
+  surfaceId?: string;
+  suggestion?: string;
+}
+
+export interface SpreadsheetQualityReport {
+  revision: number;
+  status: "needs-fix" | "ready-with-warnings" | "ready";
+  issues: SpreadsheetQualityIssue[];
+  stats: Record<string, unknown>;
+  checkedAt: number;
+}
+
+export interface SpreadsheetCatalog {
+  artifacts: unknown[];
+}
+
+export interface SpreadsheetOfficeService {
+  catalogSpreadsheets(sessionId: string): Promise<SpreadsheetCatalog>;
+  createSpreadsheet(sessionId: string, workspaceRoot: string, input: { name?: string; locale?: string }): Promise<unknown>;
+  openSpreadsheet(sessionId: string, workspaceRoot: string, input: { sourcePath: string }): Promise<unknown>;
+  importSpreadsheetData(sessionId: string, workspaceRoot: string, artifactId: string, input: { sourcePath: string; sheet?: string; startCell?: string; header?: boolean }): Promise<unknown>;
+  helpSpreadsheet(input: { verb?: "add" | "set" | "get" | "query" | "remove"; element?: string }): Promise<string>;
+  readSpreadsheet(sessionId: string, workspaceRoot: string, artifactId: string, request: SpreadsheetReadRequest): Promise<string>;
+  applySpreadsheet(sessionId: string, workspaceRoot: string, artifactId: string, operations: OfficeMutation[]): Promise<unknown>;
+  renderSpreadsheet(sessionId: string, workspaceRoot: string, artifactId: string, input: { sheet: string; range?: string }): Promise<{ revision: number; images: SpreadsheetRenderedImage[]; details: unknown }>;
+  qualityScanSpreadsheet(sessionId: string, workspaceRoot: string, artifactId: string): Promise<SpreadsheetQualityReport>;
+  publishSpreadsheet(sessionId: string, workspaceRoot: string, artifactId: string): Promise<unknown>;
+}
+
 export interface PresentationOfficeService {
   catalog(sessionId: string): Promise<PresentationCatalog>;
   create(sessionId: string, workspaceRoot: string, input: { name?: string; templateId?: string | null }): Promise<unknown>;

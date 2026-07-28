@@ -265,6 +265,35 @@ export function registerRuntimeIpc(runtime: WordlessRuntime, appearanceAssets: A
     const input = parsePayload<{ sessionId: string; artifactId: string }>(Type.Object({ sessionId: Type.String({ minLength: 1 }), artifactId: Type.String({ minLength: 1 }) }), payload);
     shell.showItemInFolder(await options.office.sourceForOpen(input.sessionId, runtime.getSessionRuntimeRoot(input.sessionId), input.artifactId));
   });
+  ipcMain.handle("wordless:spreadsheet:list", async (_event, payload: unknown) => {
+    const input = parsePayload<{ sessionId: string }>(Type.Object({ sessionId: Type.String({ minLength: 1 }) }), payload);
+    return await options.office.listSpreadsheets(input.sessionId);
+  });
+  ipcMain.handle("wordless:spreadsheet:preview", async (_event, payload: unknown) => {
+    const input = parsePayload<{ sessionId: string; artifactId: string }>(Type.Object({ sessionId: Type.String({ minLength: 1 }), artifactId: Type.String({ minLength: 1 }) }), payload);
+    return await options.office.previewSpreadsheet(input.sessionId, runtime.getSessionRuntimeRoot(input.sessionId), input.artifactId);
+  });
+  ipcMain.handle("wordless:spreadsheet:selection", async (_event, payload: unknown) => {
+    const input = parsePayload<{ sessionId: string; artifactId: string }>(Type.Object({ sessionId: Type.String({ minLength: 1 }), artifactId: Type.String({ minLength: 1 }) }), payload);
+    return await options.office.selectionSpreadsheet(input.sessionId, runtime.getSessionRuntimeRoot(input.sessionId), input.artifactId);
+  });
+  ipcMain.handle("wordless:spreadsheet:changes", async (_event, payload: unknown) => {
+    const input = parsePayload<{ sessionId: string; artifactId: string }>(Type.Object({ sessionId: Type.String({ minLength: 1 }), artifactId: Type.String({ minLength: 1 }) }), payload);
+    return await options.office.spreadsheetChanges(input.sessionId, input.artifactId);
+  });
+  ipcMain.handle("wordless:spreadsheet:validate", async (_event, payload: unknown) => {
+    const input = parsePayload<{ sessionId: string; artifactId: string }>(Type.Object({ sessionId: Type.String({ minLength: 1 }), artifactId: Type.String({ minLength: 1 }) }), payload);
+    return await options.office.validateSpreadsheet(input.sessionId, runtime.getSessionRuntimeRoot(input.sessionId), input.artifactId);
+  });
+  ipcMain.handle("wordless:spreadsheet:open", async (_event, payload: unknown) => {
+    const input = parsePayload<{ sessionId: string; artifactId: string }>(Type.Object({ sessionId: Type.String({ minLength: 1 }), artifactId: Type.String({ minLength: 1 }) }), payload);
+    const failure = await shell.openPath(await options.office.sourceForSpreadsheetOpen(input.sessionId, runtime.getSessionRuntimeRoot(input.sessionId), input.artifactId));
+    if (failure) throw new Error(failure);
+  });
+  ipcMain.handle("wordless:spreadsheet:reveal", async (_event, payload: unknown) => {
+    const input = parsePayload<{ sessionId: string; artifactId: string }>(Type.Object({ sessionId: Type.String({ minLength: 1 }), artifactId: Type.String({ minLength: 1 }) }), payload);
+    shell.showItemInFolder(await options.office.sourceForSpreadsheetOpen(input.sessionId, runtime.getSessionRuntimeRoot(input.sessionId), input.artifactId));
+  });
   ipcMain.handle("wordless:session:artifact:diff", async (_event, payload: unknown) => {
     const input = parsePayload<{ sessionId: string; path: string }>(WorkspaceFileRequestSchema, payload);
     return await runtime.getSessionArtifactDiff(input.sessionId, input.path);

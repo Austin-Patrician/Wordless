@@ -14,6 +14,12 @@ import {
   type PresentationRenderedImage,
   type PresentationSource,
   type PresentationVisualReview,
+  type SpreadsheetCatalog,
+  type SpreadsheetOfficeService,
+  type SpreadsheetQualityIssue,
+  type SpreadsheetQualityReport,
+  type SpreadsheetReadRequest,
+  type SpreadsheetRenderedImage,
 } from "@wordless/capability-office";
 import type {
   ArtifactDescriptor,
@@ -22,6 +28,8 @@ import type {
   ArtifactSelection,
   OfficeEngineHealth,
   PresentationTemplate,
+  SpreadsheetChangeRecord,
+  SpreadsheetSelection,
 } from "@wordless/protocol";
 
 type PresentationArtifactState = {
@@ -32,10 +40,16 @@ type PresentationArtifactState = {
   renderedSurfaceIds?: string[];
 };
 
-type PresentationManifest = {
-  version: 1 | 2;
+type SpreadsheetArtifactState = {
+  quality?: SpreadsheetQualityReport;
+  changes: Array<{ revision: number; operations: OfficeMutation[]; updatedAt: number }>;
+};
+
+type OfficeManifest = {
+  version: 1 | 2 | 3;
   artifacts: ArtifactDescriptor[];
   presentation?: Record<string, PresentationArtifactState>;
+  spreadsheet?: Record<string, SpreadsheetArtifactState>;
 };
 
 type RunResult = { stdout: string; stderr: string; exitCode: number | null };
@@ -48,6 +62,7 @@ type WatchSession = {
 const sessionIdPattern = /^[a-f0-9-]{36}$/i;
 const artifactIdPattern = /^[a-f0-9-]{36}$/i;
 const fileNamePattern = /^[a-zA-Z0-9][a-zA-Z0-9._ -]{0,116}\.pptx$/;
+const spreadsheetFileNamePattern = /^[a-zA-Z0-9][a-zA-Z0-9._ -]{0,116}\.xlsx$/;
 const maximumPreviewSlides = 60;
 const maximumConcurrentPreviewRenders = 3;
 const maximumModelRenderSlides = 4;
@@ -99,6 +114,12 @@ function officeCliData(value: unknown): unknown {
   return "data" in record ? record.data : value;
 }
 
+function safeWorkbookName(value: string): string {
+  const normalized = value.trim().replace(/[\\/:*?"<>|]+/g, "-").replace(/\s+/g, " ");
+  const withExtension = normalized.toLowerCase().endsWith(".xlsx") ? normalized : `${normalized || "workbook"}.xlsx`;
+  return spreadsheetFileNamePattern.test(withExtension) ? withExtension : "workbook.xlsx";
+}
+
 function recordValue(value: unknown): Record<string, unknown> | undefined {
   return typeof value === "object" && value !== null && !Array.isArray(value) ? value as Record<string, unknown> : undefined;
 }
@@ -130,6 +151,18 @@ function privateNetworkHost(hostname: string): boolean {
 
 function messageFrom(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+function spreadsheetArtifactIssues(issues: SpreadsheetQualityIssue[]): ArtifactIssue[] {
+  return issues.map((issue) => ({
+    severity: issue.severity,
+    message: issue.message,
+    ...(issue.locator ? { locator: issue.locator } : {}),
+    code: issue.code,
+    category: issue.category === "formula" ? "content" : issue.category === "reference" ? "structure" : issue.category,
+    ...(issue.surfaceId ? { surfaceId: issue.surfaceId } : {}),
+    ...(issue.suggestion ? { suggestion: issue.suggestion } : {}),
+  }));
 }
 
 export function presentationAssetUrl(sessionId: string, artifactId: string, revision: number, fileName: string): string {
@@ -235,7 +268,7 @@ export function normalizePresentationOperations(operations: unknown[]): Record<s
   });
 }
 
-export class OfficeCliService implements PresentationOfficeService {
+export class OfficeCliService implements PresentationOfficeService, SpreadsheetOfficeService {
   private healthPromise: Promise<OfficeEngineHealth> | undefined;
   private readonly guidanceCache = new Map<string, Promise<string>>();
   private readonly previewCache = new Map<string, ArtifactPreviewManifest>();
@@ -267,7 +300,7 @@ export class OfficeCliService implements PresentationOfficeService {
 
   async list(sessionId: string): Promise<ArtifactDescriptor[]> {
     const manifest = await this.readManifest(sessionId);
-    return manifest.artifacts.map((artifact) => {
+    return manifest.artifacts.filter((artifact) => artifact.kind === "presentation").map((artifact) => {
       const quality = manifest.presentation?.[artifact.id]?.quality;
       return quality ? {
         ...artifact,
@@ -282,6 +315,220 @@ export class OfficeCliService implements PresentationOfficeService {
         },
       } : artifact;
     });
+  }
+
+  async catalogSpreadsheets(sessionId: string): Promise<SpreadsheetCatalog> {
+    return { artifacts: await this.listSpreadsheets(sessionId) };
+  }
+
+  async listSpreadsheets(sessionId: string): Promise<ArtifactDescriptor[]> {
+    return (await this.readManifest(sessionId)).artifacts.filter((artifact) => artifact.kind === "spreadsheet");
+  }
+
+  async createSpreadsheet(sessionId: string, workspaceRoot: string, input: { name?: string; locale?: string }): Promise<ArtifactDescriptor> {
+    this.assertSessionId(sessionId);
+    await this.requireHealthy();
+    const root = resolve(workspaceRoot);
+    const source = await this.uniqueSpreadsheetSourcePath(root, safeWorkbookName(input.name ?? "workbook.xlsx"));
+    const args = ["create", source, "--force"];
+    if (input.locale) args.push("--locale", input.locale);
+    await this.run(args, { cwd: root });
+    this.managedSources.add(source);
+    return await this.registerSpreadsheetArtifact(sessionId, root, source);
+  }
+
+  async openSpreadsheet(sessionId: string, workspaceRoot: string, input: { sourcePath: string }): Promise<ArtifactDescriptor> {
+    this.assertSessionId(sessionId);
+    await this.requireHealthy();
+    if (isAbsolute(input.sourcePath)) throw new Error("Spreadsheet source path must be relative to the session workspace");
+    const root = resolve(workspaceRoot);
+    const source = resolve(root, input.sourcePath);
+    if (!isWithin(root, source) || extname(source).toLowerCase() !== ".xlsx") throw new Error("Spreadsheet source must be an XLSX inside the session workspace");
+    await stat(source);
+    const relativePath = relative(root, source).replace(/\\/g, "/");
+    const existing = (await this.readManifest(sessionId)).artifacts.find((artifact) => artifact.kind === "spreadsheet" && artifact.sourcePath === relativePath);
+    if (existing) return existing;
+    this.managedSources.add(source);
+    return await this.registerSpreadsheetArtifact(sessionId, root, source);
+  }
+
+  async importSpreadsheetData(sessionId: string, workspaceRoot: string, artifactId: string, input: { sourcePath: string; sheet?: string; startCell?: string; header?: boolean }): Promise<ArtifactDescriptor> {
+    if (isAbsolute(input.sourcePath)) throw new Error("Spreadsheet import path must be relative to the session workspace");
+    const root = resolve(workspaceRoot);
+    const importSource = resolve(root, input.sourcePath);
+    const extension = extname(importSource).toLowerCase();
+    if (!isWithin(root, importSource) || (extension !== ".csv" && extension !== ".tsv")) throw new Error("Spreadsheet import source must be a CSV or TSV inside the session workspace");
+    await stat(importSource);
+    const source = await this.spreadsheetSourcePath(sessionId, workspaceRoot, artifactId);
+    const artifact = await this.findSpreadsheetArtifact(sessionId, artifactId);
+    const backupRoot = this.revisionRoot(sessionId, artifactId, artifact.revision + 1);
+    const backup = join(backupRoot, "source-before.xlsx");
+    await mkdir(backupRoot, { recursive: true });
+    await copyFile(source, backup);
+    const args = ["import", source, `/${input.sheet ?? "Sheet1"}`, importSource, "--start-cell", input.startCell ?? "A1", "--json"];
+    if (input.header) args.push("--header");
+    try {
+      await this.run(args, { cwd: dirnameFor(source) });
+    } catch (cause) {
+      await copyFile(backup, source);
+      throw cause;
+    }
+    const updated = await this.updateArtifact(sessionId, artifactId, (current) => ({ ...current, revision: current.revision + 1, status: "ready", updatedAt: Date.now() }));
+    await this.updateSpreadsheetState(sessionId, artifactId, (state) => ({ ...state, quality: undefined, changes: [...state.changes, { revision: updated.revision, operations: [], updatedAt: Date.now() }] }));
+    return updated;
+  }
+
+  async helpSpreadsheet(input: { verb?: "add" | "set" | "get" | "query" | "remove"; element?: string }): Promise<string> {
+    const args = ["help", "xlsx"];
+    if (input.verb) args.push(input.verb);
+    if (input.element) args.push(input.element);
+    args.push("--json");
+    return outputText(await this.run(args));
+  }
+
+  async readSpreadsheet(sessionId: string, workspaceRoot: string, artifactId: string, request: SpreadsheetReadRequest): Promise<string> {
+    const source = await this.spreadsheetSourcePath(sessionId, workspaceRoot, artifactId);
+    let args: string[];
+    if (request.kind === "view") {
+      args = ["view", source, request.mode];
+      if (request.sheet || request.range) {
+        const locator = request.range ? `${request.sheet ?? "Sheet1"}!${request.range}` : request.sheet;
+        if (locator) args.push("--range", locator);
+      }
+      if (request.start !== undefined) args.push("--start", String(request.start));
+      if (request.end !== undefined) args.push("--end", String(request.end));
+      if (request.limit !== undefined) args.push("--max-lines", String(request.limit));
+    } else if (request.kind === "get") {
+      args = ["get", source, request.path];
+      if (request.depth !== undefined) args.push("--depth", String(request.depth));
+    } else {
+      args = ["query", source, request.selector];
+      if (request.limit !== undefined) args.push("--limit", String(request.limit));
+    }
+    args.push("--json");
+    return outputText(await this.run(args, { cwd: dirnameFor(source) }));
+  }
+
+  async applySpreadsheet(sessionId: string, workspaceRoot: string, artifactId: string, operations: OfficeMutation[]): Promise<ArtifactDescriptor> {
+    if (operations.length === 0) throw new Error("At least one spreadsheet operation is required");
+    const source = await this.spreadsheetSourcePath(sessionId, workspaceRoot, artifactId);
+    const artifact = await this.findSpreadsheetArtifact(sessionId, artifactId);
+    const nextRevisionRoot = this.revisionRoot(sessionId, artifactId, artifact.revision + 1);
+    const operationFile = join(nextRevisionRoot, "operations.json");
+    const backup = join(nextRevisionRoot, "source-before.xlsx");
+    await mkdir(nextRevisionRoot, { recursive: true });
+    await copyFile(source, backup);
+    const secured = await this.secureOfficeAssets(workspaceRoot, operations);
+    await writeFile(operationFile, JSON.stringify(compileOfficeMutations(secured)), "utf8");
+    try {
+      await this.run(["batch", source, "--input", operationFile, "--stop-on-error", "--json"], { cwd: dirnameFor(source) });
+    } catch (cause) {
+      await copyFile(backup, source);
+      throw cause;
+    }
+    const updated = await this.updateArtifact(sessionId, artifactId, (current) => ({ ...current, revision: current.revision + 1, status: "ready", updatedAt: Date.now() }));
+    await this.updateSpreadsheetState(sessionId, artifactId, (state) => ({ ...state, quality: undefined, changes: [...state.changes, { revision: updated.revision, operations: secured, updatedAt: Date.now() }].slice(-100) }));
+    return updated;
+  }
+
+  async renderSpreadsheet(sessionId: string, workspaceRoot: string, artifactId: string, input: { sheet: string; range?: string }): Promise<{ revision: number; images: SpreadsheetRenderedImage[]; details: ArtifactPreviewManifest }> {
+    const artifact = await this.findSpreadsheetArtifact(sessionId, artifactId);
+    const source = await this.spreadsheetSourcePath(sessionId, workspaceRoot, artifactId);
+    const output = this.revisionRoot(sessionId, artifactId, artifact.revision);
+    await mkdir(output, { recursive: true });
+    const surfaceId = `sheet-${encodeURIComponent(input.sheet)}`;
+    const file = join(output, `${surfaceId}-${input.range ? encodeURIComponent(input.range) : "used"}.png`);
+    const range = input.range ? `${input.sheet}!${input.range}` : input.sheet;
+    await this.run(["view", source, "screenshot", "--range", range, "-o", file], { cwd: dirnameFor(source), timeoutMs: 60_000 });
+    const image: SpreadsheetRenderedImage = { surfaceId, sheet: input.sheet, ...(input.range ? { range: input.range } : {}), mimeType: "image/png", data: (await readFile(file)).toString("base64") };
+    return { revision: artifact.revision, images: [image], details: await this.previewSpreadsheet(sessionId, workspaceRoot, artifactId) };
+  }
+
+  async qualityScanSpreadsheet(sessionId: string, workspaceRoot: string, artifactId: string): Promise<SpreadsheetQualityReport> {
+    const source = await this.spreadsheetSourcePath(sessionId, workspaceRoot, artifactId);
+    const artifact = await this.findSpreadsheetArtifact(sessionId, artifactId);
+    const [validation, issueResult, statsResult] = await Promise.all([
+      this.run(["validate", source, "--json"], { cwd: dirnameFor(source), allowFailure: true }),
+      this.run(["view", source, "issues", "--json"], { cwd: dirnameFor(source), allowFailure: true }),
+      this.run(["view", source, "stats", "--json"], { cwd: dirnameFor(source), allowFailure: true }),
+    ]);
+    const issues: SpreadsheetQualityIssue[] = [];
+    const validationEnvelope = recordValue(parseJson(validation.stdout));
+    if (validation.exitCode !== 0 || validationEnvelope?.success === false) issues.push({ code: "SCHEMA", category: "schema", severity: "error", message: outputText(validation) || "OfficeCLI schema validation failed." });
+    const issueData = recordValue(officeCliData(parseJson(issueResult.stdout)));
+    for (const value of Array.isArray(issueData?.issues) ? issueData.issues : []) {
+      const item = recordValue(value);
+      if (!item || typeof item.message !== "string") continue;
+      const rawCode = typeof item.id === "string" ? item.id : typeof item.type === "string" ? item.type : "OFFICE";
+      const code = rawCode.toUpperCase();
+      const locator = typeof item.path === "string" ? item.path : undefined;
+      const cacheWarning = /cache_stale|not_evaluated/i.test(rawCode);
+      const category = /formula/i.test(rawCode) ? "formula" as const : /ref|definedname|chart_series/i.test(rawCode) ? "reference" as const : "structure" as const;
+      const sheet = locator?.split("/").filter(Boolean)[0];
+      issues.push({ code, category, severity: cacheWarning ? "warning" : "error", message: item.message, ...(locator ? { locator } : {}), ...(sheet ? { surfaceId: `sheet-${encodeURIComponent(sheet)}` } : {}), ...(cacheWarning ? { suggestion: "Open the workbook in Excel or WPS and recalculate formulas before relying on cached values." } : {}) });
+    }
+    const hasErrors = issues.some((issue) => issue.severity === "error");
+    const report: SpreadsheetQualityReport = { revision: artifact.revision, status: hasErrors ? "needs-fix" : issues.length ? "ready-with-warnings" : "ready", issues, stats: recordValue(officeCliData(parseJson(statsResult.stdout))) ?? {}, checkedAt: Date.now() };
+    await this.updateSpreadsheetState(sessionId, artifactId, (state) => ({ ...state, quality: report }));
+    await this.updateArtifact(sessionId, artifactId, (current) => ({ ...current, status: hasErrors ? "failed" : "ready", updatedAt: Date.now() }));
+    return report;
+  }
+
+  async publishSpreadsheet(sessionId: string, workspaceRoot: string, artifactId: string): Promise<ArtifactDescriptor> {
+    const report = await this.qualityScanSpreadsheet(sessionId, workspaceRoot, artifactId);
+    if (report.status === "needs-fix") throw new Error(`Spreadsheet cannot be published: ${report.issues.filter((issue) => issue.severity === "error").length} blocking issue(s).`);
+    const source = await this.spreadsheetSourcePath(sessionId, workspaceRoot, artifactId);
+    await this.run(["save", source], { cwd: dirnameFor(source) });
+    return await this.updateArtifact(sessionId, artifactId, (artifact) => ({ ...artifact, status: "ready", updatedAt: Date.now() }));
+  }
+
+  async previewSpreadsheet(sessionId: string, workspaceRoot: string, artifactId: string): Promise<ArtifactPreviewManifest> {
+    const artifact = await this.findSpreadsheetArtifact(sessionId, artifactId);
+    const source = await this.spreadsheetSourcePath(sessionId, workspaceRoot, artifactId);
+    const outline = recordValue(officeCliData(parseJson((await this.run(["view", source, "outline", "--json"], { cwd: dirnameFor(source), allowFailure: true })).stdout)));
+    const sheets = Array.isArray(outline?.sheets) ? outline.sheets : [];
+    const surfaces = sheets.flatMap((value) => {
+      const sheet = recordValue(value);
+      if (!sheet || typeof sheet.name !== "string") return [];
+      return [{ id: `sheet-${encodeURIComponent(sheet.name)}`, kind: "sheet" as const, label: sheet.name }];
+    });
+    const state = await this.spreadsheetState(sessionId, artifactId);
+    const watchUrl = await this.ensureWatch(sessionId, artifactId, source);
+    return { artifactId, revision: artifact.revision, ...(watchUrl ? { watchUrl } : {}), surfaces: surfaces.length ? surfaces : [{ id: "sheet-Sheet1", kind: "sheet", label: "Sheet1" }], issues: spreadsheetArtifactIssues(state.quality?.issues ?? []) };
+  }
+
+  async selectionSpreadsheet(sessionId: string, workspaceRoot: string, artifactId: string): Promise<SpreadsheetSelection | null> {
+    const artifact = await this.findSpreadsheetArtifact(sessionId, artifactId);
+    const source = await this.spreadsheetSourcePath(sessionId, workspaceRoot, artifactId);
+    const result = await this.run(["get", source, "selected", "--json"], { cwd: dirnameFor(source), allowFailure: true });
+    const locator = this.selectionLocators(officeCliData(parseJson(result.stdout)))[0];
+    if (!locator) return null;
+    const sheet = locator.split("/").filter(Boolean)[0] ?? "Sheet1";
+    const selected = recordValue(officeCliData(parseJson((await this.run(["get", source, locator, "--json"], { cwd: dirnameFor(source), allowFailure: true })).stdout)));
+    const first = Array.isArray(selected?.results) ? recordValue(selected.results[0]) : undefined;
+    const format = recordValue(first?.format);
+    const formula = typeof first?.formula === "string" ? first.formula : typeof format?.formula === "string" ? format.formula : undefined;
+    const displayValue = typeof first?.text === "string" ? first.text : typeof first?.value === "string" || typeof first?.value === "number" ? String(first.value) : undefined;
+    return { artifactId, revision: artifact.revision, surfaceId: `sheet-${encodeURIComponent(sheet)}`, locator, label: `Selected range · ${locator}`, ...(displayValue ? { displayValue } : {}), ...(formula ? { formula } : {}) };
+  }
+
+  async spreadsheetChanges(sessionId: string, artifactId: string): Promise<SpreadsheetChangeRecord[]> {
+    return (await this.spreadsheetState(sessionId, artifactId)).changes.slice().reverse().map((change) => ({
+      revision: change.revision,
+      updatedAt: change.updatedAt,
+      operations: change.operations.map((operation) => ({
+        command: operation.command,
+        ...(operation.command === "add" ? { locator: operation.parent, ...(operation.type ? { elementType: operation.type } : {}) } : { locator: operation.path }),
+      })),
+    }));
+  }
+
+  async validateSpreadsheet(sessionId: string, workspaceRoot: string, artifactId: string): Promise<ArtifactIssue[]> {
+    return spreadsheetArtifactIssues((await this.qualityScanSpreadsheet(sessionId, workspaceRoot, artifactId)).issues);
+  }
+
+  async sourceForSpreadsheetOpen(sessionId: string, workspaceRoot: string, artifactId: string): Promise<string> {
+    return await this.spreadsheetSourcePath(sessionId, workspaceRoot, artifactId);
   }
 
   async create(sessionId: string, workspaceRoot: string, input: { name?: string; templateId?: string | null }): Promise<ArtifactDescriptor> {
@@ -314,7 +561,7 @@ export class OfficeCliService implements PresentationOfficeService {
     };
     const manifest = await this.readManifest(sessionId);
     manifest.artifacts.unshift(artifact);
-    manifest.version = 2;
+    manifest.version = 3;
     manifest.presentation ??= {};
     manifest.presentation[artifact.id] = { templateId, sources: [], renderedRevision: artifact.revision, renderedSurfaceIds: [] };
     await this.writeManifest(sessionId, manifest);
@@ -775,18 +1022,18 @@ export class OfficeCliService implements PresentationOfficeService {
     return url;
   }
 
-  private async readManifest(sessionId: string): Promise<PresentationManifest> {
+  private async readManifest(sessionId: string): Promise<OfficeManifest> {
     this.assertSessionId(sessionId);
     try {
       const value = parseJson(await readFile(this.manifestPath(sessionId), "utf8"));
-      if (!value || typeof value !== "object" || !Array.isArray((value as PresentationManifest).artifacts)) return { version: 2, artifacts: [], presentation: {} };
-      return value as PresentationManifest;
+      if (!value || typeof value !== "object" || !Array.isArray((value as OfficeManifest).artifacts)) return { version: 3, artifacts: [], presentation: {}, spreadsheet: {} };
+      return value as OfficeManifest;
     } catch {
-      return { version: 2, artifacts: [], presentation: {} };
+      return { version: 3, artifacts: [], presentation: {}, spreadsheet: {} };
     }
   }
 
-  private async writeManifest(sessionId: string, manifest: PresentationManifest): Promise<void> {
+  private async writeManifest(sessionId: string, manifest: OfficeManifest): Promise<void> {
     const path = this.manifestPath(sessionId);
     await mkdir(dirnameFor(path), { recursive: true });
     const temporary = `${path}.${randomUUID()}.tmp`;
@@ -797,7 +1044,7 @@ export class OfficeCliService implements PresentationOfficeService {
   private async updateArtifact(sessionId: string, artifactId: string, update: (artifact: ArtifactDescriptor) => ArtifactDescriptor): Promise<ArtifactDescriptor> {
     const manifest = await this.readManifest(sessionId);
     const index = manifest.artifacts.findIndex((artifact) => artifact.id === artifactId);
-    if (index < 0) throw new Error("Presentation artifact was not found");
+    if (index < 0) throw new Error("Office artifact was not found");
     const next = update(manifest.artifacts[index]!);
     manifest.artifacts[index] = next;
     await this.writeManifest(sessionId, manifest);
@@ -813,11 +1060,79 @@ export class OfficeCliService implements PresentationOfficeService {
   private async updatePresentationState(sessionId: string, artifactId: string, update: (state: PresentationArtifactState) => PresentationArtifactState): Promise<PresentationArtifactState> {
     const manifest = await this.readManifest(sessionId);
     if (!manifest.artifacts.some((artifact) => artifact.id === artifactId)) throw new Error("Presentation artifact was not found");
-    manifest.version = 2;
+    manifest.version = 3;
     manifest.presentation ??= {};
     const next = update(manifest.presentation[artifactId] ?? { templateId: "unknown", sources: [] });
     manifest.presentation[artifactId] = next;
     await this.writeManifest(sessionId, manifest);
+    return next;
+  }
+
+  private async registerSpreadsheetArtifact(sessionId: string, workspaceRoot: string, source: string): Promise<ArtifactDescriptor> {
+    const artifact: ArtifactDescriptor = {
+      id: randomUUID(),
+      sessionId,
+      kind: "spreadsheet",
+      sourcePath: relative(workspaceRoot, source).replace(/\\/g, "/"),
+      displayName: basename(source),
+      mimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      revision: 1,
+      status: "ready",
+      capabilities: ["preview", "select", "validate", "export", "open"],
+      updatedAt: Date.now(),
+    };
+    const manifest = await this.readManifest(sessionId);
+    manifest.version = 3;
+    manifest.artifacts.unshift(artifact);
+    manifest.spreadsheet ??= {};
+    manifest.spreadsheet[artifact.id] = { changes: [] };
+    await this.writeManifest(sessionId, manifest);
+    return artifact;
+  }
+
+  private async spreadsheetState(sessionId: string, artifactId: string): Promise<SpreadsheetArtifactState> {
+    await this.findSpreadsheetArtifact(sessionId, artifactId);
+    const manifest = await this.readManifest(sessionId);
+    return manifest.spreadsheet?.[artifactId] ?? { changes: [] };
+  }
+
+  private async updateSpreadsheetState(sessionId: string, artifactId: string, update: (state: SpreadsheetArtifactState) => SpreadsheetArtifactState): Promise<SpreadsheetArtifactState> {
+    const manifest = await this.readManifest(sessionId);
+    if (!manifest.artifacts.some((artifact) => artifact.id === artifactId && artifact.kind === "spreadsheet")) throw new Error("Spreadsheet artifact was not found");
+    manifest.version = 3;
+    manifest.spreadsheet ??= {};
+    const next = update(manifest.spreadsheet[artifactId] ?? { changes: [] });
+    manifest.spreadsheet[artifactId] = next;
+    await this.writeManifest(sessionId, manifest);
+    return next;
+  }
+
+  private async findSpreadsheetArtifact(sessionId: string, artifactId: string): Promise<ArtifactDescriptor> {
+    if (!artifactIdPattern.test(artifactId)) throw new Error("Invalid spreadsheet artifact");
+    const artifact = (await this.readManifest(sessionId)).artifacts.find((candidate) => candidate.id === artifactId && candidate.kind === "spreadsheet");
+    if (!artifact) throw new Error("Spreadsheet artifact was not found");
+    return artifact;
+  }
+
+  private async spreadsheetSourcePath(sessionId: string, workspaceRoot: string, artifactId: string): Promise<string> {
+    const artifact = await this.findSpreadsheetArtifact(sessionId, artifactId);
+    const root = resolve(workspaceRoot);
+    const source = resolve(root, artifact.sourcePath);
+    if (!isWithin(root, source) || extname(source).toLowerCase() !== ".xlsx") throw new Error("Spreadsheet artifact path is invalid");
+    await stat(source);
+    this.managedSources.add(source);
+    return source;
+  }
+
+  private async uniqueSpreadsheetSourcePath(root: string, name: string): Promise<string> {
+    const base = resolve(root, name);
+    if (!isWithin(root, base)) throw new Error("Spreadsheet path must remain inside the workspace");
+    let next = base;
+    let index = 2;
+    while (await stat(next).then(() => true).catch(() => false)) {
+      next = join(dirnameFor(base), `${basename(base, ".xlsx")} ${index}.xlsx`);
+      index += 1;
+    }
     return next;
   }
 

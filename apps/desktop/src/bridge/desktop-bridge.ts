@@ -1,9 +1,9 @@
 import type { AgentInteractionModeId, AppearanceBackgroundAsset, AppPreferences, ConfiguredModelKind, ConnectorConfiguration, ConnectorPromptSummary, ConnectorResourceSummary, ConnectorSummary, MediaInlineImage, MediaLayoutUpdate, MediaOperationRequest, MediaProject, ModelReference, SessionAccessLevel, SessionDraft, SessionRecord, UsageReport, UsageReportQuery, UserMessageSubmission, UserPromptPart, WorkspaceRecord } from "@wordless/domain";
 import type { AgentExtensionSnapshot, JsonObject } from "@wordless/agent-extension-sdk";
-import type { AppSnapshot, ArtifactDescriptor, ArtifactIssue, ArtifactPreviewManifest, ArtifactSelection, DesktopHostEvent, DesktopHostInfo, DesktopMenuId, OfficeEngineHealth, PresentationTemplate, RuntimeEventEnvelope, SessionArtifactDiff, SessionContextSnapshot, SessionHistoryPage, SessionHistoryPageRequest, SessionMessageSearchRequest, SessionMessageSearchResponse, SessionSnapshot, SessionViewSnapshot, SessionWorkspaceTextFile, WorkspaceFileEntry } from "@wordless/protocol";
+import type { AppSnapshot, ArtifactDescriptor, ArtifactIssue, ArtifactPreviewManifest, ArtifactSelection, DesktopHostEvent, DesktopHostInfo, DesktopMenuId, OfficeEngineHealth, PresentationTemplate, RuntimeEventEnvelope, SessionArtifactDiff, SessionContextSnapshot, SessionHistoryPage, SessionHistoryPageRequest, SessionMessageSearchRequest, SessionMessageSearchResponse, SessionSnapshot, SessionViewSnapshot, SessionWorkspaceTextFile, SpreadsheetChangeRecord, SpreadsheetSelection, WorkspaceFileEntry } from "@wordless/protocol";
 import type { ToolApprovalMode } from "@wordless/domain";
 
-export const DESKTOP_BRIDGE_VERSION = 21;
+export const DESKTOP_BRIDGE_VERSION = 22;
 
 export interface DesktopBridge {
   readonly version: typeof DESKTOP_BRIDGE_VERSION;
@@ -50,6 +50,13 @@ export interface DesktopBridge {
   validatePresentationArtifact(sessionId: string, artifactId: string): Promise<ArtifactIssue[]>;
   openPresentationArtifact(sessionId: string, artifactId: string): Promise<void>;
   revealPresentationArtifact(sessionId: string, artifactId: string): Promise<void>;
+  listSpreadsheetArtifacts(sessionId: string): Promise<ArtifactDescriptor[]>;
+  getSpreadsheetPreview(sessionId: string, artifactId: string): Promise<ArtifactPreviewManifest>;
+  getSpreadsheetSelection(sessionId: string, artifactId: string): Promise<SpreadsheetSelection | null>;
+  getSpreadsheetChanges(sessionId: string, artifactId: string): Promise<SpreadsheetChangeRecord[]>;
+  validateSpreadsheetArtifact(sessionId: string, artifactId: string): Promise<ArtifactIssue[]>;
+  openSpreadsheetArtifact(sessionId: string, artifactId: string): Promise<void>;
+  revealSpreadsheetArtifact(sessionId: string, artifactId: string): Promise<void>;
   getSessionArtifactDiff(sessionId: string, path: string): Promise<SessionArtifactDiff>;
   listSessionWorkspaceDirectory(sessionId: string, path: string): Promise<WorkspaceFileEntry[]>;
   searchSessionWorkspace(sessionId: string, query: string): Promise<WorkspaceFileEntry[]>;
@@ -149,6 +156,13 @@ const requiredMethods: Array<Exclude<keyof DesktopBridge, "version">> = [
   "validatePresentationArtifact",
   "openPresentationArtifact",
   "revealPresentationArtifact",
+  "listSpreadsheetArtifacts",
+  "getSpreadsheetPreview",
+  "getSpreadsheetSelection",
+  "getSpreadsheetChanges",
+  "validateSpreadsheetArtifact",
+  "openSpreadsheetArtifact",
+  "revealSpreadsheetArtifact",
   "getSessionArtifactDiff",
   "listSessionWorkspaceDirectory",
   "searchSessionWorkspace",

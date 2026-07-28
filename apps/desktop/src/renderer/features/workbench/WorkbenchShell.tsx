@@ -83,7 +83,7 @@ export function WorkbenchShell() {
     return client.subscribe((event) => {
       if (event.sessionId !== pendingInitialTurn.sessionId) return;
       if (event.event.type === "message.completed" && event.event.message.id === pendingInitialTurn.turn.message.id) setPendingInitialTurn(null);
-      if (event.event.type === "session.idle") setPendingInitialTurn(null);
+      if (event.event.type === "run.failed" || event.event.type === "run.cancelled" || event.event.type === "session.idle") setPendingInitialTurn(null);
     });
   }, [client, pendingInitialTurn]);
 
