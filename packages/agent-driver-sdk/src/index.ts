@@ -21,6 +21,7 @@ import type {
   SessionRecord,
   SkillSource,
   UserPromptPart,
+  UserMessageSubmission,
   ToolOperationApproval,
   ToolApprovalMode,
   UserRequest,
@@ -346,7 +347,10 @@ export function splitPromptAttachments(text: string): { text: string; attachment
 export function projectUserMessageContent(content: unknown): MessageBlock[] {
   const blocks: MessageBlock[] = [];
   const appendText = (text: string) => {
-    const parsed = splitPromptAttachments(text);
+    const visibleText = text
+      .replace(/\n*<wordless-presentation(?:\s[^>]*)?>[\s\S]*?<\/wordless-presentation>\s*/gi, "")
+      .trimEnd();
+    const parsed = splitPromptAttachments(visibleText);
     for (const artifactBlock of projectPromptArtifactReferences(parsed.text)) {
       if (artifactBlock.type !== "text") {
         blocks.push(artifactBlock);
@@ -397,6 +401,7 @@ export interface AgentProfileDefinition {
   systemPrompt: string;
   activeToolNames: string[];
   capabilityIds: string[];
+  defaultConnectorTemplateIds?: string[];
   skills: AgentSkillReference[];
   artifactKinds: string[];
   contextCompactionInstructions?: string;
@@ -404,9 +409,9 @@ export interface AgentProfileDefinition {
 }
 
 export type AgentDriverCommand =
-  | { type: "prompt"; text: string; attachments?: AgentTextAttachment[]; selectedSkills?: AgentRuntimeSkill[] }
-  | { type: "steer"; text: string; attachments?: AgentTextAttachment[] }
-  | { type: "follow-up"; text: string; attachments?: AgentTextAttachment[] }
+  | { type: "prompt"; text: string; attachments?: AgentTextAttachment[]; selectedSkills?: AgentRuntimeSkill[]; submission?: UserMessageSubmission }
+  | { type: "steer"; text: string; attachments?: AgentTextAttachment[]; submission?: UserMessageSubmission }
+  | { type: "follow-up"; text: string; attachments?: AgentTextAttachment[]; submission?: UserMessageSubmission }
   | { type: "cancel" }
   | { type: "resolve-approval"; resolution: OperationApprovalResolution }
   | { type: "set-tool-approval-mode"; mode: ToolApprovalMode }

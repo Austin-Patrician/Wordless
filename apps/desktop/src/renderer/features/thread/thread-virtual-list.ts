@@ -1,16 +1,21 @@
 import type { ContextCompactionRecord } from "@wordless/domain";
 import type { ConversationMessage, SessionHistoryPage } from "@wordless/protocol";
+import type { AssistantRunPresentation } from "./thread-run-state";
 
 export type ThreadTimelineItem =
-  | { type: "messages"; timestamp: number; messages: ConversationMessage[] }
+  | { type: "messages"; timestamp: number; messages: ConversationMessage[]; turnId: string }
+  | { type: "assistant-run"; timestamp: number; presentation: AssistantRunPresentation; turnId: string }
   | { type: "compaction"; timestamp: number; compaction: ContextCompactionRecord };
 
-function groupMessages(messages: readonly ConversationMessage[]): ConversationMessage[][] {
-  const groups: ConversationMessage[][] = [];
+function groupMessages(messages: readonly ConversationMessage[]): Array<{ messages: ConversationMessage[]; turnId: string }> {
+  const groups: Array<{ messages: ConversationMessage[]; turnId: string }> = [];
+  let turnId: string | null = null;
   for (const message of messages) {
     const previous = groups.at(-1);
-    if (message.role === "assistant" && previous?.[0]?.role === "assistant") previous.push(message);
-    else groups.push([message]);
+    if (message.role === "user") turnId = `turn:${message.id}`;
+    const messageTurnId = turnId ?? `turn:${message.id}`;
+    if (message.role === "assistant" && previous?.messages[0]?.role === "assistant" && previous.turnId === messageTurnId) previous.messages.push(message);
+    else groups.push({ messages: [message], turnId: messageTurnId });
   }
   return groups;
 }
@@ -18,11 +23,29 @@ function groupMessages(messages: readonly ConversationMessage[]): ConversationMe
 export function createThreadTimeline(
   messages: readonly ConversationMessage[],
   compactions: readonly ContextCompactionRecord[],
+  runPresentation?: AssistantRunPresentation | null,
 ): ThreadTimelineItem[] {
-  return [
-    ...groupMessages(messages).map((group) => ({ type: "messages" as const, timestamp: group[0]!.timestamp, messages: group })),
+  const items: ThreadTimelineItem[] = [
+    ...groupMessages(messages).map((group) => ({ type: "messages" as const, timestamp: group.messages[0]!.timestamp, messages: group.messages, turnId: group.turnId })),
     ...compactions.map((compaction) => ({ type: "compaction" as const, timestamp: compaction.timestamp, compaction })),
-  ].sort((left, right) => left.timestamp - right.timestamp);
+  ];
+  if (runPresentation?.userMessageId) {
+    const turnId = `turn:${runPresentation.userMessageId}`;
+    const hasAssistant = items.some((item) => item.type === "messages" && item.turnId === turnId && item.messages[0]?.role === "assistant");
+    if (!hasAssistant) {
+      const latestRunCompaction = compactions.reduce(
+        (latest, compaction) => compaction.timestamp >= runPresentation.startedAt ? Math.max(latest, compaction.timestamp) : latest,
+        runPresentation.startedAt - 1,
+      );
+      items.push({
+        type: "assistant-run",
+        timestamp: latestRunCompaction >= runPresentation.startedAt ? latestRunCompaction + 1 : runPresentation.startedAt,
+        presentation: runPresentation,
+        turnId,
+      });
+    }
+  }
+  return items.sort((left, right) => left.timestamp - right.timestamp);
 }
 
 export function threadTimelineItemCount(page: SessionHistoryPage): number {

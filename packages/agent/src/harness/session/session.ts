@@ -200,10 +200,13 @@ export class Session<TMetadata extends SessionMetadata = SessionMetadata> {
 		return entry.id;
 	}
 
-	async appendMessage(message: AgentMessage): Promise<string> {
+	async appendMessage(message: AgentMessage, entryId?: string): Promise<string> {
+		if (entryId && (await this.storage.getEntry(entryId))) {
+			throw new SessionError("invalid_session", `Session entry already exists: ${entryId}`);
+		}
 		return this.appendTypedEntry({
 			type: "message",
-			id: await this.storage.createEntryId(),
+			id: entryId ?? (await this.storage.createEntryId()),
 			parentId: await this.storage.getLeafId(),
 			timestamp: new Date().toISOString(),
 			message,

@@ -6,6 +6,7 @@ import { SettingsDialog, type SettingsPage } from "../settings/SettingsDialog";
 import { ConversationSearchDialog } from "../thread/ConversationSearchDialog";
 import { ThreadView, type ThreadMessageNavigationTarget } from "../thread/ThreadView";
 import type { InlineWorkspaceReferenceToken } from "../thread/InlineSkillComposer";
+import type { PendingThreadTurn } from "../thread/pending-thread-turn";
 import type { ArtifactSelection } from "@wordless/protocol";
 import { usePreferences } from "../../shared/preferences";
 import { useRuntime } from "../../shared/runtime";
@@ -40,6 +41,7 @@ export function WorkbenchShell() {
   const [skillImportOpen, setSkillImportOpen] = useState(false);
   const [conversationSearchOpen, setConversationSearchOpen] = useState(false);
   const [messageNavigationTarget, setMessageNavigationTarget] = useState<ThreadMessageNavigationTarget | null>(null);
+  const [pendingInitialTurn, setPendingInitialTurn] = useState<{ sessionId: string; turn: PendingThreadTurn } | null>(null);
   const messageNavigationSequenceRef = useRef(0);
   const { t } = usePreferences();
   const { client, error, refresh, snapshot, status } = useRuntime();
@@ -48,6 +50,7 @@ export function WorkbenchShell() {
   const newThread = () => {
     setPendingWorkspaceReferences([]);
     setPendingArtifactSelection(null);
+    setPendingInitialTurn(null);
     setSelectedSessionId(null);
     setMainView("thread");
     setRightOpen(false);
@@ -74,6 +77,15 @@ export function WorkbenchShell() {
     setMessageNavigationTarget(null);
     setPendingArtifactSelection(null);
   }, [selectedSessionId]);
+
+  useEffect(() => {
+    if (!client || !pendingInitialTurn) return;
+    return client.subscribe((event) => {
+      if (event.sessionId !== pendingInitialTurn.sessionId) return;
+      if (event.event.type === "message.completed" && event.event.message.id === pendingInitialTurn.turn.message.id) setPendingInitialTurn(null);
+      if (event.event.type === "session.idle") setPendingInitialTurn(null);
+    });
+  }, [client, pendingInitialTurn]);
 
   useEffect(() => {
     const session = snapshot?.sessions.find((candidate) => candidate.id === selectedSessionId);
@@ -188,7 +200,7 @@ export function WorkbenchShell() {
               <Button aria-label={t("settings")} onClick={() => openSettings()} size="icon" type="button" variant="ghost"><Settings className="h-4 w-4" /></Button>
             </div>
           </header> : null}
-          {mainView === "skills" ? <SkillsView onOpenImport={() => setSkillImportOpen(true)} /> : mainView === "media" ? selectedSessionId && activeSession?.workbenchId === "media-canvas" ? <MediaCanvas leftOpen={leftOpen} onBackToLibrary={() => setSelectedSessionId(null)} onOpenModels={() => openSettings("models")} onToggleLeft={() => setLeftOpen((value) => !value)} sessionId={selectedSessionId} /> : <MediaLibrary onOpenProject={(sessionId) => { setSelectedSessionId(sessionId); setMainView("media"); }} /> : selectedSessionId ? <ThreadView artifactSelection={pendingArtifactSelection} messageNavigationTarget={messageNavigationTarget} onArtifactSelectionConsumed={() => setPendingArtifactSelection(null)} onMessageNavigationConsumed={(requestId) => setMessageNavigationTarget((current) => current?.requestId === requestId ? null : current)} onOpenModels={() => openSettings("models")} onOpenSkillImport={() => setSkillImportOpen(true)} onOpenSkills={openSkills} onPendingWorkspaceReferencesConsumed={() => setPendingWorkspaceReferences([])} pendingWorkspaceReferences={pendingWorkspaceReferences} sessionId={selectedSessionId} /> : <WelcomeView onOpenModels={() => openSettings("models")} onOpenSkillImport={() => setSkillImportOpen(true)} onOpenSkills={openSkills} onSessionCreated={(sessionId) => { setPendingWorkspaceReferences([]); setPendingArtifactSelection(null); setSelectedSessionId(sessionId); }} />}
+          {mainView === "skills" ? <SkillsView onOpenImport={() => setSkillImportOpen(true)} /> : mainView === "media" ? selectedSessionId && activeSession?.workbenchId === "media-canvas" ? <MediaCanvas leftOpen={leftOpen} onBackToLibrary={() => setSelectedSessionId(null)} onOpenModels={() => openSettings("models")} onToggleLeft={() => setLeftOpen((value) => !value)} sessionId={selectedSessionId} /> : <MediaLibrary onOpenProject={(sessionId) => { setSelectedSessionId(sessionId); setMainView("media"); }} /> : selectedSessionId ? <ThreadView artifactSelection={pendingArtifactSelection} initialPendingTurn={pendingInitialTurn?.sessionId === selectedSessionId ? pendingInitialTurn.turn : null} messageNavigationTarget={messageNavigationTarget} onArtifactSelectionConsumed={() => setPendingArtifactSelection(null)} onMessageNavigationConsumed={(requestId) => setMessageNavigationTarget((current) => current?.requestId === requestId ? null : current)} onOpenModels={() => openSettings("models")} onOpenSkillImport={() => setSkillImportOpen(true)} onOpenSkills={openSkills} onPendingWorkspaceReferencesConsumed={() => setPendingWorkspaceReferences([])} pendingWorkspaceReferences={pendingWorkspaceReferences} sessionId={selectedSessionId} /> : <WelcomeView onOpenModels={() => openSettings("models")} onOpenSkillImport={() => setSkillImportOpen(true)} onOpenSkills={openSkills} onSessionCreated={(sessionId, pendingTurn) => { setPendingWorkspaceReferences([]); setPendingArtifactSelection(null); setPendingInitialTurn({ sessionId, turn: pendingTurn }); setSelectedSessionId(sessionId); }} />}
         </section>
         {showSessionTools ? contextPanel : null}
         </>}

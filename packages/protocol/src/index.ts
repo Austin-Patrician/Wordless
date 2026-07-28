@@ -123,6 +123,11 @@ export const UserPromptPartSchema = Type.Union([
 export const UserPromptPartsSchema = Type.Array(UserPromptPartSchema, { minItems: 1, maxItems: 1_024 });
 export type ProtocolUserPromptPart = Static<typeof UserPromptPartSchema> & UserPromptPart;
 
+export const UserMessageSubmissionSchema = Type.Object({
+  messageId: Type.String({ minLength: 1, maxLength: 128 }),
+  submittedAt: Type.Number({ minimum: 0 }),
+});
+
 export const SessionDraftSchema = Type.Object({
   mode: Type.Union([Type.Literal("everyday"), Type.Literal("code"), Type.Literal("create")]),
   entryId: Type.String({ minLength: 1 }),
@@ -149,6 +154,7 @@ export const OpenWorkspaceSchema = Type.Object({
 export const CreateAndPromptSchema = Type.Object({
   draft: SessionDraftSchema,
   parts: UserPromptPartsSchema,
+  submission: UserMessageSubmissionSchema,
   attachments: Type.Optional(
     Type.Array(Type.Object({ path: Type.String({ minLength: 1, maxLength: 1024 }) }), { maxItems: 8 }),
   ),
@@ -157,6 +163,7 @@ export const CreateAndPromptSchema = Type.Object({
 export const PromptSessionSchema = Type.Object({
   sessionId: Type.String({ minLength: 1 }),
   parts: UserPromptPartsSchema,
+  submission: UserMessageSubmissionSchema,
   attachments: Type.Optional(
     Type.Array(
       Type.Object({
@@ -696,13 +703,28 @@ export interface ArtifactDescriptor {
   revision: number;
   status: "creating" | "ready" | "updating" | "failed";
   capabilities: Array<"preview" | "select" | "validate" | "export" | "open">;
+  quality?: ArtifactQualitySummary;
   updatedAt: number;
+}
+
+export interface ArtifactQualitySummary {
+  revision: number;
+  status: "draft" | "needs-review" | "needs-fix" | "ready";
+  cycle: number;
+  totalSlides: number;
+  reviewedSlides: number;
+  issueCount: number;
+  checkedAt: number;
 }
 
 export interface ArtifactIssue {
   severity: "warning" | "error";
   message: string;
   locator?: string;
+  code?: string;
+  category?: "schema" | "format" | "content" | "structure" | "visual";
+  surfaceId?: string;
+  suggestion?: string;
 }
 
 export interface ArtifactPreviewSurface {
@@ -798,6 +820,7 @@ export interface RuntimeEventEnvelope {
   eventId: string;
   sessionId: string | null;
   runId?: string;
+  turnId?: string;
   sequence: number;
   timestamp: number;
   event: RuntimeEvent;

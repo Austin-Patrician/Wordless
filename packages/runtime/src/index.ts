@@ -75,6 +75,7 @@ import type {
   ToolSecurityRuleMatch,
   UsageReport,
   UsageReportQuery,
+  UserMessageSubmission,
   WorkbenchEntryDefinition,
   WorkspaceRecord,
 } from "@wordless/domain";
@@ -242,7 +243,7 @@ export const BUILTIN_ENTRIES: WorkbenchEntryDefinition[] = [
     profile: { id: "ppt", version: "1" },
     workbenchId: "presentation",
     availability: "available",
-    modelRequirements: { requiresToolUse: true },
+    modelRequirements: { requiresVision: true, requiresToolUse: true },
   },
   {
     id: "spreadsheet",
@@ -659,6 +660,7 @@ type ActiveRun = {
   compactionTrigger?: ContextCompactionRecord["trigger"];
   sequence: number;
   runId: string;
+  userMessageId?: string;
   unsubscribe: () => void;
 };
 
@@ -1222,7 +1224,7 @@ export class WordlessRuntime {
     return workspace;
   }
 
-  async createAndPrompt(draft: SessionDraft, prompt: string, skillIds: string[] = [], attachmentPaths: string[] = []): Promise<SessionRecord> {
+  async createAndPrompt(draft: SessionDraft, prompt: string, skillIds: string[] = [], attachmentPaths: string[] = [], submission?: UserMessageSubmission): Promise<SessionRecord> {
     const entry = this.getEntry(draft.entryId);
     if (entry.mode !== draft.mode) throw new Error("Selected entry does not belong to the selected mode");
     const profile = entry.profile ? this.profiles.get(entry.profile) : undefined;
@@ -1239,6 +1241,9 @@ export class WordlessRuntime {
     const runtimeRootPath = workspace?.canonicalRootPath ?? join(this.options.paths.sessionWorkspacesRoot, id);
     await this.pathService.ensureSessionRoot(runtimeRootPath);
     const journalPath = join(this.options.paths.journalsRoot, `${id}.jsonl`);
+    const availableConnectors = this.connectorRegistry.snapshot().connectors.filter((connector) => connector.enabled && connector.status === "ready");
+    const defaultConnectorTemplates = new Set(profile.defaultConnectorTemplateIds ?? []);
+    const defaultConnectorIds = availableConnectors.filter((connector) => connector.templateId && defaultConnectorTemplates.has(connector.templateId)).map((connector) => connector.id);
     const record: SessionRecord = {
       id,
       title: titleFromPrompt(prompt),
@@ -1253,7 +1258,7 @@ export class WordlessRuntime {
       accessLevel: draft.accessLevel,
       model,
       journalPath,
-      connectorIds: [...new Set(draft.connectorIds ?? [])].filter((id) => this.connectorRegistry.snapshot().connectors.some((connector) => connector.id === id && connector.enabled && connector.status === "ready")),
+      connectorIds: [...new Set([...(draft.connectorIds ?? []), ...defaultConnectorIds])].filter((id) => availableConnectors.some((connector) => connector.id === id)),
       interactionMode: draft.interactionMode ?? "default",
       pinnedAt: null,
       createdAt: now,
@@ -1282,22 +1287,22 @@ export class WordlessRuntime {
     const initialPrompt = entry.workbenchId === "presentation"
       ? `${prompt}\n\n<wordless-presentation mode="${draft.presentation?.generationMode ?? "guided"}" template="${draft.presentation?.templateId ?? "auto"}">\nUse the Presentation workflow. In guided mode, inspect the request, propose a slide outline, and wait for confirmation before creating the deck. In quick mode, create the first complete draft directly.\n</wordless-presentation>`
       : prompt;
-    void this.promptSession(id, initialPrompt, attachmentPaths, skillIds).catch(() => {});
+    void this.promptSession(id, initialPrompt, attachmentPaths, skillIds, submission).catch(() => {});
     return this.requireSession(id);
   }
 
-  async promptSession(sessionId: string, prompt: string, attachmentPaths: string[] = [], skillIds: string[] = []): Promise<void> {
+  async promptSession(sessionId: string, prompt: string, attachmentPaths: string[] = [], skillIds: string[] = [], submission?: UserMessageSubmission): Promise<void> {
     const record = await this.ensureSessionModelForOpen(sessionId);
     const attachments = await this.resolveSessionAttachments(record, attachmentPaths);
     const active = this.runs.get(sessionId);
     if (active) {
       if (active.kind === "compaction") throw new Error("Context compaction is in progress");
       if (skillIds.length > 0) throw new Error("Skills can only be selected before starting a new agent run");
-      await active.driverSession.execute({ type: "steer", text: prompt, attachments });
+      await active.driverSession.execute({ type: "steer", text: prompt, attachments, submission });
       return;
     }
     const selectedSkills = this.resolveSelectedSkills(record.workspaceId, skillIds);
-    void this.runSession(sessionId, prompt, attachments, selectedSkills).catch(() => {});
+    void this.runSession(sessionId, prompt, attachments, selectedSkills, submission).catch(() => {});
   }
 
   async cancelSession(sessionId: string): Promise<void> {
@@ -1899,9 +1904,9 @@ export class WordlessRuntime {
     await this.runCompaction(sessionId);
   }
 
-  private async runSession(sessionId: string, prompt: string, attachments: AgentTextAttachment[], selectedSkills: ReturnType<SkillRegistry["getSessionSkills"]>): Promise<void> {
+  private async runSession(sessionId: string, prompt: string, attachments: AgentTextAttachment[], selectedSkills: ReturnType<SkillRegistry["getSessionSkills"]>, submission?: UserMessageSubmission): Promise<void> {
     const automaticCompaction = this.isAutomaticContextCompactionEnabled();
-    const active = await this.createActiveRun(sessionId, automaticCompaction ? "compaction" : "prompt");
+    const active = await this.createActiveRun(sessionId, automaticCompaction ? "compaction" : "prompt", submission?.messageId);
     try {
       if (automaticCompaction) active.compactionTrigger = "automatic";
       if (automaticCompaction) await active.driverSession.execute({ type: "compact", trigger: "automatic" });
@@ -1909,7 +1914,7 @@ export class WordlessRuntime {
       active.isCompacting = false;
       active.compactionTrigger = undefined;
       this.emit(sessionId, active, { type: "run.started", runId: active.runId });
-      await active.driverSession.execute({ type: "prompt", text: prompt, attachments, selectedSkills });
+      await active.driverSession.execute({ type: "prompt", text: prompt, attachments, selectedSkills, submission });
       this.emit(sessionId, active, { type: "run.completed", runId: active.runId });
     } catch (error) {
       this.emit(sessionId, active, { type: "run.failed", runId: active.runId, message: error instanceof Error ? error.message : String(error) });
@@ -1928,7 +1933,7 @@ export class WordlessRuntime {
     }
   }
 
-  private async createActiveRun(sessionId: string, kind: ActiveRun["kind"]): Promise<ActiveRun> {
+  private async createActiveRun(sessionId: string, kind: ActiveRun["kind"], userMessageId?: string): Promise<ActiveRun> {
     const record = await this.ensureSessionModelForOpen(sessionId);
     if (this.runs.has(sessionId)) throw new Error("The session is already running");
     const profile = this.requireProfile(record);
@@ -1983,6 +1988,7 @@ export class WordlessRuntime {
       compactionTrigger: kind === "compaction" ? "manual" : undefined,
       sequence: 0,
       runId: randomUUID(),
+      ...(userMessageId ? { userMessageId } : {}),
       unsubscribe: () => {},
     };
     active.unsubscribe = driverSession.subscribe((event) => this.handleDriverEvent(sessionId, active, event));
@@ -2732,6 +2738,7 @@ export class WordlessRuntime {
       eventId: randomUUID(),
       sessionId,
       runId: active.runId,
+      ...(active.userMessageId ? { turnId: `turn:${active.userMessageId}` } : {}),
       sequence: ++active.sequence,
       timestamp: Date.now(),
       event,

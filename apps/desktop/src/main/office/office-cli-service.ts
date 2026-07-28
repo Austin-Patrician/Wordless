@@ -1,7 +1,20 @@
 import { randomUUID } from "node:crypto";
-import { access, copyFile, mkdir, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
+import { access, copyFile, mkdir, readFile, readdir, realpath, rename, rm, stat, writeFile } from "node:fs/promises";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { basename, dirname, extname, isAbsolute, join, relative, resolve } from "node:path";
+import {
+  compileOfficeMutations,
+  type OfficeMutation,
+  type PresentationAdvancedOperation,
+  type PresentationCatalog,
+  type PresentationOfficeService,
+  type PresentationQualityIssue,
+  type PresentationQualityReport,
+  type PresentationReadRequest,
+  type PresentationRenderedImage,
+  type PresentationSource,
+  type PresentationVisualReview,
+} from "@wordless/capability-office";
 import type {
   ArtifactDescriptor,
   ArtifactIssue,
@@ -11,12 +24,21 @@ import type {
   PresentationTemplate,
 } from "@wordless/protocol";
 
-type PresentationManifest = {
-  version: 1;
-  artifacts: ArtifactDescriptor[];
+type PresentationArtifactState = {
+  templateId: string;
+  quality?: PresentationQualityReport;
+  sources: PresentationSource[];
+  renderedRevision?: number;
+  renderedSurfaceIds?: string[];
 };
 
-type RunResult = { stdout: string; stderr: string };
+type PresentationManifest = {
+  version: 1 | 2;
+  artifacts: ArtifactDescriptor[];
+  presentation?: Record<string, PresentationArtifactState>;
+};
+
+type RunResult = { stdout: string; stderr: string; exitCode: number | null };
 
 type WatchSession = {
   child: ChildProcessWithoutNullStreams;
@@ -27,15 +49,29 @@ const sessionIdPattern = /^[a-f0-9-]{36}$/i;
 const artifactIdPattern = /^[a-f0-9-]{36}$/i;
 const fileNamePattern = /^[a-zA-Z0-9][a-zA-Z0-9._ -]{0,116}\.pptx$/;
 const maximumPreviewSlides = 60;
+const maximumConcurrentPreviewRenders = 3;
+const maximumModelRenderSlides = 4;
 const presentationOperationNames = new Set(["add", "set", "remove", "move", "swap"]);
+const presentationGuidanceNames = new Set(["pptx", "pitch-deck", "data-dashboard", "morph-ppt", "morph-ppt-3d"]);
+const placeholderPattern = /(?:\\n|\{\{[^}]+\}\}|<TODO>|\b(?:lorem|ipsum|xxxx|placeholder)\b|\(\s*\)|\[\s*\])/gi;
 
 const templates: PresentationTemplate[] = [
   { id: "auto", name: "Auto", description: "Let the agent select a visual direction from the brief.", tags: ["adaptive"] },
   { id: "blank", name: "Blank canvas", description: "A clean PPTX with no inherited visual language.", tags: ["minimal"] },
   { id: "aura-coffee", name: "Aura light", description: "Warm editorial product storytelling from the OfficeCLI template set.", tags: ["brand", "light"] },
   { id: "aura-coffee-dark", name: "Aura dark", description: "Dark, high-contrast product presentation from the OfficeCLI template set.", tags: ["brand", "dark"] },
+  { id: "future-2050", name: "2050 vision", description: "A forward-looking visual narrative for trends, strategy, and future scenarios.", tags: ["future", "strategy"] },
+  { id: "cat-philosophy", name: "Philosophy editorial", description: "A reflective lifestyle story with an editorial visual rhythm.", tags: ["lifestyle", "editorial"] },
+  { id: "cat-secret-life", name: "Secret life story", description: "A playful, image-led narrative for informal storytelling.", tags: ["lifestyle", "story"] },
+  { id: "feline-report", name: "Visual report", description: "A structured report layout with expressive editorial accents.", tags: ["report", "editorial"] },
   { id: "aionui-promo", name: "AionUI promo", description: "Structured technology product narrative from the OfficeCLI template set.", tags: ["product", "technology"] },
+  { id: "geminicli-timetravel", name: "CLI time travel", description: "A technical product story with a cinematic timeline treatment.", tags: ["product", "technology"] },
   { id: "attention-budget", name: "Attention budget", description: "Clear, editorial report treatment from the OfficeCLI template set.", tags: ["report", "editorial"] },
+  { id: "alien-guide", name: "Exploration guide", description: "An illustrated science guide for explanatory narratives.", tags: ["science", "guide"] },
+  { id: "mars-settlement", name: "Mars settlement", description: "A structured mission and settlement planning presentation.", tags: ["science", "strategy"] },
+  { id: "space-exploration", name: "Space exploration", description: "A chronological science narrative for milestones and discovery.", tags: ["science", "timeline"] },
+  { id: "time-travel", name: "Time travel", description: "A cinematic science story with high visual contrast.", tags: ["science", "story"] },
+  { id: "wildlife-company", name: "Wildlife technology", description: "A technology company profile with a nature-led visual system.", tags: ["technology", "company"] },
 ];
 
 function isWithin(root: string, target: string): boolean {
@@ -61,6 +97,35 @@ function officeCliData(value: unknown): unknown {
   if (!value || typeof value !== "object" || Array.isArray(value)) return value;
   const record = value as Record<string, unknown>;
   return "data" in record ? record.data : value;
+}
+
+function recordValue(value: unknown): Record<string, unknown> | undefined {
+  return typeof value === "object" && value !== null && !Array.isArray(value) ? value as Record<string, unknown> : undefined;
+}
+
+function outputText(result: RunResult): string {
+  const payload = officeCliData(parseJson(result.stdout));
+  if (typeof payload === "string") return payload;
+  if (payload !== undefined) return JSON.stringify(payload, null, 2);
+  return (result.stdout || result.stderr).trim();
+}
+
+function collectStrings(value: unknown): string[] {
+  if (typeof value === "string") return [value];
+  if (Array.isArray(value)) return value.flatMap(collectStrings);
+  const record = recordValue(value);
+  return record ? Object.values(record).flatMap(collectStrings) : [];
+}
+
+function slideNumberFromLocator(locator: string | undefined): number | undefined {
+  const match = locator?.match(/\/slide\[([1-9][0-9]*)\]/i);
+  return match ? Number(match[1]) : undefined;
+}
+
+function privateNetworkHost(hostname: string): boolean {
+  const normalized = hostname.toLowerCase();
+  if (normalized === "localhost" || normalized === "::1" || normalized.endsWith(".local")) return true;
+  return /^(?:127\.|10\.|192\.168\.|169\.254\.)/.test(normalized) || /^172\.(?:1[6-9]|2[0-9]|3[01])\./.test(normalized);
 }
 
 function messageFrom(error: unknown): string {
@@ -170,11 +235,13 @@ export function normalizePresentationOperations(operations: unknown[]): Record<s
   });
 }
 
-export class OfficeCliService {
+export class OfficeCliService implements PresentationOfficeService {
   private healthPromise: Promise<OfficeEngineHealth> | undefined;
+  private readonly guidanceCache = new Map<string, Promise<string>>();
   private readonly previewCache = new Map<string, ArtifactPreviewManifest>();
   private readonly previewPromises = new Map<string, Promise<ArtifactPreviewManifest>>();
   private readonly watches = new Map<string, WatchSession>();
+  private readonly managedSources = new Set<string>();
   private readonly options: { artifactsRoot: string; resourcesPath?: string; binaryPath?: string };
 
   constructor(options: { artifactsRoot: string; resourcesPath?: string; binaryPath?: string }) {
@@ -185,13 +252,36 @@ export class OfficeCliService {
     return templates;
   }
 
+  async catalog(sessionId: string): Promise<PresentationCatalog> {
+    return {
+      artifacts: await this.list(sessionId),
+      templates: this.listTemplates(),
+      guidance: [...presentationGuidanceNames].filter((name) => name !== "pptx"),
+    };
+  }
+
   async health(): Promise<OfficeEngineHealth> {
     if (!this.healthPromise) this.healthPromise = this.probeHealth();
     return await this.healthPromise;
   }
 
   async list(sessionId: string): Promise<ArtifactDescriptor[]> {
-    return (await this.readManifest(sessionId)).artifacts;
+    const manifest = await this.readManifest(sessionId);
+    return manifest.artifacts.map((artifact) => {
+      const quality = manifest.presentation?.[artifact.id]?.quality;
+      return quality ? {
+        ...artifact,
+        quality: {
+          revision: quality.revision,
+          status: quality.status,
+          cycle: quality.cycle,
+          totalSlides: quality.totalSlides,
+          reviewedSlides: quality.reviewedSurfaceIds.length,
+          issueCount: quality.issues.length,
+          checkedAt: quality.checkedAt,
+        },
+      } : artifact;
+    });
   }
 
   async create(sessionId: string, workspaceRoot: string, input: { name?: string; templateId?: string | null }): Promise<ArtifactDescriptor> {
@@ -200,6 +290,7 @@ export class OfficeCliService {
     const root = resolve(workspaceRoot);
     const name = safeDeckName(input.name ?? "presentation.pptx");
     const source = await this.uniqueSourcePath(root, name);
+    this.managedSources.add(source);
     const templateId = input.templateId && input.templateId !== "auto" ? input.templateId : "blank";
     if (templateId !== "blank") {
       const template = this.templatePath(templateId);
@@ -223,35 +314,223 @@ export class OfficeCliService {
     };
     const manifest = await this.readManifest(sessionId);
     manifest.artifacts.unshift(artifact);
+    manifest.version = 2;
+    manifest.presentation ??= {};
+    manifest.presentation[artifact.id] = { templateId, sources: [], renderedRevision: artifact.revision, renderedSurfaceIds: [] };
     await this.writeManifest(sessionId, manifest);
     return artifact;
   }
 
-  async inspect(sessionId: string, workspaceRoot: string, artifactId: string): Promise<string> {
-    const source = await this.sourcePath(sessionId, workspaceRoot, artifactId);
-    const result = await this.run(["view", source, "outline", "--json"], { cwd: dirnameFor(source) });
-    const payload = officeCliData(parseJson(result.stdout));
-    return payload === undefined ? result.stdout || result.stderr : JSON.stringify(payload, null, 2);
+  async help(input: { verb?: "add" | "set" | "get" | "query" | "remove"; element?: string }): Promise<string> {
+    const args = ["help", "pptx"];
+    if (input.verb) args.push(input.verb);
+    if (input.element) args.push(input.element);
+    args.push("--json");
+    return outputText(await this.run(args));
   }
 
-  async apply(sessionId: string, workspaceRoot: string, artifactId: string, operations: unknown[]): Promise<ArtifactDescriptor> {
+  async guidance(name: string, referencePath?: string): Promise<string> {
+    if (!presentationGuidanceNames.has(name)) throw new Error(`Unsupported presentation guidance: ${name}`);
+    if (referencePath && (isAbsolute(referencePath) || referencePath.includes(".."))) throw new Error("Invalid OfficeCLI guidance reference path");
+    const key = `${name}:${referencePath ?? ""}`;
+    let pending = this.guidanceCache.get(key);
+    if (!pending) {
+      pending = this.run(["load_skill", name, ...(referencePath ? ["--path", referencePath] : [])], { timeoutMs: 15_000 }).then(outputText);
+      this.guidanceCache.set(key, pending);
+    }
+    try {
+      return await pending;
+    } catch (cause) {
+      this.guidanceCache.delete(key);
+      throw cause;
+    }
+  }
+
+  async inspect(sessionId: string, workspaceRoot: string, artifactId: string): Promise<string> {
+    return await this.read(sessionId, workspaceRoot, artifactId, { kind: "view", mode: "outline" });
+  }
+
+  async read(sessionId: string, workspaceRoot: string, artifactId: string, request: PresentationReadRequest): Promise<string> {
+    const source = await this.sourcePath(sessionId, workspaceRoot, artifactId);
+    let args: string[];
+    if (request.kind === "view") {
+      args = ["view", source, request.mode];
+      if (request.start !== undefined) args.push("--start", String(request.start));
+      if (request.end !== undefined) args.push("--end", String(request.end));
+      if (request.limit !== undefined) args.push("--limit", String(request.limit));
+    } else if (request.kind === "get") {
+      args = ["get", source, request.path];
+      if (request.depth !== undefined) args.push("--depth", String(request.depth));
+    } else {
+      args = ["query", source, request.selector];
+      if (request.limit !== undefined) args.push("--limit", String(request.limit));
+    }
+    args.push("--json");
+    return outputText(await this.run(args, { cwd: dirnameFor(source) }));
+  }
+
+  async apply(sessionId: string, workspaceRoot: string, artifactId: string, operations: OfficeMutation[]): Promise<ArtifactDescriptor> {
     if (operations.length === 0) throw new Error("At least one Office operation is required");
     const source = await this.sourcePath(sessionId, workspaceRoot, artifactId);
     const artifact = await this.findArtifact(sessionId, artifactId);
-    const operationFile = join(this.revisionRoot(sessionId, artifactId, artifact.revision + 1), "operations.json");
-    await mkdir(dirnameFor(operationFile), { recursive: true });
-    await writeFile(operationFile, JSON.stringify(normalizePresentationOperations(operations)), "utf8");
-    await this.run(["batch", source, "--input", operationFile, "--json"], { cwd: dirnameFor(source) });
-    return await this.updateArtifact(sessionId, artifactId, (current) => ({ ...current, revision: current.revision + 1, status: "ready", updatedAt: Date.now() }));
+    const nextRevisionRoot = this.revisionRoot(sessionId, artifactId, artifact.revision + 1);
+    const operationFile = join(nextRevisionRoot, "operations.json");
+    await mkdir(nextRevisionRoot, { recursive: true });
+    await copyFile(source, join(nextRevisionRoot, "source-before.pptx"));
+    const normalized = normalizePresentationOperations(operations) as OfficeMutation[];
+    const secured = await this.secureOfficeAssets(workspaceRoot, normalized);
+    await writeFile(operationFile, JSON.stringify(compileOfficeMutations(secured)), "utf8");
+    await this.run(["batch", source, "--input", operationFile, "--stop-on-error", "--json"], { cwd: dirnameFor(source) });
+    const updated = await this.updateArtifact(sessionId, artifactId, (current) => ({ ...current, revision: current.revision + 1, status: "ready", updatedAt: Date.now() }));
+    await this.updatePresentationState(sessionId, artifactId, (state) => ({ ...state, quality: undefined, renderedRevision: updated.revision, renderedSurfaceIds: [] }));
+    return updated;
   }
 
   async validate(sessionId: string, workspaceRoot: string, artifactId: string): Promise<ArtifactIssue[]> {
+    const report = await this.qualityScan(sessionId, workspaceRoot, artifactId);
+    return report.issues.map((issue) => ({
+      severity: issue.severity,
+      message: issue.message,
+      ...(issue.locator ? { locator: issue.locator } : {}),
+      code: issue.code,
+      category: issue.category,
+      ...(issue.surfaceId ? { surfaceId: issue.surfaceId } : {}),
+      ...(issue.suggestion ? { suggestion: issue.suggestion } : {}),
+    }));
+  }
+
+  async qualityScan(sessionId: string, workspaceRoot: string, artifactId: string): Promise<PresentationQualityReport> {
     const source = await this.sourcePath(sessionId, workspaceRoot, artifactId);
-    const result = await this.run(["validate", source, "--json"], { cwd: dirnameFor(source), allowFailure: true });
-    const payload = parseJson(result.stdout);
-    const issues = this.validationIssues(payload, result.stderr);
-    await this.updateArtifact(sessionId, artifactId, (artifact) => ({ ...artifact, status: issues.some((issue) => issue.severity === "error") ? "failed" : "ready", updatedAt: Date.now() }));
-    return issues;
+    const artifact = await this.findArtifact(sessionId, artifactId);
+    const [validation, issueResult, textResult, statsResult, outlineResult] = await Promise.all([
+      this.run(["validate", source, "--json"], { cwd: dirnameFor(source), allowFailure: true }),
+      this.run(["view", source, "issues", "--json"], { cwd: dirnameFor(source), allowFailure: true }),
+      this.run(["view", source, "text", "--max-lines", "5000", "--json"], { cwd: dirnameFor(source), allowFailure: true }),
+      this.run(["view", source, "stats", "--json"], { cwd: dirnameFor(source), allowFailure: true }),
+      this.run(["view", source, "outline", "--json"], { cwd: dirnameFor(source), allowFailure: true }),
+    ]);
+    const issues: PresentationQualityIssue[] = [];
+    const validationEnvelope = recordValue(parseJson(validation.stdout));
+    if (validation.exitCode !== 0 || validationEnvelope?.success === false) {
+      issues.push({ code: "SCHEMA", category: "schema", severity: "error", message: outputText(validation) || "OfficeCLI schema validation failed." });
+    }
+    const issueData = recordValue(officeCliData(parseJson(issueResult.stdout)));
+    for (const value of Array.isArray(issueData?.issues) ? issueData.issues : []) {
+      const item = recordValue(value);
+      if (!item || typeof item.message !== "string") continue;
+      const code = typeof item.id === "string" ? item.id : "OFFICE";
+      const locator = typeof item.path === "string" ? item.path : undefined;
+      const category = code.startsWith("C") ? "content" as const : code.startsWith("S") ? "structure" as const : "format" as const;
+      const suggestion = item.message.match(/suggest(?:ion)?[.:=]\s*(.+)$/i)?.[1];
+      const slideNumber = slideNumberFromLocator(locator);
+      issues.push({
+        code,
+        category,
+        severity: "error",
+        message: item.message,
+        ...(locator ? { locator } : {}),
+        ...(slideNumber ? { surfaceId: `slide-${slideNumber}` } : {}),
+        ...(suggestion ? { suggestion } : {}),
+      });
+    }
+    const extractedText = collectStrings(officeCliData(parseJson(textResult.stdout))).join("\n");
+    const placeholders = [...new Set(extractedText.match(placeholderPattern) ?? [])].slice(0, 25);
+    if (placeholders.length > 0) {
+      issues.push({ code: "PLACEHOLDER", category: "content", severity: "error", message: `Unresolved placeholder or escaped text found: ${placeholders.join(", ")}` });
+    }
+    const stats = recordValue(officeCliData(parseJson(statsResult.stdout))) ?? {};
+    const outline = officeCliData(parseJson(outlineResult.stdout));
+    const totalSlides = this.slideCount(outline);
+    const state = await this.presentationState(sessionId, artifactId);
+    const previous = state.quality?.revision === artifact.revision ? state.quality : undefined;
+    const visualIssues = previous?.issues.filter((issue) => issue.category === "visual") ?? [];
+    const combinedIssues = [...issues, ...visualIssues];
+    const reviewedSurfaceIds = previous?.reviewedSurfaceIds.filter((surfaceId) => {
+      const page = Number(surfaceId.replace("slide-", ""));
+      return Number.isInteger(page) && page >= 1 && page <= totalSlides;
+    }) ?? [];
+    const report: PresentationQualityReport = {
+      revision: artifact.revision,
+      status: combinedIssues.length > 0 ? "needs-fix" : reviewedSurfaceIds.length === totalSlides ? "ready" : "needs-review",
+      cycle: (previous?.cycle ?? 0) + 1,
+      totalSlides,
+      reviewedSurfaceIds,
+      issues: combinedIssues,
+      stats,
+      checkedAt: Date.now(),
+    };
+    await this.updatePresentationState(sessionId, artifactId, (current) => ({ ...current, quality: report }));
+    await this.updateArtifact(sessionId, artifactId, (current) => ({ ...current, status: report.status === "needs-fix" ? "failed" : "ready", updatedAt: Date.now() }));
+    return report;
+  }
+
+  async recordVisualReview(sessionId: string, artifactId: string, reviews: PresentationVisualReview[]): Promise<PresentationQualityReport> {
+    const artifact = await this.findArtifact(sessionId, artifactId);
+    const state = await this.presentationState(sessionId, artifactId);
+    const current = state.quality;
+    if (!current || current.revision !== artifact.revision) throw new Error("Run presentation_quality_scan for the current revision before recording visual review");
+    const renderedSurfaceIds = new Set(state.renderedRevision === artifact.revision ? state.renderedSurfaceIds ?? [] : []);
+    const reviewed = new Set(current.reviewedSurfaceIds);
+    const reviewedNow = new Set(reviews.map((review) => review.surfaceId));
+    const validSurfaceIds = new Set(Array.from({ length: current.totalSlides }, (_, index) => `slide-${index + 1}`));
+    for (const review of reviews) {
+      if (!validSurfaceIds.has(review.surfaceId)) throw new Error(`Unknown presentation surface: ${review.surfaceId}`);
+      if (!renderedSurfaceIds.has(review.surfaceId)) throw new Error(`Render ${review.surfaceId} for the model before recording its visual review`);
+      if (review.status === "pass" && review.findings.length > 0) throw new Error("A passing visual review cannot contain findings");
+      if (review.status === "fail" && review.findings.length === 0) throw new Error("A failing visual review must describe at least one finding");
+      reviewed.add(review.surfaceId);
+    }
+    const retainedIssues = current.issues.filter((issue) => issue.category !== "visual" || !issue.surfaceId || !reviewedNow.has(issue.surfaceId));
+    const visualIssues = reviews.flatMap((review) => review.status === "pass" ? [] : review.findings.map((finding) => ({
+      code: finding.code,
+      category: "visual" as const,
+      severity: "error" as const,
+      message: finding.message,
+      surfaceId: review.surfaceId,
+      ...(finding.locator ? { locator: finding.locator } : {}),
+    })));
+    const issues = [...retainedIssues, ...visualIssues];
+    const report: PresentationQualityReport = {
+      ...current,
+      status: issues.length > 0 ? "needs-fix" : reviewed.size === current.totalSlides ? "ready" : "needs-review",
+      reviewedSurfaceIds: [...reviewed].sort((left, right) => Number(left.slice(6)) - Number(right.slice(6))),
+      issues,
+      checkedAt: Date.now(),
+    };
+    await this.updatePresentationState(sessionId, artifactId, (value) => ({ ...value, quality: report }));
+    await this.updateArtifact(sessionId, artifactId, (value) => ({ ...value, status: report.status === "needs-fix" ? "failed" : "ready", updatedAt: Date.now() }));
+    return report;
+  }
+
+  async registerSources(sessionId: string, artifactId: string, sources: Array<Omit<PresentationSource, "id" | "accessedAt">>): Promise<PresentationSource[]> {
+    const state = await this.presentationState(sessionId, artifactId);
+    const byUrl = new Map(state.sources.map((source) => [source.url, source]));
+    for (const source of sources) {
+      const url = new URL(source.url);
+      if ((url.protocol !== "https:" && url.protocol !== "http:") || privateNetworkHost(url.hostname)) throw new Error(`Unsafe presentation source URL: ${source.url}`);
+      const existing = byUrl.get(source.url);
+      byUrl.set(source.url, {
+        id: existing?.id ?? randomUUID(),
+        url: source.url,
+        title: source.title,
+        ...(source.publisher ? { publisher: source.publisher } : {}),
+        slideNumbers: [...new Set(source.slideNumbers)].sort((left, right) => left - right),
+        accessedAt: existing?.accessedAt ?? Date.now(),
+      });
+    }
+    const registered = [...byUrl.values()];
+    await this.updatePresentationState(sessionId, artifactId, (value) => ({ ...value, sources: registered }));
+    return registered;
+  }
+
+  async publish(sessionId: string, workspaceRoot: string, artifactId: string): Promise<ArtifactDescriptor> {
+    const report = await this.qualityScan(sessionId, workspaceRoot, artifactId);
+    if (report.status !== "ready") {
+      throw new Error(`Presentation cannot be published: quality status is ${report.status}; ${report.issues.length} blocking issue(s); ${report.reviewedSurfaceIds.length}/${report.totalSlides} slides reviewed.`);
+    }
+    const source = await this.sourcePath(sessionId, workspaceRoot, artifactId);
+    await this.run(["save", source], { cwd: dirnameFor(source) });
+    return await this.updateArtifact(sessionId, artifactId, (artifact) => ({ ...artifact, status: "ready", updatedAt: Date.now() }));
   }
 
   async preview(sessionId: string, workspaceRoot: string, artifactId: string, options: { force?: boolean } = {}): Promise<ArtifactPreviewManifest> {
@@ -275,6 +554,32 @@ export class OfficeCliService {
     return await render;
   }
 
+  async renderForModel(sessionId: string, workspaceRoot: string, artifactId: string, pages?: number[]): Promise<{ revision: number; totalSlides: number; images: PresentationRenderedImage[]; details: ArtifactPreviewManifest }> {
+    const preview = await this.preview(sessionId, workspaceRoot, artifactId, { force: true });
+    const totalSlides = preview.surfaces.length;
+    const selectedPages = pages?.length
+      ? [...new Set(pages)]
+      : Array.from({ length: Math.min(maximumModelRenderSlides, totalSlides) }, (_, index) => index + 1);
+    if (selectedPages.length > maximumModelRenderSlides) throw new Error(`Render at most ${maximumModelRenderSlides} slides per model inspection call`);
+    if (selectedPages.some((page) => page < 1 || page > totalSlides)) throw new Error(`Presentation page must be between 1 and ${totalSlides}`);
+    const source = await this.sourcePath(sessionId, workspaceRoot, artifactId);
+    const output = this.revisionRoot(sessionId, artifactId, preview.revision);
+    const images: PresentationRenderedImage[] = [];
+    for (const page of selectedPages) {
+      const file = join(output, `slide-${page}.png`);
+      if (!(await stat(file).then(() => true).catch(() => false))) {
+        await this.run(["view", source, "screenshot", "--page", String(page), "-o", file], { cwd: dirnameFor(source), timeoutMs: 60_000 });
+      }
+      images.push({ surfaceId: `slide-${page}`, page, mimeType: "image/png", data: (await readFile(file)).toString("base64") });
+    }
+    await this.updatePresentationState(sessionId, artifactId, (state) => ({
+      ...state,
+      renderedRevision: preview.revision,
+      renderedSurfaceIds: [...new Set([...(state.renderedRevision === preview.revision ? state.renderedSurfaceIds ?? [] : []), ...images.map((image) => image.surfaceId)])],
+    }));
+    return { revision: preview.revision, totalSlides, images, details: preview };
+  }
+
   private async renderPreview(sessionId: string, artifactId: string, revision: number, source: string): Promise<ArtifactPreviewManifest> {
     const output = this.revisionRoot(sessionId, artifactId, revision);
     await rm(output, { force: true, recursive: true });
@@ -283,9 +588,14 @@ export class OfficeCliService {
     await this.run(["view", source, "html", "-o", html], { cwd: dirnameFor(source) });
     const outline = officeCliData(parseJson((await this.run(["view", source, "outline", "--json"], { cwd: dirnameFor(source), allowFailure: true })).stdout));
     const totalSlides = this.slideCount(outline);
-    for (let index = 1; index <= Math.min(totalSlides, maximumPreviewSlides); index += 1) {
-      await this.run(["view", source, "screenshot", "--page", String(index), "-o", join(output, `slide-${index}.png`)], { cwd: dirnameFor(source), allowFailure: true, timeoutMs: 60_000 });
-    }
+    const previewPages = Array.from({ length: Math.min(totalSlides, maximumPreviewSlides) }, (_, index) => index + 1);
+    const workerCount = Math.min(maximumConcurrentPreviewRenders, previewPages.length);
+    await Promise.all(Array.from({ length: workerCount }, async (_, workerIndex) => {
+      for (let index = workerIndex; index < previewPages.length; index += workerCount) {
+        const page = previewPages[index]!;
+        await this.run(["view", source, "screenshot", "--page", String(page), "-o", join(output, `slide-${page}.png`), "--render", "html"], { cwd: dirnameFor(source), allowFailure: true, timeoutMs: 60_000 });
+      }
+    }));
     const previewFiles = await readdir(output).catch(() => []);
     const thumbnails = new Set(previewFiles.filter((file) => /^slide-[0-9]+\.png$/i.test(file)));
     const surfaces = Array.from({ length: totalSlides }, (_, index) => {
@@ -298,13 +608,22 @@ export class OfficeCliService {
       };
     });
     const watchUrl = await this.ensureWatch(sessionId, artifactId, source);
+    const qualityIssues = (await this.presentationState(sessionId, artifactId)).quality?.issues.map((issue) => ({
+      severity: issue.severity,
+      message: issue.message,
+      ...(issue.locator ? { locator: issue.locator } : {}),
+      code: issue.code,
+      category: issue.category,
+      ...(issue.surfaceId ? { surfaceId: issue.surfaceId } : {}),
+      ...(issue.suggestion ? { suggestion: issue.suggestion } : {}),
+    })) ?? [];
     return {
       artifactId,
       revision,
       htmlUrl: presentationAssetUrl(sessionId, artifactId, revision, "deck.html"),
       ...(watchUrl ? { watchUrl } : {}),
       surfaces: surfaces.length ? surfaces : [{ id: "slide-1", kind: "slide", label: "Slide 1" }],
-      issues: [],
+      issues: qualityIssues,
     };
   }
 
@@ -322,9 +641,57 @@ export class OfficeCliService {
     return await this.sourcePath(sessionId, workspaceRoot, artifactId);
   }
 
+  async advanced(sessionId: string, workspaceRoot: string, artifactId: string, operation: PresentationAdvancedOperation): Promise<string> {
+    const source = await this.sourcePath(sessionId, workspaceRoot, artifactId);
+    if (operation.kind === "dump") return outputText(await this.run(["dump", source, operation.path, "--json"], { cwd: dirnameFor(source) }));
+    if (operation.kind === "raw-read") return outputText(await this.run(["raw", source, operation.part, "--json"], { cwd: dirnameFor(source) }));
+    const artifact = await this.findArtifact(sessionId, artifactId);
+    const nextRevisionRoot = this.revisionRoot(sessionId, artifactId, artifact.revision + 1);
+    const backup = join(nextRevisionRoot, "source-before.pptx");
+    await mkdir(nextRevisionRoot, { recursive: true });
+    await copyFile(source, backup);
+    try {
+      if (operation.kind === "raw-update") {
+        const args = ["raw-set", source, operation.part, "--xpath", operation.xpath, "--action", operation.action];
+        if (operation.xml !== undefined) args.push("--xml", operation.xml);
+        args.push("--json");
+        await this.run(args, { cwd: dirnameFor(source) });
+      } else if (operation.kind === "add-part") {
+        await this.run(["add-part", source, operation.parent, "--type", operation.partType, "--json"], { cwd: dirnameFor(source) });
+      } else {
+        const data = JSON.stringify(operation.data);
+        if (data.length > 200_000) throw new Error("Presentation merge data exceeds 200,000 characters");
+        const merged = join(nextRevisionRoot, "merged.pptx");
+        await this.run(["merge", source, merged, "--data", data, "--force", "--json"], { cwd: dirnameFor(source), timeoutMs: 60_000 });
+        await copyFile(merged, source);
+      }
+      const validation = await this.run(["validate", source, "--json"], { cwd: dirnameFor(source), allowFailure: true });
+      const envelope = recordValue(parseJson(validation.stdout));
+      if (validation.exitCode !== 0 || envelope?.success === false) throw new Error(outputText(validation) || "Raw OfficeCLI update failed schema validation");
+    } catch (cause) {
+      await copyFile(backup, source);
+      throw cause;
+    }
+    const updated = await this.updateArtifact(sessionId, artifactId, (current) => ({ ...current, revision: current.revision + 1, status: "ready", updatedAt: Date.now() }));
+    await this.updatePresentationState(sessionId, artifactId, (state) => ({ ...state, quality: undefined, renderedRevision: updated.revision, renderedSurfaceIds: [] }));
+    return "Advanced OfficeCLI update applied and schema validation passed. Run the full quality workflow for the new revision.";
+  }
+
   async dispose(): Promise<void> {
-    for (const watch of this.watches.values()) watch.child.kill();
+    const watchClosures = [...this.watches.values()].map(async (watch) => {
+      if (watch.child.exitCode !== null || watch.child.killed) return;
+      await new Promise<void>((resolvePromise) => {
+        const timeout = setTimeout(resolvePromise, 2_000);
+        watch.child.once("close", () => { clearTimeout(timeout); resolvePromise(); });
+        watch.child.kill();
+      });
+    });
+    await Promise.all(watchClosures);
     this.watches.clear();
+    await Promise.all([...this.managedSources].map(async (source) => {
+      await this.run(["close", source], { cwd: dirnameFor(source), allowFailure: true, timeoutMs: 5_000 }).catch(() => undefined);
+    }));
+    this.managedSources.clear();
   }
 
   private async probeHealth(): Promise<OfficeEngineHealth> {
@@ -367,7 +734,7 @@ export class OfficeCliService {
       child.once("error", (error) => { clearTimeout(timeout); reject(error); });
       child.once("close", (code) => {
         clearTimeout(timeout);
-        if (code === 0 || options.allowFailure) resolvePromise({ stdout, stderr });
+        if (code === 0 || options.allowFailure) resolvePromise({ stdout, stderr, exitCode: code });
         else reject(new Error((stderr || stdout || `OfficeCLI exited with ${code}`).trim()));
       });
     });
@@ -377,7 +744,12 @@ export class OfficeCliService {
   private async ensureWatch(sessionId: string, artifactId: string, source: string): Promise<string | null> {
     const key = `${sessionId}:${artifactId}`;
     const existing = this.watches.get(key);
-    if (existing && !existing.child.killed) return existing.url;
+    if (existing) {
+      const running = existing.child.exitCode === null && existing.child.signalCode === null && !existing.child.killed;
+      if (running && existing.url) return existing.url;
+      this.watches.delete(key);
+      if (running) existing.child.kill();
+    }
     const child = spawn(this.binaryPath(), ["watch", source, "--port", "0"], {
       cwd: dirnameFor(source),
       env: { ...process.env, OFFICECLI_SKIP_UPDATE: "1" },
@@ -407,10 +779,10 @@ export class OfficeCliService {
     this.assertSessionId(sessionId);
     try {
       const value = parseJson(await readFile(this.manifestPath(sessionId), "utf8"));
-      if (!value || typeof value !== "object" || !Array.isArray((value as PresentationManifest).artifacts)) return { version: 1, artifacts: [] };
+      if (!value || typeof value !== "object" || !Array.isArray((value as PresentationManifest).artifacts)) return { version: 2, artifacts: [], presentation: {} };
       return value as PresentationManifest;
     } catch {
-      return { version: 1, artifacts: [] };
+      return { version: 2, artifacts: [], presentation: {} };
     }
   }
 
@@ -432,6 +804,23 @@ export class OfficeCliService {
     return next;
   }
 
+  private async presentationState(sessionId: string, artifactId: string): Promise<PresentationArtifactState> {
+    await this.findArtifact(sessionId, artifactId);
+    const manifest = await this.readManifest(sessionId);
+    return manifest.presentation?.[artifactId] ?? { templateId: "unknown", sources: [] };
+  }
+
+  private async updatePresentationState(sessionId: string, artifactId: string, update: (state: PresentationArtifactState) => PresentationArtifactState): Promise<PresentationArtifactState> {
+    const manifest = await this.readManifest(sessionId);
+    if (!manifest.artifacts.some((artifact) => artifact.id === artifactId)) throw new Error("Presentation artifact was not found");
+    manifest.version = 2;
+    manifest.presentation ??= {};
+    const next = update(manifest.presentation[artifactId] ?? { templateId: "unknown", sources: [] });
+    manifest.presentation[artifactId] = next;
+    await this.writeManifest(sessionId, manifest);
+    return next;
+  }
+
   private async findArtifact(sessionId: string, artifactId: string): Promise<ArtifactDescriptor> {
     if (!artifactIdPattern.test(artifactId)) throw new Error("Invalid presentation artifact");
     const artifact = (await this.readManifest(sessionId)).artifacts.find((candidate) => candidate.id === artifactId && candidate.kind === "presentation");
@@ -445,6 +834,7 @@ export class OfficeCliService {
     const source = resolve(root, artifact.sourcePath);
     if (!isWithin(root, source) || extname(source).toLowerCase() !== ".pptx") throw new Error("Presentation artifact path is invalid");
     await stat(source);
+    this.managedSources.add(source);
     return source;
   }
 
@@ -460,12 +850,55 @@ export class OfficeCliService {
     return next;
   }
 
+  private async secureOfficeAssets(workspaceRoot: string, operations: OfficeMutation[]): Promise<OfficeMutation[]> {
+    const root = await realpath(resolve(workspaceRoot));
+    const secureProps = async (props: Record<string, unknown> | undefined): Promise<Record<string, unknown> | undefined> => {
+      if (!props) return undefined;
+      const secured: Record<string, unknown> = { ...props };
+      for (const key of ["src", "preview"]) {
+        const value = secured[key];
+        if (typeof value !== "string") continue;
+        if (value.startsWith("data:")) {
+          if (value.length > 14_000_000) throw new Error(`Office asset ${key} data URI is too large`);
+          continue;
+        }
+        if (/^https?:\/\//i.test(value)) {
+          const url = new URL(value);
+          if (url.protocol !== "https:" || privateNetworkHost(url.hostname)) throw new Error(`Unsafe Office asset URL: ${value}`);
+          continue;
+        }
+        const candidate = await realpath(isAbsolute(value) ? value : resolve(root, value)).catch(() => undefined);
+        if (!candidate || !isWithin(root, candidate)) throw new Error(`Office asset ${key} must resolve inside the workspace: ${value}`);
+        secured[key] = candidate;
+      }
+      return secured;
+    };
+    const secured: OfficeMutation[] = [];
+    for (const operation of operations) {
+      if (operation.command === "add") secured.push({ ...operation, props: await secureProps(operation.props) });
+      else if (operation.command === "set") secured.push({ ...operation, props: (await secureProps(operation.props)) ?? {} });
+      else if (operation.command === "remove") secured.push({ ...operation, props: await secureProps(operation.props) });
+      else secured.push(operation);
+    }
+    return secured;
+  }
+
   private templatePath(templateId: string): string {
     const fileNames: Record<string, string> = {
       "aura-coffee": "aura-coffee.pptx",
       "aura-coffee-dark": "aura-coffee-dark.pptx",
+      "future-2050": "future-2050.pptx",
+      "cat-philosophy": "cat-philosophy.pptx",
+      "cat-secret-life": "cat-secret-life.pptx",
+      "feline-report": "feline-report.pptx",
       "aionui-promo": "aionui-promo.pptx",
+      "geminicli-timetravel": "geminicli-timetravel.pptx",
       "attention-budget": "attention-budget.pptx",
+      "alien-guide": "alien-guide.pptx",
+      "mars-settlement": "mars-settlement.pptx",
+      "space-exploration": "space-exploration.pptx",
+      "time-travel": "time-travel.pptx",
+      "wildlife-company": "wildlife-company.pptx",
     };
     const fileName = fileNames[templateId];
     if (!fileName || !this.options.resourcesPath) throw new Error("Selected OfficeCLI template is not available in this build");

@@ -5,6 +5,7 @@ import { contextCompactionExtension } from "@wordless/agent-extension-context-co
 import { planModeExtension } from "@wordless/agent-extension-plan-mode";
 import { subagentExtension } from "@wordless/agent-extension-subagent";
 import { createCodingAgentDriver } from "@wordless/agent-driver-coding";
+import { createPresentationAgentDriver } from "@wordless/agent-driver-presentation";
 import { createHeadlessReadOnlyTools } from "@wordless/coding-agent";
 import { createGenericAgentDriver } from "@wordless/agent-driver-generic";
 import { createAgentDriverRegistry } from "@wordless/agent-driver-sdk";
@@ -15,7 +16,6 @@ import { createProfileRegistry } from "@wordless/profile-sdk";
 import { WordlessRuntime } from "@wordless/runtime";
 import { ElectronCredentialVault } from "../adapters/electron-credential-vault";
 import { OfficeCliService } from "../office/office-cli-service";
-import { createPresentationAgentDriver } from "../office/presentation-driver";
 
 export function createDesktopRuntime(userData: string, office: OfficeCliService): WordlessRuntime {
   const extensions = new AgentExtensionManager({

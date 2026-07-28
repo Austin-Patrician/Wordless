@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -51,7 +51,24 @@ test("exposes OfficeCLI templates and reads persisted presentation artifacts wit
     const service = new OfficeCliService({ artifactsRoot: root });
     const templates = service.listTemplates();
     assert.equal(templates[0]?.id, "auto");
-    assert.deepEqual(templates.map((template) => template.id), ["auto", "blank", "aura-coffee", "aura-coffee-dark", "aionui-promo", "attention-budget"]);
+    assert.deepEqual(templates.map((template) => template.id), [
+      "auto",
+      "blank",
+      "aura-coffee",
+      "aura-coffee-dark",
+      "future-2050",
+      "cat-philosophy",
+      "cat-secret-life",
+      "feline-report",
+      "aionui-promo",
+      "geminicli-timetravel",
+      "attention-budget",
+      "alien-guide",
+      "mars-settlement",
+      "space-exploration",
+      "time-travel",
+      "wildlife-company",
+    ]);
 
     await mkdir(path.join(root, sessionId), { recursive: true });
     await writeFile(path.join(root, sessionId, "manifest.json"), JSON.stringify({
@@ -82,6 +99,21 @@ test("exposes OfficeCLI templates and reads persisted presentation artifacts wit
       capabilities: ["preview", "select", "validate", "export", "open"],
       updatedAt: 1,
     }]);
+
+    const sources = await service.registerSources(sessionId, artifactId, [{
+      url: "https://example.com/research",
+      title: "Research source",
+      slideNumbers: [2, 1, 2],
+    }]);
+    assert.equal(sources.length, 1);
+    assert.deepEqual(sources[0]?.slideNumbers, [1, 2]);
+    await assert.rejects(
+      service.registerSources(sessionId, artifactId, [{ url: "http://127.0.0.1/private", title: "Private", slideNumbers: [1] }]),
+      /Unsafe presentation source URL/,
+    );
+    const migrated = JSON.parse(await readFile(path.join(root, sessionId, "manifest.json"), "utf8")) as { version: number; presentation: Record<string, { sources: unknown[] }> };
+    assert.equal(migrated.version, 2);
+    assert.equal(migrated.presentation[artifactId]?.sources.length, 1);
   } finally {
     await rm(root, { force: true, recursive: true });
   }

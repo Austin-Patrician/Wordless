@@ -1,9 +1,9 @@
-import type { AgentInteractionModeId, AppearanceBackgroundAsset, AppPreferences, ConfiguredModelKind, ConnectorConfiguration, ConnectorPromptSummary, ConnectorResourceSummary, ConnectorSummary, MediaInlineImage, MediaLayoutUpdate, MediaOperationRequest, MediaProject, ModelReference, SessionAccessLevel, SessionDraft, SessionRecord, UsageReport, UsageReportQuery, UserPromptPart, WorkspaceRecord } from "@wordless/domain";
+import type { AgentInteractionModeId, AppearanceBackgroundAsset, AppPreferences, ConfiguredModelKind, ConnectorConfiguration, ConnectorPromptSummary, ConnectorResourceSummary, ConnectorSummary, MediaInlineImage, MediaLayoutUpdate, MediaOperationRequest, MediaProject, ModelReference, SessionAccessLevel, SessionDraft, SessionRecord, UsageReport, UsageReportQuery, UserMessageSubmission, UserPromptPart, WorkspaceRecord } from "@wordless/domain";
 import type { AgentExtensionSnapshot, JsonObject } from "@wordless/agent-extension-sdk";
 import type { AppSnapshot, ArtifactDescriptor, ArtifactIssue, ArtifactPreviewManifest, ArtifactSelection, DesktopHostEvent, DesktopHostInfo, DesktopMenuId, OfficeEngineHealth, PresentationTemplate, RuntimeEventEnvelope, SessionArtifactDiff, SessionContextSnapshot, SessionHistoryPage, SessionHistoryPageRequest, SessionMessageSearchRequest, SessionMessageSearchResponse, SessionSnapshot, SessionViewSnapshot, SessionWorkspaceTextFile, WorkspaceFileEntry } from "@wordless/protocol";
 import type { ToolApprovalMode } from "@wordless/domain";
 
-export const DESKTOP_BRIDGE_VERSION = 20;
+export const DESKTOP_BRIDGE_VERSION = 21;
 
 export interface DesktopBridge {
   readonly version: typeof DESKTOP_BRIDGE_VERSION;
@@ -37,8 +37,8 @@ export interface DesktopBridge {
   createManagedWorkspace(name: string): Promise<WorkspaceRecord>;
   openWorkspace(path: string): Promise<WorkspaceRecord>;
   pickWorkspace(): Promise<WorkspaceRecord | null>;
-  createAndPrompt(draft: SessionDraft, parts: UserPromptPart[], attachments?: Array<{ path: string }>): Promise<SessionRecord>;
-  promptSession(sessionId: string, parts: UserPromptPart[], attachments?: Array<{ path: string }>): Promise<void>;
+  createAndPrompt(draft: SessionDraft, parts: UserPromptPart[], submission: UserMessageSubmission, attachments?: Array<{ path: string }>): Promise<SessionRecord>;
+  promptSession(sessionId: string, parts: UserPromptPart[], submission: UserMessageSubmission, attachments?: Array<{ path: string }>): Promise<void>;
   compactSession(sessionId: string): Promise<void>;
   getSessionContext(sessionId: string): Promise<SessionContextSnapshot>;
   getOfficeEngineHealth(): Promise<OfficeEngineHealth>;

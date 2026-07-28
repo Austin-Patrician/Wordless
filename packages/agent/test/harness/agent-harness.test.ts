@@ -61,6 +61,25 @@ function getReasoning(options: unknown): unknown {
 }
 
 describe("AgentHarness", () => {
+	it("persists the submitted user message with its provided identity", async () => {
+		const registration = newFaux();
+		registration.setResponses([fauxAssistantMessage("done")]);
+		const session = new Session(new InMemorySessionStorage());
+		const harness = new AgentHarness({
+			models,
+			env: new NodeExecutionEnv({ cwd: process.cwd() }),
+			session,
+			model: registration.getModel(),
+		});
+
+		await harness.prompt("hello", { messageId: "submitted-user-1", timestamp: 1_700_000_000_000 });
+
+		const firstEntry = (await session.getEntries())[0];
+		expect(firstEntry).toMatchObject({ id: "submitted-user-1", type: "message" });
+		if (firstEntry?.type !== "message") throw new Error("Expected a message entry");
+		expect(firstEntry.message.timestamp).toBe(1_700_000_000_000);
+	});
+
 	it("constructs directly and exposes queue modes", () => {
 		const session = new Session(new InMemorySessionStorage());
 		const env = new NodeExecutionEnv({ cwd: process.cwd() });

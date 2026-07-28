@@ -31,3 +31,13 @@ test("preserves a selected presentation element as structured user-message conte
     { type: "text", text: " for the executive audience." },
   ]);
 });
+
+test("hides internal Wordless presentation instructions from projected user messages", () => {
+  const prompt = `Create a quarterly review.\n\n<wordless-presentation mode="guided" template="auto">
+Use the Presentation workflow and wait for confirmation.
+</wordless-presentation>`;
+
+  assert.deepEqual(projectUserMessageContent(prompt), [
+    { type: "text", text: "Create a quarterly review." },
+  ]);
+});

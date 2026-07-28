@@ -658,6 +658,11 @@ export type UserPromptPart =
       locator: string;
     };
 
+export interface UserMessageSubmission {
+  messageId: string;
+  submittedAt: number;
+}
+
 export interface MessageTextBlock {
   type: "text";
   text: string;

@@ -32,9 +32,10 @@ import {
   type SerializedLexicalNode,
   type Spread,
 } from "lexical";
-import { Command, FileText, Folder, X } from "lucide-react";
+import { Command, X } from "lucide-react";
 import { forwardRef, useEffect, useImperativeHandle, useRef, useState, type JSX, type KeyboardEvent as ReactKeyboardEvent, type MutableRefObject } from "react";
 import type { SkillSource, UserPromptPart } from "@wordless/domain";
+import { FileTypeIcon } from "../../shared/FileTypeIcon";
 import { countSkillTokenOccurrences, normalizeUserPromptParts, uniqueSkillIdsInDocumentOrder } from "./inline-skill-composer-model";
 
 export type InlineSkillToken = {
@@ -75,6 +76,8 @@ type InlineSkillComposerProps = {
   onSubmit(): void;
   placeholder: string;
   readOnly?: boolean;
+  stopEnabled?: boolean;
+  submitDisabled?: boolean;
   onWorkspaceReferenceKeyDown?(event: ReactKeyboardEvent<HTMLDivElement>): boolean;
 };
 
@@ -227,10 +230,9 @@ function SkillToken({ nodeKey, skillName }: { nodeKey: NodeKey; skillName: strin
 
 function WorkspaceReferenceToken({ nodeKey, name, path, kind }: { nodeKey: NodeKey; name: string; path: string; kind: "file" | "directory" }) {
   const [editor] = useLexicalComposerContext();
-  const Icon = kind === "directory" ? Folder : FileText;
   return (
     <span className="group ml-1 mr-1.5 my-0.5 inline-flex h-6 max-w-[250px] select-none items-center gap-1 rounded-[5px] border border-[#c2d9d1] bg-[#f0f8f5] px-1.5 align-middle font-sans text-[12px] font-medium leading-none text-[#34574d] shadow-[inset_0_1px_0_rgba(255,255,255,0.8)] transition-colors duration-150 hover:border-[#a9cbbf] hover:bg-[#e7f4ef] dark:border-[#3b675c] dark:bg-[#20332d] dark:text-[#c5e3d9] dark:hover:border-[#4a786c] dark:hover:bg-[#274036]" contentEditable={false} title={path}>
-      <Icon aria-hidden className="h-3 w-3 shrink-0 text-[#4f8b79] dark:text-[#9ccfbd]" />
+      <FileTypeIcon className="h-3 w-3 [&_svg]:h-3 [&_svg]:w-3" kind={kind} name={name} />
       <span className="min-w-0 truncate">@{name}</span>
       <button aria-label={`Remove ${name}`} className="grid h-4 w-4 shrink-0 place-items-center rounded-[3px] text-[#5e8278] opacity-0 pointer-events-none transition-opacity duration-150 group-focus-within:pointer-events-auto group-focus-within:opacity-100 group-hover:pointer-events-auto group-hover:opacity-100 hover:bg-[#cfe9e1] hover:text-[#23483d] focus-visible:pointer-events-auto focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[#6eaa99] dark:hover:bg-[#36554a] dark:hover:text-white" onClick={() => editor.update(() => $getNodeByKey(nodeKey)?.remove())} onMouseDown={(event) => event.preventDefault()} type="button"><X className="h-3 w-3" /></button>
     </span>
@@ -285,7 +287,7 @@ function EditorEditablePlugin({ editable }: { editable: boolean }) {
   return null;
 }
 
-function EditorCommandsPlugin({ onStop, onSubmit, readOnly, selectionRef }: { onStop?(): void; onSubmit(): void; readOnly: boolean; selectionRef: MutableRefObject<RangeSelection | null> }) {
+function EditorCommandsPlugin({ onStop, onSubmit, readOnly, selectionRef, stopEnabled, submitDisabled }: { onStop?(): void; onSubmit(): void; readOnly: boolean; selectionRef: MutableRefObject<RangeSelection | null>; stopEnabled: boolean; submitDisabled: boolean }) {
   const [editor] = useLexicalComposerContext();
   const onStopRef = useRef(onStop);
   const onSubmitRef = useRef(onSubmit);
@@ -297,11 +299,11 @@ function EditorCommandsPlugin({ onStop, onSubmit, readOnly, selectionRef }: { on
     (event) => {
       if (readOnly || event?.shiftKey) return false;
       event?.preventDefault();
-      onSubmitRef.current();
+      if (!submitDisabled) onSubmitRef.current();
       return true;
     },
     COMMAND_PRIORITY_HIGH,
-  ), [editor, readOnly]);
+  ), [editor, readOnly, submitDisabled]);
 
   useEffect(() => {
     const removeAdjacentToken = (direction: "backward" | "forward"): boolean => {
@@ -346,13 +348,13 @@ function EditorCommandsPlugin({ onStop, onSubmit, readOnly, selectionRef }: { on
   useEffect(() => editor.registerCommand(
     KEY_ESCAPE_COMMAND,
     (event) => {
-      if (!readOnly || !onStopRef.current) return false;
+      if (!stopEnabled || !onStopRef.current) return false;
       event?.preventDefault();
       onStopRef.current();
       return true;
     },
     COMMAND_PRIORITY_HIGH,
-  ), [editor, readOnly]);
+  ), [editor, stopEnabled]);
 
   return null;
 }
@@ -380,7 +382,7 @@ const initialConfig = {
 };
 
 export const InlineSkillComposer = forwardRef<InlineSkillComposerHandle, InlineSkillComposerProps>(function InlineSkillComposer(
-  { ariaLabel, className, disabled = false, onChange, onStop, onSubmit, placeholder, readOnly = false, onWorkspaceReferenceKeyDown },
+  { ariaLabel, className, disabled = false, onChange, onStop, onSubmit, placeholder, readOnly = false, stopEnabled = false, submitDisabled = false, onWorkspaceReferenceKeyDown },
   ref,
 ) {
   const editorRef = useRef<LexicalEditor | null>(null);
@@ -479,7 +481,7 @@ export const InlineSkillComposer = forwardRef<InlineSkillComposerHandle, InlineS
                   event.preventDefault();
                   return;
                 }
-                if (event.key === "Escape" && readOnly) {
+                if (event.key === "Escape" && stopEnabled) {
                   event.preventDefault();
                   onStop?.();
                 }
@@ -494,7 +496,7 @@ export const InlineSkillComposer = forwardRef<InlineSkillComposerHandle, InlineS
       <EditorRefPlugin editorRef={editorRef} />
       <HistoryPlugin />
       <EditorEditablePlugin editable={!disabled && !readOnly} />
-      <EditorCommandsPlugin onStop={onStop} onSubmit={onSubmit} readOnly={readOnly} selectionRef={selectionRef} />
+      <EditorCommandsPlugin onStop={onStop} onSubmit={onSubmit} readOnly={readOnly} selectionRef={selectionRef} stopEnabled={stopEnabled} submitDisabled={submitDisabled} />
       <SelectionMemoryPlugin selectionRef={selectionRef} />
       <OnChangePlugin
         ignoreSelectionChange

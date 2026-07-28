@@ -1,6 +1,6 @@
 import { ArrowLeft, ExternalLink, FileWarning } from "lucide-react";
 import { type ReactNode } from "react";
-import { getFileIcon } from "../../shared/fileIcons";
+import { FileTypeIcon } from "../../shared/FileTypeIcon";
 import { usePreferences } from "../../shared/preferences";
 
 type DocumentPreviewProps = {
@@ -10,11 +10,6 @@ type DocumentPreviewProps = {
   onOpen: () => void;
   unavailableReason?: "binary" | "missing" | "too-large";
 };
-
-function extensionFrom(name: string): string | undefined {
-  const index = name.lastIndexOf(".");
-  return index > 0 && index < name.length - 1 ? name.slice(index + 1) : undefined;
-}
 
 function InlineMarkdown({ text }: { text: string }) {
   return <>{text.split(/(`[^`]+`|\*\*[^*]+\*\*)/g).map((part, index) => {
@@ -56,8 +51,7 @@ function TextPreview({ content }: { content: string }) {
 
 export function DocumentPreview({ content, name, onBack, onOpen, unavailableReason }: DocumentPreviewProps) {
   const { t } = usePreferences();
-  const markup = getFileIcon(extensionFrom(name), name);
   const markdown = /\.(md|markdown|mdx)$/i.test(name);
   const detail = unavailableReason === "binary" ? t("filePreviewBinary") : unavailableReason === "too-large" ? t("filePreviewTooLarge") : t("filePreviewUnavailable");
-  return <section className="flex min-h-0 flex-1 flex-col"><header className="flex shrink-0 items-center gap-2 border-b border-[#e4e4df] px-3 py-2 dark:border-border"><button aria-label={t("back")} className="grid h-6 w-6 place-items-center rounded-[5px] text-[#74746d] hover:bg-[#f0f0ec] dark:hover:bg-muted" onClick={onBack} type="button"><ArrowLeft className="h-3.5 w-3.5" /></button><span aria-hidden className="grid h-4 w-4 shrink-0 place-items-center [&_svg]:h-4 [&_svg]:w-4" dangerouslySetInnerHTML={{ __html: markup }} /><span className="min-w-0 flex-1 truncate text-[12px] font-semibold text-[#3e3e39] dark:text-foreground">{name}</span><button aria-label={t("openFile")} className="grid h-6 w-6 place-items-center rounded-[5px] text-[#74746d] hover:bg-[#f0f0ec] dark:hover:bg-muted" onClick={onOpen} type="button"><ExternalLink className="h-3.5 w-3.5" /></button></header>{content === null ? <div className="grid flex-1 place-items-center px-5 text-center"><div><FileWarning className="mx-auto h-4 w-4 text-[#93938b]" /><p className="mt-3 text-[11px] leading-5 text-muted-foreground">{detail}</p></div></div> : markdown ? <MarkdownPreview content={content} /> : <TextPreview content={content} />}</section>;
+  return <section className="flex min-h-0 flex-1 flex-col"><header className="flex shrink-0 items-center gap-2 border-b border-[#e4e4df] px-3 py-2 dark:border-border"><button aria-label={t("back")} className="grid h-6 w-6 place-items-center rounded-[5px] text-[#74746d] hover:bg-[#f0f0ec] dark:hover:bg-muted" onClick={onBack} type="button"><ArrowLeft className="h-3.5 w-3.5" /></button><FileTypeIcon kind="file" name={name} /><span className="min-w-0 flex-1 truncate text-[12px] font-semibold text-[#3e3e39] dark:text-foreground">{name}</span><button aria-label={t("openFile")} className="grid h-6 w-6 place-items-center rounded-[5px] text-[#74746d] hover:bg-[#f0f0ec] dark:hover:bg-muted" onClick={onOpen} type="button"><ExternalLink className="h-3.5 w-3.5" /></button></header>{content === null ? <div className="grid flex-1 place-items-center px-5 text-center"><div><FileWarning className="mx-auto h-4 w-4 text-[#93938b]" /><p className="mt-3 text-[11px] leading-5 text-muted-foreground">{detail}</p></div></div> : markdown ? <MarkdownPreview content={content} /> : <TextPreview content={content} />}</section>;
 }

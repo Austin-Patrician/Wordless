@@ -1,5 +1,5 @@
 import { Button, cn, Tooltip, TooltipContent, TooltipTrigger } from "@wordless/ui-kit";
-import { Archive, ChevronDown, ChevronRight, CircleHelp, Command, FileText, Folder, Layers3, ListChecks, Mic, Network, Pin, PinOff, Plus, Send, ShieldCheck, Sparkles, Square, X } from "lucide-react";
+import { Archive, ChevronDown, ChevronRight, CircleHelp, Command, FileText, Folder, Layers3, Mic, Network, Pin, PinOff, Plus, Send, ShieldCheck, Sparkles, Square, X } from "lucide-react";
 import { useCallback, useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import { usePreferences } from "../../shared/preferences";
 import type { AgentInteractionModeId, ConnectorSummary, ProviderAvatarId, SessionAccessLevel, SessionContextUsage, SkillSummary, ToolApprovalMode, UserPromptPart } from "@wordless/domain";
@@ -144,11 +144,21 @@ export function Composer({
   const hasActionMenu = Boolean(onInteractionModeChange || onTogglePlanMode || onCompactContext || onImportSkill || onOpenSkills || onToolApprovalModeChange || skills.length > 0 || connectors.length > 0);
   const interactionDisabled = disabled || compacting;
   const effectiveInteractionMode = interactionMode ?? (planMode === "off" ? "default" : "plan");
-  const interactionModes: Array<{ id: AgentInteractionModeId; description: string; icon: "default" | "clarify" | "plan"; label: string }> = [
-    { id: "default", icon: "default", label: locale === "zh-CN" ? "默认" : "Default", description: locale === "zh-CN" ? "标准协作与执行" : "Standard collaboration" },
-    { id: "clarify", icon: "clarify", label: locale === "zh-CN" ? "澄清" : "Clarify", description: locale === "zh-CN" ? "提问并理清思路，不执行" : "Question and sharpen thinking" },
-    ...(canPlan || (!onInteractionModeChange && onTogglePlanMode) ? [{ id: "plan" as const, icon: "plan" as const, label: locale === "zh-CN" ? "计划" : "Plan", description: locale === "zh-CN" ? "先规划，再决定是否执行" : "Plan before execution" }] : []),
+  const interactionModes: Array<{ id: "clarify" | "plan"; description: string; label: string }> = [
+    ...(onInteractionModeChange ? [{ id: "clarify" as const, label: locale === "zh-CN" ? "澄清" : "Clarify", description: locale === "zh-CN" ? "提问并理清思路，不执行" : "Question and sharpen thinking without execution" }] : []),
+    ...(canPlan || (!onInteractionModeChange && onTogglePlanMode) ? [{ id: "plan" as const, label: locale === "zh-CN" ? "计划" : "Plan", description: locale === "zh-CN" ? "先规划，再决定是否执行" : "Plan before execution" }] : []),
   ];
+  const interactionModeDescription = effectiveInteractionMode === "plan"
+    ? locale === "zh-CN" ? "当前为计划模式，将先规划任务，等你确认后再执行。" : "Plan mode is active. Wordless will plan first and wait for confirmation before execution."
+    : effectiveInteractionMode === "clarify"
+      ? locale === "zh-CN" ? "当前为澄清模式，将通过提问理清思路，不执行任务。" : "Clarify mode is active. Wordless will ask questions and clarify the direction without execution."
+      : locale === "zh-CN" ? "当前为默认模式，可直接回答并执行任务。" : "Default mode is active. Wordless can answer and execute tasks directly.";
+  const showActionSubmenu = useCallback((submenu: "approval" | "connectors" | "mode" | "skills" | null) => {
+    setApprovalOpen(submenu === "approval");
+    setConnectorsOpen(submenu === "connectors");
+    setModeOpen(submenu === "mode");
+    setSkillsOpen(submenu === "skills");
+  }, []);
 
   useEffect(() => {
     const move = (event: PointerEvent) => {
@@ -179,13 +189,11 @@ export function Composer({
         (menuRef.current?.contains(target) || menuTriggerRef.current?.contains(target))
       ) return;
       setMenuOpen(false);
-      setModeOpen(false);
-      setSkillsOpen(false);
-      setConnectorsOpen(false);
+      showActionSubmenu(null);
     };
     document.addEventListener("pointerdown", closeMenu, true);
     return () => document.removeEventListener("pointerdown", closeMenu, true);
-  }, [menuOpen]);
+  }, [menuOpen, showActionSubmenu]);
 
   useEffect(() => {
     localStorage.setItem("wordless.pinned-skill-ids", JSON.stringify(pinnedSkillIds));
@@ -194,10 +202,8 @@ export function Composer({
   useEffect(() => {
     if (!running) return;
     setMenuOpen(false);
-    setModeOpen(false);
-    setSkillsOpen(false);
-    setConnectorsOpen(false);
-  }, [running]);
+    showActionSubmenu(null);
+  }, [running, showActionSubmenu]);
 
   useEffect(() => () => {
     if (draftFrameRef.current !== undefined) cancelAnimationFrame(draftFrameRef.current);
@@ -341,6 +347,18 @@ export function Composer({
     }
   };
 
+  const changeInteractionMode = async (mode: "clarify" | "plan") => {
+    const nextMode: AgentInteractionModeId = effectiveInteractionMode === mode ? "default" : mode;
+    try {
+      if (onInteractionModeChange) await onInteractionModeChange(nextMode);
+      else if (mode === "plan") await onTogglePlanMode?.();
+      setMenuOpen(false);
+      setModeOpen(false);
+    } catch {
+      // The session keeps its previous mode when the host rejects the change.
+    }
+  };
+
   const insertWorkspaceReference = (entry: WorkspaceFileEntry) => {
     inputRef.current?.insertWorkspaceReference({ path: entry.path, name: entry.name, kind: entry.kind });
     setWorkspacePickerOpen(false);
@@ -394,8 +412,9 @@ export function Composer({
           onStop={() => void onStop?.()}
           onSubmit={() => void send()}
           placeholder={effectiveInteractionMode === "plan" ? t("planPromptPlaceholder") : effectiveInteractionMode === "clarify" ? locale === "zh-CN" ? "输入想要理清的问题..." : "Describe what you want to clarify..." : compact ? t("compactPromptPlaceholder") : t("promptPlaceholder")}
-          readOnly={running}
           ref={inputRef}
+          stopEnabled={running}
+          submitDisabled={running}
         />
         {workspacePickerOpen ? <div className="absolute z-40 w-[min(520px,calc(100vw-3rem))] overflow-hidden rounded-[8px] border border-[#cadbd5] bg-white p-1 shadow-[0_14px_34px_rgba(27,46,40,0.16)] dark:border-[#3c655a] dark:bg-card" style={{ left: workspacePickerPosition.left, bottom: workspacePickerPosition.bottom }}>
           <div className="px-2 py-1.5 font-mono text-[9px] uppercase tracking-[0.08em] text-[#688278] dark:text-[#9bbfb2]">Workspace files</div>
@@ -403,23 +422,22 @@ export function Composer({
         </div> : null}
       </div>
       {skillWarning ? <p className="mt-1 shrink-0 text-[10px] text-[#9b6c2d] dark:text-[#d7b47d]">{t("skillContextWarning")}</p> : null}
-      {hasActionMenu && menuOpen ? <div className="absolute bottom-[48px] left-2 z-30 flex items-end gap-1.5" onMouseLeave={() => { setModeOpen(false); setSkillsOpen(false); setConnectorsOpen(false); setApprovalOpen(false); }} ref={menuRef}>
+      {hasActionMenu && menuOpen ? <div className="absolute bottom-[48px] left-2 z-30 flex items-end gap-1.5" onMouseLeave={() => showActionSubmenu(null)} ref={menuRef}>
         <div className="w-[188px] rounded-[10px] border border-[#dfdfdb] bg-white p-1.5 shadow-[0_14px_34px_rgba(28,28,25,0.12)] dark:border-border dark:bg-card">
-          {onInteractionModeChange || onTogglePlanMode ? <button className={cn("flex w-full items-center gap-2 rounded-[7px] px-2.5 py-2 text-left text-[12px] text-[#3f3f3a] hover:bg-[#f3f3f0] dark:text-foreground dark:hover:bg-muted", modeOpen && "bg-[#eeeeeb] dark:bg-muted")} onClick={() => { setModeOpen(true); setSkillsOpen(false); }} onFocus={() => { setModeOpen(true); setSkillsOpen(false); }} onMouseEnter={() => { setModeOpen(true); setSkillsOpen(false); }} type="button">
+          {onInteractionModeChange || onTogglePlanMode ? <button className={cn("flex w-full items-center gap-2 rounded-[7px] px-2.5 py-2 text-left text-[12px] text-[#3f3f3a] hover:bg-[#f3f3f0] dark:text-foreground dark:hover:bg-muted", modeOpen && "bg-[#eeeeeb] dark:bg-muted")} onClick={() => showActionSubmenu("mode")} onFocus={() => showActionSubmenu("mode")} onMouseEnter={() => showActionSubmenu("mode")} type="button">
             <Sparkles className="h-4 w-4 text-[#62625d]" /><span className="flex-1">{t("mode")}</span><ChevronRight className="h-3 w-3 text-[#898981]" />
           </button> : null}
-          {onToolApprovalModeChange ? <button aria-expanded={approvalOpen} className={cn("flex w-full items-center gap-2 rounded-[7px] px-2.5 py-2 text-left text-[12px] text-[#3f3f3a] hover:bg-[#f3f3f0] dark:text-foreground dark:hover:bg-muted", approvalOpen && "bg-[#eeeeeb] dark:bg-muted")} onClick={() => { setApprovalOpen(true); setModeOpen(false); setSkillsOpen(false); setConnectorsOpen(false); }} onFocus={() => { setApprovalOpen(true); setModeOpen(false); setSkillsOpen(false); setConnectorsOpen(false); }} onMouseEnter={() => { setApprovalOpen(true); setModeOpen(false); setSkillsOpen(false); setConnectorsOpen(false); }} type="button">
-            <ShieldCheck className={cn("h-4 w-4", toolApprovalMode === "auto" ? "text-[#a47a2a]" : "text-[#62625d]")} /><span className="min-w-0 flex-1 truncate">{locale === "zh-CN" ? "工具审批" : "Tool approval"}</span><span className="max-w-[92px] truncate text-[10px] text-[#85857e] dark:text-muted-foreground">{toolApprovalMode === "auto" ? (locale === "zh-CN" ? "自动" : "Auto") : (locale === "zh-CN" ? "手动" : "Manual")}</span><ChevronRight className="h-3 w-3 shrink-0 text-[#898981]" />
+          {onToolApprovalModeChange ? <button aria-expanded={approvalOpen} className={cn("flex w-full items-center gap-2 rounded-[7px] px-2.5 py-2 text-left text-[12px] text-[#3f3f3a] hover:bg-[#f3f3f0] dark:text-foreground dark:hover:bg-muted", approvalOpen && "bg-[#eeeeeb] dark:bg-muted")} onClick={() => showActionSubmenu("approval")} onFocus={() => showActionSubmenu("approval")} onMouseEnter={() => showActionSubmenu("approval")} type="button">
+            <ShieldCheck className={cn("h-4 w-4", toolApprovalMode === "auto" ? "text-[#a47a2a]" : "text-[#62625d]")} /><span className="min-w-0 flex-1 truncate">{locale === "zh-CN" ? "工具审批" : "Tool approval"}</span><ChevronRight className="h-3 w-3 shrink-0 text-[#898981]" />
           </button> : null}
-          {onCompactContext ? <button className="flex w-full items-center gap-2 rounded-[7px] px-2.5 py-2 text-left text-[12px] text-[#3f3f3a] hover:bg-[#f3f3f0] disabled:cursor-not-allowed disabled:opacity-45 dark:text-foreground dark:hover:bg-muted" disabled={interactionDisabled || running || !contextCompactionAvailable} onClick={() => { setMenuOpen(false); setModeOpen(false); void onCompactContext(); }} onMouseEnter={() => { setModeOpen(false); setSkillsOpen(false); }} type="button"><Archive className="h-4 w-4 shrink-0 text-[#62625d]" /><span>{t("compressContext")}</span></button> : null}
-          <button className={cn("flex w-full items-center gap-2 rounded-[7px] px-2.5 py-2 text-left text-[12px] text-[#3f3f3a] hover:bg-[#f3f3f0] dark:text-foreground dark:hover:bg-muted", skillsOpen && "bg-[#eeeeeb] dark:bg-muted")} onClick={() => { setSkillsOpen(true); setModeOpen(false); setConnectorsOpen(false); }} onFocus={() => { setSkillsOpen(true); setModeOpen(false); setConnectorsOpen(false); }} onMouseEnter={() => { setSkillsOpen(true); setModeOpen(false); setConnectorsOpen(false); }} type="button"><Command className="h-4 w-4 text-[#62625d]" /><span>{t("skills")}</span><ChevronRight className="ml-auto h-3 w-3 text-[#898981]" /></button>
-          <button className={cn("flex w-full items-center gap-2 rounded-[7px] px-2.5 py-2 text-left text-[12px] text-[#3f3f3a] hover:bg-[#f3f3f0] dark:text-foreground dark:hover:bg-muted", connectorsOpen && "bg-[#eeeeeb] dark:bg-muted")} onClick={() => { setConnectorsOpen(true); setModeOpen(false); setSkillsOpen(false); }} onFocus={() => { setConnectorsOpen(true); setModeOpen(false); setSkillsOpen(false); }} onMouseEnter={() => { setConnectorsOpen(true); setModeOpen(false); setSkillsOpen(false); }} type="button"><Network className="h-4 w-4 text-[#62625d]" /><span>{t("connectors")}</span><ChevronRight className="ml-auto h-3 w-3 text-[#898981]" /></button>
+          {onCompactContext ? <button className="flex w-full items-center gap-2 rounded-[7px] px-2.5 py-2 text-left text-[12px] text-[#3f3f3a] hover:bg-[#f3f3f0] disabled:cursor-not-allowed disabled:opacity-45 dark:text-foreground dark:hover:bg-muted" disabled={interactionDisabled || running || !contextCompactionAvailable} onClick={() => { setMenuOpen(false); showActionSubmenu(null); void onCompactContext(); }} onMouseEnter={() => showActionSubmenu(null)} type="button"><Archive className="h-4 w-4 shrink-0 text-[#62625d]" /><span>{t("compressContext")}</span></button> : null}
+          <button className={cn("flex w-full items-center gap-2 rounded-[7px] px-2.5 py-2 text-left text-[12px] text-[#3f3f3a] hover:bg-[#f3f3f0] dark:text-foreground dark:hover:bg-muted", skillsOpen && "bg-[#eeeeeb] dark:bg-muted")} onClick={() => showActionSubmenu("skills")} onFocus={() => showActionSubmenu("skills")} onMouseEnter={() => showActionSubmenu("skills")} type="button"><Command className="h-4 w-4 text-[#62625d]" /><span>{t("skills")}</span><ChevronRight className="ml-auto h-3 w-3 text-[#898981]" /></button>
+          <button className={cn("flex w-full items-center gap-2 rounded-[7px] px-2.5 py-2 text-left text-[12px] text-[#3f3f3a] hover:bg-[#f3f3f0] dark:text-foreground dark:hover:bg-muted", connectorsOpen && "bg-[#eeeeeb] dark:bg-muted")} onClick={() => showActionSubmenu("connectors")} onFocus={() => showActionSubmenu("connectors")} onMouseEnter={() => showActionSubmenu("connectors")} type="button"><Network className="h-4 w-4 text-[#62625d]" /><span>{t("connectors")}</span><ChevronRight className="ml-auto h-3 w-3 text-[#898981]" /></button>
         </div>
-        {modeOpen && (onInteractionModeChange || onTogglePlanMode) ? <div className="w-[244px] rounded-[10px] border border-[#dfdfdb] bg-white p-1.5 shadow-[0_14px_34px_rgba(28,28,25,0.12)] dark:border-border dark:bg-card">{interactionModes.map((option) => {
-          const Icon = option.icon === "clarify" ? CircleHelp : option.icon === "plan" ? ListChecks : Sparkles;
+        {modeOpen && (onInteractionModeChange || onTogglePlanMode) ? <div className="absolute left-[187px] top-0 w-[244px] rounded-[10px] border border-[#dfdfdb] bg-white p-1.5 shadow-[0_14px_34px_rgba(28,28,25,0.12)] dark:border-border dark:bg-card"><p className="px-2.5 pb-2 pt-1 text-[10px] leading-4 text-[#7f7f78] dark:text-muted-foreground">{interactionModeDescription}</p><div className="border-t border-[#ecece8] pt-1 dark:border-border">{interactionModes.map((option) => {
           const selected = effectiveInteractionMode === option.id;
-          return <button className={cn("flex w-full items-start gap-2 rounded-[7px] px-2.5 py-2 text-left hover:bg-[#f3f3f0] dark:hover:bg-muted", selected && "bg-[#edf2df] dark:bg-[#313d20]")} key={option.id} onClick={() => { if (onInteractionModeChange) void Promise.resolve(onInteractionModeChange(option.id)).catch(() => {}); else if (option.id === "plan") onTogglePlanMode?.(); setMenuOpen(false); setModeOpen(false); }} type="button"><span className={cn("mt-0.5 grid h-3.5 w-3.5 shrink-0 place-items-center rounded-[3px] border text-[9px]", selected ? "border-[#61792e] bg-[#6d8438] text-white dark:border-[#b7d76d] dark:bg-[#b8dc69] dark:text-[#263015]" : "border-[#bdbdb6] text-transparent dark:border-muted-foreground")}>✓</span><Icon className="mt-0.5 h-3.5 w-3.5 shrink-0 text-[#62625d] dark:text-muted-foreground" /><span className="min-w-0"><span className="block text-[12px] font-medium text-[#42423d] dark:text-foreground">{option.label}</span><span className="mt-0.5 block text-[10px] leading-4 text-[#85857e] dark:text-muted-foreground">{option.description}</span></span></button>;
-        })}</div> : null}
+          return <button aria-pressed={selected} className="flex w-full items-center gap-2 rounded-[7px] px-2.5 py-2 text-left hover:bg-[#f3f3f0] dark:hover:bg-muted" key={option.id} onClick={() => void changeInteractionMode(option.id)} type="button"><span className="min-w-0 flex-1"><span className="block text-[12px] font-medium text-[#42423d] dark:text-foreground">{option.label}</span><span className="mt-0.5 block truncate text-[10px] leading-4 text-[#85857e] dark:text-muted-foreground">{option.description}</span></span><span aria-hidden="true" className={cn("relative h-4 w-7 shrink-0 rounded-full transition-colors", selected ? "bg-[#74a92f] dark:bg-[#a6ca61]" : "bg-[#e7e7e2] dark:bg-[#484a43]")}><span className={cn("absolute top-0.5 h-3 w-3 rounded-full bg-white shadow-[0_1px_2px_rgba(0,0,0,0.16)] transition-transform", selected ? "translate-x-3.5" : "translate-x-0.5")} /></span></button>;
+        })}</div></div> : null}
         {approvalOpen && onToolApprovalModeChange ? <div className="w-[276px] rounded-[10px] border border-[#dfdfdb] bg-white p-1.5 shadow-[0_14px_34px_rgba(28,28,25,0.14)] dark:border-border dark:bg-card" role="radiogroup" aria-label={locale === "zh-CN" ? "工具审批方式" : "Tool approval mode"}>
           {approvalError ? <p className="px-2.5 pb-1 text-[10px] text-[#a0522d] dark:text-[#e5a47d]" role="alert">{approvalError}</p> : null}
           {([
@@ -453,7 +471,7 @@ export function Composer({
       </div> : null}
       <div className={cn("flex shrink-0 items-center justify-between gap-3", compact ? "mt-1.5 px-0.5" : "mt-3")}>
         <div className="flex min-w-0 items-center gap-1.5">
-          {hasActionMenu ? <span className="inline-flex" ref={menuTriggerRef}><Button aria-expanded={menuOpen} aria-label={t("mode")} className={cn("text-[#686862]", menuOpen && "bg-[#eeeeeb] text-[#353532] dark:bg-muted dark:text-foreground")} disabled={interactionDisabled || running} onClick={() => { setMenuOpen((current) => !current); setModeOpen(false); setSkillsOpen(false); setConnectorsOpen(false); }} size="icon" type="button" variant="ghost"><span className="relative grid h-4 w-4 place-items-center"><Plus className={cn("absolute h-4 w-4 transition-all duration-200", menuOpen ? "rotate-90 scale-75 opacity-0" : "rotate-0 scale-100 opacity-100")} /><X className={cn("absolute h-4 w-4 transition-all duration-200", menuOpen ? "rotate-0 scale-100 opacity-100" : "-rotate-90 scale-75 opacity-0")} /></span></Button></span> : null}
+          {hasActionMenu ? <span className="inline-flex" ref={menuTriggerRef}><Button aria-expanded={menuOpen} aria-label={t("mode")} className={cn("text-[#686862]", menuOpen && "bg-[#eeeeeb] text-[#353532] dark:bg-muted dark:text-foreground")} disabled={interactionDisabled || running} onClick={() => { setMenuOpen((current) => !current); showActionSubmenu(null); }} size="icon" type="button" variant="ghost"><span className="relative grid h-4 w-4 place-items-center"><Plus className={cn("absolute h-4 w-4 transition-all duration-200", menuOpen ? "rotate-90 scale-75 opacity-0" : "rotate-0 scale-100 opacity-100")} /><X className={cn("absolute h-4 w-4 transition-all duration-200", menuOpen ? "rotate-0 scale-100 opacity-100" : "-rotate-90 scale-75 opacity-0")} /></span></Button></span> : null}
           {showAccessControl && onAccessLevelChange ? <AccessPicker disabled={interactionDisabled || running} onChange={onAccessLevelChange} value={accessLevel} /> : null}
           {effectiveInteractionMode !== "default" ? <><span className="hidden h-4 w-px bg-[#e1e1dc] sm:block" /><button aria-label={locale === "zh-CN" ? "退出当前模式" : "Exit current mode"} className="flex items-center gap-1 rounded-md px-1.5 py-1.5 text-[10px] font-medium text-[#4f4f49] transition-colors hover:bg-[#f1f1ee] disabled:cursor-not-allowed disabled:opacity-50 dark:text-foreground dark:hover:bg-muted" disabled={interactionDisabled || running} onClick={() => { if (onInteractionModeChange) void Promise.resolve(onInteractionModeChange("default")).catch(() => {}); else onTogglePlanMode?.(); }} type="button">{effectiveInteractionMode === "plan" ? <img alt="" className="h-3.5 w-3.5 shrink-0 object-contain" src={planIcon} /> : <CircleHelp className="h-3.5 w-3.5 shrink-0 text-[#667d2f] dark:text-[#d1e689]" />}{effectiveInteractionMode === "plan" ? t("plan") : locale === "zh-CN" ? "澄清" : "Clarify"}</button></> : null}
           {showWorkspacePicker && onOpenWorkspacePicker ? <Button className="hidden min-w-0 text-[#64645e] sm:inline-flex" disabled={interactionDisabled || running || workspaceLocked} onClick={onOpenWorkspacePicker} size="sm" type="button" variant="ghost">

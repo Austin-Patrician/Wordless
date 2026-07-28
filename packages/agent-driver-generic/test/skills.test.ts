@@ -158,12 +158,14 @@ describe("selected skills", () => {
     const events: AgentDriverEvent[] = [];
     driverSession.subscribe((event) => events.push(event));
 
-    await driverSession.execute({ type: "prompt", text: "Prepare the release notes.", selectedSkills: [selectedSkill()] });
+    const submission = { messageId: "submitted-user-1", submittedAt: 1_700_000_000_000 };
+    await driverSession.execute({ type: "prompt", text: "Prepare the release notes.", selectedSkills: [selectedSkill()], submission });
 
     const userStart = events.find((event) => event.type === "message.started" && event.message.role === "user");
     const userCompleted = events.find((event) => event.type === "message.completed" && event.message.role === "user");
     const persistedUserEntry = (await session.getEntries()).find((entry) => entry.type === "message" && entry.message.role === "user");
     expect(persistedUserEntry).toBeDefined();
+    expect(persistedUserEntry?.id).toBe(submission.messageId);
     expect(userStart).toMatchObject({
       message: {
         blocks: [{ type: "text", text: "Prepare the release notes." }],
@@ -171,6 +173,7 @@ describe("selected skills", () => {
     });
     expect(userCompleted).toMatchObject({ message: { id: persistedUserEntry?.id } });
     expect(userStart).toMatchObject({ message: { id: persistedUserEntry?.id } });
+    expect(events.indexOf(userStart!)).toBeLessThan(events.indexOf(userCompleted!));
     expect(systemPrompts[0]).toContain("Use the release note structure from this skill.");
 
     const firstUserMessage = (await session.buildContext()).messages.find((message) => message.role === "user");

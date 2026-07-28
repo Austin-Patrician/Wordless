@@ -34,10 +34,10 @@ import type {
 } from "./types.ts";
 import { AgentHarnessError, BranchSummaryError, CompactionError, SessionError, toError } from "./types.ts";
 
-function createUserMessage(text: string, images?: ImageContent[]): UserMessage {
+function createUserMessage(text: string, images?: ImageContent[], timestamp = Date.now()): UserMessage {
 	const content: Array<{ type: "text"; text: string } | ImageContent> = [{ type: "text", text }];
 	if (images) content.push(...images);
-	return { role: "user", content, timestamp: Date.now() };
+	return { role: "user", content, timestamp };
 }
 
 function createFailureMessage(model: Model<any>, error: unknown, aborted: boolean): AssistantMessage {
@@ -167,6 +167,7 @@ export class AgentHarness<
 	private compactionAbortController?: AbortController;
 	private runPromise?: Promise<void>;
 	private pendingSessionWrites: PendingSessionWrite[] = [];
+	private readonly messageEntryIds = new WeakMap<object, string>();
 	private model: Model<any>;
 	private thinkingLevel: ThinkingLevel;
 	private systemPrompt: AgentHarnessOptions<TSkill, TPromptTemplate, TTool>["systemPrompt"];
@@ -488,7 +489,9 @@ export class AgentHarness<
 
 	private async handleAgentEvent(event: AgentEvent, signal?: AbortSignal): Promise<void> {
 		if (event.type === "message_end") {
-			await this.session.appendMessage(event.message);
+			const entryId = this.messageEntryIds.get(event.message);
+			await this.session.appendMessage(event.message, entryId);
+			if (entryId) this.messageEntryIds.delete(event.message);
 			await this.emitAny(event, signal);
 			return;
 		}
@@ -532,10 +535,12 @@ export class AgentHarness<
 	private async executeTurn(
 		turnState: AgentHarnessTurnState<TSkill, TPromptTemplate, TTool>,
 		text: string,
-		options?: { images?: ImageContent[] },
+		options?: { images?: ImageContent[]; messageId?: string; timestamp?: number },
 	): Promise<AssistantMessage> {
 		let activeTurnState = turnState;
-		let messages: AgentMessage[] = [createUserMessage(text, options?.images)];
+		const userMessage = createUserMessage(text, options?.images, options?.timestamp);
+		if (options?.messageId) this.messageEntryIds.set(userMessage, options.messageId);
+		let messages: AgentMessage[] = [userMessage];
 		if (this.nextTurnQueue.length > 0) {
 			const queuedMessages = this.nextTurnQueue.splice(0);
 			try {
@@ -658,7 +663,7 @@ export class AgentHarness<
 		}
 	}
 
-	async prompt(text: string, options?: { images?: ImageContent[] }): Promise<AssistantMessage> {
+	async prompt(text: string, options?: { images?: ImageContent[]; messageId?: string; timestamp?: number }): Promise<AssistantMessage> {
 		if (this.phase !== "idle") throw new AgentHarnessError("busy", "AgentHarness is busy");
 		this.phase = "turn";
 		const finishRunPromise = this.startRunPromise();

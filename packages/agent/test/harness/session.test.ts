@@ -30,6 +30,14 @@ async function runSessionSuite(
 			expect(context.messages.map((message) => message.role)).toEqual(["user", "assistant"]);
 		});
 
+		it("uses a caller-provided message entry id", async () => {
+			const session = new Session(await createStorage());
+			const id = await session.appendMessage(createUserMessage("one"), "submitted-user-1");
+			expect(id).toBe("submitted-user-1");
+			expect((await session.getEntry(id))?.id).toBe("submitted-user-1");
+			await expect(session.appendMessage(createUserMessage("duplicate"), id)).rejects.toThrow("already exists");
+		});
+
 		it("tracks model and thinking level changes", async () => {
 			const session = new Session(await createStorage());
 			await session.appendMessage(createUserMessage("one"));

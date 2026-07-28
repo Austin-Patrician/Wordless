@@ -30,6 +30,7 @@ export type AssistantRunPresentation = {
   activity: AssistantRunActivity;
   runId: string | null;
   startedAt: number;
+  userMessageId: string | null;
 };
 
 export type RunEventCursor = {
@@ -37,8 +38,8 @@ export type RunEventCursor = {
   sequence: number;
 };
 
-export function createAssistantRunPresentation(startedAt: number): AssistantRunPresentation {
-  return { assistantMessageId: null, activity: { type: "thinking", since: startedAt }, runId: null, startedAt };
+export function createAssistantRunPresentation(userMessageId: string, startedAt: number): AssistantRunPresentation {
+  return { assistantMessageId: null, activity: { type: "thinking", since: startedAt }, runId: null, startedAt, userMessageId };
 }
 
 function currentToolActivity(activity: AssistantRunActivity): AssistantToolActivity {
@@ -47,6 +48,7 @@ function currentToolActivity(activity: AssistantRunActivity): AssistantToolActiv
 
 export function advanceAssistantRunPresentation(current: AssistantRunPresentation | null, event: RuntimeEventEnvelope): AssistantRunPresentation | null {
   if (!current) return null;
+  if (event.turnId && current.userMessageId && event.turnId !== `turn:${current.userMessageId}`) return current;
   if (current.runId !== null && event.runId !== current.runId) return current;
 
   const at = event.timestamp;
@@ -118,7 +120,14 @@ export function assistantToolActivity(toolName: string): AssistantToolActivity {
 }
 
 export function assistantRunPresentationFromMessages(messages: ConversationMessage[], startedAt: number): AssistantRunPresentation {
-  const assistant = [...messages].reverse().find((message) => message.role === "assistant");
+  let userIndex = -1;
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    if (messages[index]?.role !== "user") continue;
+    userIndex = index;
+    break;
+  }
+  const user = userIndex === -1 ? undefined : messages[userIndex];
+  const assistant = [...messages.slice(userIndex + 1)].reverse().find((message) => message.role === "assistant");
   const activeTool = assistant ? [...assistant.blocks].reverse().find((block): block is MessageToolBlock => block.type === "tool" && (block.state === "running" || block.state === "awaiting-approval" || block.state === "awaiting-user-input")) : undefined;
   const latestBlock = assistant?.blocks.at(-1);
   const completedTool = latestBlock?.type === "tool" && (latestBlock.state === "complete" || latestBlock.state === "error") ? latestBlock : undefined;
@@ -135,6 +144,7 @@ export function assistantRunPresentationFromMessages(messages: ConversationMessa
     activity,
     runId: null,
     startedAt,
+    userMessageId: user?.id ?? null,
   };
 }
 

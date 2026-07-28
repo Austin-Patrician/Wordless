@@ -95,7 +95,7 @@ export class SessionError extends Error {
 
 export class AgentHarness<TSkill extends Skill = Skill> {
   constructor(options: { env: ExecutionEnv; session: Session; models: Models; model: Model; systemPrompt: string; tools: readonly AgentTool[]; activeToolNames?: readonly string[]; thinkingLevel: ThinkingLevel; resources?: { skills?: TSkill[] } });
-  prompt(text: string): Promise<AssistantMessage>;
+  prompt(text: string, options?: { messageId?: string; timestamp?: number }): Promise<AssistantMessage>;
   continue(): Promise<AssistantMessage>;
   prepareContextOverflowRecovery(): Promise<{ failedMessageEntryId: string }>;
   steer(text: string): Promise<void>;

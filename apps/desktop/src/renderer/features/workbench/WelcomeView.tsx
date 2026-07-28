@@ -1,4 +1,4 @@
-import { cn } from "@wordless/ui-kit";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue, cn } from "@wordless/ui-kit";
 import { useEffect, useMemo, useState } from "react";
 import type { AgentInteractionModeId, ModelReference, PresentationGenerationMode, SessionAccessLevel, ToolApprovalMode, UserPromptPart, WorkbenchEntryDefinition, WorkbenchMode } from "@wordless/domain";
 import type { PresentationTemplate } from "@wordless/protocol";
@@ -14,6 +14,7 @@ import presentationIcon from "../../../icons/common-icons/presentation.svg";
 import { usePreferences } from "../../shared/preferences";
 import { useRuntime, useRuntimeClient } from "../../shared/runtime";
 import { Composer, type WorkspaceAttachment } from "../thread/Composer";
+import { createPendingThreadTurn, createUserMessageSubmission, type PendingThreadTurn } from "../thread/pending-thread-turn";
 import { ModelPicker } from "./ModelPicker";
 import { WorkspacePicker } from "./WorkspacePicker";
 
@@ -21,7 +22,7 @@ type WelcomeViewProps = {
   onOpenModels: () => void;
   onOpenSkillImport: () => void;
   onOpenSkills: () => void;
-  onSessionCreated: (sessionId: string) => void;
+  onSessionCreated: (sessionId: string, pendingTurn: PendingThreadTurn) => void;
 };
 
 const modeOptions: { icon: string; id: WorkbenchMode; label: string }[] = [
@@ -45,6 +46,63 @@ function EntryIcon({ iconKey }: { iconKey: string }) {
 
 function defaultEntry(entries: WorkbenchEntryDefinition[], mode: WorkbenchMode): WorkbenchEntryDefinition | undefined {
   return entries.find((entry) => entry.mode === mode);
+}
+
+function PresentationLaunchControls({
+  generationMode,
+  onGenerationModeChange,
+  onTemplateChange,
+  templateId,
+  templates,
+}: {
+  generationMode: PresentationGenerationMode;
+  onGenerationModeChange: (mode: PresentationGenerationMode) => void;
+  onTemplateChange: (templateId: string) => void;
+  templateId: string;
+  templates: PresentationTemplate[];
+}) {
+  return (
+    <div className="mb-4 border-y border-[#e4e4df] py-3 dark:border-border">
+      <div className="grid max-w-[460px] grid-cols-[minmax(0,1fr)_minmax(0,1.35fr)] gap-4">
+        <div className="min-w-0">
+          <p className="h-4 text-[11px] font-semibold leading-4 text-[#464641] dark:text-foreground">Creation flow</p>
+          <div className="mt-1.5 inline-flex h-7 rounded-[6px] bg-[#ededeb] p-0.5 dark:bg-muted">
+            {(["guided", "quick"] as const).map((candidate) => (
+              <button
+                className={cn(
+                  "h-6 rounded-[4px] px-2.5 text-[10px] font-semibold transition-colors",
+                  generationMode === candidate
+                    ? "bg-white text-[#39491d] shadow-[0_1px_2px_rgba(0,0,0,0.12)] dark:bg-card dark:text-[#d7ef99]"
+                    : "text-[#777770] hover:text-[#42423d] dark:text-muted-foreground dark:hover:text-foreground",
+                )}
+                key={candidate}
+                onClick={() => onGenerationModeChange(candidate)}
+                type="button"
+              >
+                {candidate === "guided" ? "Guided" : "Quick"}
+              </button>
+            ))}
+          </div>
+        </div>
+        <div className="min-w-0">
+          <p className="h-4 text-[11px] font-semibold leading-4 text-[#464641] dark:text-foreground">Starting point</p>
+          <Select onValueChange={onTemplateChange} value={templateId}>
+            <SelectTrigger className="mt-1.5 h-7 min-w-0 rounded-[6px] bg-white px-2.5 py-0 text-[10px] text-[#565650] shadow-none focus:ring-1 dark:bg-card dark:text-foreground">
+              <SelectValue placeholder="Auto" />
+            </SelectTrigger>
+            <SelectContent className="rounded-[7px]">
+              {(templates.length > 0 ? templates : [{ id: "auto", name: "Auto", description: "", tags: [] }]).map((template) => (
+                <SelectItem className="min-h-7 px-2.5 py-1.5 text-[10px]" key={template.id} value={template.id}>{template.name}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+      </div>
+      <p className="mt-2 text-[10px] leading-4 text-muted-foreground">
+        {generationMode === "guided" ? "Confirm an outline before the agent creates the deck." : "Generate the first complete deck immediately, then iterate in the workspace."}
+      </p>
+    </div>
+  );
 }
 
 export function WelcomeView({ onOpenModels, onOpenSkillImport, onOpenSkills, onSessionCreated }: WelcomeViewProps) {
@@ -119,10 +177,12 @@ export function WelcomeView({ onOpenModels, onOpenSkillImport, onOpenSkills, onS
     }
     setSubmitting(true);
     setSubmissionError(null);
+    const submission = createUserMessageSubmission();
+    const pendingTurn = createPendingThreadTurn(parts, nextAttachments, submission);
     try {
-      const session = await client.createAndPrompt({ mode, entryId: entry.id, workspaceId, accessLevel, model, connectorIds, interactionMode, toolApprovalMode, ...(entry.workbenchId === "presentation" ? { presentation: { generationMode: presentationMode, templateId: presentationTemplateId === "auto" ? null : presentationTemplateId } } : {}) }, parts, nextAttachments.map((attachment) => ({ path: attachment.path })));
-      await refresh();
-      onSessionCreated(session.id);
+      const session = await client.createAndPrompt({ mode, entryId: entry.id, workspaceId, accessLevel, model, connectorIds, interactionMode, toolApprovalMode, ...(entry.workbenchId === "presentation" ? { presentation: { generationMode: presentationMode, templateId: presentationTemplateId === "auto" ? null : presentationTemplateId } } : {}) }, parts, submission, nextAttachments.map((attachment) => ({ path: attachment.path })));
+      onSessionCreated(session.id, pendingTurn);
+      void refresh();
     } catch (cause) {
       setSubmissionError(cause instanceof Error ? cause.message : String(cause));
       await refresh();
@@ -194,7 +254,7 @@ export function WelcomeView({ onOpenModels, onOpenSkillImport, onOpenSkills, onS
               );
             })}
           </div>
-          {entry?.workbenchId === "presentation" ? <div className="mb-4 border-y border-[#e4e4df] py-3 dark:border-border"><div className="flex flex-wrap items-center gap-x-5 gap-y-2"><div><p className="text-[11px] font-semibold text-[#464641] dark:text-foreground">Creation flow</p><div className="mt-1.5 inline-flex rounded-[6px] bg-[#ededeb] p-0.5 dark:bg-muted">{(["guided", "quick"] as const).map((candidate) => <button className={cn("h-6 rounded-[4px] px-2.5 text-[10px] font-semibold transition-colors", presentationMode === candidate ? "bg-white text-[#39491d] shadow-[0_1px_2px_rgba(0,0,0,0.12)] dark:bg-card dark:text-[#d7ef99]" : "text-[#777770] hover:text-[#42423d] dark:text-muted-foreground dark:hover:text-foreground")} key={candidate} onClick={() => setPresentationMode(candidate)} type="button">{candidate === "guided" ? "Guided" : "Quick"}</button>)}</div></div><label className="min-w-[180px]"><span className="text-[11px] font-semibold text-[#464641] dark:text-foreground">Starting point</span><select className="ml-2 h-7 max-w-[180px] rounded-[5px] border border-[#deded9] bg-white px-2 text-[10px] text-[#565650] outline-none focus:border-[#91a963] dark:border-border dark:bg-muted dark:text-foreground" onChange={(event) => setPresentationTemplateId(event.target.value)} value={presentationTemplateId}>{presentationTemplates.map((template) => <option key={template.id} value={template.id}>{template.name}</option>)}{presentationTemplates.length === 0 ? <option value="auto">Auto</option> : null}</select></label></div><p className="mt-2 text-[10px] leading-4 text-muted-foreground">{presentationMode === "guided" ? "Confirm an outline before the agent creates the deck." : "Generate the first complete deck immediately, then iterate in the workspace."}</p></div> : null}
+          {entry?.workbenchId === "presentation" ? <PresentationLaunchControls generationMode={presentationMode} onGenerationModeChange={setPresentationMode} onTemplateChange={setPresentationTemplateId} templateId={presentationTemplateId} templates={presentationTemplates} /> : null}
           <div className="relative">
             <Composer
               accessLevel={accessLevel}

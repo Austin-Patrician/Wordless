@@ -1,8 +1,9 @@
-import { access, chmod, mkdir, readFile, writeFile } from "node:fs/promises";
+import { access, chmod, mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { execFile as execFileCallback } from "node:child_process";
 import { join } from "node:path";
 import { createHash } from "node:crypto";
 import { promisify } from "node:util";
+import { fileURLToPath } from "node:url";
 
 const version = "v1.0.142";
 const root = new URL("..", import.meta.url);
@@ -22,19 +23,85 @@ const asset = platform === "linux" ? `officecli-linux-${arch}` : `officecli-${pl
 const releaseBase = `https://github.com/iOfficeAI/OfficeCLI/releases/download/${version}`;
 const preparedVersion = `${version}:${asset}`;
 const execFile = promisify(execFileCallback);
+const downloadTimeoutMs = 120_000;
 
 async function fetchBytes(url) {
-  if (platform !== "win32") {
-    try {
-      const { stdout } = await execFile("curl", ["--fail", "--location", "--silent", "--show-error", url], { encoding: "buffer", maxBuffer: 100 * 1024 * 1024 });
-      return Buffer.isBuffer(stdout) ? stdout : Buffer.from(stdout);
-    } catch (cause) {
-      if (cause?.code !== "ENOENT") throw cause;
-    }
+  const resourceName = new URL(url).pathname.split("/").at(-1) ?? url;
+  const curl = platform === "win32" ? "curl.exe" : "curl";
+  try {
+    console.log(`Downloading ${resourceName}...`);
+    const { stdout } = await execFile(curl, [
+      "--http1.1",
+      "--fail",
+      "--location",
+      "--silent",
+      "--show-error",
+      "--retry",
+      "6",
+      "--retry-all-errors",
+      "--retry-delay",
+      "2",
+      "--connect-timeout",
+      "15",
+      "--max-time",
+      String(downloadTimeoutMs / 1_000),
+      url,
+    ], { encoding: "buffer", maxBuffer: 100 * 1024 * 1024 });
+    const bytes = Buffer.isBuffer(stdout) ? stdout : Buffer.from(stdout);
+    console.log(`Downloaded ${resourceName} (${bytes.byteLength.toLocaleString()} bytes).`);
+    return bytes;
+  } catch (cause) {
+    if (cause?.code !== "ENOENT") throw cause;
   }
-  const response = await fetch(url);
+  console.log(`Downloading ${resourceName} with Node fetch...`);
+  const response = await fetch(url, { signal: AbortSignal.timeout(downloadTimeoutMs) });
   if (!response.ok) throw new Error(`Download failed (${response.status}) for ${url}`);
-  return Buffer.from(await response.arrayBuffer());
+  const bytes = Buffer.from(await response.arrayBuffer());
+  console.log(`Downloaded ${resourceName} (${bytes.byteLength.toLocaleString()} bytes).`);
+  return bytes;
+}
+
+async function downloadFile(url, temporaryDestination) {
+  const resourceName = new URL(url).pathname.split("/").at(-1) ?? url;
+  const curl = platform === "win32" ? "curl.exe" : "curl";
+  const destinationPath = fileURLToPath(temporaryDestination);
+  try {
+    console.log(`Downloading ${resourceName} with resume support...`);
+    await execFile(curl, [
+      "--http1.1",
+      "--fail",
+      "--location",
+      "--silent",
+      "--show-error",
+      "--retry",
+      "5",
+      "--retry-all-errors",
+      "--retry-delay",
+      "2",
+      "--connect-timeout",
+      "15",
+      "--speed-time",
+      "30",
+      "--speed-limit",
+      "1024",
+      "--continue-at",
+      "-",
+      "--output",
+      destinationPath,
+      url,
+    ], { maxBuffer: 1024 * 1024 });
+    const bytes = await readFile(temporaryDestination);
+    console.log(`Downloaded ${resourceName} (${bytes.byteLength.toLocaleString()} bytes).`);
+    return;
+  } catch (cause) {
+    if (cause?.code !== "ENOENT") throw cause;
+  }
+  console.log(`Downloading ${resourceName} with Node fetch...`);
+  const response = await fetch(url, { signal: AbortSignal.timeout(downloadTimeoutMs) });
+  if (!response.ok) throw new Error(`Download failed (${response.status}) for ${url}`);
+  const bytes = Buffer.from(await response.arrayBuffer());
+  await writeFile(temporaryDestination, bytes);
+  console.log(`Downloaded ${resourceName} (${bytes.byteLength.toLocaleString()} bytes).`);
 }
 
 function expectedHash(sums, name) {
@@ -45,8 +112,11 @@ function expectedHash(sums, name) {
 }
 
 async function fetchTemplate(target, source) {
-  const data = await fetchBytes(`https://raw.githubusercontent.com/iOfficeAI/OfficeCLI/${version}/${source.split("/").map(encodeURIComponent).join("/")}`);
-  await writeFile(new URL(`presentation-templates/${target}`, resources), data);
+  const destination = new URL(`presentation-templates/${target}`, resources);
+  const temporaryDestination = new URL(`presentation-templates/${target}.part`, resources);
+  await downloadFile(`https://raw.githubusercontent.com/iOfficeAI/OfficeCLI/${version}/${source.split("/").map(encodeURIComponent).join("/")}`, temporaryDestination);
+  await rm(destination, { force: true });
+  await rename(temporaryDestination, destination);
 }
 
 async function exists(target) {
@@ -59,12 +129,23 @@ async function exists(target) {
 }
 
 const destination = new URL(`officecli/${platformName}-${arch}/${executable}`, resources);
+const temporaryDestination = new URL(`officecli/${platformName}-${arch}/${executable}.part`, resources);
 const versionFile = new URL(`officecli/${platformName}-${arch}/.wordless-officecli-version`, resources);
 const templateSources = [
   ["aura-coffee.pptx", "examples/ppt/templates/styles/brand--aura-coffee/aura_coffee.pptx"],
   ["aura-coffee-dark.pptx", "examples/ppt/templates/styles/brand--aura-coffee-dark/AURA_COFFEE.pptx"],
+  ["future-2050.pptx", "examples/ppt/templates/styles/future--2050-vision/未来已来_2050.pptx"],
+  ["cat-philosophy.pptx", "examples/ppt/templates/styles/lifestyle--cat-philosophy/cat_philosophy.pptx"],
+  ["cat-secret-life.pptx", "examples/ppt/templates/styles/lifestyle--cat-secret-life/Cat-Secret-Life.pptx"],
+  ["feline-report.pptx", "examples/ppt/templates/styles/lifestyle--feline-report/Feline_Report.pptx"],
   ["aionui-promo.pptx", "examples/ppt/templates/styles/product--aionui-promo/AionUI-推广.pptx"],
+  ["geminicli-timetravel.pptx", "examples/ppt/templates/styles/product--geminicli-timetravel/GeminiCLI-TimeTravel.pptx"],
   ["attention-budget.pptx", "examples/ppt/templates/styles/productivity--attention-budget/注意力预算-把手机时间变成创造时间.pptx"],
+  ["alien-guide.pptx", "examples/ppt/templates/styles/science--alien-guide/Alien_Guide.pptx"],
+  ["mars-settlement.pptx", "examples/ppt/templates/styles/science--mars-settlement/Mars-Settlement-Guide.pptx"],
+  ["space-exploration.pptx", "examples/ppt/templates/styles/science--space-exploration/太空探索历程.pptx"],
+  ["time-travel.pptx", "examples/ppt/templates/styles/science--time-travel/Time_Travel.pptx"],
+  ["wildlife-company.pptx", "examples/ppt/templates/styles/tech--wildlife-company/野生动物科技公司.pptx"],
 ];
 await mkdir(new URL(`officecli/${platformName}-${arch}/`, resources), { recursive: true });
 await mkdir(new URL("presentation-templates/", resources), { recursive: true });
@@ -75,9 +156,14 @@ if (currentVersion.trim() !== preparedVersion || !(await exists(destination))) {
   const current = await readFile(destination).catch(() => undefined);
   const actual = current ? createHash("sha256").update(current).digest("hex") : undefined;
   if (actual !== expected) {
-    const binary = await fetchBytes(`${releaseBase}/${asset}`);
-    if (createHash("sha256").update(binary).digest("hex") !== expected) throw new Error(`SHA-256 mismatch for ${asset}`);
-    await writeFile(destination, binary);
+    await downloadFile(`${releaseBase}/${asset}`, temporaryDestination);
+    const binary = await readFile(temporaryDestination);
+    if (createHash("sha256").update(binary).digest("hex") !== expected) {
+      await rm(temporaryDestination, { force: true });
+      throw new Error(`SHA-256 mismatch for ${asset}`);
+    }
+    await rm(destination, { force: true });
+    await rename(temporaryDestination, destination);
   }
   if (platform !== "win32") await chmod(destination, 0o755);
   await writeFile(versionFile, `${preparedVersion}\n`, "utf8");

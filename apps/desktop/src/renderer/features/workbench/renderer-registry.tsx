@@ -277,9 +277,10 @@ function PresentationToolActivity({ block, onLoadToolOutput, onResolveApproval }
 
   const details = readRecord(block.details);
   const artifact = readRecord(details?.artifact);
-  const outline = block.name === "presentation_inspect" ? jsonRecord(block.output) : undefined;
+  const quality = readRecord(details?.quality);
+  const outline = block.name === "presentation_inspect" || (block.name === "presentation_read" && readRecord(block.input?.request)?.mode === "outline") ? jsonRecord(block.output) : undefined;
   const surfaces = Array.isArray(details?.surfaces) ? details.surfaces : [];
-  const issues = Array.isArray(details?.issues) ? details.issues : [];
+  const issues = Array.isArray(quality?.issues) ? quality.issues : Array.isArray(details?.issues) ? details.issues : [];
   const artifacts = Array.isArray(details?.artifacts) ? details.artifacts : [];
   const revision = typeof details?.revision === "number"
     ? details.revision
@@ -292,17 +293,21 @@ function PresentationToolActivity({ block, onLoadToolOutput, onResolveApproval }
 
   const presentation = block.name === "presentation_create"
     ? { icon: <Presentation className="h-3.5 w-3.5" />, running: "Creating presentation", detail: displayName, summary: displayName ? `Created ${displayName}` : "Presentation created" }
-    : block.name === "presentation_apply"
+    : block.name === "presentation_apply" || block.name === "presentation_edit"
       ? { icon: <WandSparkles className="h-3.5 w-3.5" />, running: "Applying changes", detail: displayName, summary: [operationCount === undefined ? undefined : `${operationCount} changes`, revision === undefined ? undefined : `revision ${revision}`].filter(Boolean).join(" · ") || "Changes applied" }
       : block.name === "presentation_render"
         ? { icon: <Image className="h-3.5 w-3.5" />, running: "Rendering slides", detail: revision === undefined ? undefined : `revision ${revision}`, summary: [surfaces.length > 0 ? `${surfaces.length} slides` : undefined, revision === undefined ? undefined : `revision ${revision}`].filter(Boolean).join(" · ") || "Preview rendered" }
-        : block.name === "presentation_inspect"
+        : block.name === "presentation_inspect" || block.name === "presentation_read"
           ? { icon: <ScanSearch className="h-3.5 w-3.5" />, running: "Inspecting presentation", detail: textValue(block.input?.artifactId), summary: slideCount === undefined ? "Inspection complete" : `${slideCount} slides inspected` }
-          : block.name === "presentation_validate"
+          : block.name === "presentation_validate" || block.name === "presentation_quality_scan" || block.name === "presentation_quality_review"
             ? { icon: <ShieldCheck className="h-3.5 w-3.5" />, running: "Checking presentation", detail: textValue(block.input?.artifactId), summary: issues.length === 0 ? "Validation passed" : `${issues.length} issue${issues.length === 1 ? "" : "s"}` }
             : block.name === "presentation_publish"
-              ? { icon: <FileOutput className="h-3.5 w-3.5" />, running: "Preparing output", detail: undefined, summary: artifacts.length === 0 ? "Output ready" : `${artifacts.length} presentation${artifacts.length === 1 ? "" : "s"} ready` }
-              : { icon: <Presentation className="h-3.5 w-3.5" />, running: "Running presentation tool", detail: undefined, summary: "Completed" };
+              ? { icon: <FileOutput className="h-3.5 w-3.5" />, running: "Preparing output", detail: displayName, summary: displayName ? `${displayName} ready` : artifacts.length === 0 ? "Output ready" : `${artifacts.length} presentation${artifacts.length === 1 ? "" : "s"} ready` }
+              : block.name === "presentation_help" || block.name === "presentation_guidance"
+                ? { icon: <ScanSearch className="h-3.5 w-3.5" />, running: "Loading OfficeCLI guidance", detail: textValue(block.input?.element) ?? textValue(block.input?.name), summary: "Guidance loaded" }
+                : block.name === "presentation_sources"
+                  ? { icon: <FileOutput className="h-3.5 w-3.5" />, running: "Registering sources", detail: textValue(block.input?.artifactId), summary: "Sources registered" }
+                  : { icon: <Presentation className="h-3.5 w-3.5" />, running: "Running presentation tool", detail: undefined, summary: "Completed" };
 
   return (
     <section className="py-3">

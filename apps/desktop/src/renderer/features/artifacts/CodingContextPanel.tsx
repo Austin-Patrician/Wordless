@@ -2,7 +2,7 @@ import { Button, Dialog, DialogContent, DialogTitle, DropdownMenu, DropdownMenuC
 import { ArrowLeft, ChevronDown, FilePlus2, FolderOpen, MoreHorizontal, Save, Trash2 } from "lucide-react";
 import { useCallback, useEffect, useState, type ReactNode } from "react";
 import type { SessionArtifactDiff, SessionArtifactFile, SessionContextSnapshot, SessionWorkspaceTextFile, WorkspaceFileEntry } from "@wordless/protocol";
-import { getFileIcon, getFolderIcon } from "../../shared/fileIcons";
+import { FileTypeIcon } from "../../shared/FileTypeIcon";
 import { usePreferences } from "../../shared/preferences";
 import { useRuntimeClient } from "../../shared/runtime";
 import type { WorkspaceAttachment } from "../thread/Composer";
@@ -26,14 +26,8 @@ function emptyContext(): SessionContextSnapshot {
   return { workspace: null, artifacts: [], changes: [] };
 }
 
-function extensionFrom(fileName: string): string | undefined {
-  const index = fileName.lastIndexOf(".");
-  return index > 0 && index < fileName.length - 1 ? fileName.slice(index + 1) : undefined;
-}
-
 function FileIcon({ entry, open = false }: { entry: Pick<WorkspaceFileEntry, "kind" | "name">; open?: boolean }) {
-  const markup = entry.kind === "directory" ? getFolderIcon(entry.name, open) : getFileIcon(extensionFrom(entry.name), entry.name);
-  return <span aria-hidden className="grid h-4 w-4 shrink-0 place-items-center [&_svg]:h-4 [&_svg]:w-4" dangerouslySetInnerHTML={{ __html: markup }} />;
+  return <FileTypeIcon kind={entry.kind} name={entry.name} open={open} />;
 }
 
 function DiffPreview({ diff, name, onBack }: { diff: SessionArtifactDiff | null; name: string; onBack: () => void }) {

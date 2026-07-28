@@ -22,6 +22,7 @@ app.setPath("userData", userData.path);
 
 let runtime: ReturnType<typeof createDesktopRuntime> | undefined;
 let office: OfficeCliService | undefined;
+let disposing = false;
 const hostInfo = createDesktopHostInfo();
 let mainWindow: BrowserWindow | undefined;
 const hasSingleInstance = app.requestSingleInstanceLock();
@@ -93,7 +94,10 @@ app.on("window-all-closed", () => {
   if (process.platform !== "darwin") app.quit();
 });
 
-app.on("before-quit", () => {
-  void office?.dispose();
+app.on("before-quit", (event) => {
+  if (disposing) return;
+  event.preventDefault();
+  disposing = true;
   runtime?.dispose();
+  void (office?.dispose() ?? Promise.resolve()).finally(() => app.quit());
 });

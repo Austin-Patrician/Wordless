@@ -1,4 +1,5 @@
-import { Archive, ArrowDown, CircleAlert, Command, Copy, FileText, Folder, Layers3, LoaderCircle } from "lucide-react";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@wordless/ui-kit";
+import { Archive, ArrowDown, ChevronDown, CircleAlert, Command, Copy, FileText, Folder, Layers3, LoaderCircle, RotateCcw } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Virtuoso, type VirtuosoHandle } from "react-virtuoso";
 import type { ArtifactSelection, ConversationMessage, RuntimeEventEnvelope, SessionHistoryPage, SessionSnapshot, SessionTurnSummary, SessionViewSnapshot } from "@wordless/protocol";
@@ -10,6 +11,7 @@ import { workbenchRendererRegistry } from "../workbench/renderer-registry";
 import { Composer, type WorkspaceAttachment } from "./Composer";
 import type { InlineWorkspaceReferenceToken } from "./InlineSkillComposer";
 import { ConversationDensityRail } from "./ConversationDensityRail";
+import { createPendingThreadTurn, createUserMessageSubmission, type PendingThreadTurn } from "./pending-thread-turn";
 import { createThreadTimeline, dataIndexFromReportedIndex, firstItemIndexAfterPrepend, threadTimelineItemCount, type ThreadTimelineItem } from "./thread-virtual-list";
 import { advanceAssistantRunPresentation, assistantRunActivityAt, assistantRunPresentationFromMessages, createAssistantRunPresentation, isNewerRunEvent, mergeCompletedAssistantMessage, nextAssistantRunActivityUpdateAt, runEventCursor, type AssistantRunActivity, type AssistantRunPresentation, type RunEventCursor } from "./thread-run-state";
 import { TurnTokenUsageRow } from "./TurnTokenUsageRow";
@@ -27,6 +29,7 @@ type ThreadViewProps = {
   onOpenSkillImport: () => void;
   onOpenSkills: () => void;
   sessionId: string;
+  initialPendingTurn?: PendingThreadTurn | null;
 };
 
 export type ThreadMessageNavigationTarget = {
@@ -117,7 +120,11 @@ function applyEvent(snapshot: SessionSnapshot, event: RuntimeEventEnvelope): Ses
     return { ...snapshot, isCompacting: false, compactionTrigger: payload.trigger, compactionError: payload.message };
   }
   if (payload.type === "message.started") {
-    if (messages.some((message) => message.id === payload.message.id)) return { ...snapshot, isRunning: true };
+    const existingIndex = messages.findIndex((message) => message.id === payload.message.id);
+    if (existingIndex !== -1) {
+      if (payload.message.role === "user") messages[existingIndex] = payload.message;
+      return { ...snapshot, messages, isRunning: true };
+    }
     const nextMessages = [...messages, payload.message];
     return { ...snapshot, messages: nextMessages, turnUsage: calculateCurrentTurnUsage(nextMessages), isRunning: true };
   }
@@ -322,9 +329,15 @@ function ContextCompactionActivity({ compaction }: { compaction: ContextCompacti
     ? `${formatTokenCount(compaction.tokensBefore)} -> ${formatTokenCount(compaction.tokensAfter)} tokens`
     : t("contextTokens").replace("{tokens}", formatTokenCount(compaction.tokensBefore));
   return (
-    <details className="border-y border-[#e4e4df] bg-[#fafaf8] px-3 py-2.5 dark:border-border dark:bg-muted/30">
-      <summary className="flex cursor-pointer list-none items-center gap-2 text-[11px] text-[#696962] dark:text-muted-foreground"><Archive className="h-3.5 w-3.5 text-[#738a44] dark:text-[#c2df6b]" /><span className="font-medium text-[#494944] dark:text-foreground">{title}</span><span className="font-mono text-[10px] text-[#94948d]">{tokenSummary}</span><span className="ml-auto font-mono text-[10px] text-[#aaa9a1]">{new Date(compaction.timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</span></summary>
-      <div className="mt-3 border-t border-[#e7e7e2] pt-3 dark:border-border"><p className="mb-2 font-mono text-[10px] text-[#8a8a83] dark:text-muted-foreground">{compaction.model.modelId}</p><div className="text-[12px] leading-5 text-[#5a5a54] dark:text-muted-foreground"><MarkdownText text={compaction.summary} /></div></div>
+    <details className="group border-y border-[#d7e5c4] bg-[#f5f9ed] text-[#586b3d] dark:border-[#4b6036] dark:bg-[#26301f] dark:text-[#c9dfa3]">
+      <summary className="flex min-h-10 cursor-pointer list-none items-center gap-2.5 px-3 py-2.5 outline-none transition-colors hover:bg-[#eef5e2] focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring dark:hover:bg-[#303d27]">
+        <Archive className="h-3.5 w-3.5 shrink-0 text-[#718b46] dark:text-[#b9d77d]" />
+        <span className="min-w-0 truncate text-[11px] font-semibold">{title}</span>
+        <span className="min-w-0 truncate font-mono text-[9px] text-[#82906e] dark:text-[#9eaf8b]">{tokenSummary}</span>
+        <span className="ml-auto shrink-0 font-mono text-[9px] text-[#99a28c] dark:text-[#8f9d82]">{new Date(compaction.timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</span>
+        <ChevronDown aria-hidden="true" className="h-3.5 w-3.5 shrink-0 text-[#849272] transition-transform duration-150 group-open:rotate-180 dark:text-[#9aaa8d]" />
+      </summary>
+      <div className="border-t border-[#dce8cc] px-3 pb-3 pt-2.5 dark:border-[#46583a]"><p className="mb-2 font-mono text-[9px] text-[#7f8d6c] dark:text-[#9cab8f]">{compaction.model.modelId}</p><div className="text-[12px] leading-5 text-[#5d694d] dark:text-[#c1cfb2]"><MarkdownText text={compaction.summary} /></div></div>
     </details>
   );
 }
@@ -336,7 +349,15 @@ function ContextCompactionPending({ trigger }: { trigger?: ContextCompactionReco
 
 function ContextCompactionFailure({ message, onRetry, trigger }: { message: string; onRetry: () => void; trigger?: ContextCompactionRecord["trigger"] }) {
   const { t } = usePreferences();
-  return <div className="flex flex-wrap items-center gap-2 border-y border-[#ead5cf] bg-[#fdf8f6] px-3 py-2.5 text-[11px] text-[#8d5448] dark:border-[#5c3d36] dark:bg-[#2b201d] dark:text-[#efb0a3]"><CircleAlert className="h-3.5 w-3.5" /><span className="font-medium">{trigger === "overflow" ? t("contextOverflowRecoveryFailed") : t("contextCompactionFailed")}</span><span className="min-w-0 flex-1 truncate">{message}</span>{trigger !== "overflow" ? <button className="rounded-[5px] border border-[#d9bbb3] px-2 py-1 text-[10px] font-medium hover:bg-[#f7ece8] dark:border-[#754b43] dark:hover:bg-[#392724]" onClick={onRetry} type="button">{t("retryCompaction")}</button> : null}</div>;
+  return <div className="flex flex-wrap items-center gap-2 border-y border-[#ead5cf] bg-[#fdf8f6] px-3 py-2.5 text-[11px] text-[#8d5448] dark:border-[#5c3d36] dark:bg-[#2b201d] dark:text-[#efb0a3]"><CircleAlert className="h-3.5 w-3.5" /><span className="font-medium">{trigger === "overflow" ? t("contextOverflowRecoveryFailed") : t("contextCompactionFailed")}</span><span className="min-w-0 flex-1 truncate" title={message}>{message}</span>{trigger !== "overflow" ? <Tooltip><TooltipTrigger asChild><button aria-label={t("retryCompaction")} className="grid h-6 w-6 shrink-0 place-items-center rounded-[5px] border border-[#d9bbb3] hover:bg-[#f7ece8] dark:border-[#754b43] dark:hover:bg-[#392724]" onClick={onRetry} type="button"><RotateCcw className="h-3.5 w-3.5" /></button></TooltipTrigger><TooltipContent>{t("retryCompaction")}</TooltipContent></Tooltip> : null}</div>;
+}
+
+function compactionFailureMessage(cause: unknown): string {
+  const message = cause instanceof Error ? cause.message : String(cause);
+  return message
+    .replace(/^Error invoking remote method '[^']+':\s*/i, "")
+    .replace(/^AgentHarnessError:\s*/i, "")
+    .trim();
 }
 
 function AssistantMessageBlocks({ message, onHandoffClarification, onLoadToolOutput, onResolveApproval, onResolveClarificationQuestion, onResolveUserRequest, canPlan, workbenchId }: { message: ConversationMessage; onHandoffClarification: (interactionMode: "default" | "clarify" | "plan") => Promise<void>; onLoadToolOutput: (callId: string) => Promise<void>; onResolveApproval: (approvalId: string, approved: boolean, feedback?: string) => void; onResolveClarificationQuestion: (callId: string, value: string | boolean) => Promise<void>; onResolveUserRequest: (requestId: string, resolution: { status: "submitted" | "cancelled"; answers?: Record<string, UserRequestAnswer>; feedback?: string }) => void; canPlan: boolean; workbenchId: WorkbenchId }) {
@@ -492,8 +513,18 @@ function MessageBody({ messages, onHandoffClarification, onLoadToolOutput, onRes
   return <AssistantMessageBody canPlan={canPlan} messages={messages} onHandoffClarification={onHandoffClarification} onLoadToolOutput={onLoadToolOutput} onResolveApproval={onResolveApproval} onResolveClarificationQuestion={onResolveClarificationQuestion} onResolvePlanResult={onResolvePlanResult} onResolveUserRequest={onResolveUserRequest} planMode={planMode} runPresentation={runPresentation} showFooter={showFooter} workbenchId={workbenchId} />;
 }
 
-function createTimeline(snapshot: SessionSnapshot): ThreadTimelineItem[] {
-  return createThreadTimeline(snapshot.messages, snapshot.contextCompactions);
+function createTimeline(snapshot: SessionSnapshot, runPresentation: AssistantRunPresentation | null): ThreadTimelineItem[] {
+  return createThreadTimeline(snapshot.messages, snapshot.contextCompactions, runPresentation);
+}
+
+function withPendingTurn(snapshot: SessionSnapshot, pendingTurn: PendingThreadTurn | null | undefined): SessionSnapshot {
+  if (!pendingTurn || snapshot.messages.some((message) => message.id === pendingTurn.message.id)) return snapshot;
+  return {
+    ...snapshot,
+    messages: [...snapshot.messages, pendingTurn.message],
+    isRunning: true,
+    turnUsage: undefined,
+  };
 }
 
 type LoadedHistory = {
@@ -606,7 +637,7 @@ function waitForScrollSettled(element: HTMLElement, reduceMotion: boolean, onSet
   };
 }
 
-export function ThreadView({ artifactSelection, messageNavigationTarget, onArtifactSelectionConsumed, onMessageNavigationConsumed, onOpenModels, onOpenSkillImport, onOpenSkills, pendingWorkspaceReferences, onPendingWorkspaceReferencesConsumed, sessionId }: ThreadViewProps) {
+export function ThreadView({ artifactSelection, initialPendingTurn, messageNavigationTarget, onArtifactSelectionConsumed, onMessageNavigationConsumed, onOpenModels, onOpenSkillImport, onOpenSkills, pendingWorkspaceReferences, onPendingWorkspaceReferencesConsumed, sessionId }: ThreadViewProps) {
   const client = useRuntimeClient();
   const { snapshot: appSnapshot } = useRuntime();
   const { reduceMotion, t } = usePreferences();
@@ -639,7 +670,7 @@ export function ThreadView({ artifactSelection, messageNavigationTarget, onArtif
     if (count > 0) virtuosoRef.current?.scrollToIndex({ index: count - 1, align: "end", behavior });
   }, []);
 
-  const timeline = useMemo(() => snapshot ? createTimeline(snapshot) : [], [snapshot]);
+  const timeline = useMemo(() => snapshot ? createTimeline(snapshot, runPresentation) : [], [runPresentation, snapshot]);
   const timelineRef = useRef<ThreadTimelineItem[]>([]);
   timelineRef.current = timeline;
 
@@ -656,7 +687,7 @@ export function ThreadView({ artifactSelection, messageNavigationTarget, onArtif
     setVirtualListVersion(0);
     setHistory(null);
     setSnapshot(null);
-    setRunPresentation(null);
+    setRunPresentation(initialPendingTurn ? createAssistantRunPresentation(initialPendingTurn.message.id, initialPendingTurn.submission.submittedAt) : null);
     hydratedRef.current = false;
     pendingEventsRef.current = [];
     pendingTextEventsRef.current = [];
@@ -666,7 +697,7 @@ export function ThreadView({ artifactSelection, messageNavigationTarget, onArtif
     navigationSequenceRef.current += 1;
     const cached = sessionViewCache.get(sessionId);
     if (cached) {
-      setSnapshot(snapshotFromSessionView(cached));
+      setSnapshot(withPendingTurn(snapshotFromSessionView(cached), initialPendingTurn));
       setHistory(loadedHistoryFromView(cached));
       setFirstItemIndex(100_000 - threadTimelineItemCount(cached.history));
     }
@@ -717,7 +748,7 @@ export function ThreadView({ artifactSelection, messageNavigationTarget, onArtif
             isRunning: view.isRunning,
             isCompacting: view.isCompacting,
             compactionTrigger: view.compactionTrigger,
-            compactionError: view.compactionError,
+            compactionError: view.compactionError ?? current.compactionError,
             extensions: view.extensions,
             toolApprovalMode: view.toolApprovalMode,
           } : snapshotFromSessionView(view));
@@ -736,7 +767,7 @@ export function ThreadView({ artifactSelection, messageNavigationTarget, onArtif
       const pendingEvents = pendingEventsRef.current;
       pendingEventsRef.current = [];
       setSnapshot(() => {
-        let current = snapshotFromSessionView(view);
+        let current = withPendingTurn(snapshotFromSessionView(view), initialPendingTurn);
         for (const event of pendingEvents) {
           if (!isNewerRunEvent(event, lastSequenceRef.current)) continue;
           lastSequenceRef.current = runEventCursor(event);
@@ -747,7 +778,9 @@ export function ThreadView({ artifactSelection, messageNavigationTarget, onArtif
       setHistory(loadedHistoryFromView(view));
       setFirstItemIndex(100_000 - threadTimelineItemCount(view.history));
       setRunPresentation((current) => {
-        let presentation = current ?? (view.isRunning ? assistantRunPresentationFromMessages(messagesFromHistoryPage(view.history), Date.now()) : null);
+        const persistedMessages = messagesFromHistoryPage(view.history);
+        const initialTurnFinished = !view.isRunning && initialPendingTurn !== null && initialPendingTurn !== undefined && persistedMessages.some((message) => message.id === initialPendingTurn.message.id);
+        let presentation = initialTurnFinished ? null : current ?? (view.isRunning ? assistantRunPresentationFromMessages(persistedMessages, Date.now()) : null);
         for (const event of pendingEvents) {
           if (event.event.type === "run.failed" || event.event.type === "run.cancelled" || event.event.type === "session.idle") presentation = null;
           else presentation = advanceAssistantRunPresentation(presentation, event);
@@ -852,10 +885,14 @@ export function ThreadView({ artifactSelection, messageNavigationTarget, onArtif
   const showDensityRail = (history?.turnSummaries.length ?? 0) >= 2;
 
   const send = async (parts: UserPromptPart[], nextAttachments: WorkspaceAttachment[]) => {
-    setRunPresentation(createAssistantRunPresentation(Date.now()));
+    const submission = createUserMessageSubmission();
+    const pendingTurn = createPendingThreadTurn(parts, nextAttachments, submission);
+    setSnapshot((current) => current ? withPendingTurn(current, pendingTurn) : current);
+    setRunPresentation(createAssistantRunPresentation(submission.messageId, submission.submittedAt));
     try {
-      await client.promptSession(sessionId, parts, nextAttachments.filter((attachment) => attachment.kind !== "directory").map((attachment) => ({ path: attachment.path })));
+      await client.promptSession(sessionId, parts, submission, nextAttachments.filter((attachment) => attachment.kind !== "directory").map((attachment) => ({ path: attachment.path })));
     } catch (cause) {
+      setSnapshot((current) => current ? { ...current, messages: current.messages.filter((message) => message.id !== submission.messageId), isRunning: false } : current);
       setRunPresentation(null);
       throw cause;
     }
@@ -949,10 +986,11 @@ export function ThreadView({ artifactSelection, messageNavigationTarget, onArtif
   };
 
   const compactContext = async () => {
+    setSnapshot((current) => current ? { ...current, isCompacting: true, compactionTrigger: "manual", compactionError: undefined } : current);
     try {
       await client.compactSession(sessionId);
     } catch (cause) {
-      setSnapshot((current) => current ? { ...current, isCompacting: false, compactionTrigger: undefined, compactionError: cause instanceof Error ? cause.message : String(cause) } : current);
+      setSnapshot((current) => current ? { ...current, isCompacting: false, compactionTrigger: "manual", compactionError: compactionFailureMessage(cause) } : current);
     }
   };
 
@@ -1050,19 +1088,24 @@ export function ThreadView({ artifactSelection, messageNavigationTarget, onArtif
           key={`${sessionId}:${virtualListVersion}`}
           atBottomStateChange={(atBottom) => { followLatestRef.current = atBottom; setIsAtBottom(atBottom); }}
           className="h-full"
-          components={{ Header: () => planExtensionEnabled && planMode !== "off" ? <ThreadContentFrame className="pb-7 pt-6" densityRail={showDensityRail}><PlanModePanel mode={planMode} snapshot={snapshot} /></ThreadContentFrame> : <div className="h-6" />, Footer: () => <ThreadContentFrame className="pb-10" densityRail={showDensityRail}>{runPresentation && !snapshot.isCompacting && (runPresentation.assistantMessageId === null || !snapshot.messages.some((message) => message.id === runPresentation.assistantMessageId)) ? <AssistantRunPlaceholder presentation={runPresentation} /> : null}{snapshot.isCompacting ? <ContextCompactionPending trigger={snapshot.compactionTrigger} /> : null}{snapshot.compactionError ? <ContextCompactionFailure message={snapshot.compactionError} onRetry={() => void compactContext()} trigger={snapshot.compactionTrigger} /> : null}</ThreadContentFrame> }}
-          computeItemKey={(_index, item) => item.type === "compaction" ? item.compaction.id : item.messages[0]!.id}
+          components={{ Header: () => planExtensionEnabled && planMode !== "off" ? <ThreadContentFrame className="pb-7 pt-6" densityRail={showDensityRail}><PlanModePanel mode={planMode} snapshot={snapshot} /></ThreadContentFrame> : <div className="h-6" />, Footer: () => <ThreadContentFrame className="pb-10" densityRail={showDensityRail}>{snapshot.isCompacting ? <ContextCompactionPending trigger={snapshot.compactionTrigger} /> : null}{snapshot.compactionError ? <ContextCompactionFailure message={snapshot.compactionError} onRetry={() => void compactContext()} trigger={snapshot.compactionTrigger} /> : null}</ThreadContentFrame> }}
+          computeItemKey={(_index, item) => item.type === "compaction" ? item.compaction.id : item.type === "assistant-run" || item.messages[0]?.role === "assistant" ? `assistant:${item.turnId}` : item.messages[0]!.id}
           data={timeline}
           endReached={() => void loadNewer()}
           firstItemIndex={firstItemIndex}
           followOutput={isAtBottom ? "auto" : false}
-          itemContent={(index, item) => <ThreadContentFrame densityRail={showDensityRail}>{item.type === "compaction"
-            ? <ContextCompactionActivity compaction={item.compaction} />
-            : <MessageBody canPlan={canPlan} isFirstMessage={item.messages[0]?.id === snapshot.messages[0]?.id} messages={item.messages} onHandoffClarification={handoffClarification} onLoadToolOutput={loadToolOutput} onResolveApproval={resolveApproval} onResolveClarificationQuestion={resolveClarificationQuestion} onResolvePlanResult={resolvePlanResult} onResolveUserRequest={resolveUserRequest} planMode={planMode} runPresentation={runPresentation} showFooter={!snapshot.isRunning && index === firstItemIndex + timeline.length - 1} workbenchId={snapshot.session.workbenchId} />}</ThreadContentFrame>}
+          itemContent={(index, item) => {
+            const dataIndex = dataIndexFromReportedIndex(index, firstItemIndex);
+            const followsCompaction = timeline[dataIndex - 1]?.type === "compaction" && item.type !== "compaction";
+            return <ThreadContentFrame className={followsCompaction ? "pt-[26px]" : ""} densityRail={showDensityRail}>{item.type === "compaction"
+              ? <ContextCompactionActivity compaction={item.compaction} />
+              : item.type === "assistant-run" ? <AssistantRunPlaceholder presentation={item.presentation} />
+              : <MessageBody canPlan={canPlan} isFirstMessage={item.messages[0]?.id === snapshot.messages[0]?.id} messages={item.messages} onHandoffClarification={handoffClarification} onLoadToolOutput={loadToolOutput} onResolveApproval={resolveApproval} onResolveClarificationQuestion={resolveClarificationQuestion} onResolvePlanResult={resolvePlanResult} onResolveUserRequest={resolveUserRequest} planMode={planMode} runPresentation={runPresentation?.userMessageId && item.turnId === `turn:${runPresentation.userMessageId}` ? runPresentation : null} showFooter={!snapshot.isRunning && index === firstItemIndex + timeline.length - 1} workbenchId={snapshot.session.workbenchId} />}</ThreadContentFrame>;
+          }}
           rangeChanged={(range) => {
             const middleReportedIndex = range.startIndex + Math.floor((range.endIndex - range.startIndex) / 2);
             const item = timeline[dataIndexFromReportedIndex(middleReportedIndex, firstItemIndex)];
-            if (item?.type === "messages") setActiveTurnId(`turn:${item.messages[0]!.id}`);
+            if (item?.type === "messages" || item?.type === "assistant-run") setActiveTurnId(item.turnId);
           }}
           ref={virtuosoRef}
           startReached={() => void loadOlder()}
@@ -1106,8 +1149,8 @@ export function ThreadView({ artifactSelection, messageNavigationTarget, onArtif
               onArtifactSelectionConsumed={onArtifactSelectionConsumed}
               pendingWorkspaceReferences={pendingWorkspaceReferences}
               onPendingWorkspaceReferencesConsumed={onPendingWorkspaceReferencesConsumed}
-              searchWorkspaceReferences={(query) => client.searchSessionWorkspace(sessionId, query)}
-              workspaceSearchScope={sessionId}
+              searchWorkspaceReferences={snapshot.session.workspaceId ? (query) => client.searchSessionWorkspace(sessionId, query) : undefined}
+              workspaceSearchScope={snapshot.session.workspaceId ? sessionId : "no-workspace"}
               onStop={() => client.cancelSession(sessionId)}
               planMode={planMode}
               running={snapshot.isRunning}

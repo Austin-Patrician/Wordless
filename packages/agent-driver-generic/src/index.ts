@@ -50,6 +50,7 @@ import type {
   UserRequestAnswer,
   UserRequestField,
   UserRequestResolution,
+  UserMessageSubmission,
   ToolApprovalMode,
 } from "@wordless/domain";
 
@@ -57,6 +58,7 @@ export interface AgentHarnessDriverOptions {
   id: string;
   features?: readonly AgentDriverFeature[];
   createTools(context: AgentDriverSessionContext): AgentTool[];
+  systemPromptContribution?: (context: AgentDriverSessionContext) => string | Promise<string>;
   preflightOperation?: (
     context: AgentDriverSessionContext,
     request: { toolName: string; input: Record<string, unknown> },
@@ -606,6 +608,7 @@ class AgentHarnessDriverSession implements AgentDriverSession {
   private readonly persistedFileBaselinePaths: Set<string>;
   private readonly toolMessageIds = new Map<string, string>();
   private activeAssistantMessageId: string | undefined;
+  private activeUserSubmission: UserMessageSubmission | undefined;
   private overflowRecoveryAttempted = false;
   private suppressedOverflowMessage: SuppressedOverflowMessage | undefined;
   private currentPrompt: string | undefined;
@@ -618,6 +621,7 @@ class AgentHarnessDriverSession implements AgentDriverSession {
     features: readonly AgentDriverFeature[],
     preflightOperation: AgentHarnessDriverOptions["preflightOperation"],
     persistedFileBaselinePaths: Set<string>,
+    systemPromptContribution: string,
   ) {
     this.context = context;
     this.toolApprovalMode = context.toolApprovalMode ?? "manual";
@@ -629,11 +633,12 @@ class AgentHarnessDriverSession implements AgentDriverSession {
     const skillPrompt = formatSkillsForSystemPrompt(context.skills, {
       loadingInstruction: "Use the load_skill tool to load a skill's complete instructions when the task matches its description.",
     });
+    const profileSystemPrompt = `${context.profile.systemPrompt}${systemPromptContribution ? `\n\n${systemPromptContribution}` : ""}`;
     const baseSystemPrompt = clarificationMode
-      ? `${context.profile.systemPrompt}${skillPrompt ? `\n\n${skillPrompt}` : ""}\n\n${CLARIFICATION_MODE_PROMPT}`
+      ? `${profileSystemPrompt}${skillPrompt ? `\n\n${skillPrompt}` : ""}\n\n${CLARIFICATION_MODE_PROMPT}`
       : supportsUserRequests
-        ? `${context.profile.systemPrompt}${skillPrompt ? `\n\n${skillPrompt}` : ""}\n\nWhen a user decision or missing requirement blocks progress, call request_user_input with a concise form. Group related questions together. Do not use it to approve file changes or commands.`
-        : `${context.profile.systemPrompt}${skillPrompt ? `\n\n${skillPrompt}` : ""}\n\nThis model cannot call tools. When you need a user decision, ask a concise question in normal response text instead.`;
+        ? `${profileSystemPrompt}${skillPrompt ? `\n\n${skillPrompt}` : ""}\n\nWhen a user decision or missing requirement blocks progress, call request_user_input with a concise form. Group related questions together. Do not use it to approve file changes or commands.`
+        : `${profileSystemPrompt}${skillPrompt ? `\n\n${skillPrompt}` : ""}\n\nThis model cannot call tools. When you need a user decision, ask a concise question in normal response text instead.`;
     const skillTools = context.skills.length > 0 ? [createLoadSkillTool(context.skills)] : [];
     const clarificationTools = clarificationMode && supportsUserRequests ? [createClarificationQuestionTool(), createClarificationBriefTool()] : [];
     const tools = supportsUserRequests
@@ -830,10 +835,15 @@ class AgentHarnessDriverSession implements AgentDriverSession {
         this.suppressedOverflowMessage = undefined;
         this.selectedSkillsForRun = command.selectedSkills ?? [];
         try {
-          const response = await this.harness.prompt(formatPromptWithAttachments(command.text, command.attachments ?? []));
+          this.activeUserSubmission = command.submission;
+          const response = await this.harness.prompt(
+            formatPromptWithAttachments(command.text, command.attachments ?? []),
+            command.submission ? { messageId: command.submission.messageId, timestamp: command.submission.submittedAt } : undefined,
+          );
           await this.recoverContextOverflow(response);
           return;
         } finally {
+          this.activeUserSubmission = undefined;
           this.selectedSkillsForRun = [];
         }
       }
@@ -1028,12 +1038,12 @@ class AgentHarnessDriverSession implements AgentDriverSession {
     };
   }
 
-  private messageId(message: AgentMessage): string {
+  private messageId(message: AgentMessage, preferredId?: string): string {
     const value = asRecord(message);
     if (!value) return randomUUID();
     const existing = this.messageIds.get(value);
     if (existing) return existing;
-    const id = randomUUID();
+    const id = preferredId ?? randomUUID();
     this.messageIds.set(value, id);
     return id;
   }
@@ -1091,12 +1101,8 @@ class AgentHarnessDriverSession implements AgentDriverSession {
 
   private async handleHarnessEvent(event: AgentHarnessEvent): Promise<void> {
     if (event.type === "message_start" && (event.message.role === "assistant" || event.message.role === "user")) {
-      // User messages are persisted by AgentHarness before message_end is
-      // emitted. Wait for that event so the UI receives the durable journal
-      // entry id instead of a driver-local id that cannot be reconciled with
-      // a session snapshot during hydration.
-      if (event.message.role === "user") return;
-      const id = this.messageId(event.message);
+      if (event.message.role === "user" && !this.activeUserSubmission) return;
+      const id = this.messageId(event.message, event.message.role === "user" ? this.activeUserSubmission?.messageId : undefined);
       if (event.message.role === "assistant") {
         this.activeAssistantMessageId = id;
         this.emit({
@@ -1161,7 +1167,9 @@ class AgentHarnessDriverSession implements AgentDriverSession {
     if (event.type === "message_end" && (event.message.role === "assistant" || event.message.role === "user")) {
       const id = event.message.role === "assistant"
         ? this.activeAssistantMessageId ?? this.messageId(event.message)
-        : await this.context.session.getLeafId() ?? this.messageId(event.message);
+        : this.activeUserSubmission
+          ? this.messageId(event.message, this.activeUserSubmission.messageId)
+          : await this.context.session.getLeafId() ?? this.messageId(event.message);
       const completed = toConversationMessage(event.message, this.context.record.model, id);
       if (event.message.role === "user") {
         if (completed) {
@@ -1198,12 +1206,14 @@ export function createAgentHarnessDriver(options: AgentHarnessDriverOptions): Ag
     id: options.id,
     features,
     async createSession(context) {
+      const systemPromptContribution = await options.systemPromptContribution?.(context) ?? "";
       const session = new AgentHarnessDriverSession(
         context,
         options.createTools(context),
         features,
         options.preflightOperation,
         await persistedBaselinePaths(context),
+        systemPromptContribution,
       );
       await session.initialize(context.executionKind === "subagent" ? undefined : options.createExtensionHost);
       return session;
