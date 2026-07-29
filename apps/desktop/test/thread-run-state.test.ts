@@ -60,6 +60,25 @@ test("restores an active tool status from a running snapshot", () => {
   assert.deepEqual(restored, { assistantMessageId: "assistant-1", activity: { type: "tool", tool: "edit", phase: "running", since: 5_000 }, runId: null, startedAt: 5_000, userMessageId: null });
 });
 
+test("restores an approval request instead of treating the tool call as complete", () => {
+  const restored = assistantRunPresentationFromMessages([assistant("assistant-1", [{
+    type: "tool",
+    callId: "call-1",
+    name: "spreadsheet_edit",
+    state: "awaiting-approval",
+    approval: {
+      approvalId: "approval-1",
+      status: "required",
+      risk: "file-write",
+      severity: "normal",
+      summary: "Update workbook",
+      preview: { type: "diff", path: "workbook.xlsx", before: "Current workbook", after: "Updated workbook", truncated: false },
+      matchedRules: [],
+    },
+  }])], 5_000);
+  assert.deepEqual(restored.activity, { type: "awaiting-approval", since: 5_000 });
+});
+
 test("restores the latest completed tool result for an active session", () => {
   const restored = assistantRunPresentationFromMessages([assistant("assistant-1", [{ type: "tool", callId: "call-1", name: "bash", state: "error" }])], 5_000);
   assert.deepEqual(restored, { assistantMessageId: "assistant-1", activity: { type: "tool-result", tool: "command", outcome: "failure", since: 5_000 }, runId: null, startedAt: 5_000, userMessageId: null });

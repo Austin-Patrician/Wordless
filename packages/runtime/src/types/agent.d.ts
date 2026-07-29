@@ -19,6 +19,7 @@ export interface AgentTool<TParameters extends TSchema = TSchema, TDetails = unk
   label: string;
   description: string;
   parameters: TParameters;
+  executionMode?: "parallel" | "sequential";
   execute(toolCallId: string, params: Static<TParameters>, signal?: AbortSignal, onUpdate?: AgentToolUpdateCallback<TDetails>): Promise<AgentToolResult<TDetails>>;
 }
 

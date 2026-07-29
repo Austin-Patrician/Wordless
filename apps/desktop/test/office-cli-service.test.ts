@@ -3,7 +3,7 @@ import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { normalizePresentationOperations, OfficeCliService, officeCliResourcePlatform, presentationAssetUrl } from "../src/main/office/office-cli-service.ts";
+import { normalizePresentationOperations, normalizeSpreadsheetSelections, OfficeCliService, officeCliResourcePlatform, presentationAssetUrl } from "../src/main/office/office-cli-service.ts";
 
 const sessionId = "0d9cd4bf-56ce-4357-a69a-4dd26fd742cd";
 const artifactId = "a601a30f-0a86-4161-a01a-311951217b13";
@@ -43,6 +43,45 @@ test("normalizes REST-style slide paths and legacy background properties", () =>
     { command: "add", parent: "/slide[1]", type: "shape", props: { geometry: "rect", left: "0", top: "0", width: "1280", height: "720", fill: "#0A1628" } },
     { command: "move", path: "/slide[2]/shape[1]", after: "/slide[1]/shape[2]" },
   ]);
+});
+
+test("preserves rectangular, disconnected, cross-sheet, and element spreadsheet selections", () => {
+  assert.deepEqual(normalizeSpreadsheetSelections([
+    "/Sheet1/B2",
+    "/Sheet1/A1",
+    "/Sheet1/B1",
+    "/Sheet1/A2",
+  ]), {
+    paths: ["/Sheet1/B2", "/Sheet1/A1", "/Sheet1/B1", "/Sheet1/A2"],
+    ranges: [{ locator: "/Sheet1/A1:B2", sheetName: "Sheet1", range: "A1:B2", rowCount: 2, columnCount: 2 }],
+    elements: [],
+  });
+  assert.deepEqual(normalizeSpreadsheetSelections(["/Sheet1/A1", "/Sheet1/C3"]), {
+    paths: ["/Sheet1/A1", "/Sheet1/C3"],
+    ranges: [
+      { locator: "/Sheet1/A1", sheetName: "Sheet1", range: "A1", rowCount: 1, columnCount: 1 },
+      { locator: "/Sheet1/C3", sheetName: "Sheet1", range: "C3", rowCount: 1, columnCount: 1 },
+    ],
+    elements: [],
+  });
+  assert.deepEqual(normalizeSpreadsheetSelections(["/Sheet1/A1", "/Sheet2/A1"]), {
+    paths: ["/Sheet1/A1", "/Sheet2/A1"],
+    ranges: [
+      { locator: "/Sheet1/A1", sheetName: "Sheet1", range: "A1", rowCount: 1, columnCount: 1 },
+      { locator: "/Sheet2/A1", sheetName: "Sheet2", range: "A1", rowCount: 1, columnCount: 1 },
+    ],
+    elements: [],
+  });
+  assert.deepEqual(normalizeSpreadsheetSelections(["/Sheet1/A1", "/Sheet1/row[1]", "/Sheet1/chart[1]"]), {
+    paths: ["/Sheet1/A1", "/Sheet1/row[1]", "/Sheet1/chart[1]"],
+    ranges: [{ locator: "/Sheet1/A1", sheetName: "Sheet1", range: "A1", rowCount: 1, columnCount: 1 }],
+    elements: ["/Sheet1/row[1]", "/Sheet1/chart[1]"],
+  });
+  assert.deepEqual(normalizeSpreadsheetSelections(["/Sales Data/C3:E8"]), {
+    paths: ["/Sales Data/C3:E8"],
+    ranges: [{ locator: "/Sales Data/C3:E8", sheetName: "Sales Data", range: "C3:E8", rowCount: 6, columnCount: 3 }],
+    elements: [],
+  });
 });
 
 test("exposes OfficeCLI templates and reads persisted presentation artifacts without a binary", async () => {
@@ -122,11 +161,12 @@ test("exposes OfficeCLI templates and reads persisted presentation artifacts wit
 test("creates and atomically edits spreadsheet artifacts with the bundled OfficeCLI", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "wordless-spreadsheet-"));
   const workspaceRoot = path.join(root, "workspace");
-    const resourcePlatform = process.platform === "darwin" ? "mac" : process.platform === "win32" ? "win" : process.platform;
-    const binaryPath = path.resolve("resources", "officecli", `${resourcePlatform}-${process.arch}`, process.platform === "win32" ? "officecli.exe" : "officecli");
+  const resourcePlatform = process.platform === "darwin" ? "mac" : process.platform === "win32" ? "win" : process.platform;
+  const binaryPath = path.resolve("resources", "officecli", `${resourcePlatform}-${process.arch}`, process.platform === "win32" ? "officecli.exe" : "officecli");
+  let service: OfficeCliService | undefined;
   try {
     await mkdir(workspaceRoot, { recursive: true });
-    const service = new OfficeCliService({ artifactsRoot: path.join(root, "artifacts"), binaryPath });
+    service = new OfficeCliService({ artifactsRoot: path.join(root, "artifacts"), binaryPath });
     const artifact = await service.createSpreadsheet(sessionId, workspaceRoot, { name: "quarterly-plan.xlsx", locale: "en-US" });
     assert.equal(artifact.kind, "spreadsheet");
     assert.equal(artifact.revision, 1);
@@ -137,17 +177,44 @@ test("creates and atomically edits spreadsheet artifacts with the bundled Office
     ]);
     assert.equal(updated.revision, 2);
     assert.match(await service.readSpreadsheet(sessionId, workspaceRoot, artifact.id, { kind: "get", path: "/Sheet1/A1" }), /Revenue/);
+
+    const concurrent = await Promise.all([
+      service.applySpreadsheet(sessionId, workspaceRoot, artifact.id, [{ command: "set", path: "/Sheet1/A2", props: { value: "North" } }]),
+      service.applySpreadsheet(sessionId, workspaceRoot, artifact.id, [{ command: "set", path: "/Sheet1/B2", props: { value: 240 } }]),
+    ]);
+    assert.deepEqual(concurrent.map((item) => item.revision), [3, 4]);
+    assert.match(await service.readSpreadsheet(sessionId, workspaceRoot, artifact.id, { kind: "get", path: "/Sheet1/A2:B2" }), /North/);
+    assert.match(await service.readSpreadsheet(sessionId, workspaceRoot, artifact.id, { kind: "get", path: "/Sheet1/A2:B2" }), /240/);
+    const capabilities = await service.spreadsheetCapabilities();
+    assert.match(capabilities.version, /^\d+\.\d+\.\d+$/);
+    assert.ok(capabilities.elements.includes("chart"));
+    assert.ok(capabilities.elements.includes("pivottable"));
+    assert.ok(capabilities.highLevelTools.includes("spreadsheet_create_chart"));
+    const profile = await service.profileSpreadsheetRange(sessionId, workspaceRoot, artifact.id, { sheet: "Sheet1", range: "A1:B2" });
+    assert.deepEqual({ rowCount: profile.rowCount, columnCount: profile.columnCount }, { rowCount: 2, columnCount: 2 });
+    assert.equal(profile.populatedCells, 4);
+    assert.equal(profile.blankCells, 0);
+    assert.equal(profile.numericCells, 2);
+    const operationPreview = await service.previewSpreadsheetOperations(sessionId, workspaceRoot, artifact.id, [
+      { command: "set", path: "/Sheet1/B2", props: { value: 360 } },
+      { command: "add", parent: "/Sheet1", type: "chart", props: { dataRange: "A1:B2", chartType: "column" } },
+    ]);
+    assert.equal(operationPreview.type, "spreadsheet");
+    assert.deepEqual(operationPreview.affectedSheets, ["Sheet1"]);
+    assert.deepEqual(operationPreview.changes.map((change) => change.kind), ["cell", "structure"]);
+    assert.equal((await service.listSpreadsheets(sessionId))[0]?.revision, 4);
+    assert.match(await service.readSpreadsheet(sessionId, workspaceRoot, artifact.id, { kind: "get", path: "/Sheet1/B2" }), /240/);
     const report = await service.qualityScanSpreadsheet(sessionId, workspaceRoot, artifact.id);
-    assert.equal(report.revision, 2);
+    assert.equal(report.revision, 4);
     assert.notEqual(report.status, "needs-fix");
 
     await assert.rejects(service.applySpreadsheet(sessionId, workspaceRoot, artifact.id, [
       { command: "set", path: "/MissingSheet/A1", props: { value: "invalid" } },
     ]));
     assert.match(await service.readSpreadsheet(sessionId, workspaceRoot, artifact.id, { kind: "get", path: "/Sheet1/A1" }), /Revenue/);
-    assert.equal((await service.spreadsheetChanges(sessionId, artifact.id)).length, 1);
-    await service.dispose();
+    assert.equal((await service.spreadsheetChanges(sessionId, artifact.id)).length, 3);
   } finally {
+    await service?.dispose();
     await rm(root, { force: true, recursive: true });
   }
 });

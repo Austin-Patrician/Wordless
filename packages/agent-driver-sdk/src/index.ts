@@ -98,7 +98,7 @@ export const CONTEXT_COMPACTION_JOURNAL_TYPE = "wordless.context-compaction";
 export interface PersistedOperationApproval {
   callId: string;
   approval: OperationApprovalRequest;
-  resolution: OperationApprovalResolution;
+  resolution?: OperationApprovalResolution;
 }
 
 export interface PersistedSessionFileBaseline {
@@ -154,6 +154,8 @@ type SerializedArtifactReference = {
   revision: number;
   surfaceId: string;
   locator: string;
+  locators?: string[];
+  intent?: "reference" | "analyze" | "formula" | "chart" | "pivot";
 };
 
 type SerializedPromptContext = {
@@ -182,7 +184,7 @@ export function formatPromptWithSkillReferences(parts: readonly UserPromptPart[]
       return `${WORKSPACE_REFERENCE_START}${encodeURIComponent(JSON.stringify(reference))}${WORKSPACE_REFERENCE_END}`;
     }
     if (part.type === "artifact-reference") {
-      const reference: SerializedArtifactReference = { version: 1, id: `${part.artifactId}:${part.surfaceId}:${index}`, artifactId: part.artifactId, kind: part.kind, name: part.name, revision: part.revision, surfaceId: part.surfaceId, locator: part.locator };
+      const reference: SerializedArtifactReference = { version: 1, id: `${part.artifactId}:${part.surfaceId}:${index}`, artifactId: part.artifactId, kind: part.kind, name: part.name, revision: part.revision, surfaceId: part.surfaceId, locator: part.locator, ...(part.locators ? { locators: part.locators } : {}), ...(part.intent ? { intent: part.intent } : {}) };
       return `${ARTIFACT_REFERENCE_START}${encodeURIComponent(JSON.stringify(reference))}${ARTIFACT_REFERENCE_END}`;
     }
     const reference: SerializedSkillReference = {
@@ -232,6 +234,25 @@ function parseSkillReference(value: string): SerializedSkillReference | undefine
 export function stripPromptSkillReferences(text: string): string {
   const pattern = new RegExp(`${SKILL_REFERENCE_START}([^<]*)${SKILL_REFERENCE_END}`, "g");
   return text.replace(pattern, (marker, encoded: string) => parseSkillReference(encoded) ? "" : marker);
+}
+
+export function formatPromptArtifactReferencesForModel(text: string): string {
+  const pattern = new RegExp(`${ARTIFACT_REFERENCE_START}([^<]*)${ARTIFACT_REFERENCE_END}`, "g");
+  return text.replace(pattern, (marker, encoded: string) => {
+    const reference = parseArtifactReference(encoded);
+    if (!reference) return marker;
+    const locators = reference.locators?.length ? reference.locators : [reference.locator];
+    return [
+      "<wordless_artifact_reference>",
+      `artifact_id=${reference.artifactId}`,
+      `kind=${reference.kind}`,
+      `revision=${reference.revision}`,
+      ...(reference.intent ? [`intent=${reference.intent}`] : []),
+      `exact_selection=${JSON.stringify(locators)}`,
+      "Use the exact selection for the requested operation. Do not replace it with the used range or the whole sheet.",
+      "</wordless_artifact_reference>",
+    ].join("\n");
+  });
 }
 
 function projectPromptSkillReferences(text: string): MessageBlock[] {
@@ -285,6 +306,8 @@ function parseArtifactReference(value: string): SerializedArtifactReference | un
     const record = parsed as Record<string, unknown>;
     if (record.version !== 1 || typeof record.id !== "string" || typeof record.artifactId !== "string" || typeof record.name !== "string" || typeof record.revision !== "number" || !Number.isInteger(record.revision) || record.revision < 1 || typeof record.surfaceId !== "string" || typeof record.locator !== "string") return undefined;
     if (record.kind !== "presentation" && record.kind !== "document" && record.kind !== "spreadsheet" && record.kind !== "browser") return undefined;
+    if (record.locators !== undefined && (!Array.isArray(record.locators) || record.locators.some((locator) => typeof locator !== "string"))) return undefined;
+    if (record.intent !== undefined && record.intent !== "reference" && record.intent !== "analyze" && record.intent !== "formula" && record.intent !== "chart" && record.intent !== "pivot") return undefined;
     return record as SerializedArtifactReference;
   } catch {
     return undefined;

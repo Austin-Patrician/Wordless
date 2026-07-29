@@ -154,7 +154,7 @@ export function registerRuntimeIpc(runtime: WordlessRuntime, appearanceAssets: A
   });
   ipcMain.handle("wordless:session:delete", async (_event, payload: unknown) => {
     const input = parsePayload<{ sessionId: string }>(DeleteSessionSchema, payload);
-    await runtime.deleteSession(input.sessionId);
+    await runtime.deleteSession(input.sessionId, async (session) => await options.office.releaseSession(session.id, session.runtimeRootPath));
   });
   ipcMain.handle("wordless:media:create", async (_event, payload: unknown) => {
     const input = parsePayload<{ title?: string }>(CreateMediaProjectSchema, payload);
@@ -276,6 +276,19 @@ export function registerRuntimeIpc(runtime: WordlessRuntime, appearanceAssets: A
   ipcMain.handle("wordless:spreadsheet:selection", async (_event, payload: unknown) => {
     const input = parsePayload<{ sessionId: string; artifactId: string }>(Type.Object({ sessionId: Type.String({ minLength: 1 }), artifactId: Type.String({ minLength: 1 }) }), payload);
     return await options.office.selectionSpreadsheet(input.sessionId, runtime.getSessionRuntimeRoot(input.sessionId), input.artifactId);
+  });
+  ipcMain.handle("wordless:spreadsheet:capabilities", async () => await options.office.spreadsheetCapabilities());
+  ipcMain.handle("wordless:spreadsheet:profile", async (_event, payload: unknown) => {
+    const input = parsePayload<{ sessionId: string; artifactId: string; sheet: string; range: string }>(Type.Object({ sessionId: Type.String({ minLength: 1 }), artifactId: Type.String({ minLength: 1 }), sheet: Type.String({ minLength: 1 }), range: Type.String({ minLength: 1 }) }), payload);
+    return await options.office.profileSpreadsheetRange(input.sessionId, runtime.getSessionRuntimeRoot(input.sessionId), input.artifactId, input);
+  });
+  ipcMain.handle("wordless:spreadsheet:focus", async (_event, payload: unknown) => {
+    const input = parsePayload<{ sessionId: string; artifactId: string; locator: string }>(Type.Object({ sessionId: Type.String({ minLength: 1 }), artifactId: Type.String({ minLength: 1 }), locator: Type.String({ minLength: 1 }) }), payload);
+    await options.office.focusSpreadsheetLocator(input.sessionId, runtime.getSessionRuntimeRoot(input.sessionId), input.artifactId, input.locator);
+  });
+  ipcMain.handle("wordless:spreadsheet:clear-marks", async (_event, payload: unknown) => {
+    const input = parsePayload<{ sessionId: string; artifactId: string }>(Type.Object({ sessionId: Type.String({ minLength: 1 }), artifactId: Type.String({ minLength: 1 }) }), payload);
+    await options.office.clearSpreadsheetMarks(input.sessionId, runtime.getSessionRuntimeRoot(input.sessionId), input.artifactId);
   });
   ipcMain.handle("wordless:spreadsheet:changes", async (_event, payload: unknown) => {
     const input = parsePayload<{ sessionId: string; artifactId: string }>(Type.Object({ sessionId: Type.String({ minLength: 1 }), artifactId: Type.String({ minLength: 1 }) }), payload);

@@ -656,6 +656,8 @@ export type UserPromptPart =
       revision: number;
       surfaceId: string;
       locator: string;
+      locators?: string[];
+      intent?: "reference" | "analyze" | "formula" | "chart" | "pivot";
     };
 
 export interface UserMessageSubmission {
@@ -707,6 +709,20 @@ export type ToolOperationApprovalPreview =
       connectorName: string;
       toolName: string;
       input: Record<string, unknown>;
+    }
+  | {
+      type: "spreadsheet";
+      artifactId: string;
+      workbookName: string;
+      affectedSheets: string[];
+      changes: Array<{
+        kind: "cell" | "range" | "structure";
+        locator: string;
+        before?: string;
+        after?: string;
+        summary: string;
+      }>;
+      truncated: boolean;
     };
 
 export interface ToolOperationApproval {

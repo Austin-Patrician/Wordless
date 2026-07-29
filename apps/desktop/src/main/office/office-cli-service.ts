@@ -4,6 +4,7 @@ import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { basename, dirname, extname, isAbsolute, join, relative, resolve } from "node:path";
 import {
   compileOfficeMutations,
+  SPREADSHEET_HIGH_LEVEL_TOOLS,
   type OfficeMutation,
   type PresentationAdvancedOperation,
   type PresentationCatalog,
@@ -15,11 +16,14 @@ import {
   type PresentationSource,
   type PresentationVisualReview,
   type SpreadsheetCatalog,
+  type SpreadsheetCapabilitySnapshot,
   type SpreadsheetOfficeService,
+  type SpreadsheetOperationPreview,
   type SpreadsheetQualityIssue,
   type SpreadsheetQualityReport,
   type SpreadsheetReadRequest,
   type SpreadsheetRenderedImage,
+  type SpreadsheetRangeProfile,
 } from "@wordless/capability-office";
 import type {
   ArtifactDescriptor,
@@ -53,6 +57,25 @@ type OfficeManifest = {
 };
 
 type RunResult = { stdout: string; stderr: string; exitCode: number | null };
+
+type OfficeCliErrorCode = "OFFICECLI_TIMEOUT" | "OFFICECLI_CANCELLED" | "OFFICECLI_EXIT_FAILED" | "OFFICECLI_TERMINATION_FAILED";
+
+class OfficeCliExecutionError extends Error {
+  readonly code: OfficeCliErrorCode;
+
+  constructor(code: OfficeCliErrorCode, message: string) {
+    super(message);
+    this.name = "OfficeCliExecutionError";
+    this.code = code;
+  }
+}
+
+type RunOptions = {
+  allowFailure?: boolean;
+  cwd?: string;
+  signal?: AbortSignal;
+  timeoutMs?: number;
+};
 
 type WatchSession = {
   child: ChildProcessWithoutNullStreams;
@@ -129,6 +152,114 @@ function outputText(result: RunResult): string {
   if (typeof payload === "string") return payload;
   if (payload !== undefined) return JSON.stringify(payload, null, 2);
   return (result.stdout || result.stderr).trim();
+}
+
+function spreadsheetColumnNumber(value: string): number {
+  return [...value.toUpperCase()].reduce((total, character) => total * 26 + character.charCodeAt(0) - 64, 0);
+}
+
+function spreadsheetColumnLabel(value: number): string {
+  let current = value;
+  let label = "";
+  while (current > 0) {
+    current -= 1;
+    label = String.fromCharCode(65 + current % 26) + label;
+    current = Math.floor(current / 26);
+  }
+  return label;
+}
+
+function spreadsheetRangeDimensions(value: string): { rowCount: number; columnCount: number } {
+  const match = value.match(/^([A-Z]{1,3})([1-9][0-9]*)(?::([A-Z]{1,3})([1-9][0-9]*))?$/i);
+  if (!match) return { rowCount: 1, columnCount: 1 };
+  const startColumn = spreadsheetColumnNumber(match[1]!);
+  const startRow = Number(match[2]);
+  const endColumn = spreadsheetColumnNumber(match[3] ?? match[1]!);
+  const endRow = Number(match[4] ?? match[2]);
+  return { rowCount: Math.abs(endRow - startRow) + 1, columnCount: Math.abs(endColumn - startColumn) + 1 };
+}
+
+function spreadsheetSheetFromLocator(locator: string): string | undefined {
+  return locator.replace(/^\//, "").split("/")[0]?.trim() || undefined;
+}
+
+type SpreadsheetSelectionBounds = {
+  sheetName: string;
+  startColumn: number;
+  startRow: number;
+  endColumn: number;
+  endRow: number;
+};
+
+function spreadsheetSelectionBounds(locator: string): SpreadsheetSelectionBounds | undefined {
+  const match = locator.match(/^\/([^/]+)\/([A-Z]{1,3})([1-9][0-9]*)(?::([A-Z]{1,3})([1-9][0-9]*))?$/i);
+  if (!match) return undefined;
+  const firstColumn = spreadsheetColumnNumber(match[2]!);
+  const firstRow = Number(match[3]);
+  const secondColumn = spreadsheetColumnNumber(match[4] ?? match[2]!);
+  const secondRow = Number(match[5] ?? match[3]);
+  return {
+    sheetName: match[1]!,
+    startColumn: Math.min(firstColumn, secondColumn),
+    startRow: Math.min(firstRow, secondRow),
+    endColumn: Math.max(firstColumn, secondColumn),
+    endRow: Math.max(firstRow, secondRow),
+  };
+}
+
+export function normalizeSpreadsheetSelectionLocators(locators: readonly string[]): { locator: string; sheetName: string; range: string; rowCount: number; columnCount: number } | undefined {
+  return normalizeSpreadsheetSelections(locators).ranges[0];
+}
+
+export function normalizeSpreadsheetSelections(locators: readonly string[]): {
+  paths: string[];
+  ranges: Array<{ locator: string; sheetName: string; range: string; rowCount: number; columnCount: number }>;
+  elements: string[];
+} {
+  const paths = [...new Set(locators)];
+  const cellBounds = paths.flatMap((locator) => {
+    const bounds = spreadsheetSelectionBounds(locator);
+    return bounds ? [bounds] : [];
+  });
+  const elements = paths.filter((locator) => !spreadsheetSelectionBounds(locator));
+  const expandedCells = new Map<string, { sheetName: string; column: number; row: number }>();
+  for (const bounds of cellBounds) {
+    for (let row = bounds.startRow; row <= bounds.endRow; row += 1) {
+      for (let column = bounds.startColumn; column <= bounds.endColumn; column += 1) {
+        expandedCells.set(`${bounds.sheetName}\u0000${column}\u0000${row}`, { sheetName: bounds.sheetName, column, row });
+      }
+    }
+  }
+  const ranges = [...new Set([...expandedCells.values()].map((cell) => cell.sheetName))].flatMap((sheetName) => {
+    const byRow = new Map<number, number[]>();
+    for (const cell of expandedCells.values()) {
+      if (cell.sheetName !== sheetName) continue;
+      byRow.set(cell.row, [...(byRow.get(cell.row) ?? []), cell.column]);
+    }
+    const rowRuns = [...byRow.entries()].sort((left, right) => left[0] - right[0]).flatMap(([row, columns]) => {
+      const sorted = [...new Set(columns)].sort((left, right) => left - right);
+      const runs: Array<{ startColumn: number; endColumn: number; startRow: number; endRow: number }> = [];
+      for (const column of sorted) {
+        const current = runs.at(-1);
+        if (current && column === current.endColumn + 1) current.endColumn = column;
+        else runs.push({ startColumn: column, endColumn: column, startRow: row, endRow: row });
+      }
+      return runs;
+    });
+    const merged: typeof rowRuns = [];
+    for (const run of rowRuns) {
+      const previous = merged.find((candidate) => candidate.endRow === run.startRow - 1 && candidate.startColumn === run.startColumn && candidate.endColumn === run.endColumn);
+      if (previous) previous.endRow = run.endRow;
+      else merged.push({ ...run });
+    }
+    return merged.map((bounds) => {
+      const start = `${spreadsheetColumnLabel(bounds.startColumn)}${bounds.startRow}`;
+      const end = `${spreadsheetColumnLabel(bounds.endColumn)}${bounds.endRow}`;
+      const range = start === end ? start : `${start}:${end}`;
+      return { locator: `/${sheetName}/${range}`, sheetName, range, rowCount: bounds.endRow - bounds.startRow + 1, columnCount: bounds.endColumn - bounds.startColumn + 1 };
+    });
+  });
+  return { paths, ranges, elements };
 }
 
 function collectStrings(value: unknown): string[] {
@@ -270,11 +401,13 @@ export function normalizePresentationOperations(operations: unknown[]): Record<s
 
 export class OfficeCliService implements PresentationOfficeService, SpreadsheetOfficeService {
   private healthPromise: Promise<OfficeEngineHealth> | undefined;
+  private spreadsheetCapabilityPromise: Promise<SpreadsheetCapabilitySnapshot> | undefined;
   private readonly guidanceCache = new Map<string, Promise<string>>();
   private readonly previewCache = new Map<string, ArtifactPreviewManifest>();
   private readonly previewPromises = new Map<string, Promise<ArtifactPreviewManifest>>();
   private readonly watches = new Map<string, WatchSession>();
   private readonly managedSources = new Set<string>();
+  private readonly spreadsheetWriteLocks = new Map<string, Promise<void>>();
   private readonly options: { artifactsRoot: string; resourcesPath?: string; binaryPath?: string };
 
   constructor(options: { artifactsRoot: string; resourcesPath?: string; binaryPath?: string }) {
@@ -321,18 +454,32 @@ export class OfficeCliService implements PresentationOfficeService, SpreadsheetO
     return { artifacts: await this.listSpreadsheets(sessionId) };
   }
 
+  async spreadsheetCapabilities(): Promise<SpreadsheetCapabilitySnapshot> {
+    if (!this.spreadsheetCapabilityPromise) {
+      this.spreadsheetCapabilityPromise = Promise.all([
+        this.run(["--version"], { timeoutMs: 6_000 }),
+        this.run(["help", "xlsx"], { timeoutMs: 15_000 }),
+      ]).then(([version, schema]) => ({
+        version: (version.stdout || version.stderr).trim(),
+        elements: [...schema.stdout.matchAll(/^  ([a-z][a-z0-9-]*)\s*$/gim)].map((match) => match[1]!).sort(),
+        highLevelTools: [...SPREADSHEET_HIGH_LEVEL_TOOLS],
+      }));
+    }
+    return await this.spreadsheetCapabilityPromise;
+  }
+
   async listSpreadsheets(sessionId: string): Promise<ArtifactDescriptor[]> {
     return (await this.readManifest(sessionId)).artifacts.filter((artifact) => artifact.kind === "spreadsheet");
   }
 
-  async createSpreadsheet(sessionId: string, workspaceRoot: string, input: { name?: string; locale?: string }): Promise<ArtifactDescriptor> {
+  async createSpreadsheet(sessionId: string, workspaceRoot: string, input: { name?: string; locale?: string }, signal?: AbortSignal): Promise<ArtifactDescriptor> {
     this.assertSessionId(sessionId);
     await this.requireHealthy();
     const root = resolve(workspaceRoot);
     const source = await this.uniqueSpreadsheetSourcePath(root, safeWorkbookName(input.name ?? "workbook.xlsx"));
     const args = ["create", source, "--force"];
     if (input.locale) args.push("--locale", input.locale);
-    await this.run(args, { cwd: root });
+    await this.run(args, { cwd: root, signal, timeoutMs: 90_000 });
     this.managedSources.add(source);
     return await this.registerSpreadsheetArtifact(sessionId, root, source);
   }
@@ -352,7 +499,7 @@ export class OfficeCliService implements PresentationOfficeService, SpreadsheetO
     return await this.registerSpreadsheetArtifact(sessionId, root, source);
   }
 
-  async importSpreadsheetData(sessionId: string, workspaceRoot: string, artifactId: string, input: { sourcePath: string; sheet?: string; startCell?: string; header?: boolean }): Promise<ArtifactDescriptor> {
+  async importSpreadsheetData(sessionId: string, workspaceRoot: string, artifactId: string, input: { sourcePath: string; sheet?: string; startCell?: string; header?: boolean }, signal?: AbortSignal): Promise<ArtifactDescriptor> {
     if (isAbsolute(input.sourcePath)) throw new Error("Spreadsheet import path must be relative to the session workspace");
     const root = resolve(workspaceRoot);
     const importSource = resolve(root, input.sourcePath);
@@ -360,22 +507,25 @@ export class OfficeCliService implements PresentationOfficeService, SpreadsheetO
     if (!isWithin(root, importSource) || (extension !== ".csv" && extension !== ".tsv")) throw new Error("Spreadsheet import source must be a CSV or TSV inside the session workspace");
     await stat(importSource);
     const source = await this.spreadsheetSourcePath(sessionId, workspaceRoot, artifactId);
-    const artifact = await this.findSpreadsheetArtifact(sessionId, artifactId);
-    const backupRoot = this.revisionRoot(sessionId, artifactId, artifact.revision + 1);
-    const backup = join(backupRoot, "source-before.xlsx");
-    await mkdir(backupRoot, { recursive: true });
-    await copyFile(source, backup);
-    const args = ["import", source, `/${input.sheet ?? "Sheet1"}`, importSource, "--start-cell", input.startCell ?? "A1", "--json"];
-    if (input.header) args.push("--header");
-    try {
-      await this.run(args, { cwd: dirnameFor(source) });
-    } catch (cause) {
-      await copyFile(backup, source);
-      throw cause;
-    }
-    const updated = await this.updateArtifact(sessionId, artifactId, (current) => ({ ...current, revision: current.revision + 1, status: "ready", updatedAt: Date.now() }));
-    await this.updateSpreadsheetState(sessionId, artifactId, (state) => ({ ...state, quality: undefined, changes: [...state.changes, { revision: updated.revision, operations: [], updatedAt: Date.now() }] }));
-    return updated;
+    return await this.withSpreadsheetWrite(source, async () => {
+      await this.stopWatch(sessionId, artifactId);
+      const artifact = await this.findSpreadsheetArtifact(sessionId, artifactId);
+      const backupRoot = this.revisionRoot(sessionId, artifactId, artifact.revision + 1);
+      const backup = join(backupRoot, "source-before.xlsx");
+      await mkdir(backupRoot, { recursive: true });
+      await copyFile(source, backup);
+      const args = ["import", source, `/${input.sheet ?? "Sheet1"}`, importSource, "--start-cell", input.startCell ?? "A1", "--json"];
+      if (input.header) args.push("--header");
+      try {
+        await this.run(args, { cwd: dirnameFor(source), signal, timeoutMs: 90_000 });
+      } catch (cause) {
+        await this.restoreSpreadsheetBackup(sessionId, artifactId, source, backup, cause);
+        throw cause;
+      }
+      const updated = await this.updateArtifact(sessionId, artifactId, (current) => ({ ...current, revision: current.revision + 1, status: "ready", updatedAt: Date.now() }));
+      await this.updateSpreadsheetState(sessionId, artifactId, (state) => ({ ...state, quality: undefined, changes: [...state.changes, { revision: updated.revision, operations: [], updatedAt: Date.now() }] }));
+      return updated;
+    });
   }
 
   async helpSpreadsheet(input: { verb?: "add" | "set" | "get" | "query" | "remove"; element?: string }): Promise<string> {
@@ -388,6 +538,7 @@ export class OfficeCliService implements PresentationOfficeService, SpreadsheetO
 
   async readSpreadsheet(sessionId: string, workspaceRoot: string, artifactId: string, request: SpreadsheetReadRequest): Promise<string> {
     const source = await this.spreadsheetSourcePath(sessionId, workspaceRoot, artifactId);
+    await this.waitForSpreadsheetWrite(source);
     let args: string[];
     if (request.kind === "view") {
       args = ["view", source, request.mode];
@@ -409,31 +560,104 @@ export class OfficeCliService implements PresentationOfficeService, SpreadsheetO
     return outputText(await this.run(args, { cwd: dirnameFor(source) }));
   }
 
-  async applySpreadsheet(sessionId: string, workspaceRoot: string, artifactId: string, operations: OfficeMutation[]): Promise<ArtifactDescriptor> {
+  async profileSpreadsheetRange(sessionId: string, workspaceRoot: string, artifactId: string, input: { sheet: string; range: string }): Promise<SpreadsheetRangeProfile> {
+    const source = await this.spreadsheetSourcePath(sessionId, workspaceRoot, artifactId);
+    await this.waitForSpreadsheetWrite(source);
+    const artifact = await this.findSpreadsheetArtifact(sessionId, artifactId);
+    const result = await this.run(["view", source, "text", "--range", `${input.sheet}!${input.range}`, "--json"], { cwd: dirnameFor(source) });
+    const payload = recordValue(officeCliData(parseJson(result.stdout)));
+    const values = (Array.isArray(payload?.sheets) ? payload.sheets : []).flatMap((sheet) => {
+      const sheetRecord = recordValue(sheet);
+      return (Array.isArray(sheetRecord?.rows) ? sheetRecord.rows : []).flatMap((row) => {
+        const cells = recordValue(recordValue(row)?.cells);
+        return cells ? Object.values(cells).filter((value): value is string | number | boolean => typeof value === "string" || typeof value === "number" || typeof value === "boolean") : [];
+      });
+    });
+    const dimensions = spreadsheetRangeDimensions(input.range);
+    const numbers = values.flatMap((value) => {
+      const number = typeof value === "number" ? value : typeof value === "string" && value.trim() ? Number(value) : Number.NaN;
+      return Number.isFinite(number) ? [number] : [];
+    });
+    const normalizedValues = values.map((value) => String(value));
+    const populatedCells = values.length;
+    const duplicateValues = normalizedValues.length - new Set(normalizedValues).size;
+    const totalCells = dimensions.rowCount * dimensions.columnCount;
+    return {
+      artifactId,
+      revision: artifact.revision,
+      sheetName: input.sheet,
+      range: input.range,
+      ...dimensions,
+      populatedCells,
+      blankCells: Math.max(0, totalCells - populatedCells),
+      numericCells: numbers.length,
+      duplicateValues,
+      ...(numbers.length ? { minimum: Math.min(...numbers), maximum: Math.max(...numbers), average: numbers.reduce((sum, value) => sum + value, 0) / numbers.length } : {}),
+    };
+  }
+
+  async previewSpreadsheetOperations(sessionId: string, workspaceRoot: string, artifactId: string, operations: OfficeMutation[]): Promise<SpreadsheetOperationPreview> {
+    const source = await this.spreadsheetSourcePath(sessionId, workspaceRoot, artifactId);
+    await this.waitForSpreadsheetWrite(source);
+    const artifact = await this.findSpreadsheetArtifact(sessionId, artifactId);
+    const limited = operations.slice(0, 20);
+    const changes = await Promise.all(limited.map(async (operation) => {
+      const locator = operation.command === "add" ? operation.parent : operation.path;
+      const before = operation.command === "add" ? undefined : await this.run(["get", source, locator, "--json"], { cwd: dirnameFor(source), allowFailure: true }).then((result) => outputText(result).slice(0, 500));
+      const kind = /\/[A-Z]{1,3}[1-9][0-9]*(?::[A-Z]{1,3}[1-9][0-9]*)?$/i.test(locator)
+        ? locator.includes(":") ? "range" as const : "cell" as const
+        : "structure" as const;
+      const summary = operation.command === "add"
+        ? `Add ${operation.type ?? "element"}`
+        : operation.command === "set"
+          ? `Update ${Object.keys(operation.props).join(", ")}`
+          : operation.command === "remove"
+            ? "Remove element"
+            : operation.command === "move"
+              ? "Move element"
+              : "Swap elements";
+      const after = operation.command === "set" ? JSON.stringify(operation.props).slice(0, 500) : operation.command === "add" ? JSON.stringify(operation.props ?? {}).slice(0, 500) : undefined;
+      return { kind, locator, ...(before ? { before } : {}), ...(after ? { after } : {}), summary };
+    }));
+    return {
+      type: "spreadsheet",
+      artifactId,
+      workbookName: artifact.displayName,
+      affectedSheets: [...new Set(operations.map((operation) => spreadsheetSheetFromLocator(operation.command === "add" ? operation.parent : operation.path)).filter((sheet): sheet is string => Boolean(sheet)))],
+      changes,
+      truncated: operations.length > limited.length,
+    };
+  }
+
+  async applySpreadsheet(sessionId: string, workspaceRoot: string, artifactId: string, operations: OfficeMutation[], signal?: AbortSignal): Promise<ArtifactDescriptor> {
     if (operations.length === 0) throw new Error("At least one spreadsheet operation is required");
     const source = await this.spreadsheetSourcePath(sessionId, workspaceRoot, artifactId);
-    const artifact = await this.findSpreadsheetArtifact(sessionId, artifactId);
-    const nextRevisionRoot = this.revisionRoot(sessionId, artifactId, artifact.revision + 1);
-    const operationFile = join(nextRevisionRoot, "operations.json");
-    const backup = join(nextRevisionRoot, "source-before.xlsx");
-    await mkdir(nextRevisionRoot, { recursive: true });
-    await copyFile(source, backup);
-    const secured = await this.secureOfficeAssets(workspaceRoot, operations);
-    await writeFile(operationFile, JSON.stringify(compileOfficeMutations(secured)), "utf8");
-    try {
-      await this.run(["batch", source, "--input", operationFile, "--stop-on-error", "--json"], { cwd: dirnameFor(source) });
-    } catch (cause) {
-      await copyFile(backup, source);
-      throw cause;
-    }
-    const updated = await this.updateArtifact(sessionId, artifactId, (current) => ({ ...current, revision: current.revision + 1, status: "ready", updatedAt: Date.now() }));
-    await this.updateSpreadsheetState(sessionId, artifactId, (state) => ({ ...state, quality: undefined, changes: [...state.changes, { revision: updated.revision, operations: secured, updatedAt: Date.now() }].slice(-100) }));
-    return updated;
+    return await this.withSpreadsheetWrite(source, async () => {
+      await this.stopWatch(sessionId, artifactId);
+      const artifact = await this.findSpreadsheetArtifact(sessionId, artifactId);
+      const nextRevisionRoot = this.revisionRoot(sessionId, artifactId, artifact.revision + 1);
+      const operationFile = join(nextRevisionRoot, "operations.json");
+      const backup = join(nextRevisionRoot, "source-before.xlsx");
+      await mkdir(nextRevisionRoot, { recursive: true });
+      await copyFile(source, backup);
+      const secured = await this.secureOfficeAssets(workspaceRoot, operations);
+      await writeFile(operationFile, JSON.stringify(compileOfficeMutations(secured)), "utf8");
+      try {
+        await this.run(["batch", source, "--input", operationFile, "--stop-on-error", "--json"], { cwd: dirnameFor(source), signal, timeoutMs: 90_000 });
+      } catch (cause) {
+        await this.restoreSpreadsheetBackup(sessionId, artifactId, source, backup, cause);
+        throw cause;
+      }
+      const updated = await this.updateArtifact(sessionId, artifactId, (current) => ({ ...current, revision: current.revision + 1, status: "ready", updatedAt: Date.now() }));
+      await this.updateSpreadsheetState(sessionId, artifactId, (state) => ({ ...state, quality: undefined, changes: [...state.changes, { revision: updated.revision, operations: secured, updatedAt: Date.now() }].slice(-100) }));
+      return updated;
+    });
   }
 
   async renderSpreadsheet(sessionId: string, workspaceRoot: string, artifactId: string, input: { sheet: string; range?: string }): Promise<{ revision: number; images: SpreadsheetRenderedImage[]; details: ArtifactPreviewManifest }> {
-    const artifact = await this.findSpreadsheetArtifact(sessionId, artifactId);
     const source = await this.spreadsheetSourcePath(sessionId, workspaceRoot, artifactId);
+    await this.waitForSpreadsheetWrite(source);
+    const artifact = await this.findSpreadsheetArtifact(sessionId, artifactId);
     const output = this.revisionRoot(sessionId, artifactId, artifact.revision);
     await mkdir(output, { recursive: true });
     const surfaceId = `sheet-${encodeURIComponent(input.sheet)}`;
@@ -446,6 +670,7 @@ export class OfficeCliService implements PresentationOfficeService, SpreadsheetO
 
   async qualityScanSpreadsheet(sessionId: string, workspaceRoot: string, artifactId: string): Promise<SpreadsheetQualityReport> {
     const source = await this.spreadsheetSourcePath(sessionId, workspaceRoot, artifactId);
+    await this.waitForSpreadsheetWrite(source);
     const artifact = await this.findSpreadsheetArtifact(sessionId, artifactId);
     const [validation, issueResult, statsResult] = await Promise.all([
       this.run(["validate", source, "--json"], { cwd: dirnameFor(source), allowFailure: true }),
@@ -474,17 +699,21 @@ export class OfficeCliService implements PresentationOfficeService, SpreadsheetO
     return report;
   }
 
-  async publishSpreadsheet(sessionId: string, workspaceRoot: string, artifactId: string): Promise<ArtifactDescriptor> {
+  async publishSpreadsheet(sessionId: string, workspaceRoot: string, artifactId: string, signal?: AbortSignal): Promise<ArtifactDescriptor> {
     const report = await this.qualityScanSpreadsheet(sessionId, workspaceRoot, artifactId);
     if (report.status === "needs-fix") throw new Error(`Spreadsheet cannot be published: ${report.issues.filter((issue) => issue.severity === "error").length} blocking issue(s).`);
     const source = await this.spreadsheetSourcePath(sessionId, workspaceRoot, artifactId);
-    await this.run(["save", source], { cwd: dirnameFor(source) });
-    return await this.updateArtifact(sessionId, artifactId, (artifact) => ({ ...artifact, status: "ready", updatedAt: Date.now() }));
+    return await this.withSpreadsheetWrite(source, async () => {
+      await this.stopWatch(sessionId, artifactId);
+      await this.run(["save", source], { cwd: dirnameFor(source), signal, timeoutMs: 90_000 });
+      return await this.updateArtifact(sessionId, artifactId, (artifact) => ({ ...artifact, status: "ready", updatedAt: Date.now() }));
+    });
   }
 
   async previewSpreadsheet(sessionId: string, workspaceRoot: string, artifactId: string): Promise<ArtifactPreviewManifest> {
-    const artifact = await this.findSpreadsheetArtifact(sessionId, artifactId);
     const source = await this.spreadsheetSourcePath(sessionId, workspaceRoot, artifactId);
+    await this.waitForSpreadsheetWrite(source);
+    const artifact = await this.findSpreadsheetArtifact(sessionId, artifactId);
     const outline = recordValue(officeCliData(parseJson((await this.run(["view", source, "outline", "--json"], { cwd: dirnameFor(source), allowFailure: true })).stdout)));
     const sheets = Array.isArray(outline?.sheets) ? outline.sheets : [];
     const surfaces = sheets.flatMap((value) => {
@@ -498,18 +727,42 @@ export class OfficeCliService implements PresentationOfficeService, SpreadsheetO
   }
 
   async selectionSpreadsheet(sessionId: string, workspaceRoot: string, artifactId: string): Promise<SpreadsheetSelection | null> {
-    const artifact = await this.findSpreadsheetArtifact(sessionId, artifactId);
     const source = await this.spreadsheetSourcePath(sessionId, workspaceRoot, artifactId);
+    await this.waitForSpreadsheetWrite(source);
+    const artifact = await this.findSpreadsheetArtifact(sessionId, artifactId);
     const result = await this.run(["get", source, "selected", "--json"], { cwd: dirnameFor(source), allowFailure: true });
-    const locator = this.selectionLocators(officeCliData(parseJson(result.stdout)))[0];
-    if (!locator) return null;
-    const sheet = locator.split("/").filter(Boolean)[0] ?? "Sheet1";
-    const selected = recordValue(officeCliData(parseJson((await this.run(["get", source, locator, "--json"], { cwd: dirnameFor(source), allowFailure: true })).stdout)));
+    const normalizedSelection = normalizeSpreadsheetSelections(this.selectionLocators(officeCliData(parseJson(result.stdout))));
+    if (normalizedSelection.paths.length === 0) return null;
+    const primaryRange = normalizedSelection.ranges[0];
+    const selected = primaryRange ? recordValue(officeCliData(parseJson((await this.run(["get", source, primaryRange.locator, "--json"], { cwd: dirnameFor(source), allowFailure: true })).stdout))) : undefined;
     const first = Array.isArray(selected?.results) ? recordValue(selected.results[0]) : undefined;
     const format = recordValue(first?.format);
-    const formula = typeof first?.formula === "string" ? first.formula : typeof format?.formula === "string" ? format.formula : undefined;
-    const displayValue = typeof first?.text === "string" ? first.text : typeof first?.value === "string" || typeof first?.value === "number" ? String(first.value) : undefined;
-    return { artifactId, revision: artifact.revision, surfaceId: `sheet-${encodeURIComponent(sheet)}`, locator, label: `Selected range · ${locator}`, ...(displayValue ? { displayValue } : {}), ...(formula ? { formula } : {}) };
+    const isSingleCell = normalizedSelection.ranges.length === 1 && normalizedSelection.elements.length === 0 && primaryRange?.rowCount === 1 && primaryRange.columnCount === 1;
+    const formula = isSingleCell ? typeof first?.formula === "string" ? first.formula : typeof format?.formula === "string" ? format.formula : undefined : undefined;
+    const displayValue = isSingleCell ? typeof first?.text === "string" ? first.text : typeof first?.value === "string" || typeof first?.value === "number" ? String(first.value) : undefined : undefined;
+    const selectionKind = normalizedSelection.ranges.length === 1 && normalizedSelection.elements.length === 0
+      ? "range" as const
+      : normalizedSelection.ranges.length > 0 && normalizedSelection.elements.length === 0
+        ? "multi-range" as const
+        : normalizedSelection.ranges.length === 0
+          ? "elements" as const
+          : "mixed" as const;
+    const locator = primaryRange?.locator ?? normalizedSelection.elements[0]!;
+    const summary = normalizedSelection.ranges.length > 1 ? `${normalizedSelection.ranges.length} ranges` : normalizedSelection.elements.length > 0 ? `${normalizedSelection.paths.length} items` : locator;
+    return {
+      artifactId,
+      kind: "spreadsheet",
+      revision: artifact.revision,
+      surfaceId: `sheet-${encodeURIComponent(primaryRange?.sheetName ?? "selection")}`,
+      locator,
+      locators: normalizedSelection.ranges.map((range) => range.locator).concat(normalizedSelection.elements),
+      label: `Selected · ${summary}`,
+      selectionKind,
+      ...normalizedSelection,
+      ...(primaryRange && normalizedSelection.ranges.length === 1 ? { sheetName: primaryRange.sheetName, range: primaryRange.range, rowCount: primaryRange.rowCount, columnCount: primaryRange.columnCount } : {}),
+      ...(displayValue ? { displayValue } : {}),
+      ...(formula ? { formula } : {}),
+    };
   }
 
   async spreadsheetChanges(sessionId: string, artifactId: string): Promise<SpreadsheetChangeRecord[]> {
@@ -529,6 +782,19 @@ export class OfficeCliService implements PresentationOfficeService, SpreadsheetO
 
   async sourceForSpreadsheetOpen(sessionId: string, workspaceRoot: string, artifactId: string): Promise<string> {
     return await this.spreadsheetSourcePath(sessionId, workspaceRoot, artifactId);
+  }
+
+  async focusSpreadsheetLocator(sessionId: string, workspaceRoot: string, artifactId: string, locator: string): Promise<void> {
+    const source = await this.spreadsheetSourcePath(sessionId, workspaceRoot, artifactId);
+    await this.ensureWatch(sessionId, artifactId, source);
+    await this.run(["watch", source, "unmark", source, "--all"], { cwd: dirnameFor(source), allowFailure: true, timeoutMs: 5_000 });
+    await this.run(["watch", source, "mark", source, locator], { cwd: dirnameFor(source), allowFailure: true, timeoutMs: 5_000 });
+    await this.run(["watch", source, "goto", source, locator], { cwd: dirnameFor(source), allowFailure: true, timeoutMs: 5_000 });
+  }
+
+  async clearSpreadsheetMarks(sessionId: string, workspaceRoot: string, artifactId: string): Promise<void> {
+    const source = await this.spreadsheetSourcePath(sessionId, workspaceRoot, artifactId);
+    await this.run(["watch", source, "unmark", source, "--all"], { cwd: dirnameFor(source), allowFailure: true, timeoutMs: 5_000 });
   }
 
   async create(sessionId: string, workspaceRoot: string, input: { name?: string; templateId?: string | null }): Promise<ArtifactDescriptor> {
@@ -881,7 +1147,7 @@ export class OfficeCliService implements PresentationOfficeService, SpreadsheetO
     const payload = officeCliData(parseJson(result.stdout));
     const locators = this.selectionLocators(payload);
     if (!locators[0]) return null;
-    return { artifactId, revision: artifact.revision, surfaceId, locator: locators[0], label: `Selected element · ${locators[0]}` };
+    return { artifactId, kind: "presentation", revision: artifact.revision, surfaceId, locator: locators[0], label: `Selected element · ${locators[0]}` };
   }
 
   async sourceForOpen(sessionId: string, workspaceRoot: string, artifactId: string): Promise<string> {
@@ -941,6 +1207,23 @@ export class OfficeCliService implements PresentationOfficeService, SpreadsheetO
     this.managedSources.clear();
   }
 
+  async releaseSession(sessionId: string, workspaceRoot: string): Promise<void> {
+    this.assertSessionId(sessionId);
+    const root = resolve(workspaceRoot);
+    const manifest = await this.readManifest(sessionId);
+    const watchedArtifactIds = [...this.watches.keys()]
+      .flatMap((key) => key.startsWith(`${sessionId}:`) ? [key.slice(sessionId.length + 1)] : []);
+    const artifactIds = [...new Set([...manifest.artifacts.map((artifact) => artifact.id), ...watchedArtifactIds])];
+    await Promise.all(artifactIds.map(async (artifactId) => await this.stopWatch(sessionId, artifactId)));
+    await Promise.all(manifest.artifacts.map(async (artifact) => {
+      const source = resolve(root, artifact.sourcePath);
+      if (!isWithin(root, source)) return;
+      this.managedSources.delete(source);
+      this.spreadsheetWriteLocks.delete(source);
+      await this.run(["close", source], { cwd: dirnameFor(source), allowFailure: true, timeoutMs: 5_000 }).catch(() => undefined);
+    }));
+  }
+
   private async probeHealth(): Promise<OfficeEngineHealth> {
     const binary = this.binaryPath();
     try {
@@ -967,25 +1250,120 @@ export class OfficeCliService implements PresentationOfficeService, SpreadsheetO
     return "officecli";
   }
 
-  private async run(args: string[], options: { cwd?: string; timeoutMs?: number; allowFailure?: boolean } = {}): Promise<RunResult> {
+  private async run(args: string[], options: RunOptions = {}): Promise<RunResult> {
+    if (options.signal?.aborted) throw new OfficeCliExecutionError("OFFICECLI_CANCELLED", "OfficeCLI operation was cancelled before it started");
     const binary = this.binaryPath();
     const result = await new Promise<RunResult>((resolvePromise, reject) => {
       const child = spawn(binary, args, { cwd: options.cwd, env: { ...process.env, OFFICECLI_SKIP_UPDATE: "1" }, stdio: "pipe", windowsHide: true });
       let stdout = "";
       let stderr = "";
+      let settled = false;
+      let termination: "cancelled" | "timeout" | undefined;
+      let forceTimer: ReturnType<typeof setTimeout> | undefined;
+      let terminationTimer: ReturnType<typeof setTimeout> | undefined;
+      let timeout: ReturnType<typeof setTimeout> | undefined;
       const limit = 2_000_000;
       const append = (current: string, chunk: Buffer) => (current.length >= limit ? current : `${current}${chunk.toString("utf8")}`.slice(0, limit));
       child.stdout.on("data", (chunk: Buffer) => { stdout = append(stdout, chunk); });
       child.stderr.on("data", (chunk: Buffer) => { stderr = append(stderr, chunk); });
-      const timeout = setTimeout(() => child.kill("SIGTERM"), options.timeoutMs ?? 45_000);
-      child.once("error", (error) => { clearTimeout(timeout); reject(error); });
+      const cleanup = () => {
+        if (timeout) clearTimeout(timeout);
+        if (forceTimer) clearTimeout(forceTimer);
+        if (terminationTimer) clearTimeout(terminationTimer);
+        options.signal?.removeEventListener("abort", abort);
+      };
+      const rejectOnce = (error: unknown) => {
+        if (settled) return;
+        settled = true;
+        cleanup();
+        reject(error);
+      };
+      const terminate = (reason: "cancelled" | "timeout") => {
+        if (termination || settled) return;
+        termination = reason;
+        if (process.platform === "win32" && child.pid !== undefined) {
+          const killer = spawn("taskkill", ["/PID", String(child.pid), "/T", "/F"], { stdio: "ignore", windowsHide: true });
+          killer.once("error", () => child.kill());
+        } else {
+          child.kill("SIGTERM");
+          forceTimer = setTimeout(() => {
+            if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
+          }, 2_000);
+        }
+        terminationTimer = setTimeout(() => rejectOnce(new OfficeCliExecutionError(
+          "OFFICECLI_TERMINATION_FAILED",
+          `OfficeCLI did not terminate after the operation ${reason === "timeout" ? "timed out" : "was cancelled"}`,
+        )), 5_000);
+      };
+      const abort = () => terminate("cancelled");
+      options.signal?.addEventListener("abort", abort, { once: true });
+      timeout = setTimeout(() => terminate("timeout"), options.timeoutMs ?? 45_000);
+      if (options.signal?.aborted) abort();
+      child.once("error", (error) => rejectOnce(error));
       child.once("close", (code) => {
-        clearTimeout(timeout);
+        if (settled) return;
+        settled = true;
+        cleanup();
+        if (termination === "timeout") {
+          reject(new OfficeCliExecutionError("OFFICECLI_TIMEOUT", `OfficeCLI operation timed out after ${options.timeoutMs ?? 45_000}ms`));
+          return;
+        }
+        if (termination === "cancelled") {
+          reject(new OfficeCliExecutionError("OFFICECLI_CANCELLED", "OfficeCLI operation was cancelled"));
+          return;
+        }
         if (code === 0 || options.allowFailure) resolvePromise({ stdout, stderr, exitCode: code });
-        else reject(new Error((stderr || stdout || `OfficeCLI exited with ${code}`).trim()));
+        else reject(new OfficeCliExecutionError("OFFICECLI_EXIT_FAILED", (stderr || stdout || `OfficeCLI exited with ${code}`).trim()));
       });
     });
     return result;
+  }
+
+  private async withSpreadsheetWrite<T>(source: string, operation: () => Promise<T>): Promise<T> {
+    const previous = this.spreadsheetWriteLocks.get(source) ?? Promise.resolve();
+    let release: (() => void) | undefined;
+    const current = new Promise<void>((resolvePromise) => { release = resolvePromise; });
+    this.spreadsheetWriteLocks.set(source, current);
+    await previous.catch(() => undefined);
+    try {
+      return await operation();
+    } finally {
+      release?.();
+      if (this.spreadsheetWriteLocks.get(source) === current) this.spreadsheetWriteLocks.delete(source);
+    }
+  }
+
+  private async waitForSpreadsheetWrite(source: string): Promise<void> {
+    await this.spreadsheetWriteLocks.get(source)?.catch(() => undefined);
+  }
+
+  private async restoreSpreadsheetBackup(sessionId: string, artifactId: string, source: string, backup: string, cause: unknown): Promise<void> {
+    if (cause instanceof OfficeCliExecutionError && cause.code === "OFFICECLI_TERMINATION_FAILED") {
+      await this.updateArtifact(sessionId, artifactId, (artifact) => ({ ...artifact, status: "failed", updatedAt: Date.now() }));
+      return;
+    }
+    await copyFile(backup, source);
+  }
+
+  private async stopWatch(sessionId: string, artifactId: string): Promise<void> {
+    const key = `${sessionId}:${artifactId}`;
+    const watch = this.watches.get(key);
+    if (!watch) return;
+    this.watches.delete(key);
+    if (watch.child.exitCode !== null || watch.child.signalCode !== null || watch.child.killed) return;
+    await new Promise<void>((resolvePromise) => {
+      const timeout = setTimeout(resolvePromise, 2_000);
+      watch.child.once("close", () => {
+        clearTimeout(timeout);
+        resolvePromise();
+      });
+      if (process.platform === "win32" && watch.child.pid !== undefined) {
+        const killer = spawn("taskkill", ["/PID", String(watch.child.pid), "/T", "/F"], { stdio: "ignore", windowsHide: true });
+        killer.once("error", () => watch.child.kill());
+      } else {
+        watch.child.kill();
+      }
+    });
   }
 
   private async ensureWatch(sessionId: string, artifactId: string, source: string): Promise<string | null> {

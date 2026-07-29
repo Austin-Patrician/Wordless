@@ -100,17 +100,64 @@ export interface SpreadsheetCatalog {
   artifacts: unknown[];
 }
 
+export interface SpreadsheetCapabilitySnapshot {
+  version: string;
+  elements: string[];
+  highLevelTools: string[];
+}
+
+export interface SpreadsheetRangeProfile {
+  artifactId: string;
+  revision: number;
+  sheetName: string;
+  range: string;
+  rowCount: number;
+  columnCount: number;
+  populatedCells: number;
+  blankCells: number;
+  numericCells: number;
+  duplicateValues: number;
+  minimum?: number;
+  maximum?: number;
+  average?: number;
+}
+
+export interface SpreadsheetOperationPreview {
+  type: "spreadsheet";
+  artifactId: string;
+  workbookName: string;
+  affectedSheets: string[];
+  changes: Array<{ kind: "cell" | "range" | "structure"; locator: string; before?: string; after?: string; summary: string }>;
+  truncated: boolean;
+}
+
+export const SPREADSHEET_HIGH_LEVEL_TOOLS = [
+  "spreadsheet_profile_range",
+  "spreadsheet_format_range",
+  "spreadsheet_create_table",
+  "spreadsheet_create_chart",
+  "spreadsheet_create_pivot",
+  "spreadsheet_apply_validation",
+  "spreadsheet_apply_conditional_format",
+  "spreadsheet_sort_filter",
+] as const;
+
 export interface SpreadsheetOfficeService {
   catalogSpreadsheets(sessionId: string): Promise<SpreadsheetCatalog>;
-  createSpreadsheet(sessionId: string, workspaceRoot: string, input: { name?: string; locale?: string }): Promise<unknown>;
+  spreadsheetCapabilities(): Promise<SpreadsheetCapabilitySnapshot>;
+  createSpreadsheet(sessionId: string, workspaceRoot: string, input: { name?: string; locale?: string }, signal?: AbortSignal): Promise<unknown>;
   openSpreadsheet(sessionId: string, workspaceRoot: string, input: { sourcePath: string }): Promise<unknown>;
-  importSpreadsheetData(sessionId: string, workspaceRoot: string, artifactId: string, input: { sourcePath: string; sheet?: string; startCell?: string; header?: boolean }): Promise<unknown>;
+  importSpreadsheetData(sessionId: string, workspaceRoot: string, artifactId: string, input: { sourcePath: string; sheet?: string; startCell?: string; header?: boolean }, signal?: AbortSignal): Promise<unknown>;
   helpSpreadsheet(input: { verb?: "add" | "set" | "get" | "query" | "remove"; element?: string }): Promise<string>;
   readSpreadsheet(sessionId: string, workspaceRoot: string, artifactId: string, request: SpreadsheetReadRequest): Promise<string>;
-  applySpreadsheet(sessionId: string, workspaceRoot: string, artifactId: string, operations: OfficeMutation[]): Promise<unknown>;
+  profileSpreadsheetRange(sessionId: string, workspaceRoot: string, artifactId: string, input: { sheet: string; range: string }): Promise<SpreadsheetRangeProfile>;
+  previewSpreadsheetOperations(sessionId: string, workspaceRoot: string, artifactId: string, operations: OfficeMutation[]): Promise<SpreadsheetOperationPreview>;
+  applySpreadsheet(sessionId: string, workspaceRoot: string, artifactId: string, operations: OfficeMutation[], signal?: AbortSignal): Promise<unknown>;
   renderSpreadsheet(sessionId: string, workspaceRoot: string, artifactId: string, input: { sheet: string; range?: string }): Promise<{ revision: number; images: SpreadsheetRenderedImage[]; details: unknown }>;
   qualityScanSpreadsheet(sessionId: string, workspaceRoot: string, artifactId: string): Promise<SpreadsheetQualityReport>;
-  publishSpreadsheet(sessionId: string, workspaceRoot: string, artifactId: string): Promise<unknown>;
+  publishSpreadsheet(sessionId: string, workspaceRoot: string, artifactId: string, signal?: AbortSignal): Promise<unknown>;
+  focusSpreadsheetLocator(sessionId: string, workspaceRoot: string, artifactId: string, locator: string): Promise<void>;
+  clearSpreadsheetMarks(sessionId: string, workspaceRoot: string, artifactId: string): Promise<void>;
 }
 
 export interface PresentationOfficeService {

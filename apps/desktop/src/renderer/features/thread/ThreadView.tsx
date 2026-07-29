@@ -200,8 +200,9 @@ function applyEvent(snapshot: SessionSnapshot, event: RuntimeEventEnvelope): Ses
     const blocks = message.blocks.map((block) => block.type === "tool" && block.approval?.approvalId === payload.resolution.approvalId
       ? {
           ...block,
-          state: payload.resolution.approved ? "running" as const : "awaiting-approval" as const,
+          state: payload.resolution.approved ? "running" as const : "error" as const,
           approval: { ...block.approval, status: payload.resolution.approved ? "approved" as const : "rejected" as const, feedback: payload.resolution.feedback },
+          ...(!payload.resolution.approved ? { output: payload.resolution.feedback ?? "Operation rejected by the user" } : {}),
         }
       : block);
     messages[index] = { ...message, blocks };

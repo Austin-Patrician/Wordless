@@ -5,7 +5,7 @@ import type { AgentDriverSessionContext } from "@wordless/agent-driver-sdk";
 import type { SpreadsheetOfficeService } from "@wordless/capability-office";
 import type { SessionRecord } from "@wordless/domain";
 import { describe, expect, it } from "vitest";
-import { createSpreadsheetAgentDriver } from "../src/index.ts";
+import { compileSpreadsheetToolOperations, createSpreadsheetAgentDriver } from "../src/index.ts";
 
 function unused(): never {
   throw new Error("Office service should not run during driver startup");
@@ -13,18 +13,70 @@ function unused(): never {
 
 const office: SpreadsheetOfficeService = {
   catalogSpreadsheets: unused,
+  spreadsheetCapabilities: unused,
   createSpreadsheet: unused,
   openSpreadsheet: unused,
   importSpreadsheetData: unused,
   helpSpreadsheet: unused,
   readSpreadsheet: unused,
+  profileSpreadsheetRange: unused,
+  previewSpreadsheetOperations: unused,
   applySpreadsheet: unused,
   renderSpreadsheet: unused,
   qualityScanSpreadsheet: unused,
   publishSpreadsheet: unused,
+  focusSpreadsheetLocator: unused,
+  clearSpreadsheetMarks: unused,
 };
 
 describe("spreadsheet driver startup", () => {
+  it("compiles high-level spreadsheet tools into deterministic OfficeCLI operations", () => {
+    expect(compileSpreadsheetToolOperations("spreadsheet_create_chart", {
+      artifactId: "workbook-1",
+      sheet: "Summary",
+      dataRange: "A1:B12",
+      chartType: "column",
+      title: "Monthly revenue",
+      anchor: "D2",
+    })).toEqual([{
+      command: "add",
+      parent: "/Summary",
+      type: "chart",
+      props: { dataRange: "A1:B12", chartType: "column", title: "Monthly revenue", anchor: "D2" },
+    }]);
+    expect(compileSpreadsheetToolOperations("spreadsheet_create_chart", {
+      artifactId: "workbook-1",
+      sheet: "Summary",
+      chartType: "column",
+      categories: "Summary!A3:A9",
+      series: [{ name: "Revenue", values: "Summary!C3:C9", categories: "Summary!A3:A9", color: "#587136" }],
+    })).toEqual([{
+      command: "add",
+      parent: "/Summary",
+      type: "chart",
+      props: {
+        categories: "Summary!A3:A9",
+        chartType: "column",
+        "series1.name": "Revenue",
+        "series1.values": "Summary!C3:C9",
+        "series1.categories": "Summary!A3:A9",
+        "series1.color": "#587136",
+      },
+    }]);
+    expect(compileSpreadsheetToolOperations("spreadsheet_sort_filter", {
+      artifactId: "workbook-1",
+      sheet: "Data",
+      range: "A1:F200",
+      sort: "C:desc",
+      header: true,
+      filterColumn: 2,
+      filter: ">100",
+    })).toEqual([
+      { command: "set", path: "/Data/A1:F200", props: { sort: "C:desc", sortHeader: true } },
+      { command: "add", parent: "/Data", type: "autofilter", props: { range: "A1:F200", criteria2: ">100" } },
+    ]);
+  });
+
   it("creates a session and reaches the model on the first prompt", async () => {
     const models = createModels();
     const faux = fauxProvider({ provider: `spreadsheet-${crypto.randomUUID()}` });
@@ -41,7 +93,7 @@ describe("spreadsheet driver startup", () => {
       record,
       profile: {
         reference: record.profile, driverId: "spreadsheet", modelRequirements: { requiresToolUse: true }, systemPrompt: "Use spreadsheet tools.",
-        activeToolNames: ["spreadsheet_catalog", "spreadsheet_create", "spreadsheet_open", "spreadsheet_import", "spreadsheet_help", "spreadsheet_read", "spreadsheet_edit", "spreadsheet_render", "spreadsheet_quality_scan", "spreadsheet_publish"],
+        activeToolNames: ["spreadsheet_catalog", "spreadsheet_create", "spreadsheet_open", "spreadsheet_import", "spreadsheet_help", "spreadsheet_read", "spreadsheet_edit", "spreadsheet_profile_range", "spreadsheet_format_range", "spreadsheet_create_table", "spreadsheet_create_chart", "spreadsheet_create_pivot", "spreadsheet_apply_validation", "spreadsheet_apply_conditional_format", "spreadsheet_sort_filter", "spreadsheet_render", "spreadsheet_quality_scan", "spreadsheet_publish"],
         capabilityIds: ["filesystem", "office"], skills: [], artifactKinds: ["spreadsheet"], workbenchId: "workbook",
       },
       model,

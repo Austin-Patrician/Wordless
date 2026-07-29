@@ -1,7 +1,7 @@
 import { InMemorySessionStorage, Session } from "@wordless/agent";
 import { NodeExecutionEnv } from "@wordless/agent/node";
 import { createModels, fauxAssistantMessage, fauxProvider, type FauxResponseFactory } from "@wordless/ai";
-import { formatPromptWithSkillReferences, projectUserMessageContent, selectedSkillIdsFromPromptParts, stripPromptSkillReferences, type AgentDriverEvent, type AgentDriverSessionContext, type AgentRuntimeSkill } from "@wordless/agent-driver-sdk";
+import { formatPromptArtifactReferencesForModel, formatPromptWithSkillReferences, projectUserMessageContent, selectedSkillIdsFromPromptParts, stripPromptSkillReferences, type AgentDriverEvent, type AgentDriverSessionContext, type AgentRuntimeSkill } from "@wordless/agent-driver-sdk";
 import type { SessionRecord } from "@wordless/domain";
 import { describe, expect, it } from "vitest";
 import { createAgentHarnessDriver } from "../src/index.ts";
@@ -141,6 +141,33 @@ describe("selected skills", () => {
       { type: "text", text: " and " },
       { type: "workspace-reference", id: "src/components:3", path: "src/components", name: "components", kind: "directory" },
     ]);
+  });
+
+  it("keeps artifact selections compact in history and explicit in model context", () => {
+    const prompt = formatPromptWithSkillReferences([
+      { type: "text", text: "Create a chart from " },
+      {
+        type: "artifact-reference",
+        artifactId: "workbook-1",
+        kind: "spreadsheet",
+        name: "report.xlsx",
+        revision: 4,
+        surfaceId: "sheet-Summary",
+        locator: "/Summary/A3:A9",
+        locators: ["/Summary/A3:A9", "/Summary/C3:C9"],
+        intent: "chart",
+      },
+    ]);
+
+    expect(projectUserMessageContent(prompt)).toEqual([
+      { type: "text", text: "Create a chart from " },
+      { type: "artifact", artifactId: "workbook-1", kind: "spreadsheet", name: "report.xlsx", revision: 4, surfaceId: "sheet-Summary", locator: "/Summary/A3:A9" },
+    ]);
+    const modelContext = formatPromptArtifactReferencesForModel(prompt);
+    expect(modelContext).toContain("intent=chart");
+    expect(modelContext).toContain('exact_selection=["/Summary/A3:A9","/Summary/C3:C9"]');
+    expect(modelContext).toContain("Do not replace it with the used range or the whole sheet.");
+    expect(modelContext).not.toContain("wordless-artifact-reference");
   });
 
   it("injects an explicitly selected skill into this run only", async () => {

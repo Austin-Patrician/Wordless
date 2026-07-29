@@ -1,5 +1,5 @@
 import { Button, DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger, Tooltip, TooltipContent, TooltipTrigger } from "@wordless/ui-kit";
-import { Bell, ChevronDown, ChevronLeft, ChevronRight, Command, Ellipsis, Folder, FolderOpen, Images, Pin, PinOff, Search, Settings, Trash2, Pencil } from "lucide-react";
+import { Bell, ChevronDown, ChevronLeft, ChevronRight, Command, Ellipsis, Folder, FolderOpen, Images, Pin, PinOff, Search, Settings, Trash2, Pencil, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import type { SessionRecord } from "@wordless/domain";
@@ -7,6 +7,7 @@ import { usePreferences } from "../../shared/preferences";
 import { useRuntime, useRuntimeClient } from "../../shared/runtime";
 import folderIcon from "../../../icons/common-icons/floder.svg";
 import wordlessIcon from "../../../icons/common-icons/wordless.png";
+import { SessionSearchDialog } from "./SessionSearchDialog";
 
 type SidebarProps = {
   collapsed: boolean;
@@ -94,7 +95,7 @@ function SessionRow({ active, editingTitle, onDelete, onEditCancel, onEditSave, 
   );
 }
 
-function SessionDeleteConfirm({ onCancel, onConfirm, saving, session, t }: { onCancel: () => void; onConfirm: () => void; saving: boolean; session: SessionRecord | null; t: ReturnType<typeof usePreferences>["t"] }) {
+function SessionDeleteConfirm({ error, onCancel, onConfirm, saving, session, t }: { error: string | null; onCancel: () => void; onConfirm: () => void; saving: boolean; session: SessionRecord | null; t: ReturnType<typeof usePreferences>["t"] }) {
   useEffect(() => {
     if (!session) return;
     const closeOnEscape = (event: KeyboardEvent) => {
@@ -110,9 +111,18 @@ function SessionDeleteConfirm({ onCancel, onConfirm, saving, session, t }: { onC
       <section aria-describedby="delete-session-description" aria-labelledby="delete-session-title" aria-modal="true" className="w-full max-w-[360px] rounded-[8px] border border-[#3b3b38] bg-white p-4 text-[#242421] shadow-[0_18px_42px_rgba(0,0,0,0.24)] dark:border-border dark:bg-card dark:text-foreground" role="alertdialog">
         <h2 className="text-[15px] font-bold" id="delete-session-title">{t("deleteSession")}</h2>
         <p className="mt-3 text-[13px] leading-5 text-[#454540] dark:text-muted-foreground" id="delete-session-description">{t("deleteSessionHelp")}</p>
+        {error ? <p className="mt-3 rounded-[6px] border border-[#ebccc4] bg-[#fdf4f1] px-3 py-2 text-[11px] leading-4 text-[#a65749] dark:border-[#613f37] dark:bg-[#2b201d] dark:text-[#efb0a3]" role="alert">{error}</p> : null}
         <div className="mt-5 flex justify-end gap-2"><Button className="h-9 px-4" onClick={onCancel} type="button" variant="outline">{t("cancel")}</Button><Button className="h-9 bg-[#ff4d55] px-4 text-white hover:bg-[#e83e46]" disabled={saving} onClick={onConfirm} type="button">{t("delete")}</Button></div>
       </section>
     </div>,
+    document.body,
+  );
+}
+
+function SidebarActionNotice({ message, onDismiss }: { message: string | null; onDismiss: () => void }) {
+  if (!message) return null;
+  return createPortal(
+    <div aria-live="polite" className="fixed bottom-5 right-5 z-[130] flex max-w-[360px] items-start gap-2 rounded-[8px] border border-[#e4c9c2] bg-white px-3 py-2.5 text-[11px] leading-4 text-[#9b5145] shadow-[0_10px_26px_rgba(0,0,0,0.14)] dark:border-[#613f37] dark:bg-card dark:text-[#efb0a3]" role="status"><span className="min-w-0 flex-1">{message}</span><button aria-label="Dismiss" className="grid h-4 w-4 shrink-0 place-items-center text-[#9b5145]/70 hover:text-[#71352c] dark:text-[#efb0a3]/70 dark:hover:text-[#ffd0c9]" onClick={onDismiss} type="button"><X className="h-3 w-3" /></button></div>,
     document.body,
   );
 }
@@ -125,8 +135,10 @@ export function Sidebar({ collapsed, mediaActive, onNewThread, onOpenMedia, onOp
   const [renaming, setRenaming] = useState<SessionRecord | null>(null);
   const [title, setTitle] = useState("");
   const [deleting, setDeleting] = useState<SessionRecord | null>(null);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const [sessionSearchOpen, setSessionSearchOpen] = useState(false);
   const sessions = (snapshot?.sessions ?? []).filter((session) => session.workbenchId !== "media-canvas");
   const workspaces = snapshot?.workspaces ?? [];
   const selectedSession = sessions.find((session) => session.id === selectedSessionId);
@@ -182,12 +194,18 @@ export function Sidebar({ collapsed, mediaActive, onNewThread, onOpenMedia, onOp
   const confirmDelete = async () => {
     if (!deleting) return;
     const session = deleting;
+    setDeleteError(null);
     setSaving(true);
-    const succeeded = await run(async () => await client.deleteSession(session.id));
-    setSaving(false);
-    if (succeeded) {
+    try {
+      await client.deleteSession(session.id);
+      await refresh();
       setDeleting(null);
       onSessionDeleted(session.id);
+    } catch (cause) {
+      const message = cause instanceof Error ? cause.message : String(cause);
+      setDeleteError(/\b(?:EBUSY|EPERM|ENOTEMPTY)\b/i.test(message) ? t("sessionDeleteInUse") : message);
+    } finally {
+      setSaving(false);
     }
   };
 
@@ -199,7 +217,7 @@ export function Sidebar({ collapsed, mediaActive, onNewThread, onOpenMedia, onOp
     { id: "projects", label: t("projects"), icon: Folder },
   ];
 
-  const sessionRow = (session: SessionRecord) => <SessionRow active={selectedSessionId === session.id} editingTitle={renaming?.id === session.id ? title : null} key={session.id} onDelete={setDeleting} onEditCancel={() => setRenaming(null)} onEditSave={() => void saveRename()} onEditTitleChange={setTitle} onOpen={openSession} onOpenFolder={(candidate) => void run(async () => await client.openSessionFolder(candidate.id))} onRename={beginRename} onSetPinned={(candidate, pinned) => void run(async () => await client.setSessionPinned(candidate.id, pinned))} session={session} t={t} timeLabel={relativeTime(session.updatedAt, locale)} />;
+  const sessionRow = (session: SessionRecord) => <SessionRow active={selectedSessionId === session.id} editingTitle={renaming?.id === session.id ? title : null} key={session.id} onDelete={(candidate) => { setDeleteError(null); setDeleting(candidate); }} onEditCancel={() => setRenaming(null)} onEditSave={() => void saveRename()} onEditTitleChange={setTitle} onOpen={openSession} onOpenFolder={(candidate) => void run(async () => await client.openSessionFolder(candidate.id))} onRename={beginRename} onSetPinned={(candidate, pinned) => void run(async () => await client.setSessionPinned(candidate.id, pinned))} session={session} t={t} timeLabel={relativeTime(session.updatedAt, locale)} />;
 
   return (
     <aside className={`hidden h-full min-h-0 shrink-0 flex-col border-r border-border bg-[var(--wordless-shell-sidebar)] py-4 transition-[width] duration-200 lg:flex ${collapsed ? "w-[58px] px-2" : "w-[238px] px-3"}`}>
@@ -208,7 +226,7 @@ export function Sidebar({ collapsed, mediaActive, onNewThread, onOpenMedia, onOp
           <img alt="" className="h-7 w-7 shrink-0 rounded-[8px] object-cover transition-transform hover:rotate-3" draggable={false} src={wordlessIcon} />
           {!collapsed ? <span className="truncate text-[15px] font-bold tracking-[-0.04em]">wordless</span> : null}
         </button>
-        {!collapsed ? <div className="flex items-center gap-1"><Button aria-label={t("search")} size="icon" type="button" variant="ghost"><Search className="h-4 w-4" /></Button><Button aria-label={t("collapseSidebar")} onClick={onToggle} size="icon" type="button" variant="ghost"><ChevronLeft className="h-4 w-4" /></Button></div> : null}
+        {!collapsed ? <div className="flex items-center gap-1"><Button aria-label={t("searchTasks")} onClick={() => setSessionSearchOpen(true)} size="icon" type="button" variant="ghost"><Search className="h-4 w-4" /></Button><Button aria-label={t("collapseSidebar")} onClick={onToggle} size="icon" type="button" variant="ghost"><ChevronLeft className="h-4 w-4" /></Button></div> : null}
       </div>
 
       <nav aria-label="Primary navigation" className="mt-7 shrink-0 space-y-1">
@@ -223,11 +241,13 @@ export function Sidebar({ collapsed, mediaActive, onNewThread, onOpenMedia, onOp
       {!collapsed ? <div className="mt-7 min-h-0 flex-1 overflow-y-auto pr-1"><section><div className="mb-2 flex items-center justify-between px-3"><p className="font-mono text-[10px] uppercase tracking-[0.14em] text-muted-foreground">{t("recentThreads")}</p><span className="font-mono text-[10px] text-muted-foreground">{recentSessions.length.toString().padStart(2, "0")}</span></div><div className="space-y-1">{recentSessions.map(sessionRow)}</div></section><section className="mt-6"><div className="mb-2 flex items-center justify-between px-3"><p className="font-mono text-[10px] uppercase tracking-[0.14em] text-muted-foreground">{t("yourSpace")}</p><span className="font-mono text-[10px] text-muted-foreground">{workspaceGroups.length.toString().padStart(2, "0")}</span></div><div className="space-y-2">{workspaceGroups.map(({ workspace, sessions: workspaceSessions }) => {
         const expanded = expandedWorkspaceIds.has(workspace.id);
         return <section key={workspace.id}><button aria-expanded={expanded} className="flex h-8 w-full items-center gap-2 rounded-[7px] px-2 text-left text-[11px] text-[#4f4f4a] outline-none hover:bg-[#e7e7e3] focus-visible:ring-2 focus-visible:ring-ring dark:text-muted-foreground dark:hover:bg-[#282a21]" onClick={() => setExpandedWorkspaceIds((current) => { const next = new Set(current); if (next.has(workspace.id)) next.delete(workspace.id); else next.add(workspace.id); return next; })} type="button"><img alt="" className="h-3.5 w-3.5 shrink-0 opacity-75 dark:invert" src={folderIcon} /><span className="min-w-0 flex-1 truncate font-medium">{workspace.name}</span><ChevronDown className={`h-3.5 w-3.5 transition-transform ${expanded ? "" : "-rotate-90"}`} /></button>{expanded ? <div className="mt-0.5 space-y-1 pl-2">{workspaceSessions.map(sessionRow)}</div> : null}</section>;
-      })}</div></section>{actionError ? <p className="mt-4 px-3 text-[11px] leading-4 text-destructive">{actionError}</p> : null}</div> : null}
+      })}</div></section></div> : null}
 
       <div className={`mt-auto flex shrink-0 items-center ${collapsed ? "justify-center" : "justify-between px-2"}`}><button className="flex min-w-0 items-center gap-2 rounded-lg p-1.5 text-left hover:bg-muted" onClick={collapsed ? onToggle : onOpenSettings} type="button"><span className="grid h-7 w-7 shrink-0 place-items-center rounded-full bg-[#d9efaa] text-[10px] font-extrabold text-[#314008]">MA</span>{!collapsed ? <span className="truncate text-xs font-semibold">Mina Ahn</span> : null}</button>{!collapsed ? <div className="flex gap-1"><Button aria-label={t("settings")} onClick={onOpenSettings} size="icon" type="button" variant="ghost"><Settings className="h-4 w-4" /></Button><Button aria-label={t("notifications")} size="icon" type="button" variant="ghost"><Bell className="h-4 w-4" /></Button></div> : null}</div>
 
-      <SessionDeleteConfirm onCancel={() => setDeleting(null)} onConfirm={() => void confirmDelete()} saving={saving} session={deleting} t={t} />
+      <SessionDeleteConfirm error={deleteError} onCancel={() => { setDeleteError(null); setDeleting(null); }} onConfirm={() => void confirmDelete()} saving={saving} session={deleting} t={t} />
+      <SessionSearchDialog onOpenChange={setSessionSearchOpen} onSelectSession={openSession} open={sessionSearchOpen} sessions={sessions} workspaces={workspaces} />
+      <SidebarActionNotice message={actionError} onDismiss={() => setActionError(null)} />
     </aside>
   );
 }

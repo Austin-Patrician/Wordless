@@ -11,13 +11,14 @@ const DialogTitle = DialogPrimitive.Title;
 const DialogDescription = DialogPrimitive.Description;
 
 type DialogContentProps = ComponentPropsWithoutRef<typeof DialogPrimitive.Content> & {
+  overlayClassName?: string;
   showCloseButton?: boolean;
 };
 
-function DialogContent({ className, children, showCloseButton = true, ...props }: DialogContentProps) {
+function DialogContent({ className, children, overlayClassName, showCloseButton = true, ...props }: DialogContentProps) {
   return (
     <DialogPrimitive.Portal>
-      <DialogPrimitive.Overlay className="fixed inset-0 z-50 bg-foreground/35 backdrop-blur-[2px]" />
+      <DialogPrimitive.Overlay className={cn("fixed inset-0 z-50 bg-foreground/35 backdrop-blur-[2px]", overlayClassName)} />
       <DialogPrimitive.Content
         className={cn(
           "fixed left-1/2 top-1/2 z-[60] max-h-[calc(100vh-2rem)] w-[min(64rem,calc(100vw-2rem))] -translate-x-1/2 -translate-y-1/2 overflow-hidden rounded-lg border border-border bg-card text-card-foreground shadow-2xl outline-none",

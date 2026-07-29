@@ -401,12 +401,11 @@ function persistedApproval(value: unknown): PersistedOperationApproval | undefin
   const resolution = asRecord(record?.resolution);
   if (
     typeof record?.callId !== "string" ||
-    typeof approval?.approvalId !== "string" ||
-    typeof resolution?.approvalId !== "string" ||
-    typeof resolution?.approved !== "boolean"
+    typeof approval?.approvalId !== "string"
   ) {
     return undefined;
   }
+  if (resolution && (typeof resolution.approvalId !== "string" || typeof resolution.approved !== "boolean")) return undefined;
   const matchedRules = Array.isArray(approval.matchedRules)
     ? approval.matchedRules.flatMap((candidate): ToolSecurityRuleMatch[] => {
       const rule = asRecord(candidate);
@@ -428,12 +427,14 @@ function persistedApproval(value: unknown): PersistedOperationApproval | undefin
       severity: approval.severity === "high" ? "high" : "normal",
       matchedRules,
     },
-    resolution: {
-      ...(resolution as unknown as OperationApprovalResolution),
-      approvalId: resolution.approvalId,
-      approved: resolution.approved,
-      ...(typeof resolution.feedback === "string" ? { feedback: resolution.feedback } : {}),
-    },
+    ...(resolution ? {
+      resolution: {
+        ...(resolution as unknown as OperationApprovalResolution),
+        approvalId: resolution.approvalId as string,
+        approved: resolution.approved as boolean,
+        ...(typeof resolution.feedback === "string" ? { feedback: resolution.feedback } : {}),
+      },
+    } : {}),
   };
 }
 
@@ -612,7 +613,7 @@ function workspaceRelativePath(rootPath: string, path: string): string | undefin
 }
 
 function approvalFileBaseline(value: PersistedOperationApproval): SessionFileBaseline | undefined {
-  if (!value.resolution.approved) return undefined;
+  if (!value.resolution?.approved) return undefined;
   const preview = asRecord(value.approval.preview);
   if (
     preview?.type !== "diff" ||
@@ -888,7 +889,7 @@ export class WordlessRuntime {
         const approval = persistedApproval(customEntry.data);
         if (!approval) continue;
         approvals.set(approval.callId, approval);
-        this.applyApproval(messages, tools.get(approval.callId), approval);
+        this.applyApproval(messages, tools.get(approval.callId), approval, this.runs.has(sessionId));
         continue;
       }
       if (customEntry.type === "custom" && customEntry.customType === USER_REQUEST_JOURNAL_TYPE) {
@@ -1428,13 +1429,14 @@ export class WordlessRuntime {
     }
   }
 
-  async deleteSession(sessionId: string): Promise<void> {
+  async deleteSession(sessionId: string, beforeDelete?: (session: SessionRecord) => Promise<void>): Promise<void> {
     if (this.runs.has(sessionId)) throw new Error("Wait for the current response before deleting this session");
     const session = this.requireSession(sessionId);
-    await rm(session.journalPath, { force: true });
-    await rm(join(this.options.paths.journalsRoot, "subagents", sessionId), { force: true, recursive: true });
-    if (this.isInternalSessionRoot(session.runtimeRootPath)) await rm(session.runtimeRootPath, { force: true, recursive: true });
-    await rm(join(this.mediaAssetsRoot(), sessionId), { force: true, recursive: true });
+    await beforeDelete?.(session);
+    if (this.isInternalSessionRoot(session.runtimeRootPath)) await rm(session.runtimeRootPath, { force: true, recursive: true, maxRetries: 10, retryDelay: 200 });
+    await rm(session.journalPath, { force: true, maxRetries: 5, retryDelay: 100 });
+    await rm(join(this.options.paths.journalsRoot, "subagents", sessionId), { force: true, recursive: true, maxRetries: 5, retryDelay: 100 });
+    await rm(join(this.mediaAssetsRoot(), sessionId), { force: true, recursive: true, maxRetries: 5, retryDelay: 100 });
     if (session.workbenchId === "media-canvas") this.database.deleteMediaProject(sessionId);
     this.database.deleteSession(sessionId);
     this.historyCache.delete(sessionId);
@@ -2049,10 +2051,28 @@ export class WordlessRuntime {
     if (event.type === "tool.updated") this.emit(sessionId, active, event);
     if (event.type === "tool.completed") {
       this.invalidateSessionWorkspaceSearch(sessionId);
+      this.historyCache.delete(sessionId);
+      this.emit(sessionId, active, event);
+      const details = asRecord(event.details);
+      const artifact = asRecord(details?.artifact);
+      if (
+        !event.isError &&
+        typeof artifact?.id === "string" &&
+        typeof artifact.revision === "number" &&
+        (artifact.kind === "presentation" || artifact.kind === "document" || artifact.kind === "spreadsheet" || artifact.kind === "browser")
+      ) {
+        const affectedLocators = Array.isArray(details?.affectedLocators) ? details.affectedLocators.filter((value): value is string => typeof value === "string") : [];
+        this.emit(sessionId, active, { type: "artifact.changed", artifactId: artifact.id, kind: artifact.kind, revision: artifact.revision, affectedLocators });
+      }
+    }
+    if (event.type === "approval.requested") {
+      this.historyCache.delete(sessionId);
       this.emit(sessionId, active, event);
     }
-    if (event.type === "approval.requested") this.emit(sessionId, active, event);
-    if (event.type === "approval.resolved") this.emit(sessionId, active, event);
+    if (event.type === "approval.resolved") {
+      this.historyCache.delete(sessionId);
+      this.emit(sessionId, active, event);
+    }
     if (event.type === "user-request.requested") this.emit(sessionId, active, event);
     if (event.type === "user-request.resolved") this.emit(sessionId, active, event);
     if (event.type === "model.changed") this.emit(sessionId, active, event);
@@ -2624,7 +2644,7 @@ export class WordlessRuntime {
         if (block.type === "text" && typeof block.text === "string") blocks.push({ type: "text", text: block.text });
         if (block.type === "thinking" && typeof block.thinking === "string") blocks.push({ type: "reasoning", text: block.thinking });
         if (block.type === "toolCall" && typeof block.id === "string" && typeof block.name === "string") {
-          blocks.push({ type: "tool", callId: block.id, name: block.name, state: "complete", input: asRecord(block.arguments) });
+          blocks.push({ type: "tool", callId: block.id, name: block.name, state: "pending", input: asRecord(block.arguments) });
         }
       }
     }
@@ -2644,19 +2664,30 @@ export class WordlessRuntime {
     messages: ConversationMessage[],
     location: { messageIndex: number; blockIndex: number } | undefined,
     persisted: PersistedOperationApproval,
+    isRunning: boolean,
   ): void {
     if (!location) return;
     const message = messages[location.messageIndex];
     if (!message) return;
     const block = message.blocks[location.blockIndex];
     if (!block || block.type !== "tool") return;
-    const approval = {
-      ...persisted.approval,
-      status: persisted.resolution.approved ? "approved" as const : "rejected" as const,
-      feedback: persisted.resolution.feedback,
-    };
+    const approval = persisted.resolution
+      ? {
+          ...persisted.approval,
+          status: persisted.resolution.approved ? "approved" as const : "rejected" as const,
+          feedback: persisted.resolution.feedback,
+        }
+      : { ...persisted.approval, status: "required" as const };
     const blocks = [...message.blocks];
-    blocks[location.blockIndex] = { ...block, approval };
+    blocks[location.blockIndex] = persisted.resolution
+      ? persisted.resolution.approved
+        ? isRunning
+          ? { ...block, state: "running", approval }
+          : { ...block, state: "error", approval, output: "The operation was interrupted before the approved tool could finish. Start a new turn to retry it." }
+        : { ...block, state: "error", approval, output: persisted.resolution.feedback ?? "Operation rejected by the user" }
+      : isRunning
+        ? { ...block, state: "awaiting-approval", approval }
+        : { ...block, state: "error", approval, output: "The operation was interrupted before approval could be resolved. Start a new turn to retry it." };
     messages[location.messageIndex] = { ...message, blocks };
   }
 
@@ -2724,13 +2755,15 @@ export class WordlessRuntime {
     const blocks = [...message.blocks];
     const details = asRecord(result.details);
     const usage = conversationUsageFromUnknown(details?.usage);
-    const approval = persisted
+    const approval = persisted?.resolution
       ? {
           ...persisted.approval,
           status: persisted.resolution.approved ? "approved" as const : "rejected" as const,
           feedback: persisted.resolution.feedback,
         }
-      : block.approval;
+      : persisted
+        ? { ...persisted.approval, status: "required" as const }
+        : block.approval;
     const next: MessageToolBlock = {
       ...block,
       state: result.isError === true ? "error" : "complete",

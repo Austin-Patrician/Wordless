@@ -32,6 +32,7 @@ import {
   USER_REQUEST_JOURNAL_TYPE,
   formatPromptWithAttachments,
   projectUserMessageContent,
+  formatPromptArtifactReferencesForModel,
   stripPromptSkillReferences,
   type PersistedOperationApproval,
   type PersistedSessionFileBaseline,
@@ -214,7 +215,7 @@ function stripSkillReferenceMarkers(messages: AgentMessage[]): AgentMessage[] {
     const value = asRecord(message);
     if (!value || value.role !== "user") return message;
     if (typeof value.content === "string") {
-      const content = stripPromptSkillReferences(value.content);
+      const content = formatPromptArtifactReferencesForModel(stripPromptSkillReferences(value.content));
       if (content === value.content) return message;
       changed = true;
       return { ...value, content } as AgentMessage;
@@ -223,7 +224,7 @@ function stripSkillReferenceMarkers(messages: AgentMessage[]): AgentMessage[] {
     const content = value.content.map((item) => {
       const block = asRecord(item);
       if (!block || block.type !== "text" || typeof block.text !== "string") return item;
-      const text = stripPromptSkillReferences(block.text);
+      const text = formatPromptArtifactReferencesForModel(stripPromptSkillReferences(block.text));
       if (text === block.text) return item;
       changed = true;
       return { ...block, text };
@@ -706,13 +707,26 @@ class AgentHarnessDriverSession implements AgentDriverSession {
           toolName: event.toolName,
           input: event.input,
         };
-        const resolution = await new Promise<OperationApprovalResolution>((resolve) => {
+        let resolveApproval: ((resolution: OperationApprovalResolution) => void) | undefined;
+        const pendingResolution = new Promise<OperationApprovalResolution>((resolve) => {
+          resolveApproval = resolve;
           this.pendingApprovals.set(request.approvalId, { messageId, request, resolve });
-          this.emit({ type: "approval.requested", messageId, approval: request });
-          if (this.toolApprovalMode === "auto" && request.severity === "normal") {
-            this.resolvePendingApproval(request.approvalId, true);
-          }
         });
+        try {
+          await (this.context.session as unknown as CustomEntrySession).appendCustomEntry(
+            OPERATION_APPROVAL_JOURNAL_TYPE,
+            { callId: event.toolCallId, approval: request } satisfies PersistedOperationApproval,
+          );
+        } catch (cause) {
+          this.pendingApprovals.delete(request.approvalId);
+          resolveApproval?.({ approvalId: request.approvalId, approved: false, feedback: "Approval request could not be persisted" });
+          throw cause;
+        }
+        this.emit({ type: "approval.requested", messageId, approval: request });
+        if (this.toolApprovalMode === "auto" && request.severity === "normal") {
+          this.resolvePendingApproval(request.approvalId, true);
+        }
+        const resolution = await pendingResolution;
         const persisted: PersistedOperationApproval = { callId: event.toolCallId, approval: request, resolution };
         this.approvalResults.set(event.toolCallId, persisted);
         await (this.context.session as unknown as CustomEntrySession).appendCustomEntry(OPERATION_APPROVAL_JOURNAL_TYPE, persisted);
@@ -1084,15 +1098,16 @@ class AgentHarnessDriverSession implements AgentDriverSession {
 
   private toolDetailsWithInteractions(callId: string, details: unknown): unknown {
     const approval = this.approvalResults.get(callId);
+    const approvalResolution = approval?.resolution;
     const userRequest = this.userRequestResults.get(callId);
     if (!approval && !userRequest) return details;
     return {
       ...(asRecord(details) ?? {}),
-      ...(approval ? {
+      ...(approval && approvalResolution ? {
         approval: {
           ...approval.approval,
-          status: approval.resolution.approved ? "approved" : "rejected",
-          feedback: approval.resolution.feedback,
+          status: approvalResolution.approved ? "approved" : "rejected",
+          feedback: approvalResolution.feedback,
         },
       } : {}),
       ...(userRequest ? { userRequest: { request: userRequest.request, resolution: userRequest.resolution } } : {}),

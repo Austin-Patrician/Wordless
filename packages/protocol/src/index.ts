@@ -117,6 +117,8 @@ export const UserPromptPartSchema = Type.Union([
     revision: Type.Integer({ minimum: 1 }),
     surfaceId: Type.String({ minLength: 1, maxLength: 512 }),
     locator: Type.String({ minLength: 1, maxLength: 2_048 }),
+    locators: Type.Optional(Type.Array(Type.String({ minLength: 1, maxLength: 2_048 }), { minItems: 1, maxItems: 10_000 })),
+    intent: Type.Optional(Type.Union([Type.Literal("reference"), Type.Literal("analyze"), Type.Literal("formula"), Type.Literal("chart"), Type.Literal("pivot")])),
   }),
 ]);
 
@@ -745,15 +747,56 @@ export interface ArtifactPreviewManifest {
 
 export interface ArtifactSelection {
   artifactId: string;
+  kind: ArtifactKind;
   revision: number;
   surfaceId: string;
   locator: string;
   label: string;
+  locators?: string[];
+  intent?: "reference" | "analyze" | "formula" | "chart" | "pivot";
+}
+
+export interface SpreadsheetSelectionRange {
+  sheetName: string;
+  range: string;
+  locator: string;
+  rowCount: number;
+  columnCount: number;
 }
 
 export interface SpreadsheetSelection extends ArtifactSelection {
+  paths: string[];
+  ranges: SpreadsheetSelectionRange[];
+  elements: string[];
+  selectionKind: "range" | "multi-range" | "elements" | "mixed";
+  sheetName?: string;
+  range?: string;
+  rowCount?: number;
+  columnCount?: number;
   displayValue?: string;
   formula?: string;
+}
+
+export interface SpreadsheetCapabilitySnapshot {
+  version: string;
+  elements: string[];
+  highLevelTools: string[];
+}
+
+export interface SpreadsheetRangeProfile {
+  artifactId: string;
+  revision: number;
+  sheetName: string;
+  range: string;
+  rowCount: number;
+  columnCount: number;
+  populatedCells: number;
+  blankCells: number;
+  numericCells: number;
+  duplicateValues: number;
+  minimum?: number;
+  maximum?: number;
+  average?: number;
 }
 
 export interface SpreadsheetChangeRecord {
@@ -789,6 +832,7 @@ export type RuntimeEvent =
   | { type: "connectors.changed" }
   | { type: "model-configuration.changed" }
   | { type: "media.project.changed"; sessionId: string }
+  | { type: "artifact.changed"; artifactId: string; kind: ArtifactKind; revision: number; affectedLocators: string[] }
   | { type: "run.started"; runId: string }
   | { type: "run.completed"; runId: string }
   | { type: "run.failed"; runId: string; message: string }
