@@ -1,9 +1,12 @@
-import { Button, cn, Tooltip, TooltipContent, TooltipTrigger } from "@wordless/ui-kit";
-import { Archive, ChevronDown, ChevronRight, CircleHelp, Command, FileText, Folder, Layers3, Mic, Network, Pin, PinOff, Plus, Send, ShieldCheck, Sparkles, Square, X } from "lucide-react";
+import { Button, Switch, cn, Tooltip, TooltipContent, TooltipTrigger } from "@wordless/ui-kit";
+import { Archive, ArrowUpRight, ChevronDown, ChevronRight, CircleHelp, FileText, Folder, Layers3, Mic, Pin, PinOff, Plus, Send, ShieldCheck, Sparkles, Square, X } from "lucide-react";
 import { useCallback, useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import { usePreferences } from "../../shared/preferences";
 import type { AgentInteractionModeId, ConnectorSummary, ProviderAvatarId, SessionAccessLevel, SessionContextUsage, SkillSummary, ToolApprovalMode, UserPromptPart } from "@wordless/domain";
 import planIcon from "../../../icons/common-icons/plan.svg";
+import mcpIcon from "../../../icons/common-icons/mcp.svg";
+import skillsIcon from "../../../icons/common-icons/skills.svg";
+import { ConnectorIcon } from "../../shared/ConnectorIcon";
 import { AccessPicker } from "./AccessPicker";
 import { ContextUsageIndicator } from "./ContextUsageIndicator";
 import { InlineSkillComposer, type InlineSkillComposerHandle, type InlineSkillComposerValue, type InlineWorkspaceReferenceToken } from "./InlineSkillComposer";
@@ -114,7 +117,7 @@ export function Composer({
   const [approvalChanging, setApprovalChanging] = useState(false);
   const [approvalError, setApprovalError] = useState<string | null>(null);
   const [skillQuery, setSkillQuery] = useState("");
-  const [connectorQuery, setConnectorQuery] = useState("");
+  const [activeConnectorId, setActiveConnectorId] = useState<string | null>(null);
   const [workspaceMatches, setWorkspaceMatches] = useState<WorkspaceFileEntry[]>([]);
   const [workspacePickerIndex, setWorkspacePickerIndex] = useState(0);
   const [workspacePickerOpen, setWorkspacePickerOpen] = useState(false);
@@ -134,6 +137,7 @@ export function Composer({
   const inputRef = useRef<InlineSkillComposerHandle>(null);
   const menuRef = useRef<HTMLDivElement>(null);
   const menuTriggerRef = useRef<HTMLSpanElement>(null);
+  const connectorDockRef = useRef<HTMLDivElement>(null);
   const resizeStart = useRef<{ height: number; y: number } | null>(null);
   const draftRef = useRef<InlineSkillComposerValue>(EMPTY_INLINE_SKILL_COMPOSER_VALUE);
   const draftFrameRef = useRef<number | undefined>(undefined);
@@ -194,6 +198,17 @@ export function Composer({
     document.addEventListener("pointerdown", closeMenu, true);
     return () => document.removeEventListener("pointerdown", closeMenu, true);
   }, [menuOpen, showActionSubmenu]);
+
+  useEffect(() => {
+    if (activeConnectorId === null) return;
+    const closeConnectorCard = (event: PointerEvent) => {
+      const target = event.target;
+      if (target instanceof Node && connectorDockRef.current?.contains(target)) return;
+      setActiveConnectorId(null);
+    };
+    document.addEventListener("pointerdown", closeConnectorCard, true);
+    return () => document.removeEventListener("pointerdown", closeConnectorCard, true);
+  }, [activeConnectorId]);
 
   useEffect(() => {
     localStorage.setItem("wordless.pinned-skill-ids", JSON.stringify(pinnedSkillIds));
@@ -304,7 +319,6 @@ export function Composer({
   const selectedSkillTokens = Math.ceil(selectedSkills.reduce((total, skill) => total + skill.contentBytes, 0) / 4);
   const skillWarning = skillContextWindow !== undefined && selectedSkillTokens > Math.floor(skillContextWindow * 0.2);
   const availableConnectors = connectors.filter((connector) => connector.enabled && connector.status === "ready");
-  const filteredConnectors = availableConnectors.filter((connector) => connector.name.toLowerCase().includes(connectorQuery.trim().toLowerCase()));
   const selectedConnectors = selectedConnectorIds.flatMap((id) => {
     const connector = availableConnectors.find((candidate) => candidate.id === id);
     return connector ? [connector] : [];
@@ -317,19 +331,12 @@ export function Composer({
     window.setTimeout(() => inputRef.current?.focus(), 0);
   };
 
-  const toggleConnector = (connector: ConnectorSummary) => {
-    const next = selectedConnectorIds.includes(connector.id)
-      ? selectedConnectorIds.filter((id) => id !== connector.id)
-      : [...selectedConnectorIds, connector.id];
+  const setConnectorSelected = (connectorId: string, selected: boolean) => {
+    const next = selected
+      ? [...new Set([...selectedConnectorIds, connectorId])]
+      : selectedConnectorIds.filter((id) => id !== connectorId);
     void onConnectorIdsChange?.(next);
-    setMenuOpen(false);
-    setConnectorsOpen(false);
-    window.setTimeout(() => inputRef.current?.focus(), 0);
-  };
-
-  const removeConnector = (connectorId: string) => {
-    void onConnectorIdsChange?.(selectedConnectorIds.filter((id) => id !== connectorId));
-    window.setTimeout(() => inputRef.current?.focus(), 0);
+    if (!selected) setActiveConnectorId((current) => current === connectorId ? null : current);
   };
 
   const changeToolApprovalMode = async (mode: ToolApprovalMode) => {
@@ -398,11 +405,6 @@ export function Composer({
       />
       <div className="flex min-h-0 flex-1 flex-col gap-1.5 overflow-hidden pr-0.5">
         {artifactSelection ? <div className="flex h-7 shrink-0 min-w-0 items-center gap-1.5 self-start rounded-[6px] border border-[#b8d6cb] bg-[#edf8f4] px-2 text-[#345f53] dark:border-[#416b5e] dark:bg-[#20372f] dark:text-[#bae2d3]"><Layers3 className="h-3.5 w-3.5 shrink-0" /><span className="max-w-[min(360px,calc(100vw-12rem))] truncate text-[10px] font-medium" title={artifactSelection.locator}>{artifactSelection.label}</span><button aria-label="Remove selected artifact" className="grid h-4 w-4 shrink-0 place-items-center rounded-[3px] text-[#66857b] hover:bg-[#d7eee6] hover:text-[#274f44] dark:hover:bg-[#36564b] dark:hover:text-white" disabled={interactionDisabled || running} onClick={() => onArtifactSelectionConsumed?.()} type="button"><X className="h-3 w-3" /></button></div> : null}
-        {selectedConnectors.length > 0 ? (
-          <div className="flex shrink-0 flex-wrap content-start items-start gap-1.5">
-            {selectedConnectors.map((connector) => <div className="group inline-flex h-7 shrink-0 items-center rounded-[6px] border border-[#b9ccd7] bg-[#edf5f7] px-2 font-mono text-[10px] text-[#385a67] outline-none transition-colors focus-visible:border-[#6f98a8] focus-visible:ring-2 focus-visible:ring-[#cde3e9] dark:border-[#41626c] dark:bg-[#21343a] dark:text-[#c6e4eb] dark:focus-visible:ring-[#34515a]" key={connector.id} onKeyDown={(event) => { if (!running && (event.key === "Backspace" || event.key === "Delete")) { event.preventDefault(); removeConnector(connector.id); } }} tabIndex={running ? -1 : 0}><button aria-label={`Remove ${connector.name}`} className="grid h-3.5 w-0 shrink-0 place-items-center overflow-hidden opacity-0 pointer-events-none transition-all group-focus:mr-1 group-focus:w-3.5 group-focus:opacity-100 group-focus:pointer-events-auto group-hover:mr-1 group-hover:w-3.5 group-hover:opacity-100 group-hover:pointer-events-auto hover:text-[#252624] disabled:cursor-not-allowed dark:hover:text-white" disabled={interactionDisabled || running} onClick={() => removeConnector(connector.id)} type="button"><X className="h-3 w-3" /></button><Network className="mr-1 h-3 w-3 shrink-0" /><span className="max-w-40 truncate">{connector.name}</span></div>)}
-          </div>
-        ) : null}
         <InlineSkillComposer
           ariaLabel={t("send")}
           className="min-h-[40px] w-full min-w-0 flex-1 resize-none overflow-y-auto bg-transparent px-0.5 text-[16px] font-medium leading-7 text-[#353532] caret-[#252624] outline-none placeholder:font-normal placeholder:text-[#a2a29b] selection:bg-[#dff09b] disabled:cursor-not-allowed read-only:cursor-default dark:text-foreground dark:caret-foreground dark:placeholder:text-muted-foreground dark:selection:bg-[#4a5a26]"
@@ -428,21 +430,21 @@ export function Composer({
             <Sparkles className="h-4 w-4 text-[#62625d]" /><span className="flex-1">{t("mode")}</span><ChevronRight className="h-3 w-3 text-[#898981]" />
           </button> : null}
           {onToolApprovalModeChange ? <button aria-expanded={approvalOpen} className={cn("flex w-full items-center gap-2 rounded-[7px] px-2.5 py-2 text-left text-[12px] text-[#3f3f3a] hover:bg-[#f3f3f0] dark:text-foreground dark:hover:bg-muted", approvalOpen && "bg-[#eeeeeb] dark:bg-muted")} onClick={() => showActionSubmenu("approval")} onFocus={() => showActionSubmenu("approval")} onMouseEnter={() => showActionSubmenu("approval")} type="button">
-            <ShieldCheck className={cn("h-4 w-4", toolApprovalMode === "auto" ? "text-[#a47a2a]" : "text-[#62625d]")} /><span className="min-w-0 flex-1 truncate">{locale === "zh-CN" ? "工具审批" : "Tool approval"}</span><ChevronRight className="h-3 w-3 shrink-0 text-[#898981]" />
+            <ShieldCheck className={cn("h-4 w-4", toolApprovalMode === "auto" ? "text-[#a47a2a]" : "text-[#62625d]")} /><span className="min-w-0 flex-1 truncate">{locale === "zh-CN" ? "工具审批" : "Tool Approval"}</span><ChevronRight className="h-3 w-3 shrink-0 text-[#898981]" />
           </button> : null}
           {onCompactContext ? <button className="flex w-full items-center gap-2 rounded-[7px] px-2.5 py-2 text-left text-[12px] text-[#3f3f3a] hover:bg-[#f3f3f0] disabled:cursor-not-allowed disabled:opacity-45 dark:text-foreground dark:hover:bg-muted" disabled={interactionDisabled || running || !contextCompactionAvailable} onClick={() => { setMenuOpen(false); showActionSubmenu(null); void onCompactContext(); }} onMouseEnter={() => showActionSubmenu(null)} type="button"><Archive className="h-4 w-4 shrink-0 text-[#62625d]" /><span>{t("compressContext")}</span></button> : null}
-          <button className={cn("flex w-full items-center gap-2 rounded-[7px] px-2.5 py-2 text-left text-[12px] text-[#3f3f3a] hover:bg-[#f3f3f0] dark:text-foreground dark:hover:bg-muted", skillsOpen && "bg-[#eeeeeb] dark:bg-muted")} onClick={() => showActionSubmenu("skills")} onFocus={() => showActionSubmenu("skills")} onMouseEnter={() => showActionSubmenu("skills")} type="button"><Command className="h-4 w-4 text-[#62625d]" /><span>{t("skills")}</span><ChevronRight className="ml-auto h-3 w-3 text-[#898981]" /></button>
-          <button className={cn("flex w-full items-center gap-2 rounded-[7px] px-2.5 py-2 text-left text-[12px] text-[#3f3f3a] hover:bg-[#f3f3f0] dark:text-foreground dark:hover:bg-muted", connectorsOpen && "bg-[#eeeeeb] dark:bg-muted")} onClick={() => showActionSubmenu("connectors")} onFocus={() => showActionSubmenu("connectors")} onMouseEnter={() => showActionSubmenu("connectors")} type="button"><Network className="h-4 w-4 text-[#62625d]" /><span>{t("connectors")}</span><ChevronRight className="ml-auto h-3 w-3 text-[#898981]" /></button>
+          <button className={cn("flex w-full items-center gap-2 rounded-[7px] px-2.5 py-2 text-left text-[12px] text-[#3f3f3a] hover:bg-[#f3f3f0] dark:text-foreground dark:hover:bg-muted", skillsOpen && "bg-[#eeeeeb] dark:bg-muted")} onClick={() => showActionSubmenu("skills")} onFocus={() => showActionSubmenu("skills")} onMouseEnter={() => showActionSubmenu("skills")} type="button"><img alt="" className="h-4 w-4 shrink-0 object-contain dark:invert" src={skillsIcon} /><span>{t("skills")}</span><ChevronRight className="ml-auto h-3 w-3 text-[#898981]" /></button>
+          <button className={cn("flex w-full items-center gap-2 rounded-[7px] px-2.5 py-2 text-left text-[12px] text-[#3f3f3a] hover:bg-[#f3f3f0] dark:text-foreground dark:hover:bg-muted", connectorsOpen && "bg-[#eeeeeb] dark:bg-muted")} onClick={() => showActionSubmenu("connectors")} onFocus={() => showActionSubmenu("connectors")} onMouseEnter={() => showActionSubmenu("connectors")} type="button"><img alt="" className="h-4 w-4 shrink-0 object-contain dark:invert" src={mcpIcon} /><span>{t("connectors")}</span><ChevronRight className="ml-auto h-3 w-3 text-[#898981]" /></button>
         </div>
         {modeOpen && (onInteractionModeChange || onTogglePlanMode) ? <div className="absolute left-[187px] top-0 w-[244px] rounded-[10px] border border-[#dfdfdb] bg-white p-1.5 shadow-[0_14px_34px_rgba(28,28,25,0.12)] dark:border-border dark:bg-card"><p className="px-2.5 pb-2 pt-1 text-[10px] leading-4 text-[#7f7f78] dark:text-muted-foreground">{interactionModeDescription}</p><div className="border-t border-[#ecece8] pt-1 dark:border-border">{interactionModes.map((option) => {
           const selected = effectiveInteractionMode === option.id;
           return <button aria-pressed={selected} className="flex w-full items-center gap-2 rounded-[7px] px-2.5 py-2 text-left hover:bg-[#f3f3f0] dark:hover:bg-muted" key={option.id} onClick={() => void changeInteractionMode(option.id)} type="button"><span className="min-w-0 flex-1"><span className="block text-[12px] font-medium text-[#42423d] dark:text-foreground">{option.label}</span><span className="mt-0.5 block truncate text-[10px] leading-4 text-[#85857e] dark:text-muted-foreground">{option.description}</span></span><span aria-hidden="true" className={cn("relative h-4 w-7 shrink-0 rounded-full transition-colors", selected ? "bg-[#74a92f] dark:bg-[#a6ca61]" : "bg-[#e7e7e2] dark:bg-[#484a43]")}><span className={cn("absolute top-0.5 h-3 w-3 rounded-full bg-white shadow-[0_1px_2px_rgba(0,0,0,0.16)] transition-transform", selected ? "translate-x-3.5" : "translate-x-0.5")} /></span></button>;
         })}</div></div> : null}
-        {approvalOpen && onToolApprovalModeChange ? <div className="w-[276px] rounded-[10px] border border-[#dfdfdb] bg-white p-1.5 shadow-[0_14px_34px_rgba(28,28,25,0.14)] dark:border-border dark:bg-card" role="radiogroup" aria-label={locale === "zh-CN" ? "工具审批方式" : "Tool approval mode"}>
+        {approvalOpen && onToolApprovalModeChange ? <div className="w-[276px] rounded-[10px] border border-[#dfdfdb] bg-white p-1.5 shadow-[0_14px_34px_rgba(28,28,25,0.14)] dark:border-border dark:bg-card" role="radiogroup" aria-label={locale === "zh-CN" ? "工具审批方式" : "Tool Approval mode"}>
           {approvalError ? <p className="px-2.5 pb-1 text-[10px] text-[#a0522d] dark:text-[#e5a47d]" role="alert">{approvalError}</p> : null}
           {([
             { id: "manual" as const, label: locale === "zh-CN" ? "手动审批" : "Manual approval", description: locale === "zh-CN" ? "每次工具操作都需要确认" : "Ask before each tool action" },
-            { id: "auto" as const, label: locale === "zh-CN" ? "本次自动审批" : "Auto-approve for this session", description: locale === "zh-CN" ? "普通操作自动通过，高风险操作仍需确认" : "Normal actions auto-approve; high-risk actions still ask" },
+            { id: "auto" as const, label: locale === "zh-CN" ? "本次自动审批" : "Auto-Approve for this session", description: locale === "zh-CN" ? "普通操作自动通过，高风险操作仍需确认" : "Normal actions auto-approve; high-risk actions still ask" },
           ]).map((option) => <button aria-checked={toolApprovalMode === option.id} className={cn("flex w-full items-start gap-2 rounded-[7px] px-2.5 py-2 text-left hover:bg-[#f3f3f0] dark:hover:bg-muted", toolApprovalMode === option.id && "bg-[#edf2df] dark:bg-[#313d20]")} disabled={approvalChanging} key={option.id} onClick={() => void changeToolApprovalMode(option.id)} role="radio" type="button"><span className={cn("mt-0.5 grid h-3.5 w-3.5 shrink-0 place-items-center rounded-full border text-[9px]", toolApprovalMode === option.id ? "border-[#6d8438] bg-[#6d8438] text-white" : "border-[#bdbdb6] text-transparent dark:border-muted-foreground")}>✓</span><span className="min-w-0"><span className="block text-[12px] font-medium text-[#42423d] dark:text-foreground">{option.label}</span><span className="mt-0.5 block text-[10px] leading-4 text-[#85857e] dark:text-muted-foreground">{option.description}</span></span></button>)}
         </div> : null}
         {skillsOpen ? <div className="w-[294px] rounded-[10px] border border-[#dfdfdb] bg-white p-2 shadow-[0_14px_34px_rgba(28,28,25,0.12)] dark:border-border dark:bg-card">
@@ -457,21 +459,21 @@ export function Composer({
           </div>
           <div className="mt-1 space-y-0.5 border-t border-[#ecece8] pt-1 dark:border-border"><button className="w-full rounded-[6px] px-2 py-1.5 text-left text-[11px] text-[#565650] hover:bg-[#f3f3f0] dark:text-foreground dark:hover:bg-muted" onClick={() => { setSkillsOpen(false); setMenuOpen(false); void onImportSkill?.(); }} type="button">{t("importSkill")}</button><button className="w-full rounded-[6px] px-2 py-1.5 text-left text-[11px] text-[#565650] hover:bg-[#f3f3f0] dark:text-foreground dark:hover:bg-muted" onClick={() => { setSkillsOpen(false); setMenuOpen(false); onOpenSkills?.(); }} type="button">{t("manageSkills")}</button></div>
         </div> : null}
-        {connectorsOpen ? <div className="w-[294px] rounded-[10px] border border-[#dfdfdb] bg-white p-2 shadow-[0_14px_34px_rgba(28,28,25,0.12)] dark:border-border dark:bg-card">
-          <input aria-label={t("connectors")} autoFocus className="h-8 w-full rounded-[6px] border border-[#e4e4df] bg-[#fafaf8] px-2 text-[12px] text-[#3f3f3a] outline-none placeholder:text-[#9b9b94] focus:border-[#82a6b2] dark:border-border dark:bg-muted dark:text-foreground" onChange={(event) => setConnectorQuery(event.target.value)} placeholder={t("connectors")} value={connectorQuery} />
-          <div className="mt-1 max-h-[232px] overflow-y-auto">
-            {filteredConnectors.map((connector) => {
+        {connectorsOpen ? <div className="w-[248px] rounded-[10px] border border-[#dfdfdb] bg-white p-1.5 shadow-[0_14px_34px_rgba(28,28,25,0.12)] dark:border-border dark:bg-card">
+          <div className="max-h-[248px] overflow-y-auto">
+            {availableConnectors.map((connector) => {
               const selected = selectedConnectorIds.includes(connector.id);
-              return <button className="flex w-full min-w-0 items-start gap-2 rounded-[7px] px-2 py-2 text-left hover:bg-[#f3f3f0] dark:hover:bg-muted" key={connector.id} onClick={() => toggleConnector(connector)} type="button"><span className={cn("mt-0.5 grid h-3.5 w-3.5 shrink-0 place-items-center rounded-[3px] border text-[10px]", selected ? "border-[#456e7b] bg-[#4f7f8c] text-white" : "border-[#bdbdb6] text-transparent dark:border-muted-foreground")}>✓</span><Network className="mt-0.5 h-3.5 w-3.5 shrink-0 text-[#5d7f8a]" /><span className="min-w-0"><span className="block truncate text-[12px] font-semibold text-[#3f3f3a] dark:text-foreground">{connector.name}</span><span className="mt-0.5 block truncate font-mono text-[10px] leading-4 text-[#86867e] dark:text-muted-foreground">{connector.tools.length} tools · {connector.resources.length} resources · {connector.prompts.length} prompts</span></span></button>;
+              return <div className="flex h-9 w-full min-w-0 items-center gap-2 rounded-[7px] px-2 hover:bg-[#f3f3f0] dark:hover:bg-muted" key={connector.id}><ConnectorIcon className="h-4 w-4 shrink-0" templateId={connector.templateId} transport={connector.transport} /><span className="min-w-0 flex-1 truncate text-[12px] font-medium text-[#3f3f3a] dark:text-foreground">{connector.name}</span><Switch aria-label={`${selected ? "Disable" : "Enable"} ${connector.name}`} checked={selected} disabled={interactionDisabled || running} onCheckedChange={(checked) => setConnectorSelected(connector.id, checked)} /></div>;
             })}
-            {filteredConnectors.length === 0 ? <p className="px-2 py-3 text-[11px] text-[#8b8b84] dark:text-muted-foreground">No ready connectors</p> : null}
+            {availableConnectors.length === 0 ? <p className="px-2 py-3 text-[11px] text-[#8b8b84] dark:text-muted-foreground">{locale === "zh-CN" ? "没有已连接并启用的 MCP" : "No connected and enabled MCP servers"}</p> : null}
           </div>
-          <div className="mt-1 border-t border-[#ecece8] pt-1 dark:border-border"><button className="w-full rounded-[6px] px-2 py-1.5 text-left text-[11px] text-[#565650] hover:bg-[#f3f3f0] dark:text-foreground dark:hover:bg-muted" onClick={() => { setConnectorsOpen(false); setMenuOpen(false); onOpenSkills?.(); }} type="button">管理连接器</button></div>
+          <div className="mt-1 border-t border-[#ecece8] pt-1 dark:border-border"><button className="flex w-full items-center gap-2 rounded-[6px] px-2 py-2 text-left text-[11px] font-medium text-[#565650] hover:bg-[#f3f3f0] dark:text-foreground dark:hover:bg-muted" onClick={() => { setConnectorsOpen(false); setMenuOpen(false); onOpenSkills?.(); }} type="button"><ArrowUpRight className="h-3.5 w-3.5" />{locale === "zh-CN" ? "选择更多连接器" : "Choose more connectors"}</button></div>
         </div> : null}
       </div> : null}
       <div className={cn("flex shrink-0 items-center justify-between gap-3", compact ? "mt-1.5 px-0.5" : "mt-3")}>
         <div className="flex min-w-0 items-center gap-1.5">
-          {hasActionMenu ? <span className="inline-flex" ref={menuTriggerRef}><Button aria-expanded={menuOpen} aria-label={t("mode")} className={cn("text-[#686862]", menuOpen && "bg-[#eeeeeb] text-[#353532] dark:bg-muted dark:text-foreground")} disabled={interactionDisabled || running} onClick={() => { setMenuOpen((current) => !current); showActionSubmenu(null); }} size="icon" type="button" variant="ghost"><span className="relative grid h-4 w-4 place-items-center"><Plus className={cn("absolute h-4 w-4 transition-all duration-200", menuOpen ? "rotate-90 scale-75 opacity-0" : "rotate-0 scale-100 opacity-100")} /><X className={cn("absolute h-4 w-4 transition-all duration-200", menuOpen ? "rotate-0 scale-100 opacity-100" : "-rotate-90 scale-75 opacity-0")} /></span></Button></span> : null}
+          {hasActionMenu ? <span className="inline-flex" ref={menuTriggerRef}><Button aria-expanded={menuOpen} aria-label={t("mode")} className={cn("text-[#686862]", menuOpen && "bg-[#eeeeeb] text-[#353532] dark:bg-muted dark:text-foreground")} disabled={interactionDisabled || running} onClick={() => { setActiveConnectorId(null); setMenuOpen((current) => !current); showActionSubmenu(null); }} size="icon" type="button" variant="ghost"><span className="relative grid h-4 w-4 place-items-center"><Plus className={cn("absolute h-4 w-4 transition-all duration-200", menuOpen ? "rotate-90 scale-75 opacity-0" : "rotate-0 scale-100 opacity-100")} /><X className={cn("absolute h-4 w-4 transition-all duration-200", menuOpen ? "rotate-0 scale-100 opacity-100" : "-rotate-90 scale-75 opacity-0")} /></span></Button></span> : null}
+          {selectedConnectors.length > 0 ? <div className="flex min-w-0 items-center gap-1" ref={connectorDockRef}>{selectedConnectors.map((connector) => <div className="relative shrink-0" key={connector.id}><Tooltip><TooltipTrigger asChild><button aria-expanded={activeConnectorId === connector.id} aria-label={connector.name} className={cn("grid h-7 w-7 place-items-center rounded-[6px] text-[#5d5d57] transition-colors hover:bg-[#efefeb] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring dark:text-foreground dark:hover:bg-muted", activeConnectorId === connector.id && "bg-[#e9e9e5] dark:bg-muted")} onClick={() => { setMenuOpen(false); showActionSubmenu(null); setActiveConnectorId((current) => current === connector.id ? null : connector.id); }} type="button"><ConnectorIcon className="h-4 w-4" templateId={connector.templateId} transport={connector.transport} /></button></TooltipTrigger><TooltipContent>{connector.name}</TooltipContent></Tooltip>{activeConnectorId === connector.id ? <div className="absolute bottom-[calc(100%+9px)] left-0 z-40 w-[240px] overflow-hidden rounded-[11px] border border-[#deded9] bg-white shadow-[0_14px_34px_rgba(28,28,25,0.14)] dark:border-border dark:bg-card"><div className="flex h-11 min-w-0 items-center gap-2.5 px-3"><ConnectorIcon className="h-4 w-4 shrink-0" templateId={connector.templateId} transport={connector.transport} /><span className="min-w-0 flex-1 truncate text-[12px] font-medium text-[#33332f] dark:text-foreground">{connector.name}</span><Switch aria-label={`Disable ${connector.name}`} checked disabled={interactionDisabled || running} onCheckedChange={(checked) => setConnectorSelected(connector.id, checked)} /></div><div className="border-t border-[#ecece7] p-1.5 dark:border-border"><button className="flex w-full items-center gap-2 rounded-[7px] px-2 py-2 text-left text-[11px] font-medium text-[#565650] hover:bg-[#f3f3f0] dark:text-foreground dark:hover:bg-muted" onClick={() => { setActiveConnectorId(null); setMenuOpen(true); showActionSubmenu("connectors"); }} type="button"><ArrowUpRight className="h-3.5 w-3.5" />{locale === "zh-CN" ? "选择更多连接器" : "Choose more connectors"}</button></div></div> : null}</div>)}</div> : null}
           {showAccessControl && onAccessLevelChange ? <AccessPicker disabled={interactionDisabled || running} onChange={onAccessLevelChange} value={accessLevel} /> : null}
           {effectiveInteractionMode !== "default" ? <><span className="hidden h-4 w-px bg-[#e1e1dc] sm:block" /><button aria-label={locale === "zh-CN" ? "退出当前模式" : "Exit current mode"} className="flex items-center gap-1 rounded-md px-1.5 py-1.5 text-[10px] font-medium text-[#4f4f49] transition-colors hover:bg-[#f1f1ee] disabled:cursor-not-allowed disabled:opacity-50 dark:text-foreground dark:hover:bg-muted" disabled={interactionDisabled || running} onClick={() => { if (onInteractionModeChange) void Promise.resolve(onInteractionModeChange("default")).catch(() => {}); else onTogglePlanMode?.(); }} type="button">{effectiveInteractionMode === "plan" ? <img alt="" className="h-3.5 w-3.5 shrink-0 object-contain" src={planIcon} /> : <CircleHelp className="h-3.5 w-3.5 shrink-0 text-[#667d2f] dark:text-[#d1e689]" />}{effectiveInteractionMode === "plan" ? t("plan") : locale === "zh-CN" ? "澄清" : "Clarify"}</button></> : null}
           {showWorkspacePicker && onOpenWorkspacePicker ? <Button className="hidden min-w-0 text-[#64645e] sm:inline-flex" disabled={interactionDisabled || running || workspaceLocked} onClick={onOpenWorkspacePicker} size="sm" type="button" variant="ghost">

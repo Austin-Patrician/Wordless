@@ -707,26 +707,35 @@ class AgentHarnessDriverSession implements AgentDriverSession {
           toolName: event.toolName,
           input: event.input,
         };
-        let resolveApproval: ((resolution: OperationApprovalResolution) => void) | undefined;
-        const pendingResolution = new Promise<OperationApprovalResolution>((resolve) => {
-          resolveApproval = resolve;
-          this.pendingApprovals.set(request.approvalId, { messageId, request, resolve });
-        });
-        try {
+        const automaticallyApproved = this.toolApprovalMode === "auto" && request.severity === "normal";
+        let resolution: OperationApprovalResolution;
+        if (automaticallyApproved) {
           await (this.context.session as unknown as CustomEntrySession).appendCustomEntry(
             OPERATION_APPROVAL_JOURNAL_TYPE,
             { callId: event.toolCallId, approval: request } satisfies PersistedOperationApproval,
           );
-        } catch (cause) {
-          this.pendingApprovals.delete(request.approvalId);
-          resolveApproval?.({ approvalId: request.approvalId, approved: false, feedback: "Approval request could not be persisted" });
-          throw cause;
+          resolution = { approvalId: request.approvalId, approved: true };
+        } else {
+          let resolveApproval: ((value: OperationApprovalResolution) => void) | undefined;
+          const pendingResolution = new Promise<OperationApprovalResolution>((resolve) => {
+            resolveApproval = resolve;
+            this.pendingApprovals.set(request.approvalId, { messageId, request, resolve });
+          });
+          try {
+            await (this.context.session as unknown as CustomEntrySession).appendCustomEntry(
+              OPERATION_APPROVAL_JOURNAL_TYPE,
+              { callId: event.toolCallId, approval: request } satisfies PersistedOperationApproval,
+            );
+          } catch (cause) {
+            this.pendingApprovals.delete(request.approvalId);
+            resolveApproval?.({ approvalId: request.approvalId, approved: false, feedback: "Approval request could not be persisted" });
+            throw cause;
+          }
+          if (this.pendingApprovals.has(request.approvalId)) {
+            this.emit({ type: "approval.requested", messageId, approval: request });
+          }
+          resolution = await pendingResolution;
         }
-        this.emit({ type: "approval.requested", messageId, approval: request });
-        if (this.toolApprovalMode === "auto" && request.severity === "normal") {
-          this.resolvePendingApproval(request.approvalId, true);
-        }
-        const resolution = await pendingResolution;
         const persisted: PersistedOperationApproval = { callId: event.toolCallId, approval: request, resolution };
         this.approvalResults.set(event.toolCallId, persisted);
         await (this.context.session as unknown as CustomEntrySession).appendCustomEntry(OPERATION_APPROVAL_JOURNAL_TYPE, persisted);
@@ -1239,10 +1248,12 @@ export function createAgentHarnessDriver(options: AgentHarnessDriverOptions): Ag
 export function createGenericAgentDriver(options: {
   createExtensionHost?: AgentExtensionHostFactory;
   createTools?: (context: AgentDriverSessionContext) => AgentTool[];
+  preflightOperation?: AgentHarnessDriverOptions["preflightOperation"];
 } = {}): AgentDriver {
   return createAgentHarnessDriver({
     id: "generic",
     createTools: options.createTools ?? (() => []),
     createExtensionHost: options.createExtensionHost,
+    preflightOperation: options.preflightOperation,
   });
 }

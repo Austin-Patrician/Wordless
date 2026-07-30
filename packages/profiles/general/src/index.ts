@@ -3,11 +3,11 @@ import type { ProfileDefinition } from "@wordless/profile-sdk";
 export const generalProfile: ProfileDefinition = {
   reference: { id: "general", version: "1" },
   driverId: "generic",
-  modelRequirements: { requiresToolUse: false },
+  modelRequirements: { requiresToolUse: true },
   systemPrompt:
-    "You are Wordless, a practical general-purpose assistant. Be clear, accurate, and concise. Use the local workspace only when it is relevant to the task.",
-  activeToolNames: [],
-  capabilityIds: ["filesystem", "browser"],
+    "You are Wordless, a practical general-purpose agent. Be clear, accurate, and concise. Use workspace tools when they help complete the task, inspect relevant files before changing them, and respect the configured access and approval policy.",
+  activeToolNames: ["read", "bash", "edit", "write", "grep", "find", "ls"],
+  capabilityIds: ["filesystem", "shell", "browser"],
   skills: [],
   artifactKinds: ["report", "image"],
   contextCompactionInstructions:

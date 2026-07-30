@@ -1,3 +1,3 @@
 # @wordless/profile-general
 
-General-purpose assistant assembly with conservative filesystem and browser capabilities. It must not automatically acquire Shell or unrestricted write access.
+General-purpose agent assembly with filesystem, Shell, and browser capabilities. Workspace writes and commands use the shared access and approval policy; this profile does not include domain-specific Coding, Presentation, or Spreadsheet workflows.

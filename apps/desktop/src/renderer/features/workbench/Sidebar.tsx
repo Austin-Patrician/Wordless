@@ -7,6 +7,7 @@ import { usePreferences } from "../../shared/preferences";
 import { useRuntime, useRuntimeClient } from "../../shared/runtime";
 import folderIcon from "../../../icons/common-icons/floder.svg";
 import wordlessIcon from "../../../icons/common-icons/wordless.png";
+import { AgentEntryIcon } from "./AgentEntryIcon";
 import { SessionSearchDialog } from "./SessionSearchDialog";
 
 type SidebarProps = {
@@ -44,6 +45,7 @@ function relativeTime(timestamp: number, locale: "zh-CN" | "en-US"): string {
 type SessionRowProps = {
   active: boolean;
   editingTitle: string | null;
+  entryIconKey?: string;
   onDelete: (session: SessionRecord) => void;
   onEditCancel: () => void;
   onEditSave: () => void;
@@ -57,9 +59,20 @@ type SessionRowProps = {
   t: ReturnType<typeof usePreferences>["t"];
 };
 
-function SessionRow({ active, editingTitle, onDelete, onEditCancel, onEditSave, onEditTitleChange, onOpen, onOpenFolder, onRename, onSetPinned, session, timeLabel, t }: SessionRowProps) {
+function SessionRow({ active, editingTitle, entryIconKey, onDelete, onEditCancel, onEditSave, onEditTitleChange, onOpen, onOpenFolder, onRename, onSetPinned, session, timeLabel, t }: SessionRowProps) {
   const editing = editingTitle !== null;
   const renameInputRef = useRef<HTMLInputElement>(null);
+  const rowClassName = editing
+    ? "bg-white shadow-[0_1px_2px_rgba(0,0,0,0.04)] dark:bg-[#2a2c22]"
+    : active
+      ? "bg-[#edf4d9] text-[#39471d] shadow-[0_1px_2px_rgba(59,74,29,0.08)] dark:bg-[#303b1d] dark:text-[#e5f6b8]"
+      : "hover:bg-[#e7e7e3] dark:hover:bg-[#282a21]";
+  const contentClassName = active && !editing
+    ? "text-[#39471d] dark:text-[#e5f6b8]"
+    : "text-[#4d4d48] dark:text-muted-foreground";
+  const timeClassName = active && !editing
+    ? "text-[#73834b] dark:text-[#bed18f]"
+    : "text-[#a1a19a] dark:text-muted-foreground";
 
   useEffect(() => {
     if (!editing) return;
@@ -71,11 +84,12 @@ function SessionRow({ active, editingTitle, onDelete, onEditCancel, onEditSave, 
   }, [editing]);
 
   return (
-    <div className={`group relative flex min-w-0 items-center rounded-[8px] ${active || editing ? "bg-white shadow-[0_1px_2px_rgba(0,0,0,0.04)] dark:bg-[#2a2c22]" : "hover:bg-[#e7e7e3] dark:hover:bg-[#282a21]"}`}>
-      <div className="flex h-8 min-w-0 flex-1 items-center gap-2 px-3 text-left text-[12px] text-[#4d4d48] dark:text-muted-foreground">
-        {session.pinnedAt !== null ? <Pin className="h-3 w-3 shrink-0 text-[#738847]" /> : <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-accent" />}
+    <div className={`group relative flex min-w-0 items-center rounded-[8px] ${rowClassName}`}>
+      <div className={`flex h-8 min-w-0 flex-1 items-center gap-2 px-3 text-left text-[12px] ${contentClassName}`}>
+        <AgentEntryIcon className={active ? "opacity-100" : "opacity-70 transition-opacity group-hover:opacity-100"} iconKey={entryIconKey} />
         {editing ? <input className="h-5 min-w-0 flex-1 rounded-[3px] border border-[#6f6f6a] bg-white px-1 text-[12px] text-[#242421] outline-none dark:bg-card dark:text-foreground" maxLength={120} onBlur={onEditCancel} onChange={(event) => onEditTitleChange(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); onEditSave(); } if (event.key === "Escape") { event.preventDefault(); onEditCancel(); } }} ref={renameInputRef} value={editingTitle} /> : <button className="min-w-0 flex-1 truncate text-left outline-none focus-visible:ring-2 focus-visible:ring-ring" onClick={() => onOpen(session)} type="button">{session.title}</button>}
-        <span className={`shrink-0 pr-1 font-mono text-[10px] text-[#a1a19a] dark:text-muted-foreground ${editing ? "opacity-100" : "group-hover:opacity-0"}`}>{timeLabel}</span>
+        {session.pinnedAt !== null && !editing ? <Pin aria-label={t("pinSession")} className="h-2.5 w-2.5 shrink-0 text-[#738847] dark:text-[#bad47a]" /> : null}
+        <span className={`shrink-0 pr-1 font-mono text-[10px] ${timeClassName} ${editing ? "opacity-100" : "group-hover:opacity-0"}`}>{timeLabel}</span>
       </div>
       {!editing ? <DropdownMenu>
         <DropdownMenuTrigger asChild>
@@ -141,6 +155,8 @@ export function Sidebar({ collapsed, mediaActive, onNewThread, onOpenMedia, onOp
   const [sessionSearchOpen, setSessionSearchOpen] = useState(false);
   const sessions = (snapshot?.sessions ?? []).filter((session) => session.workbenchId !== "media-canvas");
   const workspaces = snapshot?.workspaces ?? [];
+  const entries = snapshot?.entries ?? [];
+  const entryIconKeys = useMemo(() => new Map(entries.map((entry) => [entry.id, entry.iconKey])), [entries]);
   const selectedSession = sessions.find((session) => session.id === selectedSessionId);
   const recentSessions = useMemo(() => sortSessions(sessions.filter((session) => session.workspaceId === null)), [sessions]);
   const workspaceGroups = useMemo(
@@ -217,7 +233,7 @@ export function Sidebar({ collapsed, mediaActive, onNewThread, onOpenMedia, onOp
     { id: "projects", label: t("projects"), icon: Folder },
   ];
 
-  const sessionRow = (session: SessionRecord) => <SessionRow active={selectedSessionId === session.id} editingTitle={renaming?.id === session.id ? title : null} key={session.id} onDelete={(candidate) => { setDeleteError(null); setDeleting(candidate); }} onEditCancel={() => setRenaming(null)} onEditSave={() => void saveRename()} onEditTitleChange={setTitle} onOpen={openSession} onOpenFolder={(candidate) => void run(async () => await client.openSessionFolder(candidate.id))} onRename={beginRename} onSetPinned={(candidate, pinned) => void run(async () => await client.setSessionPinned(candidate.id, pinned))} session={session} t={t} timeLabel={relativeTime(session.updatedAt, locale)} />;
+  const sessionRow = (session: SessionRecord) => <SessionRow active={selectedSessionId === session.id} editingTitle={renaming?.id === session.id ? title : null} entryIconKey={entryIconKeys.get(session.entryId)} key={session.id} onDelete={(candidate) => { setDeleteError(null); setDeleting(candidate); }} onEditCancel={() => setRenaming(null)} onEditSave={() => void saveRename()} onEditTitleChange={setTitle} onOpen={openSession} onOpenFolder={(candidate) => void run(async () => await client.openSessionFolder(candidate.id))} onRename={beginRename} onSetPinned={(candidate, pinned) => void run(async () => await client.setSessionPinned(candidate.id, pinned))} session={session} t={t} timeLabel={relativeTime(session.updatedAt, locale)} />;
 
   return (
     <aside className={`hidden h-full min-h-0 shrink-0 flex-col border-r border-border bg-[var(--wordless-shell-sidebar)] py-4 transition-[width] duration-200 lg:flex ${collapsed ? "w-[58px] px-2" : "w-[238px] px-3"}`}>
@@ -246,7 +262,7 @@ export function Sidebar({ collapsed, mediaActive, onNewThread, onOpenMedia, onOp
       <div className={`mt-auto flex shrink-0 items-center ${collapsed ? "justify-center" : "justify-between px-2"}`}><button className="flex min-w-0 items-center gap-2 rounded-lg p-1.5 text-left hover:bg-muted" onClick={collapsed ? onToggle : onOpenSettings} type="button"><span className="grid h-7 w-7 shrink-0 place-items-center rounded-full bg-[#d9efaa] text-[10px] font-extrabold text-[#314008]">MA</span>{!collapsed ? <span className="truncate text-xs font-semibold">Mina Ahn</span> : null}</button>{!collapsed ? <div className="flex gap-1"><Button aria-label={t("settings")} onClick={onOpenSettings} size="icon" type="button" variant="ghost"><Settings className="h-4 w-4" /></Button><Button aria-label={t("notifications")} size="icon" type="button" variant="ghost"><Bell className="h-4 w-4" /></Button></div> : null}</div>
 
       <SessionDeleteConfirm error={deleteError} onCancel={() => { setDeleteError(null); setDeleting(null); }} onConfirm={() => void confirmDelete()} saving={saving} session={deleting} t={t} />
-      <SessionSearchDialog onOpenChange={setSessionSearchOpen} onSelectSession={openSession} open={sessionSearchOpen} sessions={sessions} workspaces={workspaces} />
+      <SessionSearchDialog entries={entries} onOpenChange={setSessionSearchOpen} onSelectSession={openSession} open={sessionSearchOpen} sessions={sessions} workspaces={workspaces} />
       <SidebarActionNotice message={actionError} onDismiss={() => setActionError(null)} />
     </aside>
   );

@@ -432,7 +432,7 @@ export function registerRuntimeIpc(runtime: WordlessRuntime, appearanceAssets: A
   });
   ipcMain.handle("wordless:connectors:save", async (_event, payload: unknown) => {
     const input = parsePayload<{ configuration: Parameters<WordlessRuntime["saveConnector"]>[0] }>(Type.Object({ configuration: ConnectorConfigurationSchema }), payload);
-    await runtime.saveConnector(input.configuration);
+    return await runtime.saveConnector(input.configuration);
   });
   ipcMain.handle("wordless:connectors:test", async (_event, payload: unknown) => {
     const input = parsePayload<{ connectorId: string }>(ConnectorIdSchema, payload);

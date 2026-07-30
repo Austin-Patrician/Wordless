@@ -7,7 +7,8 @@ import { subagentExtension } from "@wordless/agent-extension-subagent";
 import { createCodingAgentDriver } from "@wordless/agent-driver-coding";
 import { createPresentationAgentDriver } from "@wordless/agent-driver-presentation";
 import { createSpreadsheetAgentDriver } from "@wordless/agent-driver-spreadsheet";
-import { createHeadlessReadOnlyTools } from "@wordless/coding-agent";
+import { preflightWorkspaceOperation } from "@wordless/agent-workspace-policy";
+import { createHeadlessCodingTools } from "@wordless/coding-agent";
 import { createGenericAgentDriver } from "@wordless/agent-driver-generic";
 import { createAgentDriverRegistry } from "@wordless/agent-driver-sdk";
 import { codingProfile } from "@wordless/profile-coding";
@@ -41,7 +42,10 @@ export function createDesktopRuntime(userData: string, office: OfficeCliService)
     profiles: createProfileRegistry([generalProfile, codingProfile, pptProfile, excelProfile]),
     extensions,
     drivers: createAgentDriverRegistry([
-      createGenericAgentDriver({ createTools: (context) => createHeadlessReadOnlyTools(context.env) }),
+      createGenericAgentDriver({
+        createTools: (context) => createHeadlessCodingTools(context.env),
+        preflightOperation: preflightWorkspaceOperation,
+      }),
       createCodingAgentDriver({ createExtensionHost: extensions }),
       createPresentationAgentDriver(office),
       createSpreadsheetAgentDriver(office),

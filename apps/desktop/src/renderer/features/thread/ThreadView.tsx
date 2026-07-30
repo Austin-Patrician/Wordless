@@ -361,7 +361,7 @@ function compactionFailureMessage(cause: unknown): string {
     .trim();
 }
 
-function AssistantMessageBlocks({ message, onHandoffClarification, onLoadToolOutput, onResolveApproval, onResolveClarificationQuestion, onResolveUserRequest, canPlan, workbenchId }: { message: ConversationMessage; onHandoffClarification: (interactionMode: "default" | "clarify" | "plan") => Promise<void>; onLoadToolOutput: (callId: string) => Promise<void>; onResolveApproval: (approvalId: string, approved: boolean, feedback?: string) => void; onResolveClarificationQuestion: (callId: string, value: string | boolean) => Promise<void>; onResolveUserRequest: (requestId: string, resolution: { status: "submitted" | "cancelled"; answers?: Record<string, UserRequestAnswer>; feedback?: string }) => void; canPlan: boolean; workbenchId: WorkbenchId }) {
+function AssistantMessageBlocks({ clarificationHandoffAvailable, message, onHandoffClarification, onLoadToolOutput, onResolveApproval, onResolveClarificationQuestion, onResolveUserRequest, canPlan, workbenchId }: { clarificationHandoffAvailable: boolean; message: ConversationMessage; onHandoffClarification: (interactionMode: "default" | "clarify" | "plan") => Promise<void>; onLoadToolOutput: (callId: string) => Promise<void>; onResolveApproval: (approvalId: string, approved: boolean, feedback?: string) => void; onResolveClarificationQuestion: (callId: string, value: string | boolean) => Promise<void>; onResolveUserRequest: (requestId: string, resolution: { status: "submitted" | "cancelled"; answers?: Record<string, UserRequestAnswer>; feedback?: string }) => void; canPlan: boolean; workbenchId: WorkbenchId }) {
   const rendered: ReactNode[] = [];
   for (let index = 0; index < message.blocks.length; index += 1) {
     const block = message.blocks[index]!;
@@ -376,7 +376,7 @@ function AssistantMessageBlocks({ message, onHandoffClarification, onLoadToolOut
         <div className="mt-4 divide-y divide-[#e7e7e2] border-y border-[#e7e7e2] dark:divide-border dark:border-border" data-thread-search-exclude key={`tools-${tools[0]?.callId}`}>
           {tools.map((tool) => {
             const ToolActivity = workbenchRendererRegistry.resolveTool(workbenchId, tool.name);
-            return <ToolActivity block={tool} canPlan={canPlan} key={tool.callId} onHandoffClarification={onHandoffClarification} onLoadToolOutput={onLoadToolOutput} onResolveApproval={onResolveApproval} onResolveClarificationQuestion={onResolveClarificationQuestion} onResolveUserRequest={onResolveUserRequest} />;
+            return <ToolActivity block={tool} canPlan={canPlan} clarificationHandoffAvailable={clarificationHandoffAvailable} key={tool.callId} onHandoffClarification={onHandoffClarification} onLoadToolOutput={onLoadToolOutput} onResolveApproval={onResolveApproval} onResolveClarificationQuestion={onResolveClarificationQuestion} onResolveUserRequest={onResolveUserRequest} />;
           })}
         </div>,
       );
@@ -479,7 +479,7 @@ function AssistantMessageBody({ messages, onHandoffClarification, onLoadToolOutp
     <article>
       <AssistantIdentityHeader />
       <div className="mt-2 min-w-0">
-        {messages.map((candidate, index) => <section className={`min-h-px outline-none focus-visible:ring-2 focus-visible:ring-ring ${index > 0 ? "mt-5" : ""}`} data-thread-message-id={candidate.id} key={candidate.id} tabIndex={-1}><AssistantMessageBlocks canPlan={canPlan} message={candidate} onHandoffClarification={onHandoffClarification} onLoadToolOutput={onLoadToolOutput} onResolveApproval={onResolveApproval} onResolveClarificationQuestion={onResolveClarificationQuestion} onResolveUserRequest={onResolveUserRequest} workbenchId={workbenchId} /><AssistantResponseError message={candidate} /></section>)}
+        {messages.map((candidate, index) => <section className={`min-h-px outline-none focus-visible:ring-2 focus-visible:ring-ring ${index > 0 ? "mt-5" : ""}`} data-thread-message-id={candidate.id} key={candidate.id} tabIndex={-1}><AssistantMessageBlocks canPlan={canPlan} clarificationHandoffAvailable={showFooter && !isStreaming && !hasPendingInteraction && candidate.id === message.id} message={candidate} onHandoffClarification={onHandoffClarification} onLoadToolOutput={onLoadToolOutput} onResolveApproval={onResolveApproval} onResolveClarificationQuestion={onResolveClarificationQuestion} onResolveUserRequest={onResolveUserRequest} workbenchId={workbenchId} /><AssistantResponseError message={candidate} /></section>)}
         {showRunStatus && runPresentation ? <AssistantRunStatus activity={runPresentation.activity} /> : null}
         {showFooter && !isStreaming && !hasPendingInteraction && planMode === "planning" ? <PlanResultActions onResolve={onResolvePlanResult} /> : null}
         {showFooter && !isStreaming && !hasPendingInteraction ? <div className="mt-4 flex items-center gap-2 text-[#898981]">
@@ -935,6 +935,9 @@ export function ThreadView({ artifactSelection, initialPendingTurn, messageNavig
     const view = await client.getSessionView(sessionId);
     setSnapshot((current) => current ? { ...current, session: view.session, messages: messagesFromHistoryPage(view.history), contextUsage: view.contextUsage, turnUsage: view.turnUsage, extensions: view.extensions } : snapshotFromSessionView(view));
     setHistory(loadedHistoryFromView(view));
+    if (nextMode === "default") {
+      await send([{ type: "text", text: "Implement the clarified list above. Follow the confirmed goals, constraints, and decisions, complete the work, and verify the result." }], []);
+    }
   };
 
   const setConnectors = async (connectorIds: string[]) => {

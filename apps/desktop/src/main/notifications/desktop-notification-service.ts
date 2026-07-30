@@ -42,22 +42,37 @@ function focusWordless(): void {
 }
 
 export class DesktopNotificationService {
-  private pendingActions = 0;
+  private readonly pendingActions = new Set<string>();
 
   clearBadge(): void {
-    this.pendingActions = 0;
+    this.pendingActions.clear();
     if (process.platform === "darwin" && app.dock) app.dock.setBadge("");
   }
 
   private updateBadge(): void {
-    if (process.platform === "darwin" && app.dock) app.dock.setBadge(this.pendingActions > 0 ? String(this.pendingActions) : "");
+    if (process.platform === "darwin" && app.dock) app.dock.setBadge(this.pendingActions.size > 0 ? String(this.pendingActions.size) : "");
   }
 
   handle(event: RuntimeEventEnvelope, preferences: AppPreferences): void {
+    const sessionId = event.sessionId ?? "global";
+    if (event.event.type === "approval.resolved") {
+      this.pendingActions.delete(`${sessionId}:approval:${event.event.resolution.approvalId}`);
+      this.updateBadge();
+      return;
+    }
+    if (event.event.type === "user-request.resolved") {
+      this.pendingActions.delete(`${sessionId}:user-request:${event.event.resolution.requestId}`);
+      this.updateBadge();
+      return;
+    }
     const kind = notificationKind(event);
     if (!kind || !isEnabled(preferences, kind)) return;
     if (kind === "action-required") {
-      this.pendingActions += 1;
+      if (event.event.type === "approval.requested") {
+        this.pendingActions.add(`${sessionId}:approval:${event.event.approval.approvalId}`);
+      } else if (event.event.type === "user-request.requested") {
+        this.pendingActions.add(`${sessionId}:user-request:${event.event.request.requestId}`);
+      }
       this.updateBadge();
     }
     if (hasFocusedWindow() || !Notification.isSupported()) return;

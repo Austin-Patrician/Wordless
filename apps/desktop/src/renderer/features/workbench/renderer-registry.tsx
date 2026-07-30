@@ -37,6 +37,7 @@ export type ToolActivityProps = {
     resolution: { status: "submitted" | "cancelled"; answers?: Record<string, string | string[] | boolean>; feedback?: string },
   ) => void | Promise<void>;
   canPlan?: boolean;
+  clarificationHandoffAvailable?: boolean;
   onHandoffClarification?: (interactionMode: "default" | "clarify" | "plan") => void | Promise<void>;
   onResolveClarificationQuestion?: (callId: string, value: string | boolean) => void | Promise<void>;
 };
@@ -413,7 +414,7 @@ export function createWorkbenchRendererRegistry(
 export const workbenchRendererRegistry = createWorkbenchRendererRegistry(
   [
     { toolName: "ask_clarifying_question", component: ({ block, onResolveClarificationQuestion }) => <ClarificationQuestionToolActivity block={block} onResolveQuestion={onResolveClarificationQuestion} /> },
-    { toolName: "complete_clarification", component: ({ block, canPlan, onHandoffClarification }) => <ClarificationBriefToolActivity block={block} canPlan={canPlan} onHandoff={onHandoffClarification} /> },
+    { toolName: "complete_clarification", component: ({ block, clarificationHandoffAvailable, onHandoffClarification }) => <ClarificationBriefToolActivity block={block} handoffAvailable={clarificationHandoffAvailable} onHandoff={onHandoffClarification} /> },
     { toolName: "request_user_input", component: UserRequestToolActivity },
     { toolName: "delegate_task", component: SubagentToolActivity },
     { workbenchId: "code", component: CodeToolActivity },

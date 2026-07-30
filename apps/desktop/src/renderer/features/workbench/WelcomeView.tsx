@@ -3,20 +3,15 @@ import { useEffect, useMemo, useState } from "react";
 import type { AgentInteractionModeId, ModelReference, PresentationGenerationMode, SessionAccessLevel, ToolApprovalMode, UserPromptPart, WorkbenchEntryDefinition, WorkbenchMode } from "@wordless/domain";
 import type { PresentationTemplate } from "@wordless/protocol";
 import codeDevelopmentIcon from "../../../icons/common-icons/代码开发.svg";
-import spreadsheetIcon from "../../../icons/common-icons/电子表格.svg";
-import everydayOfficeIcon from "../../../icons/common-icons/日常办公.svg";
-import dataAnalysisIcon from "../../../icons/common-icons/数据分析.svg";
-import websiteIcon from "../../../icons/common-icons/网站.svg";
 import everydayWorkIcon from "../../../icons/common-icons/everydaywork.svg";
-import innovationIcon from "../../../icons/common-icons/innovation.svg";
 import uiDesignIcon from "../../../icons/common-icons/ui-design.svg";
-import presentationIcon from "../../../icons/common-icons/presentation.svg";
 import { usePreferences } from "../../shared/preferences";
 import { useRuntime, useRuntimeClient } from "../../shared/runtime";
 import { Composer, type WorkspaceAttachment } from "../thread/Composer";
 import { createPendingThreadTurn, createUserMessageSubmission, type PendingThreadTurn } from "../thread/pending-thread-turn";
 import { ModelPicker } from "./ModelPicker";
 import { WorkspacePicker } from "./WorkspacePicker";
+import { AgentEntryIcon } from "./AgentEntryIcon";
 
 type WelcomeViewProps = {
   onOpenModels: () => void;
@@ -30,19 +25,6 @@ const modeOptions: { icon: string; id: WorkbenchMode; label: string }[] = [
   { id: "code", label: "Code", icon: codeDevelopmentIcon },
   { id: "create", label: "Create", icon: uiDesignIcon },
 ];
-
-function EntryIcon({ iconKey }: { iconKey: string }) {
-  const icons: Record<string, string> = {
-    sparkles: everydayOfficeIcon,
-    presentation: presentationIcon,
-    table: spreadsheetIcon,
-    chart: dataAnalysisIcon,
-    code: codeDevelopmentIcon,
-    palette: websiteIcon,
-    image: innovationIcon,
-  };
-  return <img alt="" className="h-3.5 w-3.5 shrink-0 object-contain" draggable={false} src={icons[iconKey] ?? everydayOfficeIcon} />;
-}
 
 function defaultEntry(entries: WorkbenchEntryDefinition[], mode: WorkbenchMode): WorkbenchEntryDefinition | undefined {
   return entries.find((entry) => entry.mode === mode);
@@ -248,7 +230,7 @@ export function WelcomeView({ onOpenModels, onOpenSkillImport, onOpenSkills, onS
                   title={candidate.availability === "unavailable" ? t("unavailable") : undefined}
                   type="button"
                 >
-                  <EntryIcon iconKey={candidate.iconKey} />
+                  <AgentEntryIcon iconKey={candidate.iconKey} />
                   <span className="truncate">{t(candidate.labelKey as Parameters<typeof t>[0])}</span>
                 </button>
               );

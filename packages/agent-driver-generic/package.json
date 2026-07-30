@@ -19,6 +19,9 @@
     "typebox": "1.1.38"
   },
   "devDependencies": {
+    "@wordless/agent-workspace-policy": "0.0.0",
+    "@wordless/coding-agent": "0.0.0",
+    "@wordless/profile-general": "0.0.0",
     "typescript": "5.9.3",
     "vitest": "4.1.9"
   }

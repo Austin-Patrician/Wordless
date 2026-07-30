@@ -3,7 +3,7 @@ import { Button } from "@wordless/ui-kit";
 import { AlertCircle, ArrowDownUp, CalendarDays, ChartLine, LoaderCircle, RefreshCw } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
-import type { UsageAggregate, UsageBucket, UsageGroup, UsageMetric, UsageReport } from "@wordless/domain";
+import type { ProviderAvatarId, UsageAggregate, UsageBucket, UsageGroup, UsageMetric, UsageReport } from "@wordless/domain";
 import { ProviderIcon } from "./provider-icons";
 import { usePreferences } from "../../shared/preferences";
 import { useRuntime, useRuntimeClient } from "../../shared/runtime";
@@ -125,6 +125,7 @@ export function UsageSettings() {
   }, [client, groupBy, range.endAt, range.startAt, refreshVersion]);
 
   const providerNames = useMemo(() => new Map((snapshot?.modelConfiguration.providers ?? []).map((provider) => [provider.id, provider.displayName])), [snapshot?.modelConfiguration.providers]);
+  const providerAvatars = useMemo(() => new Map((snapshot?.modelConfiguration.providers ?? []).map((provider) => [`${provider.kind}:${provider.id}`, provider.avatarId])), [snapshot?.modelConfiguration.providers]);
   const sortedGroups = useMemo(() => {
     if (!report) return [];
     return [...report.groups].sort((left, right) => {
@@ -212,7 +213,7 @@ export function UsageSettings() {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-[#eeeeea] dark:divide-border">
-                    {sortedGroups.map((group) => <UsageTableRow chatLabel={t("usageChat")} group={group} imageLabel={t("usageImage")} key={group.key} locale={locale} name={groupName(group, providerNames)} />)}
+                    {sortedGroups.map((group) => <UsageTableRow avatarId={group.modelKind === "mixed" ? providerAvatars.get(`chat:${group.providerId}`) ?? providerAvatars.get(`image:${group.providerId}`) : providerAvatars.get(`${group.modelKind}:${group.providerId}`)} chatLabel={t("usageChat")} group={group} imageLabel={t("usageImage")} key={group.key} locale={locale} name={groupName(group, providerNames)} />)}
                   </tbody>
                 </table>
               </div>
@@ -314,7 +315,7 @@ function UsageTableHeader({ active, direction, label, numeric = false, onClick }
   return <th aria-sort={active ? direction : "none"} className={`h-9 px-2.5 font-medium ${numeric ? "text-right" : "text-left"}`} scope="col"><button className={`inline-flex items-center gap-1 ${numeric ? "justify-end" : ""} ${active ? "text-foreground" : "hover:text-foreground"}`} onClick={onClick} type="button"><span>{label}</span><ArrowDownUp className={`h-2.5 w-2.5 ${active ? "opacity-100" : "opacity-35"}`} /></button></th>;
 }
 
-function UsageTableRow({ chatLabel, group, imageLabel, locale, name }: { chatLabel: string; group: UsageGroup; imageLabel: string; locale: string; name: string }) {
+function UsageTableRow({ avatarId, chatLabel, group, imageLabel, locale, name }: { avatarId: ProviderAvatarId | null | undefined; chatLabel: string; group: UsageGroup; imageLabel: string; locale: string; name: string }) {
   const cells = [group.usage.requestCount, group.usage.inputTokens, group.usage.outputTokens, group.usage.cacheReadTokens, group.usage.cacheWriteTokens, group.usage.totalTokens];
-  return <tr className="text-[10px] text-[#595951] hover:bg-[#fafaf7] dark:text-[#d7d9ce] dark:hover:bg-muted/40"><td className="max-w-[190px] px-2.5 py-2.5"><div className="flex min-w-0 items-center gap-2"><ProviderIcon className="h-4 w-4 shrink-0" providerId={group.providerId} /><div className="min-w-0"><p className="truncate font-medium text-foreground" title={name}>{name}</p><p className="mt-0.5 truncate text-[9px] text-muted-foreground">{groupKindLabel(group, chatLabel, imageLabel)} · {group.providerId}</p></div></div></td>{cells.map((value, index) => <td className="px-2.5 py-2.5 text-right font-mono tabular-nums" key={index}>{formatCompactNumber(value, locale)}</td>)}<td className="px-2.5 py-2.5 text-right font-mono tabular-nums text-[#53673a] dark:text-[#cbe27f]">{formatCost(group.usage.estimatedCost, locale)}</td></tr>;
+  return <tr className="text-[10px] text-[#595951] hover:bg-[#fafaf7] dark:text-[#d7d9ce] dark:hover:bg-muted/40"><td className="max-w-[190px] px-2.5 py-2.5"><div className="flex min-w-0 items-center gap-2"><ProviderIcon avatarId={avatarId} className="h-4 w-4 shrink-0" providerId={group.providerId} /><div className="min-w-0"><p className="truncate font-medium text-foreground" title={name}>{name}</p><p className="mt-0.5 truncate text-[9px] text-muted-foreground">{groupKindLabel(group, chatLabel, imageLabel)} · {group.providerId}</p></div></div></td>{cells.map((value, index) => <td className="px-2.5 py-2.5 text-right font-mono tabular-nums" key={index}>{formatCompactNumber(value, locale)}</td>)}<td className="px-2.5 py-2.5 text-right font-mono tabular-nums text-[#53673a] dark:text-[#cbe27f]">{formatCost(group.usage.estimatedCost, locale)}</td></tr>;
 }

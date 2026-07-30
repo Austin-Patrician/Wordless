@@ -1,11 +1,13 @@
 import { Button, Dialog, DialogContent, DialogTitle } from "@wordless/ui-kit";
-import type { SessionRecord, WorkspaceRecord } from "@wordless/domain";
+import type { SessionRecord, WorkbenchEntryDefinition, WorkspaceRecord } from "@wordless/domain";
 import { Clock3, Folder, Search, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import { usePreferences } from "../../shared/preferences";
 import { searchSidebarSessions } from "./session-search";
+import { AgentEntryIcon } from "./AgentEntryIcon";
 
 type SessionSearchDialogProps = {
+  entries: readonly WorkbenchEntryDefinition[];
   onOpenChange: (open: boolean) => void;
   onSelectSession: (session: SessionRecord) => void;
   open: boolean;
@@ -13,7 +15,7 @@ type SessionSearchDialogProps = {
   workspaces: readonly WorkspaceRecord[];
 };
 
-export function SessionSearchDialog({ onOpenChange, onSelectSession, open, sessions, workspaces }: SessionSearchDialogProps) {
+export function SessionSearchDialog({ entries, onOpenChange, onSelectSession, open, sessions, workspaces }: SessionSearchDialogProps) {
   const { reduceMotion, t } = usePreferences();
   const [query, setQuery] = useState("");
   const [selectedIndex, setSelectedIndex] = useState(0);
@@ -21,6 +23,7 @@ export function SessionSearchDialog({ onOpenChange, onSelectSession, open, sessi
   const resultRefs = useRef<Array<HTMLButtonElement | null>>([]);
   const results = useMemo(() => searchSidebarSessions(sessions, query), [query, sessions]);
   const workspaceNames = useMemo(() => new Map(workspaces.map((workspace) => [workspace.id, workspace.name])), [workspaces]);
+  const entryIconKeys = useMemo(() => new Map(entries.map((entry) => [entry.id, entry.iconKey])), [entries]);
 
   useEffect(() => {
     if (!open) return;
@@ -75,7 +78,7 @@ export function SessionSearchDialog({ onOpenChange, onSelectSession, open, sessi
             const workspaceName = session.workspaceId ? workspaceNames.get(session.workspaceId) : undefined;
             const source = workspaceName ?? (session.workspaceId ? t("noWorkspace") : t("recentThreads"));
             const SourceIcon = workspaceName ? Folder : Clock3;
-            return <button aria-selected={selectedIndex === index} className={`flex h-9 w-full min-w-0 items-center gap-3 rounded-[6px] px-2 text-left outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring ${selectedIndex === index ? "bg-[#f0f1ed] dark:bg-muted" : "hover:bg-[#f5f5f2] dark:hover:bg-muted/60"}`} key={session.id} onClick={() => selectSession(session)} onMouseEnter={() => setSelectedIndex(index)} ref={(element) => { resultRefs.current[index] = element; }} role="option" type="button"><span className="min-w-0 flex-1 truncate text-[12px] font-medium text-[#3d3d38] dark:text-foreground" title={session.title}>{session.title}</span><span className="flex max-w-[155px] shrink-0 items-center gap-1.5 text-[10px] text-[#aaa9a2] dark:text-muted-foreground" title={source}><SourceIcon className="h-3 w-3 shrink-0 stroke-[1.5]" /><span className="truncate">{source}</span></span></button>;
+            return <button aria-selected={selectedIndex === index} className={`flex h-9 w-full min-w-0 items-center gap-2.5 rounded-[6px] px-2 text-left outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring ${selectedIndex === index ? "bg-[#f0f1ed] dark:bg-muted" : "hover:bg-[#f5f5f2] dark:hover:bg-muted/60"}`} key={session.id} onClick={() => selectSession(session)} onMouseEnter={() => setSelectedIndex(index)} ref={(element) => { resultRefs.current[index] = element; }} role="option" type="button"><AgentEntryIcon className={selectedIndex === index ? "opacity-100" : "opacity-70"} iconKey={entryIconKeys.get(session.entryId)} /><span className="min-w-0 flex-1 truncate text-[12px] font-medium text-[#3d3d38] dark:text-foreground" title={session.title}>{session.title}</span><span className="flex max-w-[155px] shrink-0 items-center gap-1.5 text-[10px] text-[#aaa9a2] dark:text-muted-foreground" title={source}><SourceIcon className="h-3 w-3 shrink-0 stroke-[1.5]" /><span className="truncate">{source}</span></span></button>;
           })}</div> : <div className="grid h-full min-h-[220px] place-items-center px-6 text-center"><div><Search aria-hidden className="mx-auto h-5 w-5 text-[#aaa9a2] dark:text-muted-foreground" /><p className="mt-3 text-[12px] font-semibold text-[#55554f] dark:text-foreground">{t("noMatchingSessions")}</p><p className="mt-1 text-[11px] text-[#92928b] dark:text-muted-foreground">{t("noMatchingSessionsHelp")}</p></div></div>}
         </div>
       </section>

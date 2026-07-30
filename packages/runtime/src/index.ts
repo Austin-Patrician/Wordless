@@ -232,7 +232,7 @@ export const BUILTIN_ENTRIES: WorkbenchEntryDefinition[] = [
     profile: { id: "general", version: "1" },
     workbenchId: "conversation",
     availability: "available",
-    modelRequirements: { requiresToolUse: false },
+    modelRequirements: { requiresToolUse: true },
   },
   {
     id: "presentation",
