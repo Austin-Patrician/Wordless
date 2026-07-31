@@ -39,6 +39,9 @@ dmg:
   title: Wordless
   sign: false
 win:
+  signtoolOptions:
+    signingHashAlgorithms:
+      - sha256
   target:
     - target: nsis
       arch:

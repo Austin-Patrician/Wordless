@@ -20,9 +20,9 @@
     "build:desktop": "npm run prepare:officecli && npm run build:renderer && npm run build:electron",
     "dev:electron": "npm run prepare:officecli && node scripts/build-electron.mjs && node scripts/dev-electron.mjs",
     "test:host": "node --test test/*.test.ts",
-    "dist:mac": "npm run build:desktop && electron-builder --config electron-builder.yml --mac",
-    "dist:mac:preview": "npm run build:desktop && CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --config electron-builder.yml --mac",
-    "dist:win": "npm run build:desktop && electron-builder --config electron-builder.yml --win --x64"
+    "dist:mac": "npm run build:desktop && electron-builder --config electron-builder.yml --mac --publish never",
+    "dist:mac:preview": "npm run build:desktop && CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --config electron-builder.yml --mac --publish never",
+    "dist:win": "npm run build:desktop && electron-builder --config electron-builder.yml --win --x64 --publish never"
   },
   "dependencies": {
     "ajv": "^8.20.0",

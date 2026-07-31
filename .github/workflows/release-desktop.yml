@@ -79,7 +79,7 @@ jobs:
           node scripts/prepare-officecli-assets.mjs --platform darwin --arch x64
           npm run build:renderer
           npm run build:electron
-          npx electron-builder --config electron-builder.yml --mac
+          npx electron-builder --config electron-builder.yml --mac --publish never
       - uses: actions/upload-artifact@v4
         with:
           name: wordless-macos
@@ -101,20 +101,45 @@ jobs:
         with:
           node-version: 22.19.0
           cache: npm
-      - name: Require signing credentials
-        shell: bash
+      - name: Prepare Windows signing certificate
+        shell: pwsh
         env:
-          CSC_LINK: ${{ secrets.WINDOWS_CSC_LINK }}
-          CSC_KEY_PASSWORD: ${{ secrets.WINDOWS_CSC_KEY_PASSWORD }}
+          WINDOWS_CERTIFICATE_BASE64: ${{ secrets.WINDOWS_CSC_LINK }}
+          WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CSC_KEY_PASSWORD }}
         run: |
-          test -n "$CSC_LINK" || { echo "WINDOWS_CSC_LINK is required" >&2; exit 1; }
-          test -n "$CSC_KEY_PASSWORD" || { echo "WINDOWS_CSC_KEY_PASSWORD is required" >&2; exit 1; }
+          $ErrorActionPreference = "Stop"
+          if ([string]::IsNullOrWhiteSpace($env:WINDOWS_CERTIFICATE_BASE64)) {
+            throw "WINDOWS_CSC_LINK is required"
+          }
+          if ([string]::IsNullOrWhiteSpace($env:WINDOWS_CERTIFICATE_PASSWORD)) {
+            throw "WINDOWS_CSC_KEY_PASSWORD is required"
+          }
+          try {
+            $certificateBytes = [Convert]::FromBase64String($env:WINDOWS_CERTIFICATE_BASE64.Trim())
+          } catch {
+            throw "WINDOWS_CSC_LINK is not complete Base64. Replace it with the complete contents of WINDOWS_CSC_LINK.txt."
+          }
+          if ($certificateBytes.Length -lt 1024) {
+            throw "WINDOWS_CSC_LINK decoded to an invalid certificate file"
+          }
+          $certificatePath = Join-Path $env:RUNNER_TEMP "wordless-internal-signing.pfx"
+          [IO.File]::WriteAllBytes($certificatePath, $certificateBytes)
+          try {
+            $flags = [Security.Cryptography.X509Certificates.X509KeyStorageFlags]::EphemeralKeySet
+            $certificate = [Security.Cryptography.X509Certificates.X509Certificate2]::new($certificatePath, $env:WINDOWS_CERTIFICATE_PASSWORD, $flags)
+          } catch {
+            throw "The signing PFX or WINDOWS_CSC_KEY_PASSWORD is invalid"
+          }
+          if (-not $certificate.HasPrivateKey) {
+            throw "The signing PFX does not contain a private key"
+          }
+          Write-Host "Loaded Windows signing certificate: $($certificate.Subject)"
       - run: npm ci
       - name: Set package version
         run: npm pkg set version="${{ needs.prepare.outputs.version }}" --workspace=@wordless/desktop
       - name: Build signed Windows artifacts
         env:
-          CSC_LINK: ${{ secrets.WINDOWS_CSC_LINK }}
+          WIN_CSC_LINK: ${{ runner.temp }}\wordless-internal-signing.pfx
           CSC_KEY_PASSWORD: ${{ secrets.WINDOWS_CSC_KEY_PASSWORD }}
         run: npm run dist:win --workspace=@wordless/desktop
       - uses: actions/upload-artifact@v4
