@@ -59,7 +59,8 @@ test("persists workspace metadata and JSONL model changes", async (context) => {
 test("persists session rename, pin state, and deletion", async (context) => {
   const root = await mkdtemp(join(tmpdir(), "wordless-persistence-"));
   context.after(async () => await rm(root, { force: true, recursive: true }));
-  const database = new WordlessDatabase(join(root, "wordless.db"));
+  const databasePath = join(root, "wordless.db");
+  let database = new WordlessDatabase(databasePath);
   const createSession = (id: string, updatedAt: number) => ({
     id,
     title: id,
@@ -76,6 +77,7 @@ test("persists session rename, pin state, and deletion", async (context) => {
     journalPath: join(root, "sessions", `${id}.jsonl`),
     connectorIds: [],
     interactionMode: id === "older" ? "clarify" as const : undefined,
+    toolApprovalMode: id === "older" ? "bypass" as const : "auto" as const,
     pinnedAt: null,
     createdAt: updatedAt,
     updatedAt,
@@ -83,9 +85,14 @@ test("persists session rename, pin state, and deletion", async (context) => {
 
   database.upsertSession(createSession("older", 1));
   database.upsertSession(createSession("newer", 2));
+  database.close();
+  database = new WordlessDatabase(databasePath);
+
   assert.deepEqual(database.listSessions().map((session) => session.id), ["newer", "older"]);
   assert.equal(database.getSession("older")?.interactionMode, "clarify");
   assert.equal(database.getSession("newer")?.interactionMode, "default");
+  assert.equal(database.getSession("older")?.toolApprovalMode, "bypass");
+  assert.equal(database.getSession("newer")?.toolApprovalMode, "auto");
 
   const renamed = database.renameSession("older", "Renamed session");
   assert.equal(renamed?.title, "Renamed session");

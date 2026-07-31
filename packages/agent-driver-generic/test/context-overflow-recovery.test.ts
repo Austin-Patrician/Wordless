@@ -34,6 +34,7 @@ async function createDriverSession(responses: ReturnType<typeof fauxAssistantMes
     accessLevel: "full",
     model: { connectionId: model.provider, modelId: model.id },
     journalPath: "memory",
+    toolApprovalMode: "manual",
     pinnedAt: null,
     createdAt: Date.now(),
     updatedAt: Date.now(),
@@ -63,6 +64,9 @@ async function createDriverSession(responses: ReturnType<typeof fauxAssistantMes
     models,
     session,
     env: new NodeExecutionEnv({ cwd: process.cwd() }),
+    skills: [],
+    connectorTools: [],
+    connectorToolPolicies: [],
     security: { fileRules: [], commandRules: [] },
     resolveModel: () => model,
   };

@@ -46,6 +46,7 @@ async function createClarificationDriverSession(
     journalPath: "memory",
     connectorIds: [],
     interactionMode: "clarify",
+    toolApprovalMode: "manual",
     pinnedAt: null,
     createdAt: Date.now(),
     updatedAt: Date.now(),

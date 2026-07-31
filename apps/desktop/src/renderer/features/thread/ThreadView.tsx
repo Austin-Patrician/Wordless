@@ -8,7 +8,7 @@ import { usePreferences } from "../../shared/preferences";
 import { useRuntime, useRuntimeClient } from "../../shared/runtime";
 import { ModelPicker } from "../workbench/ModelPicker";
 import { workbenchRendererRegistry } from "../workbench/renderer-registry";
-import { Composer, type WorkspaceAttachment } from "./Composer";
+import { Composer } from "./Composer";
 import type { InlineWorkspaceReferenceToken } from "./InlineSkillComposer";
 import { ConversationDensityRail } from "./ConversationDensityRail";
 import { createPendingThreadTurn, createUserMessageSubmission, type PendingThreadTurn } from "./pending-thread-turn";
@@ -166,11 +166,21 @@ function applyEvent(snapshot: SessionSnapshot, event: RuntimeEventEnvelope): Ses
     const message = messages[index]!;
     const existing = message.blocks.find((block): block is MessageToolBlock => block.type === "tool" && block.callId === payload.callId);
     const next: MessageToolBlock = payload.type === "tool.started"
-      ? { type: "tool", callId: payload.callId, name: payload.name, input: payload.input, state: "running" }
+      ? {
+        type: "tool",
+        callId: payload.callId,
+        name: payload.name,
+        input: payload.input,
+        state: "running",
+        startedAt: event.timestamp,
+        ...(payload.name === "bash" ? { timeoutSeconds: typeof payload.input.timeout === "number" ? payload.input.timeout : 30 } : {}),
+      }
       : {
         type: "tool",
         callId: payload.callId,
         name: existing?.name ?? "tool",
+        startedAt: existing?.startedAt,
+        timeoutSeconds: existing?.timeoutSeconds,
         input: existing?.input,
         output: payload.type === "tool.updated" ? `${existing?.output ?? ""}${payload.output}` : payload.output,
         details: payload.type === "tool.completed" ? payload.details : payload.type === "tool.updated" ? payload.details ?? existing?.details : existing?.details,
@@ -885,13 +895,13 @@ export function ThreadView({ artifactSelection, initialPendingTurn, messageNavig
   const availableConnectors = appSnapshot?.connectors.connectors ?? [];
   const showDensityRail = (history?.turnSummaries.length ?? 0) >= 2;
 
-  const send = async (parts: UserPromptPart[], nextAttachments: WorkspaceAttachment[]) => {
+  const send = async (parts: UserPromptPart[]) => {
     const submission = createUserMessageSubmission();
-    const pendingTurn = createPendingThreadTurn(parts, nextAttachments, submission);
+    const pendingTurn = createPendingThreadTurn(parts, submission);
     setSnapshot((current) => current ? withPendingTurn(current, pendingTurn) : current);
     setRunPresentation(createAssistantRunPresentation(submission.messageId, submission.submittedAt));
     try {
-      await client.promptSession(sessionId, parts, submission, nextAttachments.filter((attachment) => attachment.kind !== "directory").map((attachment) => ({ path: attachment.path })));
+      await client.promptSession(sessionId, parts, submission);
     } catch (cause) {
       setSnapshot((current) => current ? { ...current, messages: current.messages.filter((message) => message.id !== submission.messageId), isRunning: false } : current);
       setRunPresentation(null);
@@ -936,7 +946,7 @@ export function ThreadView({ artifactSelection, initialPendingTurn, messageNavig
     setSnapshot((current) => current ? { ...current, session: view.session, messages: messagesFromHistoryPage(view.history), contextUsage: view.contextUsage, turnUsage: view.turnUsage, extensions: view.extensions } : snapshotFromSessionView(view));
     setHistory(loadedHistoryFromView(view));
     if (nextMode === "default") {
-      await send([{ type: "text", text: "Implement the clarified list above. Follow the confirmed goals, constraints, and decisions, complete the work, and verify the result." }], []);
+      await send([{ type: "text", text: "Implement the clarified list above. Follow the confirmed goals, constraints, and decisions, complete the work, and verify the result." }]);
     }
   };
 
@@ -986,7 +996,7 @@ export function ThreadView({ artifactSelection, initialPendingTurn, messageNavig
   const resolvePlanResult = async (action: "implement" | "stay") => {
     if (action === "stay") return;
     await setPlanMode("executing");
-    await send([{ type: "text", text: "Implement the approved plan above. Follow the plan, make the necessary changes, and verify the result." }], []);
+    await send([{ type: "text", text: "Implement the approved plan above. Follow the plan, make the necessary changes, and verify the result." }]);
   };
 
   const compactContext = async () => {

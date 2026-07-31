@@ -82,7 +82,7 @@ export const AgentInteractionModeSchema = Type.Union([
   Type.Literal("plan"),
 ]);
 
-export const ToolApprovalModeSchema = Type.Union([Type.Literal("manual"), Type.Literal("auto")]);
+export const ToolApprovalModeSchema = Type.Union([Type.Literal("manual"), Type.Literal("auto"), Type.Literal("bypass")]);
 
 const SkillSourceSchema = Type.Union([
   Type.Literal("wordless"),
@@ -157,23 +157,12 @@ export const CreateAndPromptSchema = Type.Object({
   draft: SessionDraftSchema,
   parts: UserPromptPartsSchema,
   submission: UserMessageSubmissionSchema,
-  attachments: Type.Optional(
-    Type.Array(Type.Object({ path: Type.String({ minLength: 1, maxLength: 1024 }) }), { maxItems: 8 }),
-  ),
 });
 
 export const PromptSessionSchema = Type.Object({
   sessionId: Type.String({ minLength: 1 }),
   parts: UserPromptPartsSchema,
   submission: UserMessageSubmissionSchema,
-  attachments: Type.Optional(
-    Type.Array(
-      Type.Object({
-        path: Type.String({ minLength: 1, maxLength: 1024 }),
-      }),
-      { maxItems: 8 },
-    ),
-  ),
 });
 
 export const WorkspaceReferenceSearchSchema = Type.Object({

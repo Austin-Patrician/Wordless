@@ -41,13 +41,6 @@ export type AgentDriverFeature =
   | "user-request"
   | "extensions";
 
-export interface AgentTextAttachment {
-  path: string;
-  name: string;
-  mediaType: string;
-  content?: string;
-}
-
 export interface OperationApprovalRequest {
   approvalId: string;
   callId: string;
@@ -158,24 +151,6 @@ type SerializedArtifactReference = {
   intent?: "reference" | "analyze" | "formula" | "chart" | "pivot";
 };
 
-type SerializedPromptContext = {
-  version: 1;
-  attachments: AgentTextAttachment[];
-} | {
-  version: 2;
-  attachments: AgentTextAttachment[];
-  skills: Array<Pick<AgentRuntimeSkill, "id" | "name" | "source" | "baseDir" | "content">>;
-};
-
-export function formatPromptWithAttachments(
-  text: string,
-  attachments: readonly AgentTextAttachment[],
-): string {
-  if (attachments.length === 0) return text;
-  const serialized: SerializedPromptContext = { version: 1, attachments: [...attachments] };
-  return `${text}${WORKSPACE_ATTACHMENT_START}${JSON.stringify(serialized)}${WORKSPACE_ATTACHMENT_END}`;
-}
-
 export function formatPromptWithSkillReferences(parts: readonly UserPromptPart[]): string {
   return parts.map((part, index) => {
     if (part.type === "text") return part.text;
@@ -281,6 +256,21 @@ function parseWorkspaceReference(value: string): SerializedWorkspaceReference | 
   } catch {
     return undefined;
   }
+}
+
+export function formatPromptWorkspaceReferencesForModel(text: string): string {
+  const pattern = new RegExp(`${WORKSPACE_REFERENCE_START}([^<]*)${WORKSPACE_REFERENCE_END}`, "g");
+  return text.replace(pattern, (marker, encoded: string) => {
+    const reference = parseWorkspaceReference(encoded);
+    if (!reference) return marker;
+    return [
+      "<wordless_workspace_reference>",
+      `path=${JSON.stringify(reference.path)}`,
+      `kind=${reference.kind}`,
+      "This path is inside the current workspace. Use the available workspace tools to inspect it when needed.",
+      "</wordless_workspace_reference>",
+    ].join("\n");
+  });
 }
 
 function projectPromptWorkspaceReferences(text: string): MessageBlock[] {
@@ -432,9 +422,9 @@ export interface AgentProfileDefinition {
 }
 
 export type AgentDriverCommand =
-  | { type: "prompt"; text: string; attachments?: AgentTextAttachment[]; selectedSkills?: AgentRuntimeSkill[]; submission?: UserMessageSubmission }
-  | { type: "steer"; text: string; attachments?: AgentTextAttachment[]; submission?: UserMessageSubmission }
-  | { type: "follow-up"; text: string; attachments?: AgentTextAttachment[]; submission?: UserMessageSubmission }
+  | { type: "prompt"; text: string; selectedSkills?: AgentRuntimeSkill[]; submission?: UserMessageSubmission }
+  | { type: "steer"; text: string; submission?: UserMessageSubmission }
+  | { type: "follow-up"; text: string; submission?: UserMessageSubmission }
   | { type: "cancel" }
   | { type: "resolve-approval"; resolution: OperationApprovalResolution }
   | { type: "set-tool-approval-mode"; mode: ToolApprovalMode }

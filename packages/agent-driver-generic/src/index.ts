@@ -30,9 +30,9 @@ import {
   CONTEXT_COMPACTION_JOURNAL_TYPE,
   SESSION_FILE_BASELINE_JOURNAL_TYPE,
   USER_REQUEST_JOURNAL_TYPE,
-  formatPromptWithAttachments,
   projectUserMessageContent,
   formatPromptArtifactReferencesForModel,
+  formatPromptWorkspaceReferencesForModel,
   stripPromptSkillReferences,
   type PersistedOperationApproval,
   type PersistedSessionFileBaseline,
@@ -215,7 +215,7 @@ function stripSkillReferenceMarkers(messages: AgentMessage[]): AgentMessage[] {
     const value = asRecord(message);
     if (!value || value.role !== "user") return message;
     if (typeof value.content === "string") {
-      const content = formatPromptArtifactReferencesForModel(stripPromptSkillReferences(value.content));
+      const content = formatPromptWorkspaceReferencesForModel(formatPromptArtifactReferencesForModel(stripPromptSkillReferences(value.content)));
       if (content === value.content) return message;
       changed = true;
       return { ...value, content } as AgentMessage;
@@ -224,7 +224,7 @@ function stripSkillReferenceMarkers(messages: AgentMessage[]): AgentMessage[] {
     const content = value.content.map((item) => {
       const block = asRecord(item);
       if (!block || block.type !== "text" || typeof block.text !== "string") return item;
-      const text = formatPromptArtifactReferencesForModel(stripPromptSkillReferences(block.text));
+      const text = formatPromptWorkspaceReferencesForModel(formatPromptArtifactReferencesForModel(stripPromptSkillReferences(block.text)));
       if (text === block.text) return item;
       changed = true;
       return { ...block, text };
@@ -707,7 +707,7 @@ class AgentHarnessDriverSession implements AgentDriverSession {
           toolName: event.toolName,
           input: event.input,
         };
-        const automaticallyApproved = this.toolApprovalMode === "auto" && request.severity === "normal";
+        const automaticallyApproved = this.toolApprovalMode === "bypass" || (this.toolApprovalMode === "auto" && request.severity === "normal");
         let resolution: OperationApprovalResolution;
         if (automaticallyApproved) {
           await (this.context.session as unknown as CustomEntrySession).appendCustomEntry(
@@ -860,7 +860,7 @@ class AgentHarnessDriverSession implements AgentDriverSession {
         try {
           this.activeUserSubmission = command.submission;
           const response = await this.harness.prompt(
-            formatPromptWithAttachments(command.text, command.attachments ?? []),
+            command.text,
             command.submission ? { messageId: command.submission.messageId, timestamp: command.submission.submittedAt } : undefined,
           );
           await this.recoverContextOverflow(response);
@@ -872,11 +872,11 @@ class AgentHarnessDriverSession implements AgentDriverSession {
       }
       case "steer":
         this.currentPrompt = command.text;
-        await this.harness.steer(formatPromptWithAttachments(command.text, command.attachments ?? []));
+        await this.harness.steer(command.text);
         return;
       case "follow-up":
         this.currentPrompt = command.text;
-        await this.harness.followUp(formatPromptWithAttachments(command.text, command.attachments ?? []));
+        await this.harness.followUp(command.text);
         return;
       case "cancel":
         this.resolvePendingApprovals(false, "Operation cancelled");
@@ -894,6 +894,7 @@ class AgentHarnessDriverSession implements AgentDriverSession {
       case "set-tool-approval-mode":
         this.toolApprovalMode = command.mode;
         if (command.mode === "auto") this.resolvePendingNormalApprovals();
+        if (command.mode === "bypass") this.resolvePendingApprovals(true, "Automatically approved by Bypass permissions");
         await this.context.subagentRunner?.setToolApprovalMode?.(command.mode);
         return;
       case "resolve-user-request": {

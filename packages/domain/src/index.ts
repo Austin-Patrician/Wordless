@@ -137,7 +137,7 @@ export interface SkillCatalogSnapshot {
 
 export type SessionAccessLevel = "default" | "full";
 
-export type ToolApprovalMode = "manual" | "auto";
+export type ToolApprovalMode = "manual" | "auto" | "bypass";
 
 export type PresentationGenerationMode = "guided" | "quick";
 
@@ -257,6 +257,7 @@ export interface SessionRecord {
   journalPath: string;
   connectorIds: string[];
   interactionMode?: AgentInteractionModeId;
+  toolApprovalMode: ToolApprovalMode;
   pinnedAt: number | null;
   createdAt: number;
   updatedAt: number;
@@ -680,6 +681,8 @@ export interface MessageToolBlock {
   callId: string;
   name: string;
   state: "pending" | "awaiting-approval" | "awaiting-user-input" | "running" | "complete" | "error";
+  startedAt?: number;
+  timeoutSeconds?: number;
   input?: Record<string, unknown>;
   output?: string;
   outputTruncated?: boolean;

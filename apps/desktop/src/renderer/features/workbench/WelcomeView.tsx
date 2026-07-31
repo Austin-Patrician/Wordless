@@ -7,7 +7,7 @@ import everydayWorkIcon from "../../../icons/common-icons/everydaywork.svg";
 import uiDesignIcon from "../../../icons/common-icons/ui-design.svg";
 import { usePreferences } from "../../shared/preferences";
 import { useRuntime, useRuntimeClient } from "../../shared/runtime";
-import { Composer, type WorkspaceAttachment } from "../thread/Composer";
+import { Composer } from "../thread/Composer";
 import { createPendingThreadTurn, createUserMessageSubmission, type PendingThreadTurn } from "../thread/pending-thread-turn";
 import { ModelPicker } from "./ModelPicker";
 import { WorkspacePicker } from "./WorkspacePicker";
@@ -150,7 +150,7 @@ export function WelcomeView({ onOpenModels, onOpenSkillImport, onOpenSkills, onS
     void client.listPresentationTemplates().then(setPresentationTemplates).catch(() => setPresentationTemplates([]));
   }, [client, entry?.workbenchId]);
 
-  const send = async (parts: UserPromptPart[], nextAttachments: WorkspaceAttachment[]) => {
+  const send = async (parts: UserPromptPart[]) => {
     if (!entry || entry.availability !== "available" || !model) return;
     if (!selectedWorkspaceAvailable) {
       setSubmissionError(t("unavailable"));
@@ -160,9 +160,9 @@ export function WelcomeView({ onOpenModels, onOpenSkillImport, onOpenSkills, onS
     setSubmitting(true);
     setSubmissionError(null);
     const submission = createUserMessageSubmission();
-    const pendingTurn = createPendingThreadTurn(parts, nextAttachments, submission);
+    const pendingTurn = createPendingThreadTurn(parts, submission);
     try {
-      const session = await client.createAndPrompt({ mode, entryId: entry.id, workspaceId, accessLevel, model, connectorIds, interactionMode, toolApprovalMode, ...(entry.workbenchId === "presentation" ? { presentation: { generationMode: presentationMode, templateId: presentationTemplateId === "auto" ? null : presentationTemplateId } } : {}) }, parts, submission, nextAttachments.map((attachment) => ({ path: attachment.path })));
+      const session = await client.createAndPrompt({ mode, entryId: entry.id, workspaceId, accessLevel, model, connectorIds, interactionMode, toolApprovalMode, ...(entry.workbenchId === "presentation" ? { presentation: { generationMode: presentationMode, templateId: presentationTemplateId === "auto" ? null : presentationTemplateId } } : {}) }, parts, submission);
       onSessionCreated(session.id, pendingTurn);
       void refresh();
     } catch (cause) {

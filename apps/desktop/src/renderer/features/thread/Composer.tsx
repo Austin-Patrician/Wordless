@@ -8,6 +8,7 @@ import mcpIcon from "../../../icons/common-icons/mcp.svg";
 import skillsIcon from "../../../icons/common-icons/skills.svg";
 import { ConnectorIcon } from "../../shared/ConnectorIcon";
 import { AccessPicker } from "./AccessPicker";
+import { BypassPermissionsDialog } from "./BypassPermissionsDialog";
 import { ContextUsageIndicator } from "./ContextUsageIndicator";
 import { InlineSkillComposer, type InlineSkillComposerHandle, type InlineSkillComposerValue, type InlineWorkspaceReferenceToken } from "./InlineSkillComposer";
 import { ProviderIcon } from "../settings/provider-icons";
@@ -38,7 +39,7 @@ type ComposerProps = {
   onImportSkill?: () => void | Promise<void>;
   onInteractionModeChange?: (interactionMode: AgentInteractionModeId) => void | Promise<void>;
   onOpenSkills?: () => void;
-  onSend: (parts: UserPromptPart[], attachments: WorkspaceAttachment[]) => void | Promise<void>;
+  onSend: (parts: UserPromptPart[]) => void | Promise<void>;
   onStop?: () => void | Promise<void>;
   running?: boolean;
   skillContextWindow?: number;
@@ -55,12 +56,6 @@ type ComposerProps = {
   onPendingWorkspaceReferencesConsumed?: () => void;
   artifactSelection?: ArtifactSelection | null;
   onArtifactSelectionConsumed?: () => void;
-};
-
-export type WorkspaceAttachment = {
-  path: string;
-  name: string;
-  kind?: "file" | "directory";
 };
 
 const EMPTY_INLINE_SKILL_COMPOSER_VALUE: InlineSkillComposerValue = { parts: [], skillIds: [], skillTokenCounts: {}, text: "", workspaceReferenceCount: 0, workspaceQuery: null };
@@ -116,6 +111,8 @@ export function Composer({
   const [approvalOpen, setApprovalOpen] = useState(false);
   const [approvalChanging, setApprovalChanging] = useState(false);
   const [approvalError, setApprovalError] = useState<string | null>(null);
+  const [sendError, setSendError] = useState<string | null>(null);
+  const [bypassConfirmOpen, setBypassConfirmOpen] = useState(false);
   const [skillQuery, setSkillQuery] = useState("");
   const [activeConnectorId, setActiveConnectorId] = useState<string | null>(null);
   const [workspaceMatches, setWorkspaceMatches] = useState<WorkspaceFileEntry[]>([]);
@@ -151,6 +148,11 @@ export function Composer({
   const interactionModes: Array<{ id: "clarify" | "plan"; description: string; label: string }> = [
     ...(onInteractionModeChange ? [{ id: "clarify" as const, label: locale === "zh-CN" ? "澄清" : "Clarify", description: locale === "zh-CN" ? "提问并理清思路，不执行" : "Question and sharpen thinking without execution" }] : []),
     ...(canPlan || (!onInteractionModeChange && onTogglePlanMode) ? [{ id: "plan" as const, label: locale === "zh-CN" ? "计划" : "Plan", description: locale === "zh-CN" ? "先规划，再决定是否执行" : "Plan before execution" }] : []),
+  ];
+  const approvalModes: Array<{ id: ToolApprovalMode; description: string; label: string }> = [
+    { id: "manual", label: locale === "zh-CN" ? "手动审批" : "Manual approval", description: locale === "zh-CN" ? "每次工具操作都需要确认" : "Ask before each tool action" },
+    { id: "auto", label: locale === "zh-CN" ? "本次自动审批" : "Auto-Approve for this session", description: locale === "zh-CN" ? "普通操作自动通过，高风险操作仍需确认" : "Normal actions auto-approve; high-risk actions still ask" },
+    { id: "bypass", label: locale === "zh-CN" ? "绕过工具审批" : "Bypass permissions", description: locale === "zh-CN" ? "普通与高风险审批均自动通过" : "Auto-approve normal and high-risk actions" },
   ];
   const interactionModeDescription = effectiveInteractionMode === "plan"
     ? locale === "zh-CN" ? "当前为计划模式，将先规划任务，等你确认后再执行。" : "Plan mode is active. Wordless will plan first and wait for confirmation before execution."
@@ -235,7 +237,7 @@ export function Composer({
     const timer = window.setTimeout(() => {
       void searchWorkspace(query).then((matches) => {
         if (!active) return;
-        setWorkspaceMatches(matches.filter((entry) => entry.kind === "directory" || entry.size <= 64 * 1024));
+        setWorkspaceMatches(matches);
         setWorkspacePickerIndex(0);
         setWorkspacePickerOpen(true);
       }).catch(() => {
@@ -253,6 +255,7 @@ export function Composer({
 
   const updateDraft = useCallback((nextDraft: InlineSkillComposerValue) => {
     draftRef.current = nextDraft;
+    if (nextDraft.parts.length > 0) setSendError(null);
     const cursor = inputRef.current?.getCursorRect();
     const container = composerRef.current?.getBoundingClientRect();
     if (cursor && container) {
@@ -288,19 +291,23 @@ export function Composer({
   }
 
   const send = async () => {
-    const currentDraft = draftRef.current;
+    const currentDraft = inputRef.current?.getValue() ?? draftRef.current;
     if (currentDraft.parts.length === 0 || interactionDisabled || running || sendDisabled) return;
-    const referenceAttachments = currentDraft.parts.flatMap((part) => part.type === "workspace-reference" && part.kind === "file" ? [{ path: part.path, name: part.name }] : []);
     const parts: UserPromptPart[] = artifactSelection
       ? [{ type: "artifact-reference", artifactId: artifactSelection.artifactId, kind: artifactSelection.kind, name: artifactSelection.label, revision: artifactSelection.revision, surfaceId: artifactSelection.surfaceId, locator: artifactSelection.locator, ...(artifactSelection.locators ? { locators: artifactSelection.locators } : {}), ...(artifactSelection.intent ? { intent: artifactSelection.intent } : {}) }, ...currentDraft.parts]
       : currentDraft.parts;
-    await onSend(parts, referenceAttachments);
-    if (artifactSelection) onArtifactSelectionConsumed?.();
-    inputRef.current?.clear();
-    if (draftFrameRef.current !== undefined) cancelAnimationFrame(draftFrameRef.current);
-    draftFrameRef.current = undefined;
-    draftRef.current = EMPTY_INLINE_SKILL_COMPOSER_VALUE;
-    setDraft(EMPTY_INLINE_SKILL_COMPOSER_VALUE);
+    setSendError(null);
+    try {
+      await onSend(parts);
+      if (artifactSelection) onArtifactSelectionConsumed?.();
+      inputRef.current?.clear();
+      if (draftFrameRef.current !== undefined) cancelAnimationFrame(draftFrameRef.current);
+      draftFrameRef.current = undefined;
+      draftRef.current = EMPTY_INLINE_SKILL_COMPOSER_VALUE;
+      setDraft(EMPTY_INLINE_SKILL_COMPOSER_VALUE);
+    } catch (cause) {
+      setSendError(cause instanceof Error ? cause.message : String(cause));
+    }
   };
 
   const availableSkills = skills
@@ -347,11 +354,24 @@ export function Composer({
       await onToolApprovalModeChange(mode);
       setApprovalOpen(false);
       setMenuOpen(false);
+      setBypassConfirmOpen(false);
     } catch {
       setApprovalError(locale === "zh-CN" ? "工具审批设置失败" : "Could not update tool approval mode");
     } finally {
       setApprovalChanging(false);
     }
+  };
+
+  const requestToolApprovalModeChange = (mode: ToolApprovalMode) => {
+    if (mode === toolApprovalMode || approvalChanging) return;
+    if (mode === "bypass") {
+      setApprovalError(null);
+      setMenuOpen(false);
+      showActionSubmenu(null);
+      setBypassConfirmOpen(true);
+      return;
+    }
+    void changeToolApprovalMode(mode);
   };
 
   const changeInteractionMode = async (mode: "clarify" | "plan") => {
@@ -382,6 +402,7 @@ export function Composer({
   };
 
   return (
+    <>
     <div
       ref={composerRef}
       className={cn(
@@ -424,13 +445,14 @@ export function Composer({
         </div> : null}
       </div>
       {skillWarning ? <p className="mt-1 shrink-0 text-[10px] text-[#9b6c2d] dark:text-[#d7b47d]">{t("skillContextWarning")}</p> : null}
+      {sendError ? <p className="mt-1 shrink-0 text-[10px] leading-4 text-destructive" role="alert">{sendError}</p> : null}
       {hasActionMenu && menuOpen ? <div className="absolute bottom-[48px] left-2 z-30 flex items-end gap-1.5" onMouseLeave={() => showActionSubmenu(null)} ref={menuRef}>
         <div className="w-[188px] rounded-[10px] border border-[#dfdfdb] bg-white p-1.5 shadow-[0_14px_34px_rgba(28,28,25,0.12)] dark:border-border dark:bg-card">
           {onInteractionModeChange || onTogglePlanMode ? <button className={cn("flex w-full items-center gap-2 rounded-[7px] px-2.5 py-2 text-left text-[12px] text-[#3f3f3a] hover:bg-[#f3f3f0] dark:text-foreground dark:hover:bg-muted", modeOpen && "bg-[#eeeeeb] dark:bg-muted")} onClick={() => showActionSubmenu("mode")} onFocus={() => showActionSubmenu("mode")} onMouseEnter={() => showActionSubmenu("mode")} type="button">
             <Sparkles className="h-4 w-4 text-[#62625d]" /><span className="flex-1">{t("mode")}</span><ChevronRight className="h-3 w-3 text-[#898981]" />
           </button> : null}
           {onToolApprovalModeChange ? <button aria-expanded={approvalOpen} className={cn("flex w-full items-center gap-2 rounded-[7px] px-2.5 py-2 text-left text-[12px] text-[#3f3f3a] hover:bg-[#f3f3f0] dark:text-foreground dark:hover:bg-muted", approvalOpen && "bg-[#eeeeeb] dark:bg-muted")} onClick={() => showActionSubmenu("approval")} onFocus={() => showActionSubmenu("approval")} onMouseEnter={() => showActionSubmenu("approval")} type="button">
-            <ShieldCheck className={cn("h-4 w-4", toolApprovalMode === "auto" ? "text-[#a47a2a]" : "text-[#62625d]")} /><span className="min-w-0 flex-1 truncate">{locale === "zh-CN" ? "工具审批" : "Tool Approval"}</span><ChevronRight className="h-3 w-3 shrink-0 text-[#898981]" />
+            <ShieldCheck className={cn("h-4 w-4", toolApprovalMode === "bypass" ? "text-[#bd5147] dark:text-[#f09a90]" : toolApprovalMode === "auto" ? "text-[#a47a2a]" : "text-[#62625d]")} /><span className="min-w-0 flex-1 truncate">{locale === "zh-CN" ? "工具审批" : "Tool Approval"}</span><ChevronRight className="h-3 w-3 shrink-0 text-[#898981]" />
           </button> : null}
           {onCompactContext ? <button className="flex w-full items-center gap-2 rounded-[7px] px-2.5 py-2 text-left text-[12px] text-[#3f3f3a] hover:bg-[#f3f3f0] disabled:cursor-not-allowed disabled:opacity-45 dark:text-foreground dark:hover:bg-muted" disabled={interactionDisabled || running || !contextCompactionAvailable} onClick={() => { setMenuOpen(false); showActionSubmenu(null); void onCompactContext(); }} onMouseEnter={() => showActionSubmenu(null)} type="button"><Archive className="h-4 w-4 shrink-0 text-[#62625d]" /><span>{t("compressContext")}</span></button> : null}
           <button className={cn("flex w-full items-center gap-2 rounded-[7px] px-2.5 py-2 text-left text-[12px] text-[#3f3f3a] hover:bg-[#f3f3f0] dark:text-foreground dark:hover:bg-muted", skillsOpen && "bg-[#eeeeeb] dark:bg-muted")} onClick={() => showActionSubmenu("skills")} onFocus={() => showActionSubmenu("skills")} onMouseEnter={() => showActionSubmenu("skills")} type="button"><img alt="" className="h-4 w-4 shrink-0 object-contain dark:invert" src={skillsIcon} /><span>{t("skills")}</span><ChevronRight className="ml-auto h-3 w-3 text-[#898981]" /></button>
@@ -442,10 +464,7 @@ export function Composer({
         })}</div></div> : null}
         {approvalOpen && onToolApprovalModeChange ? <div className="w-[276px] rounded-[10px] border border-[#dfdfdb] bg-white p-1.5 shadow-[0_14px_34px_rgba(28,28,25,0.14)] dark:border-border dark:bg-card" role="radiogroup" aria-label={locale === "zh-CN" ? "工具审批方式" : "Tool Approval mode"}>
           {approvalError ? <p className="px-2.5 pb-1 text-[10px] text-[#a0522d] dark:text-[#e5a47d]" role="alert">{approvalError}</p> : null}
-          {([
-            { id: "manual" as const, label: locale === "zh-CN" ? "手动审批" : "Manual approval", description: locale === "zh-CN" ? "每次工具操作都需要确认" : "Ask before each tool action" },
-            { id: "auto" as const, label: locale === "zh-CN" ? "本次自动审批" : "Auto-Approve for this session", description: locale === "zh-CN" ? "普通操作自动通过，高风险操作仍需确认" : "Normal actions auto-approve; high-risk actions still ask" },
-          ]).map((option) => <button aria-checked={toolApprovalMode === option.id} className={cn("flex w-full items-start gap-2 rounded-[7px] px-2.5 py-2 text-left hover:bg-[#f3f3f0] dark:hover:bg-muted", toolApprovalMode === option.id && "bg-[#edf2df] dark:bg-[#313d20]")} disabled={approvalChanging} key={option.id} onClick={() => void changeToolApprovalMode(option.id)} role="radio" type="button"><span className={cn("mt-0.5 grid h-3.5 w-3.5 shrink-0 place-items-center rounded-full border text-[9px]", toolApprovalMode === option.id ? "border-[#6d8438] bg-[#6d8438] text-white" : "border-[#bdbdb6] text-transparent dark:border-muted-foreground")}>✓</span><span className="min-w-0"><span className="block text-[12px] font-medium text-[#42423d] dark:text-foreground">{option.label}</span><span className="mt-0.5 block text-[10px] leading-4 text-[#85857e] dark:text-muted-foreground">{option.description}</span></span></button>)}
+          {approvalModes.map((option) => <button aria-checked={toolApprovalMode === option.id} className={cn("flex w-full items-start gap-2 rounded-[7px] px-2.5 py-2 text-left hover:bg-[#f3f3f0] dark:hover:bg-muted", toolApprovalMode === option.id && (option.id === "bypass" ? "bg-[#f9e9e6] dark:bg-[#452824]" : "bg-[#edf2df] dark:bg-[#313d20]"))} disabled={approvalChanging} key={option.id} onClick={() => requestToolApprovalModeChange(option.id)} role="radio" type="button"><span className={cn("mt-0.5 grid h-3.5 w-3.5 shrink-0 place-items-center rounded-full border text-[9px]", toolApprovalMode === option.id ? option.id === "bypass" ? "border-[#bd5147] bg-[#bd5147] text-white" : "border-[#6d8438] bg-[#6d8438] text-white" : "border-[#bdbdb6] text-transparent dark:border-muted-foreground")}>✓</span><span className="min-w-0"><span className={cn("block text-[12px] font-medium dark:text-foreground", option.id === "bypass" ? "text-[#9f453d] dark:text-[#f09a90]" : "text-[#42423d]")}>{option.label}</span><span className="mt-0.5 block text-[10px] leading-4 text-[#85857e] dark:text-muted-foreground">{option.description}</span></span></button>)}
         </div> : null}
         {skillsOpen ? <div className="w-[294px] rounded-[10px] border border-[#dfdfdb] bg-white p-2 shadow-[0_14px_34px_rgba(28,28,25,0.12)] dark:border-border dark:bg-card">
           <input aria-label={t("searchSkills")} autoFocus className="h-8 w-full rounded-[6px] border border-[#e4e4df] bg-[#fafaf8] px-2 text-[12px] text-[#3f3f3a] outline-none placeholder:text-[#9b9b94] focus:border-[#9dad75] dark:border-border dark:bg-muted dark:text-foreground" onChange={(event) => setSkillQuery(event.target.value)} placeholder={t("searchSkills")} value={skillQuery} />
@@ -503,5 +522,7 @@ export function Composer({
         </div>
       </div>
     </div>
+    <BypassPermissionsDialog error={approvalError} onCancel={() => { if (approvalChanging) return; setBypassConfirmOpen(false); setApprovalError(null); }} onConfirm={() => void changeToolApprovalMode("bypass")} open={bypassConfirmOpen} saving={approvalChanging} />
+    </>
   );
 }

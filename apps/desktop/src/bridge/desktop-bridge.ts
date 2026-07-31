@@ -37,8 +37,8 @@ export interface DesktopBridge {
   createManagedWorkspace(name: string): Promise<WorkspaceRecord>;
   openWorkspace(path: string): Promise<WorkspaceRecord>;
   pickWorkspace(): Promise<WorkspaceRecord | null>;
-  createAndPrompt(draft: SessionDraft, parts: UserPromptPart[], submission: UserMessageSubmission, attachments?: Array<{ path: string }>): Promise<SessionRecord>;
-  promptSession(sessionId: string, parts: UserPromptPart[], submission: UserMessageSubmission, attachments?: Array<{ path: string }>): Promise<void>;
+  createAndPrompt(draft: SessionDraft, parts: UserPromptPart[], submission: UserMessageSubmission): Promise<SessionRecord>;
+  promptSession(sessionId: string, parts: UserPromptPart[], submission: UserMessageSubmission): Promise<void>;
   compactSession(sessionId: string): Promise<void>;
   getSessionContext(sessionId: string): Promise<SessionContextSnapshot>;
   getOfficeEngineHealth(): Promise<OfficeEngineHealth>;

@@ -152,8 +152,8 @@ export function WorkbenchShell() {
 
   const contextPanelDefinition = workbenchContextPanelRegistry.resolve(activeSession?.workbenchId);
   const ContextPanelContent = contextPanelDefinition.component;
-  const addAttachment = (attachment: { path: string; name: string; kind?: "file" | "directory" }) => {
-    setPendingWorkspaceReferences((current) => current.some((item) => item.path === attachment.path) ? current : [...current, { path: attachment.path, name: attachment.name, kind: attachment.kind ?? "file" }]);
+  const addWorkspaceReference = (reference: InlineWorkspaceReferenceToken) => {
+    setPendingWorkspaceReferences((current) => current.some((item) => item.path === reference.path) ? current : [...current, reference]);
     setRightOpen(true);
   };
   const contextPanel = (
@@ -170,7 +170,7 @@ export function WorkbenchShell() {
       }}
       tabs={contextPanelDefinition.tabs}
       renderContent={(view) => activeSession
-        ? <ContextPanelContent onArtifactSelection={(selection) => { setPendingArtifactSelection(selection); setRightOpen(true); }} onAttachFile={addAttachment} onViewChange={setContextView} sessionId={activeSession.id} view={view} />
+        ? <ContextPanelContent onArtifactSelection={(selection) => { setPendingArtifactSelection(selection); setRightOpen(true); }} onAttachFile={addWorkspaceReference} onViewChange={setContextView} sessionId={activeSession.id} view={view} />
         : <div className="p-4 text-[12px] text-muted-foreground">Select a session to view its context.</div>}
       view={contextView}
     />

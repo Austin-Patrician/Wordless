@@ -254,6 +254,17 @@ describe("NodeExecutionEnv", () => {
 		expect(stderr).toBe("err");
 	});
 
+	it("reports a missing working directory before spawning", async () => {
+		const root = createTempDir();
+		const env = new NodeExecutionEnv({ cwd: join(root, "missing") });
+		const result = await env.exec("printf ok");
+
+		expect(result).toMatchObject({
+			ok: false,
+			error: { code: "spawn_error", message: expect.stringContaining("Working directory does not exist") },
+		});
+	});
+
 	it("returns non-zero command exit codes as successful execution results", async () => {
 		const root = createTempDir();
 		const env = new NodeExecutionEnv({ cwd: root });

@@ -4,7 +4,7 @@ import { app, BrowserWindow, dialog, ipcMain, shell } from "electron";
 import { Type } from "typebox";
 import { Value } from "typebox/value";
 import type { TSchema } from "typebox";
-import type { AppearancePreferences, AppPreferences, SessionAccessLevel, UserMessageSubmission, UserPromptPart } from "@wordless/domain";
+import type { AppearancePreferences, AppPreferences, SessionAccessLevel, ToolApprovalMode, UserMessageSubmission, UserPromptPart } from "@wordless/domain";
 import { formatPromptWithSkillReferences, selectedSkillIdsFromPromptParts } from "@wordless/agent-driver-sdk";
 import {
   CreateAndPromptSchema,
@@ -218,12 +218,12 @@ export function registerRuntimeIpc(runtime: WordlessRuntime, appearanceAssets: A
     return await runtime.openLinkedWorkspace(result.filePaths[0]);
   });
   ipcMain.handle("wordless:session:create-and-prompt", async (_event, payload: unknown) => {
-    const input = parsePayload<{ draft: Parameters<WordlessRuntime["createAndPrompt"]>[0]; parts: UserPromptPart[]; submission: UserMessageSubmission; attachments?: Array<{ path: string }> }>(CreateAndPromptSchema, payload);
-    return await runtime.createAndPrompt(input.draft, formatPromptWithSkillReferences(input.parts), selectedSkillIdsFromPromptParts(input.parts), input.attachments?.map((attachment) => attachment.path), input.submission);
+    const input = parsePayload<{ draft: Parameters<WordlessRuntime["createAndPrompt"]>[0]; parts: UserPromptPart[]; submission: UserMessageSubmission }>(CreateAndPromptSchema, payload);
+    return await runtime.createAndPrompt(input.draft, formatPromptWithSkillReferences(input.parts), selectedSkillIdsFromPromptParts(input.parts), input.submission);
   });
   ipcMain.handle("wordless:session:prompt", async (_event, payload: unknown) => {
-    const input = parsePayload<{ sessionId: string; parts: UserPromptPart[]; submission: UserMessageSubmission; attachments?: Array<{ path: string }> }>(PromptSessionSchema, payload);
-    await runtime.promptSession(input.sessionId, formatPromptWithSkillReferences(input.parts), input.attachments?.map((attachment) => attachment.path), selectedSkillIdsFromPromptParts(input.parts), input.submission);
+    const input = parsePayload<{ sessionId: string; parts: UserPromptPart[]; submission: UserMessageSubmission }>(PromptSessionSchema, payload);
+    await runtime.promptSession(input.sessionId, formatPromptWithSkillReferences(input.parts), selectedSkillIdsFromPromptParts(input.parts), input.submission);
   });
   ipcMain.handle("wordless:session:compact", async (_event, payload: unknown) => {
     const input = parsePayload<{ sessionId: string }>(CompactSessionSchema, payload);
@@ -353,7 +353,7 @@ export function registerRuntimeIpc(runtime: WordlessRuntime, appearanceAssets: A
     await runtime.resolveOperationApproval(input.sessionId, input.approvalId, input.approved, input.feedback);
   });
   ipcMain.handle("wordless:session:approval-mode", async (_event, payload: unknown) => {
-    const input = parsePayload<{ sessionId: string; mode: "manual" | "auto" }>(SetSessionToolApprovalModeSchema, payload);
+    const input = parsePayload<{ sessionId: string; mode: ToolApprovalMode }>(SetSessionToolApprovalModeSchema, payload);
     await runtime.setSessionToolApprovalMode(input.sessionId, input.mode);
   });
   ipcMain.handle("wordless:session:user-request", async (_event, payload: unknown) => {

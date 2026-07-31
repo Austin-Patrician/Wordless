@@ -20,7 +20,7 @@ import {
   Wrench,
   X,
 } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { MessageArtifactBlock, MessageToolBlock, WorkbenchId } from "@wordless/domain";
 import grepIcon from "../../../icons/common-icons/grep.svg";
 import readFileIcon from "../../../icons/common-icons/read_file.svg";
@@ -103,12 +103,24 @@ function activityStatusClass(block: MessageToolBlock): string {
 }
 
 function ToolActivityRow({ block, detail, icon, runningLabel, summary }: { block: MessageToolBlock; detail?: string; icon: ReactNode; runningLabel?: string; summary?: string }) {
+  const [now, setNow] = useState(Date.now());
+  useEffect(() => {
+    if (block.state !== "running" || block.startedAt === undefined) return;
+    setNow(Date.now());
+    const interval = window.setInterval(() => setNow(Date.now()), 1_000);
+    return () => window.clearInterval(interval);
+  }, [block.startedAt, block.state]);
+  const runningTime = block.state === "running" && block.startedAt !== undefined
+    ? `${Math.max(0, Math.floor((now - block.startedAt) / 1_000))}s${block.timeoutSeconds !== undefined ? ` / ${block.timeoutSeconds}s` : ""}`
+    : undefined;
   const stateLabel = block.state === "complete"
     ? summary ?? "Completed"
     : block.state === "error"
       ? "Failed"
       : block.state === "running" && runningLabel
-        ? runningLabel
+        ? `${runningLabel}${runningTime ? ` · ${runningTime}` : ""}`
+        : block.state === "running" && runningTime
+          ? `Running · ${runningTime}`
         : activityState(block);
   const statusClass = activityStatusClass(block);
 

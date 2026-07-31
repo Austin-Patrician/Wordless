@@ -3,6 +3,9 @@ import { Type, type TSchema } from "typebox";
 
 type ToolDetails = Record<string, unknown>;
 
+const DEFAULT_BASH_TIMEOUT_SECONDS = 30;
+const MAX_BASH_TIMEOUT_SECONDS = 600;
+
 function textResult(text: string, details: ToolDetails = {}): AgentToolResult<ToolDetails> {
   return { content: [{ type: "text", text }], details };
 }
@@ -134,17 +137,42 @@ export function createHeadlessCodingTools(env: ExecutionEnv) {
   const bash = defineTool({
     name: "bash",
     label: "Run command",
-    description: "Run a shell command within the current workspace.",
-    parameters: Type.Object({ command: Type.String(), timeout: Type.Optional(Type.Integer({ minimum: 1, maximum: 600 })) }),
+    description: `Run a shell command within the current workspace. Commands time out after ${DEFAULT_BASH_TIMEOUT_SECONDS} seconds by default. For an expected long-running command, set timeout explicitly up to ${MAX_BASH_TIMEOUT_SECONDS} seconds. If a command times out, narrow its scope first or retry it with a larger timeout.`,
+    parameters: Type.Object({ command: Type.String(), timeout: Type.Optional(Type.Integer({ minimum: 1, maximum: MAX_BASH_TIMEOUT_SECONDS })) }),
     async execute(_id, input, signal, onUpdate) {
-      const result = requireSuccess(await env.exec(input.command, {
+      const timeoutSeconds = input.timeout ?? DEFAULT_BASH_TIMEOUT_SECONDS;
+      const startedAt = Date.now();
+      let stdout = "";
+      let stderr = "";
+      const result = await env.exec(input.command, {
         abortSignal: signal,
-        timeout: input.timeout,
-        onStdout: (chunk) => onUpdate?.(textResult(chunk, { command: input.command })),
-        onStderr: (chunk) => onUpdate?.(textResult(chunk, { command: input.command })),
-      }));
-      const output = [result.stdout, result.stderr].filter(Boolean).join(result.stdout && result.stderr ? "\n" : "");
-      return textResult(output || `Command finished with exit code ${result.exitCode}`, { command: input.command, exitCode: result.exitCode, stdout: result.stdout, stderr: result.stderr });
+        timeout: timeoutSeconds,
+        onStdout: (chunk) => {
+          stdout += chunk;
+          onUpdate?.(textResult(chunk, { command: input.command, timeoutSeconds }));
+        },
+        onStderr: (chunk) => {
+          stderr += chunk;
+          onUpdate?.(textResult(chunk, { command: input.command, timeoutSeconds }));
+        },
+      });
+      if (!result.ok) {
+        if (!("code" in result.error) || result.error.code !== "timeout") throw result.error;
+        const partialOutput = [stdout, stderr].filter(Boolean).join(stdout && stderr ? "\n" : "");
+        const truncatedOutput = partialOutput.length > 8_000 ? `...${partialOutput.slice(-8_000)}` : partialOutput;
+        throw new Error(
+          `Command timed out after ${timeoutSeconds} seconds.${truncatedOutput ? `\n\nPartial output:\n${truncatedOutput}` : ""}\n\nThis timeout is retryable. Narrow the command scope first, or call bash again with a larger explicit timeout (maximum ${MAX_BASH_TIMEOUT_SECONDS} seconds).`,
+        );
+      }
+      const output = [result.value.stdout, result.value.stderr].filter(Boolean).join(result.value.stdout && result.value.stderr ? "\n" : "");
+      return textResult(output || `Command finished with exit code ${result.value.exitCode}`, {
+        command: input.command,
+        elapsedMs: Date.now() - startedAt,
+        exitCode: result.value.exitCode,
+        stdout: result.value.stdout,
+        stderr: result.value.stderr,
+        timeoutSeconds,
+      });
     },
   });
   const workspaceChanges = defineTool({

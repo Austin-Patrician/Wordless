@@ -1,7 +1,7 @@
 import type { ComponentType } from "react";
 import type { WorkbenchId } from "@wordless/domain";
 import type { ArtifactSelection } from "@wordless/protocol";
-import type { WorkspaceAttachment } from "../thread/Composer";
+import type { InlineWorkspaceReferenceToken } from "../thread/InlineSkillComposer";
 
 export type ContextPanelView = "overview" | "files" | "changes" | "preview" | "slides" | "sheets" | "assets" | "issues";
 
@@ -13,7 +13,7 @@ export type ContextPanelTab = {
 
 export type WorkbenchContextPanelProps = {
   onArtifactSelection?: (selection: ArtifactSelection) => void;
-  onAttachFile: (attachment: WorkspaceAttachment) => void;
+  onAttachFile: (reference: InlineWorkspaceReferenceToken) => void;
   onViewChange: (view: ContextPanelView) => void;
   sessionId: string;
   view: ContextPanelView;

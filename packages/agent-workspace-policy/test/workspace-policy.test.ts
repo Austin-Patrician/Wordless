@@ -42,6 +42,7 @@ function createContext(accessLevel: SessionAccessLevel): AgentDriverSessionConte
     journalPath: "memory",
     connectorIds: [],
     interactionMode: "default",
+    toolApprovalMode: "manual",
     pinnedAt: null,
     createdAt: Date.now(),
     updatedAt: Date.now(),

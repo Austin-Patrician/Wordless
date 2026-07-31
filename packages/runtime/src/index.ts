@@ -20,7 +20,6 @@ import {
   type AgentDriverEvent,
   type AgentDriverRegistry,
   type AgentDriverSession,
-  type AgentTextAttachment,
   type PersistedOperationApproval,
   type PersistedContextCompaction,
   type PersistedSessionFileBaseline,
@@ -656,6 +655,7 @@ class VaultCredentialStore implements CredentialStore {
 type ActiveRun = {
   driverSession: AgentDriverSession;
   subagents: SessionSubagentRunner;
+  tools: Map<string, MessageToolBlock>;
   kind: "prompt" | "compaction";
   isCompacting: boolean;
   compactionTrigger?: ContextCompactionRecord["trigger"];
@@ -693,7 +693,6 @@ export class WordlessRuntime {
   private readonly historyCache = new Map<string, CachedSessionHistory>();
   private readonly workspaceSearchCache = new Map<string, WorkspaceSearchCache>();
   private readonly runs = new Map<string, ActiveRun>();
-  private readonly toolApprovalModes = new Map<string, ToolApprovalMode>();
   private readonly mediaOperations = new Map<string, AbortController>();
   private readonly runtimeInstanceId = randomUUID();
   private appSequence = 0;
@@ -760,7 +759,6 @@ export class WordlessRuntime {
       active.driverSession.dispose();
     }
     this.runs.clear();
-    this.toolApprovalModes.clear();
     for (const controller of this.mediaOperations.values()) controller.abort();
     this.mediaOperations.clear();
     this.workspaceSearchCache.clear();
@@ -936,6 +934,22 @@ export class WordlessRuntime {
       });
     }
     const active = this.runs.get(sessionId);
+    if (active) {
+      for (const [callId, activeTool] of active.tools) {
+        const location = tools.get(callId);
+        if (!location) continue;
+        const message = messages[location.messageIndex];
+        const block = message?.blocks[location.blockIndex];
+        if (!message || !block || block.type !== "tool" || block.state !== "pending") continue;
+        const blocks = [...message.blocks];
+        blocks[location.blockIndex] = {
+          ...activeTool,
+          ...(block.approval ? { approval: block.approval } : {}),
+          ...(block.userRequest ? { userRequest: block.userRequest } : {}),
+        };
+        messages[location.messageIndex] = { ...message, blocks };
+      }
+    }
     const contextCompactions: ContextCompactionRecord[] = compactions.map((compaction) => {
       const metadata = compactionMetadata.get(compaction.id);
       return {
@@ -976,7 +990,7 @@ export class WordlessRuntime {
       isRunning: active?.kind === "prompt",
       isCompacting: active?.isCompacting ?? false,
       compactionTrigger: active?.compactionTrigger,
-      toolApprovalMode: this.toolApprovalModes.get(sessionId) ?? "manual",
+      toolApprovalMode: record.toolApprovalMode,
       extensions,
     };
   }
@@ -994,7 +1008,7 @@ export class WordlessRuntime {
       isRunning: active?.kind === "prompt",
       isCompacting: active?.isCompacting ?? false,
       compactionTrigger: active?.compactionTrigger,
-      toolApprovalMode: this.toolApprovalModes.get(sessionId) ?? "manual",
+      toolApprovalMode: record.toolApprovalMode,
       compactionError: cached.snapshot.compactionError,
       extensions: cached.snapshot.extensions,
     };
@@ -1225,7 +1239,7 @@ export class WordlessRuntime {
     return workspace;
   }
 
-  async createAndPrompt(draft: SessionDraft, prompt: string, skillIds: string[] = [], attachmentPaths: string[] = [], submission?: UserMessageSubmission): Promise<SessionRecord> {
+  async createAndPrompt(draft: SessionDraft, prompt: string, skillIds: string[] = [], submission?: UserMessageSubmission): Promise<SessionRecord> {
     const entry = this.getEntry(draft.entryId);
     if (entry.mode !== draft.mode) throw new Error("Selected entry does not belong to the selected mode");
     const profile = entry.profile ? this.profiles.get(entry.profile) : undefined;
@@ -1261,6 +1275,7 @@ export class WordlessRuntime {
       journalPath,
       connectorIds: [...new Set([...(draft.connectorIds ?? []), ...defaultConnectorIds])].filter((id) => availableConnectors.some((connector) => connector.id === id)),
       interactionMode: draft.interactionMode ?? "default",
+      toolApprovalMode: draft.toolApprovalMode ?? "manual",
       pinnedAt: null,
       createdAt: now,
       updatedAt: now,
@@ -1283,29 +1298,27 @@ export class WordlessRuntime {
     await journal.appendModelChange(model.connectionId, model.modelId);
     if (record.interactionMode === "plan") await this.persistPlanModeState(record, "planning");
     this.database.upsertSession(record);
-    this.toolApprovalModes.set(id, draft.toolApprovalMode ?? "manual");
     this.rememberEntryModel(entry.id, model);
     const initialPrompt = entry.workbenchId === "presentation"
       ? `${prompt}\n\n<wordless-presentation mode="${draft.presentation?.generationMode ?? "guided"}" template="${draft.presentation?.templateId ?? "auto"}">\nUse the Presentation workflow. In guided mode, inspect the request, propose a slide outline, and wait for confirmation before creating the deck. In quick mode, create the first complete draft directly.\n</wordless-presentation>`
       : prompt;
-    await this.promptSession(id, initialPrompt, attachmentPaths, skillIds, submission);
+    await this.promptSession(id, initialPrompt, skillIds, submission);
     return this.requireSession(id);
   }
 
-  async promptSession(sessionId: string, prompt: string, attachmentPaths: string[] = [], skillIds: string[] = [], submission?: UserMessageSubmission): Promise<void> {
+  async promptSession(sessionId: string, prompt: string, skillIds: string[] = [], submission?: UserMessageSubmission): Promise<void> {
     const record = await this.ensureSessionModelForOpen(sessionId);
-    const attachments = await this.resolveSessionAttachments(record, attachmentPaths);
     const active = this.runs.get(sessionId);
     if (active) {
       if (active.kind === "compaction") throw new Error("Context compaction is in progress");
       if (skillIds.length > 0) throw new Error("Skills can only be selected before starting a new agent run");
-      await active.driverSession.execute({ type: "steer", text: prompt, attachments, submission });
+      await active.driverSession.execute({ type: "steer", text: prompt, submission });
       return;
     }
     const selectedSkills = this.resolveSelectedSkills(record.workspaceId, skillIds);
     const automaticCompaction = this.isAutomaticContextCompactionEnabled();
     const run = await this.createActiveRun(sessionId, automaticCompaction ? "compaction" : "prompt", submission?.messageId);
-    void this.executeActiveRun(sessionId, run, prompt, attachments, selectedSkills, automaticCompaction, submission).catch(() => {});
+    void this.executeActiveRun(sessionId, run, prompt, selectedSkills, automaticCompaction, submission).catch(() => {});
   }
 
   async cancelSession(sessionId: string): Promise<void> {
@@ -1346,16 +1359,16 @@ export class WordlessRuntime {
   }
 
   async setSessionToolApprovalMode(sessionId: string, mode: ToolApprovalMode): Promise<void> {
-    this.requireSession(sessionId);
+    const previous = this.requireSession(sessionId);
     const active = this.runs.get(sessionId);
-    const previous = this.toolApprovalModes.get(sessionId) ?? "manual";
-    this.toolApprovalModes.set(sessionId, mode);
+    const next = { ...previous, toolApprovalMode: mode };
+    this.database.upsertSession(next);
     if (!active) return;
     try {
       await active.driverSession.execute({ type: "set-tool-approval-mode", mode });
     } catch (error) {
-      this.toolApprovalModes.set(sessionId, previous);
-      await active.driverSession.execute({ type: "set-tool-approval-mode", mode: previous }).catch(() => {});
+      this.database.upsertSession(previous);
+      await active.driverSession.execute({ type: "set-tool-approval-mode", mode: previous.toolApprovalMode }).catch(() => {});
       throw error;
     }
   }
@@ -1470,6 +1483,7 @@ export class WordlessRuntime {
       journalPath,
       connectorIds: [],
       interactionMode: "default",
+      toolApprovalMode: "manual",
       pinnedAt: null,
       createdAt: now,
       updatedAt: now,
@@ -1908,7 +1922,7 @@ export class WordlessRuntime {
     await this.runCompaction(sessionId);
   }
 
-  private async executeActiveRun(sessionId: string, active: ActiveRun, prompt: string, attachments: AgentTextAttachment[], selectedSkills: ReturnType<SkillRegistry["getSessionSkills"]>, automaticCompaction: boolean, submission?: UserMessageSubmission): Promise<void> {
+  private async executeActiveRun(sessionId: string, active: ActiveRun, prompt: string, selectedSkills: ReturnType<SkillRegistry["getSessionSkills"]>, automaticCompaction: boolean, submission?: UserMessageSubmission): Promise<void> {
     try {
       if (automaticCompaction) active.compactionTrigger = "automatic";
       if (automaticCompaction) await active.driverSession.execute({ type: "compact", trigger: "automatic" });
@@ -1916,7 +1930,7 @@ export class WordlessRuntime {
       active.isCompacting = false;
       active.compactionTrigger = undefined;
       this.emit(sessionId, active, { type: "run.started", runId: active.runId });
-      await active.driverSession.execute({ type: "prompt", text: prompt, attachments, selectedSkills, submission });
+      await active.driverSession.execute({ type: "prompt", text: prompt, selectedSkills, submission });
       this.emit(sessionId, active, { type: "run.completed", runId: active.runId });
     } catch (error) {
       this.emit(sessionId, active, { type: "run.failed", runId: active.runId, message: error instanceof Error ? error.message : String(error) });
@@ -1963,7 +1977,7 @@ export class WordlessRuntime {
       resolveModel: (reference) => this.requireRuntimeModel(reference),
       resolveCapabilities: (reference) => this.requireEnabledModel(reference).capabilities,
       onFilesChanged: async (changes) => await this.persistSubagentFileChanges(record, changes),
-      toolApprovalMode: this.toolApprovalModes.get(sessionId) ?? "manual",
+      toolApprovalMode: record.toolApprovalMode,
     });
     const driverSession = await driver.createSession({
       record,
@@ -1980,11 +1994,12 @@ export class WordlessRuntime {
       resolveModel: (reference) => this.requireRuntimeModel(reference),
       executionKind: "primary",
       subagentRunner: subagents,
-      toolApprovalMode: this.toolApprovalModes.get(sessionId) ?? "manual",
+      toolApprovalMode: record.toolApprovalMode,
     });
     const active: ActiveRun = {
       driverSession,
       subagents,
+      tools: new Map(),
       kind,
       isCompacting: kind === "compaction",
       compactionTrigger: kind === "compaction" ? "manual" : undefined,
@@ -2003,7 +2018,6 @@ export class WordlessRuntime {
     active.driverSession.dispose();
     void active.subagents.dispose();
     this.runs.delete(sessionId);
-    this.toolApprovalModes.delete(sessionId);
     this.emit(sessionId, active, { type: "session.idle" });
     const current = this.requireSession(sessionId);
     this.database.upsertSession({ ...current, updatedAt: Date.now() });
@@ -2047,9 +2061,44 @@ export class WordlessRuntime {
     if (event.type === "message.text.delta") this.emit(sessionId, active, event);
     if (event.type === "message.reasoning.delta") this.emit(sessionId, active, event);
     if (event.type === "message.completed") this.emit(sessionId, active, { type: "message.completed", message: event.message });
-    if (event.type === "tool.started") this.emit(sessionId, active, event);
-    if (event.type === "tool.updated") this.emit(sessionId, active, event);
+    if (event.type === "tool.started") {
+      const configuredTimeout = event.input.timeout;
+      active.tools.set(event.callId, {
+        type: "tool",
+        callId: event.callId,
+        name: event.name,
+        state: "running",
+        startedAt: Date.now(),
+        ...(event.name === "bash" ? { timeoutSeconds: typeof configuredTimeout === "number" ? configuredTimeout : 30 } : {}),
+        input: event.input,
+      });
+      this.historyCache.delete(sessionId);
+      this.emit(sessionId, active, event);
+    }
+    if (event.type === "tool.updated") {
+      const current = active.tools.get(event.callId);
+      if (current) {
+        active.tools.set(event.callId, {
+          ...current,
+          state: "running",
+          output: `${current.output ?? ""}${event.output}`,
+          ...(event.details !== undefined ? { details: event.details } : {}),
+          ...(event.usage ? { usage: event.usage } : {}),
+        });
+      }
+      this.emit(sessionId, active, event);
+    }
     if (event.type === "tool.completed") {
+      const current = active.tools.get(event.callId);
+      if (current) {
+        active.tools.set(event.callId, {
+          ...current,
+          state: event.isError ? "error" : "complete",
+          output: event.output,
+          ...(event.details !== undefined ? { details: event.details } : {}),
+          ...(event.usage ? { usage: event.usage } : {}),
+        });
+      }
       this.invalidateSessionWorkspaceSearch(sessionId);
       this.historyCache.delete(sessionId);
       this.emit(sessionId, active, event);
@@ -2600,33 +2649,6 @@ export class WordlessRuntime {
   private rememberEntryModel(entryId: string, model: ModelReference): void {
     this.preferences = { ...this.preferences, entryModels: { ...this.preferences.entryModels, [entryId]: model } };
     this.database.savePreferences(this.preferences);
-  }
-
-  private async resolveSessionAttachments(record: SessionRecord, paths: string[]): Promise<AgentTextAttachment[]> {
-    if (paths.length === 0) return Promise.resolve([]);
-    if (!record.workspaceId) throw new Error("Only workspace files can be attached to a conversation");
-    const workspace = this.requireWorkspace(record.workspaceId);
-    if (workspace.availability !== "available") throw new Error("The selected workspace is unavailable");
-    const spreadsheetMediaTypes: Record<string, string> = {
-      ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-      ".csv": "text/csv",
-      ".tsv": "text/tab-separated-values",
-    };
-    const files = await Promise.all(paths.map(async (path): Promise<AgentTextAttachment> => {
-      const extension = extname(path).toLowerCase();
-      const spreadsheetMediaType = record.workbenchId === "workbook" ? spreadsheetMediaTypes[extension] : undefined;
-      if (spreadsheetMediaType) {
-        const source = await this.pathService.resolveWorkspaceFile(record.runtimeRootPath, path);
-        const details = await stat(source);
-        if (details.size > 100 * 1024 * 1024) throw new Error("Spreadsheet attachments must not exceed 100 MiB");
-        return { path: path.replace(/\\/g, "/").replace(/^\.\//, ""), name: basename(source), mediaType: spreadsheetMediaType };
-      }
-      const file = await this.pathService.readWorkspaceTextFile(record.runtimeRootPath, path, 64 * 1024);
-      return { ...file, mediaType: "text/plain" };
-    }));
-    const totalTextBytes = files.reduce((size, file) => size + (file.content ? new TextEncoder().encode(file.content).byteLength : 0), 0);
-    if (totalTextBytes > 256 * 1024) throw new Error("Attached workspace text files exceed the 256 KiB limit");
-    return files;
   }
 
   private toConversationMessage(message: unknown, model: ModelReference, id: string): ConversationMessage | undefined {

@@ -63,6 +63,7 @@ export type InlineSkillComposerHandle = {
   clear(): void;
   focus(): void;
   getCursorRect(): DOMRect | null;
+  getValue(): InlineSkillComposerValue;
   insertSkill(skill: InlineSkillToken): void;
   insertWorkspaceReference(reference: InlineWorkspaceReferenceToken): void;
 };
@@ -410,6 +411,10 @@ export const InlineSkillComposer = forwardRef<InlineSkillComposerHandle, InlineS
       const selection = window.getSelection();
       if (!selection || selection.rangeCount === 0) return null;
       return selection.getRangeAt(0).getBoundingClientRect();
+    },
+    getValue() {
+      const editor = editorRef.current;
+      return editor ? editorValue(editor.getEditorState()) : { parts: [], skillIds: [], skillTokenCounts: {}, text: "", workspaceReferenceCount: 0, workspaceQuery: null };
     },
     insertSkill(skill) {
       const editor = editorRef.current;

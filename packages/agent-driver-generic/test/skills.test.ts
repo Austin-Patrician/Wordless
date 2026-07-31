@@ -1,7 +1,7 @@
 import { InMemorySessionStorage, Session } from "@wordless/agent";
 import { NodeExecutionEnv } from "@wordless/agent/node";
 import { createModels, fauxAssistantMessage, fauxProvider, type FauxResponseFactory } from "@wordless/ai";
-import { formatPromptArtifactReferencesForModel, formatPromptWithSkillReferences, projectUserMessageContent, selectedSkillIdsFromPromptParts, stripPromptSkillReferences, type AgentDriverEvent, type AgentDriverSessionContext, type AgentRuntimeSkill } from "@wordless/agent-driver-sdk";
+import { formatPromptArtifactReferencesForModel, formatPromptWithSkillReferences, formatPromptWorkspaceReferencesForModel, projectUserMessageContent, selectedSkillIdsFromPromptParts, stripPromptSkillReferences, type AgentDriverEvent, type AgentDriverSessionContext, type AgentRuntimeSkill } from "@wordless/agent-driver-sdk";
 import type { SessionRecord } from "@wordless/domain";
 import { describe, expect, it } from "vitest";
 import { createAgentHarnessDriver } from "../src/index.ts";
@@ -41,6 +41,7 @@ async function createDriverSession(responses: Array<ReturnType<typeof fauxAssist
     accessLevel: "full",
     model: { connectionId: model.provider, modelId: model.id },
     journalPath: "memory",
+    toolApprovalMode: "manual",
     pinnedAt: null,
     createdAt: Date.now(),
     updatedAt: Date.now(),
@@ -127,20 +128,41 @@ describe("selected skills", () => {
     ]);
   });
 
-  it("preserves workspace file and folder references in history", () => {
+  it("passes workspace references to the provider as paths without file contents", async () => {
     const parts = [
       { type: "text" as const, text: "Review " },
-      { type: "workspace-reference" as const, path: "src/app.ts", name: "app.ts", kind: "file" as const },
+      { type: "workspace-reference" as const, path: "reports/large-workbook.xlsx", name: "large-workbook.xlsx", kind: "file" as const },
       { type: "text" as const, text: " and " },
-      { type: "workspace-reference" as const, path: "src/components", name: "components", kind: "directory" as const },
+      { type: "workspace-reference" as const, path: "references/source.pdf", name: "source.pdf", kind: "file" as const },
     ];
+    const prompt = formatPromptWithSkillReferences(parts);
 
-    expect(projectUserMessageContent(formatPromptWithSkillReferences(parts))).toEqual([
+    expect(projectUserMessageContent(prompt)).toEqual([
       { type: "text", text: "Review " },
-      { type: "workspace-reference", id: "src/app.ts:1", path: "src/app.ts", name: "app.ts", kind: "file" },
+      { type: "workspace-reference", id: "reports/large-workbook.xlsx:1", path: "reports/large-workbook.xlsx", name: "large-workbook.xlsx", kind: "file" },
       { type: "text", text: " and " },
-      { type: "workspace-reference", id: "src/components:3", path: "src/components", name: "components", kind: "directory" },
+      { type: "workspace-reference", id: "references/source.pdf:3", path: "references/source.pdf", name: "source.pdf", kind: "file" },
     ]);
+    const modelContext = formatPromptWorkspaceReferencesForModel(prompt);
+    expect(modelContext).toContain('path="reports/large-workbook.xlsx"');
+    expect(modelContext).toContain('path="references/source.pdf"');
+    expect(modelContext).toContain("Use the available workspace tools to inspect it when needed.");
+    expect(modelContext).not.toContain("wordless-workspace-reference");
+
+    const providerContexts: string[] = [];
+    const { driverSession } = await createDriverSession([
+      (context) => {
+        providerContexts.push(JSON.stringify(context.messages));
+        return fauxAssistantMessage("Done");
+      },
+    ]);
+    await driverSession.execute({ type: "prompt", text: prompt });
+
+    expect(providerContexts).toHaveLength(1);
+    expect(providerContexts[0]).toContain('path=\\"reports/large-workbook.xlsx\\"');
+    expect(providerContexts[0]).toContain('path=\\"references/source.pdf\\"');
+    expect(providerContexts[0]).not.toContain("wordless-workspace-reference");
+    expect(providerContexts[0]).not.toContain("PK\\u0003\\u0004");
   });
 
   it("keeps artifact selections compact in history and explicit in model context", () => {

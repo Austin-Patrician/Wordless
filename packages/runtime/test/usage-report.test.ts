@@ -31,6 +31,7 @@ function sessionRecord(root: string, journalPath: string): SessionRecord {
     model: { connectionId: "openai", modelId: "gpt-5" },
     journalPath,
     connectorIds: [],
+    toolApprovalMode: "manual",
     pinnedAt: null,
     createdAt: 1,
     updatedAt: 1,

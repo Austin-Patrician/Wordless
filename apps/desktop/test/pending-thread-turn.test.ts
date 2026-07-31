@@ -9,12 +9,11 @@ test("projects a submitted prompt into an immediately renderable user message", 
       { type: "text", text: "Review this file" },
       { type: "workspace-reference", path: "src/app.ts", name: "app.ts", kind: "file" },
     ],
-    [{ path: "src/app.ts", name: "app.ts" }],
     { messageId: "message-1", submittedAt: 123 },
   );
 
   assert.equal(turn.message.id, "message-1");
   assert.equal(turn.message.timestamp, 123);
   assert.equal(turn.message.role, "user");
-  assert.deepEqual(turn.message.blocks.map((block) => block.type), ["skill-reference", "text", "workspace-reference", "attachment"]);
+  assert.deepEqual(turn.message.blocks.map((block) => block.type), ["skill-reference", "text", "workspace-reference"]);
 });

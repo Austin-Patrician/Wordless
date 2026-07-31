@@ -5,14 +5,14 @@ import type { SessionArtifactDiff, SessionArtifactFile, SessionContextSnapshot, 
 import { FileTypeIcon } from "../../shared/FileTypeIcon";
 import { usePreferences } from "../../shared/preferences";
 import { useRuntimeClient } from "../../shared/runtime";
-import type { WorkspaceAttachment } from "../thread/Composer";
+import type { InlineWorkspaceReferenceToken } from "../thread/InlineSkillComposer";
 import { DocumentPreview } from "./DocumentPreview";
 import type { ContextPanelView } from "../workbench/context-panel-types";
 
 export type { ContextPanelView } from "../workbench/context-panel-types";
 
 type CodingContextPanelProps = {
-  onAttachFile: (attachment: WorkspaceAttachment) => void;
+  onAttachFile: (reference: InlineWorkspaceReferenceToken) => void;
   onViewChange: (view: ContextPanelView) => void;
   sessionId: string;
   view: ContextPanelView;
@@ -169,7 +169,7 @@ export function CodingContextPanel({ onAttachFile, onViewChange, sessionId, view
   return <div className="relative p-3"><WorkspaceTree directories={directories} expanded={expanded} isRunning={isRunning} onAction={(entry, name) => void action(entry, name)} onAttach={onAttachFile} onDelete={setDeletingEntry} onPreview={previewFile} onToggleDirectory={toggleDirectory} selectedPath={selectedPath} />{error ? <p className="mt-3 px-2 text-[10px] text-destructive">{error}</p> : null}<Dialog onOpenChange={(open) => { if (!open && !deleting) setDeletingEntry(null); }} open={deletingEntry !== null}><DialogContent className="w-[min(25rem,calc(100vw-2rem))] rounded-[10px] border-[#d9d9d4] px-5 py-5 shadow-[0_18px_42px_rgba(20,20,17,0.18)]" showCloseButton={false}><DialogTitle className="text-[15px] font-bold text-foreground">{locale === "zh-CN" ? "移到废纸篓" : "Move to Trash"}</DialogTitle><p className="mt-2 text-[12px] leading-5 text-muted-foreground">{locale === "zh-CN" ? `将“${deletingEntry?.name ?? ""}”移到系统废纸篓？` : `Move “${deletingEntry?.name ?? ""}” to the system Trash?`}</p><div className="mt-5 flex justify-end gap-2"><Button className="h-8 px-3 text-[11px]" disabled={deleting} onClick={() => setDeletingEntry(null)} type="button" variant="outline">{locale === "zh-CN" ? "取消" : "Cancel"}</Button><Button className="h-8 bg-destructive px-3 text-[11px] text-destructive-foreground hover:bg-destructive/90" disabled={deleting || isRunning} onClick={() => void deleteEntry()} type="button">{deleting ? "..." : locale === "zh-CN" ? "移到废纸篓" : "Move to Trash"}</Button></div></DialogContent></Dialog></div>;
 }
 
-function WorkspaceTree({ directories, expanded, isRunning, onAction, onAttach, onDelete, onPreview, onToggleDirectory, selectedPath }: { directories: Record<string, WorkspaceFileEntry[]>; expanded: Set<string>; isRunning: boolean; onAction: (entry: WorkspaceFileEntry, name: "open" | "reveal" | "save") => void; onAttach: (attachment: WorkspaceAttachment) => void; onDelete: (entry: WorkspaceFileEntry) => void; onPreview: (entry: Pick<WorkspaceFileEntry, "path" | "name">) => void; onToggleDirectory: (entry: WorkspaceFileEntry) => void; selectedPath: string | null }) {
+function WorkspaceTree({ directories, expanded, isRunning, onAction, onAttach, onDelete, onPreview, onToggleDirectory, selectedPath }: { directories: Record<string, WorkspaceFileEntry[]>; expanded: Set<string>; isRunning: boolean; onAction: (entry: WorkspaceFileEntry, name: "open" | "reveal" | "save") => void; onAttach: (reference: InlineWorkspaceReferenceToken) => void; onDelete: (entry: WorkspaceFileEntry) => void; onPreview: (entry: Pick<WorkspaceFileEntry, "path" | "name">) => void; onToggleDirectory: (entry: WorkspaceFileEntry) => void; selectedPath: string | null }) {
   const renderEntries = (path: string, depth: number): ReactNode[] => (directories[path] ?? []).flatMap((entry) => {
     const open = entry.kind === "directory" && expanded.has(entry.path);
     const row = (

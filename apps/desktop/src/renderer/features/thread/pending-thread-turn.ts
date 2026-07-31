@@ -11,7 +11,6 @@ export function createUserMessageSubmission(now = Date.now()): UserMessageSubmis
 
 export function createPendingThreadTurn(
   parts: readonly UserPromptPart[],
-  attachments: readonly { name: string; path: string }[],
   submission: UserMessageSubmission,
 ): PendingThreadTurn {
   const blocks: MessageBlock[] = parts.map((part, index): MessageBlock => {
@@ -24,9 +23,6 @@ export function createPendingThreadTurn(
     }
     return { type: "artifact", artifactId: part.artifactId, kind: part.kind, name: part.name, revision: part.revision, surfaceId: part.surfaceId, locator: part.locator };
   });
-  for (const [index, attachment] of attachments.entries()) {
-    blocks.push({ type: "attachment", id: `${submission.messageId}:attachment:${index}`, name: attachment.name, mediaType: "text/plain" });
-  }
   return {
     submission,
     message: {

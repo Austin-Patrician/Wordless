@@ -1,4 +1,4 @@
-import { spawn } from "node:child_process";
+import { type ChildProcess, spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { constants, createReadStream } from "node:fs";
 import {
@@ -30,6 +30,7 @@ import {
 
 const MAX_TIMEOUT_MS = 2_147_483_647;
 const MAX_TIMEOUT_SECONDS = MAX_TIMEOUT_MS / 1000;
+const EXIT_STDIO_GRACE_MS = 100;
 
 function resolveTimeoutMs(timeout: number | undefined): Result<number | undefined, ExecutionError> {
 	if (timeout === undefined) return ok(undefined);
@@ -243,10 +244,80 @@ function killProcessTree(pid: number): void {
 	}
 }
 
+function waitForChildProcess(child: ChildProcess): Promise<number | null> {
+	return new Promise((resolvePromise, reject) => {
+		let settled = false;
+		let exited = false;
+		let exitCode: number | null = null;
+		let postExitTimer: ReturnType<typeof setTimeout> | undefined;
+		let stdoutEnded = child.stdout === null;
+		let stderrEnded = child.stderr === null;
+
+		const cleanup = (): void => {
+			if (postExitTimer) clearTimeout(postExitTimer);
+			child.removeListener("error", onError);
+			child.removeListener("exit", onExit);
+			child.removeListener("close", onClose);
+			child.stdout?.removeListener("end", onStdoutEnd);
+			child.stderr?.removeListener("end", onStderrEnd);
+			child.stdout?.removeListener("data", onData);
+			child.stderr?.removeListener("data", onData);
+		};
+		const finalize = (code: number | null): void => {
+			if (settled) return;
+			settled = true;
+			cleanup();
+			child.stdout?.destroy();
+			child.stderr?.destroy();
+			resolvePromise(code);
+		};
+		const maybeFinalizeAfterExit = (): void => {
+			if (exited && stdoutEnded && stderrEnded) finalize(exitCode);
+		};
+		const armIdleTimer = (): void => {
+			if (postExitTimer) clearTimeout(postExitTimer);
+			postExitTimer = setTimeout(() => finalize(exitCode), EXIT_STDIO_GRACE_MS);
+		};
+		const onData = (): void => {
+			if (exited && !settled) armIdleTimer();
+		};
+		const onStdoutEnd = (): void => {
+			stdoutEnded = true;
+			maybeFinalizeAfterExit();
+		};
+		const onStderrEnd = (): void => {
+			stderrEnded = true;
+			maybeFinalizeAfterExit();
+		};
+		const onError = (error: Error): void => {
+			if (settled) return;
+			settled = true;
+			cleanup();
+			reject(error);
+		};
+		const onExit = (code: number | null): void => {
+			exited = true;
+			exitCode = code;
+			maybeFinalizeAfterExit();
+			if (!settled) armIdleTimer();
+		};
+		const onClose = (code: number | null): void => finalize(code);
+
+		child.stdout?.once("end", onStdoutEnd);
+		child.stderr?.once("end", onStderrEnd);
+		child.stdout?.on("data", onData);
+		child.stderr?.on("data", onData);
+		child.once("error", onError);
+		child.once("exit", onExit);
+		child.once("close", onClose);
+	});
+}
+
 export class NodeExecutionEnv implements ExecutionEnv {
 	cwd: string;
 	private shellPath?: string;
 	private shellEnv?: NodeJS.ProcessEnv;
+	private activeChildPids = new Set<number>();
 
 	constructor(options: { cwd: string; shellPath?: string; shellEnv?: NodeJS.ProcessEnv }) {
 		this.cwd = options.cwd;
@@ -281,6 +352,12 @@ export class NodeExecutionEnv implements ExecutionEnv {
 		const cwd = options?.cwd ? resolvePath(this.cwd, options.cwd) : this.cwd;
 		const shellConfig = await getShellConfig(this.shellPath);
 		if (!shellConfig.ok) return shellConfig;
+		try {
+			await access(cwd, constants.F_OK);
+		} catch (error) {
+			const cause = toError(error);
+			return err(new ExecutionError("spawn_error", `Working directory does not exist: ${cwd}\nCannot execute bash commands.`, cause));
+		}
 
 		return await new Promise((resolvePromise) => {
 			let stdout = "";
@@ -300,6 +377,7 @@ export class NodeExecutionEnv implements ExecutionEnv {
 			const settle = (result: Result<{ stdout: string; stderr: string; exitCode: number }, ExecutionError>) => {
 				if (timeoutId) clearTimeout(timeoutId);
 				if (options?.abortSignal) options.abortSignal.removeEventListener("abort", onAbort);
+				if (child?.pid) this.activeChildPids.delete(child.pid);
 				if (settled) return;
 				settled = true;
 				resolvePromise(result);
@@ -318,6 +396,7 @@ export class NodeExecutionEnv implements ExecutionEnv {
 						windowsHide: true,
 					},
 				);
+				if (child.pid) this.activeChildPids.add(child.pid);
 				if (commandFromStdin) {
 					child.stdin?.on("error", () => {});
 					child.stdin?.end(command);
@@ -369,25 +448,24 @@ export class NodeExecutionEnv implements ExecutionEnv {
 				}
 			});
 
-			child.on("error", (error) => {
-				settle(err(new ExecutionError("spawn_error", error.message, error)));
-			});
-
-			child.on("close", (code) => {
-				if (callbackError) {
-					settle(err(callbackError));
-					return;
-				}
-				if (timedOut) {
-					settle(err(new ExecutionError("timeout", `timeout:${options?.timeout}`)));
-					return;
-				}
-				if (options?.abortSignal?.aborted) {
-					settle(err(new ExecutionError("aborted", "aborted")));
-					return;
-				}
-				settle(ok({ stdout, stderr, exitCode: code ?? 0 }));
-			});
+			void waitForChildProcess(child).then(
+				(code) => {
+					if (callbackError) {
+						settle(err(callbackError));
+						return;
+					}
+					if (timedOut) {
+						settle(err(new ExecutionError("timeout", `Command timed out after ${options?.timeout} seconds`)));
+						return;
+					}
+					if (options?.abortSignal?.aborted) {
+						settle(err(new ExecutionError("aborted", "aborted")));
+						return;
+					}
+					settle(ok({ stdout, stderr, exitCode: code ?? 0 }));
+				},
+				(error: Error) => settle(err(new ExecutionError("spawn_error", error.message, error))),
+			);
 		});
 	}
 
@@ -564,6 +642,7 @@ export class NodeExecutionEnv implements ExecutionEnv {
 	}
 
 	async cleanup(): Promise<void> {
-		// nothing to clean up for the local node implementation
+		for (const pid of this.activeChildPids) killProcessTree(pid);
+		this.activeChildPids.clear();
 	}
 }
