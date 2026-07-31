@@ -134,7 +134,7 @@ export function WorkbenchShell() {
       <main className="relative isolate min-h-screen overflow-hidden bg-transparent text-foreground">
         <AppBackgroundLayer />
         <div className="relative z-10 flex min-h-screen flex-col">
-        <DesktopChrome onNewThread={newThread} onOpenSettings={() => openSettings()} />
+        <DesktopChrome onNewThread={newThread} onOpenSettings={openSettings} />
         <section className="grid h-[calc(100dvh-var(--wordless-chrome-height))] place-items-center bg-[var(--wordless-shell-workspace)] px-6">
           <div className="w-full max-w-[520px] border-y border-[#e3e3de] py-8 text-center dark:border-border">
             {loading ? <LoaderCircle className="mx-auto h-5 w-5 animate-spin text-[#6f8250]" /> : <AlertTriangle className="mx-auto h-5 w-5 text-[#b16854]" />}
@@ -180,7 +180,7 @@ export function WorkbenchShell() {
     <main className="relative isolate min-h-screen overflow-hidden bg-transparent text-foreground">
       <AppBackgroundLayer />
       <div className="relative z-10 flex min-h-screen flex-col">
-      <DesktopChrome onNewThread={newThread} onOpenSettings={() => openSettings()} />
+      <DesktopChrome onNewThread={newThread} onOpenSettings={openSettings} />
       <div className="flex h-[calc(100dvh-var(--wordless-chrome-height))] overflow-hidden">
         {showSessionTools && rightFullscreen ? contextPanel : <>
         <Sidebar collapsed={!leftOpen} mediaActive={mainView === "media"} onNewThread={newThread} onOpenMedia={openMedia} onOpenSession={(sessionId) => { const session = snapshot.sessions.find((candidate) => candidate.id === sessionId); setPendingWorkspaceReferences([]); setPendingArtifactSelection(null); setSelectedSessionId(sessionId); setMainView(session?.workbenchId === "media-canvas" ? "media" : "thread"); setRightFullscreen(false); }} onOpenSettings={() => openSettings()} onOpenSkills={openSkills} onSessionDeleted={(sessionId) => { if (selectedSessionId === sessionId) newThread(); }} onToggle={() => setLeftOpen((value) => !value)} selectedSessionId={selectedSessionId} skillsActive={mainView === "skills"} />

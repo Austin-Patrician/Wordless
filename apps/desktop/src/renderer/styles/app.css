@@ -49,46 +49,286 @@ body {
   outline: none;
 }
 
-.wordless-update-popover {
+.wordless-update-notice {
   position: fixed;
-  top: calc(var(--wordless-chrome-height) + 12px);
-  right: 16px;
+  top: calc(var(--wordless-chrome-height) + 10px);
+  left: 50%;
   z-index: 90;
   display: flex;
   align-items: center;
-  gap: 16px;
-  min-width: 250px;
-  padding: 11px 12px;
+  gap: 12px;
+  width: min(680px, calc(100vw - 32px));
+  min-height: 54px;
+  padding: 9px 10px 9px 12px;
+  transform: translateX(-50%);
   border: 1px solid var(--border);
-  border-radius: 10px;
-  background: color-mix(in srgb, var(--card) 94%, transparent);
-  box-shadow: 0 12px 30px rgb(0 0 0 / 0.12);
-  backdrop-filter: blur(12px);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--card) 97%, transparent);
+  box-shadow: 0 14px 38px rgb(0 0 0 / 0.14);
+  backdrop-filter: blur(16px);
 }
 
-.wordless-update-popover div {
+.wordless-update-notice__mark {
   display: grid;
-  gap: 2px;
-  min-width: 0;
+  width: 28px;
+  height: 28px;
+  flex: 0 0 auto;
+  place-items: center;
+  border-radius: 7px;
+  background: color-mix(in srgb, #728857 15%, transparent);
+  color: #59703e;
 }
 
-.wordless-update-popover strong {
+.wordless-update-notice__mark svg {
+  width: 14px;
+  height: 14px;
+}
+
+.wordless-update-notice strong,
+.wordless-update-notice span {
+  display: block;
+}
+
+.wordless-update-notice strong {
+  color: var(--foreground);
+  font-size: 11px;
+  line-height: 16px;
+}
+
+.wordless-update-notice span {
+  overflow: hidden;
+  color: var(--muted-foreground);
+  font-size: 10px;
+  line-height: 15px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.wordless-update-notice__actions {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 4px;
+}
+
+.wordless-update-notice__actions button {
+  display: inline-flex;
+  height: 30px;
+  align-items: center;
+  gap: 5px;
+  border-radius: 6px;
+  padding: 0 9px;
+  color: var(--muted-foreground);
+  font-size: 10px;
+  font-weight: 600;
+}
+
+.wordless-update-notice__actions button:hover {
+  background: color-mix(in srgb, var(--foreground) 7%, transparent);
+  color: var(--foreground);
+}
+
+.wordless-update-notice__actions button.is-primary {
+  background: #273120;
+  color: #f6f8ef;
+}
+
+.wordless-update-notice__actions button.is-icon {
+  width: 30px;
+  padding: 0;
+  justify-content: center;
+}
+
+.wordless-update-notice__actions svg {
+  width: 12px;
+  height: 12px;
+}
+
+.wordless-update-notice__progress,
+.about-update-progress {
+  overflow: hidden;
+  height: 2px;
+  margin-top: 5px;
+  border-radius: 1px;
+  background: color-mix(in srgb, var(--foreground) 10%, transparent);
+}
+
+.wordless-update-notice__progress i,
+.about-update-progress i {
+  display: block;
+  height: 100%;
+  background: #728857;
+  transition: width 180ms ease-out;
+}
+
+.about-product-band {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  padding-bottom: 28px;
+  border-bottom: 1px solid var(--border);
+}
+
+.about-update-row {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  min-height: 84px;
+  border-bottom: 1px solid var(--border);
+}
+
+.about-update-status {
+  display: grid;
+  width: 30px;
+  height: 30px;
+  flex: 0 0 auto;
+  place-items: center;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--foreground) 7%, transparent);
+  color: var(--muted-foreground);
+}
+
+.about-update-status.is-ready {
+  background: color-mix(in srgb, #728857 15%, transparent);
+  color: #58723b;
+}
+
+.about-update-status.is-error {
+  background: color-mix(in srgb, #b35e48 13%, transparent);
+  color: #a14e3b;
+}
+
+.about-update-status svg {
+  width: 14px;
+  height: 14px;
+}
+
+.about-update-row h3 {
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.about-update-row p {
+  margin-top: 3px;
+  color: var(--muted-foreground);
+  font-size: 10px;
+  line-height: 15px;
+}
+
+.about-update-progress {
+  width: min(320px, 100%);
+  margin-top: 8px;
+}
+
+.about-release {
+  display: grid;
+  grid-template-columns: 116px minmax(0, 1fr);
+  gap: 18px;
+  padding: 20px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.about-release__meta {
+  display: grid;
+  align-content: start;
+  justify-items: start;
+  gap: 5px;
+}
+
+.about-release__meta strong {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 11px;
 }
 
-.wordless-update-popover span {
+.about-release__meta time {
   color: var(--muted-foreground);
   font-size: 10px;
 }
 
-.wordless-update-popover button {
-  flex: 0 0 auto;
-  border-radius: 6px;
-  background: var(--primary);
-  color: var(--primary-foreground);
-  padding: 6px 9px;
+.about-release__meta span {
+  border: 1px solid color-mix(in srgb, #728857 38%, transparent);
+  border-radius: 4px;
+  padding: 2px 5px;
+  color: #58723b;
+  font-size: 8px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.about-release__title {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  text-align: left;
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.about-release__title:hover {
+  color: #58723b;
+}
+
+.about-release__title svg {
+  width: 11px;
+  height: 11px;
+}
+
+.about-release__notes {
+  margin-top: 9px;
+  color: var(--muted-foreground);
   font-size: 10px;
+  line-height: 17px;
+}
+
+.about-release__notes summary {
+  width: fit-content;
+  cursor: pointer;
   font-weight: 600;
+}
+
+.about-release__notes > :not(summary) {
+  margin-top: 9px;
+}
+
+.about-release__notes ul,
+.about-release__notes ol {
+  margin: 6px 0;
+  padding-left: 18px;
+}
+
+.about-release__notes ul {
+  list-style: disc;
+}
+
+.about-release__notes ol {
+  list-style: decimal;
+}
+
+.about-release__notes a {
+  color: #58723b;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+@media (max-width: 720px) {
+  .wordless-update-notice {
+    align-items: flex-start;
+  }
+
+  .wordless-update-notice__actions button:not(.is-primary):not(.is-icon) {
+    display: none;
+  }
+
+  .about-product-band,
+  .about-update-row {
+    align-items: flex-start;
+    flex-wrap: wrap;
+  }
+
+  .about-release {
+    grid-template-columns: 1fr;
+    gap: 10px;
+  }
 }
 
 :root[data-theme="dark"] {

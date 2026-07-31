@@ -1,5 +1,5 @@
 import { Button } from "@wordless/ui-kit";
-import { BarChart3, Database, Package, Palette, Settings, ShieldAlert, SlidersHorizontal, X } from "lucide-react";
+import { BarChart3, CircleHelp, Database, Package, Palette, Settings, ShieldAlert, SlidersHorizontal, X } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { useEffect, useState } from "react";
 import { GeneralSettings } from "./GeneralSettings";
@@ -9,8 +9,10 @@ import { SecuritySettings } from "./SecuritySettings";
 import { PersonalizationSettings } from "./PersonalizationSettings";
 import { UsageSettings } from "./UsageSettings";
 import { usePreferences } from "../../shared/preferences";
+import { useDesktopUpdate } from "../../platform/desktop-update";
+import { AboutUpdatesSettings } from "./AboutUpdatesSettings";
 
-export type SettingsPage = "general" | "models" | "assistant" | "usage" | "security" | "personalization";
+export type SettingsPage = "general" | "models" | "assistant" | "usage" | "security" | "personalization" | "about";
 
 type SettingsDialogProps = {
   initialPage?: SettingsPage;
@@ -39,7 +41,7 @@ export function SettingsDialog({ initialPage = "general", open, onOpenChange }: 
         <SettingsSidebar page={page} onPageChange={setPage} />
         <div className="flex min-w-0 flex-1 flex-col">
           <SettingsHeader page={page} onClose={() => onOpenChange(false)} />
-          {page === "general" ? <GeneralSettings /> : page === "models" ? <ModelSettings /> : page === "assistant" ? <ExtensionsSettings /> : page === "usage" ? <UsageSettings /> : page === "security" ? <SecuritySettings /> : <PersonalizationSettings />}
+          {page === "general" ? <GeneralSettings /> : page === "models" ? <ModelSettings /> : page === "assistant" ? <ExtensionsSettings /> : page === "usage" ? <UsageSettings /> : page === "security" ? <SecuritySettings /> : page === "personalization" ? <PersonalizationSettings /> : <AboutUpdatesSettings />}
         </div>
       </div>
     </div>
@@ -48,8 +50,8 @@ export function SettingsDialog({ initialPage = "general", open, onOpenChange }: 
 
 function SettingsHeader({ page, onClose }: { page: SettingsPage; onClose: () => void }) {
   const { t } = usePreferences();
-  const title = page === "models" ? t("models") : page === "assistant" ? t("assistant") : page === "usage" ? t("usage") : page === "security" ? t("securityCenter") : page === "personalization" ? t("personalization") : t("general");
-  const description = page === "models" ? t("configuredModels") : page === "assistant" ? t("extensionsHelp") : page === "usage" ? t("usageHelp") : page === "security" ? t("securityCenterHelp") : page === "personalization" ? t("personalizationHelp") : t("configure");
+  const title = page === "about" ? "About & Updates" : page === "models" ? t("models") : page === "assistant" ? t("assistant") : page === "usage" ? t("usage") : page === "security" ? t("securityCenter") : page === "personalization" ? t("personalization") : t("general");
+  const description = page === "about" ? "Version information, updates, and release history" : page === "models" ? t("configuredModels") : page === "assistant" ? t("extensionsHelp") : page === "usage" ? t("usageHelp") : page === "security" ? t("securityCenterHelp") : page === "personalization" ? t("personalizationHelp") : t("configure");
 
   return (
     <header className="flex shrink-0 items-center justify-between border-b border-border px-6 py-5 sm:px-9">
@@ -66,11 +68,12 @@ function SettingsHeader({ page, onClose }: { page: SettingsPage; onClose: () => 
 
 function SettingsSidebar({ page, onPageChange }: { page: SettingsPage; onPageChange: (page: SettingsPage) => void }) {
   const { t } = usePreferences();
+  const { appInfo } = useDesktopUpdate();
   return (
-    <aside className="hidden w-[238px] shrink-0 border-r border-border bg-[#f4f4f1] p-3 dark:bg-[#202219] sm:block">
+    <aside className="hidden w-[238px] shrink-0 flex-col border-r border-border bg-[#f4f4f1] p-3 dark:bg-[#202219] sm:flex">
       <div className="px-3 pb-5 pt-2">
         <p className="text-sm font-bold">{t("settingsTitle")}</p>
-        <p className="mt-1 font-mono text-[10px] uppercase text-muted-foreground">Wordless / v0.1</p>
+        <p className="mt-1 font-mono text-[10px] uppercase text-muted-foreground">Wordless / v{appInfo?.version ?? "-"}</p>
       </div>
       <nav className="space-y-1">
         <SettingsNav active={page === "general"} icon={Settings} label={t("general")} onClick={() => onPageChange("general")} />
@@ -80,6 +83,9 @@ function SettingsSidebar({ page, onPageChange }: { page: SettingsPage; onPageCha
         <SettingsNav active={page === "security"} icon={ShieldAlert} label={t("securityCenter")} onClick={() => onPageChange("security")} />
         <SettingsNav active={page === "personalization"} icon={Palette} label={t("personalization")} onClick={() => onPageChange("personalization")} />
         <SettingsNav active={false} icon={Database} label={t("dataPrivacy")} onClick={() => undefined} />
+      </nav>
+      <nav className="mt-auto border-t border-border pt-3">
+        <SettingsNav active={page === "about"} icon={CircleHelp} label="About & Updates" onClick={() => onPageChange("about")} />
       </nav>
     </aside>
   );

@@ -71,10 +71,14 @@ app.whenReady().then(async () => {
   });
   registerRuntimeIpc(runtime, appearanceAssets, {
     hostInfo,
+    getAppInfo: () => updateService.getAppInfo(),
     showApplicationMenu: (menuId, window) => applicationMenu.show(menuId, window),
+    getUpdateSnapshot: () => updateService.getSnapshot(),
+    listReleases: (refresh) => updateService.listReleases(refresh),
     checkForUpdates: () => updateService.check(),
     downloadUpdate: () => updateService.download(),
     installUpdate: () => updateService.install(),
+    openReleasePage: (version) => updateService.openReleasePage(version),
     office,
   });
   mainWindow = createMainWindow(path.join(__dirname, "preload.cjs"), runtime.getSnapshot().preferences);

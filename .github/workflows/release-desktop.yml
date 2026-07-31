@@ -1,62 +1,156 @@
 name: Release Desktop
 
 on:
+  push:
+    tags:
+      - "v*"
   workflow_dispatch:
     inputs:
-      version:
-        description: "Release version without the v prefix"
+      tag:
+        description: "Existing release tag (vX.Y.Z)"
         required: true
-        type: string
-      release_notes:
-        description: "Optional release notes"
-        required: false
-        default: ""
         type: string
 
 permissions:
   contents: write
 
+concurrency:
+  group: desktop-release-${{ github.event_name == 'push' && github.ref_name || inputs.tag }}
+  cancel-in-progress: false
+
 jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.version.outputs.tag }}
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - id: version
+        name: Validate release version
+        shell: bash
+        env:
+          RELEASE_TAG: ${{ github.event_name == 'push' && github.ref_name || inputs.tag }}
+        run: |
+          set -euo pipefail
+          if [[ ! "$RELEASE_TAG" =~ ^v([0-9]+)\.([0-9]+)\.([0-9]+)$ ]]; then
+            echo "Release tag must match vX.Y.Z" >&2
+            exit 1
+          fi
+          echo "tag=$RELEASE_TAG" >> "$GITHUB_OUTPUT"
+          echo "version=${RELEASE_TAG#v}" >> "$GITHUB_OUTPUT"
+
+  verify:
+    needs: prepare
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare.outputs.tag }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.19.0
+          cache: npm
+      - run: npm ci
+      - run: npm run check --workspace=@wordless/desktop
+      - run: npm run test:host --workspace=@wordless/desktop
+
   build-macos:
-    name: macOS Universal preview
+    needs: [prepare, verify]
     runs-on: macos-14
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare.outputs.tag }}
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: 22.19.0
           cache: npm
-      - name: Install dependencies
-        run: npm ci
-      - name: Set release version
-        run: npm pkg set version="${{ inputs.version }}" --workspace=@wordless/desktop
-      - name: Typecheck
-        run: npm run check --workspace=@wordless/desktop
-      - name: Build unsigned/ad-hoc macOS artifacts
-        run: npm run dist:mac:preview --workspace=@wordless/desktop
-      - name: Upload build artifacts
-        uses: actions/upload-artifact@v4
+      - run: npm ci
+      - name: Set package version
+        run: npm pkg set version="${{ needs.prepare.outputs.version }}" --workspace=@wordless/desktop
+      - name: Build unsigned macOS artifacts
+        working-directory: apps/desktop
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: "false"
+        run: |
+          node scripts/prepare-officecli-assets.mjs --platform darwin --arch arm64
+          node scripts/prepare-officecli-assets.mjs --platform darwin --arch x64
+          npm run build:renderer
+          npm run build:electron
+          npx electron-builder --config electron-builder.yml --mac
+      - uses: actions/upload-artifact@v4
         with:
-          name: wordless-macos-universal
-          path: apps/desktop/release/*
+          name: wordless-macos
+          path: |
+            apps/desktop/release/*.dmg
+            apps/desktop/release/*.zip
+            apps/desktop/release/*.blockmap
+            apps/desktop/release/*.yml
+          if-no-files-found: error
+
+  build-windows:
+    needs: [prepare, verify]
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare.outputs.tag }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.19.0
+          cache: npm
+      - name: Require signing credentials
+        shell: bash
+        env:
+          CSC_LINK: ${{ secrets.WINDOWS_CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.WINDOWS_CSC_KEY_PASSWORD }}
+        run: |
+          test -n "$CSC_LINK" || { echo "WINDOWS_CSC_LINK is required" >&2; exit 1; }
+          test -n "$CSC_KEY_PASSWORD" || { echo "WINDOWS_CSC_KEY_PASSWORD is required" >&2; exit 1; }
+      - run: npm ci
+      - name: Set package version
+        run: npm pkg set version="${{ needs.prepare.outputs.version }}" --workspace=@wordless/desktop
+      - name: Build signed Windows artifacts
+        env:
+          CSC_LINK: ${{ secrets.WINDOWS_CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.WINDOWS_CSC_KEY_PASSWORD }}
+        run: npm run dist:win --workspace=@wordless/desktop
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wordless-windows-x64
+          path: |
+            apps/desktop/release/*.exe
+            apps/desktop/release/*.blockmap
+            apps/desktop/release/*.yml
+          if-no-files-found: error
 
   publish:
-    name: Publish GitHub Release
-    needs: build-macos
+    needs: [prepare, build-macos, build-windows]
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare.outputs.tag }}
       - uses: actions/download-artifact@v4
         with:
-          name: wordless-macos-universal
+          pattern: wordless-*
           path: release
-      - name: Create release
+          merge-multiple: true
+      - name: Generate checksums
+        working-directory: release
+        run: find . -maxdepth 1 -type f ! -name SHA256SUMS.txt -printf '%f\0' | sort -z | xargs -0 sha256sum > SHA256SUMS.txt
+      - name: Publish complete release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ needs.prepare.outputs.tag }}
+          RELEASE_VERSION: ${{ needs.prepare.outputs.version }}
         run: |
           set -euo pipefail
-          if [ -n "${{ inputs.release_notes }}" ]; then
-            printf '%s\n' '${{ inputs.release_notes }}' > release-notes.md
+          if gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            IS_DRAFT="$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$RELEASE_TAG" --jq .draft)"
+            test "$IS_DRAFT" = "true" || { echo "Release $RELEASE_TAG is already published" >&2; exit 1; }
           else
-            printf '%s\n' '- macOS Universal preview build.' '- This build is not notarized; macOS may require allowing Wordless in Privacy & Security on first launch.' > release-notes.md
+            gh release create "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --title "Wordless $RELEASE_VERSION" --generate-notes --draft
           fi
-          gh release create "v${{ inputs.version }}" release/* --title "Wordless ${{ inputs.version }}" --notes-file release-notes.md --repo "${{ github.repository }}"
+          gh release upload "$RELEASE_TAG" release/* --repo "$GITHUB_REPOSITORY" --clobber
+          gh release edit "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --draft=false

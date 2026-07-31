@@ -54,12 +54,41 @@ export type DesktopMenuId = "file" | "edit" | "window" | "help";
 
 export type DesktopCommand = "new-thread" | "open-settings" | "search" | "show-about";
 
+export type DesktopAppInfo = {
+  name: string;
+  version: string;
+  repositoryUrl: string;
+  packaged: boolean;
+  platform: "darwin" | "win32" | "linux";
+  arch: string;
+};
+
+export type DesktopRelease = {
+  version: string;
+  title: string;
+  notes: string;
+  publishedAt: string;
+  htmlUrl: string;
+  prerelease: boolean;
+};
+
+export type DesktopUpdateSnapshot = {
+  state: "idle" | "checking" | "up-to-date" | "available" | "downloading" | "ready" | "error";
+  currentVersion: string;
+  availableVersion?: string;
+  releaseNotes?: string;
+  progress?: number;
+  checkedAt?: number;
+  error?: string;
+  installMode?: "restart-install" | "open-installer";
+};
+
 export type DesktopHostEvent =
   | { type: "command"; command: DesktopCommand }
   | { type: "deep-link"; url: string }
-  | { type: "update"; state: "available" | "downloading" | "ready" | "error"; version?: string; progress?: number; message?: string };
+  | { type: "update"; snapshot: DesktopUpdateSnapshot };
 
-export type DesktopUpdateState = Extract<DesktopHostEvent, { type: "update" }>;
+export type DesktopUpdateState = DesktopUpdateSnapshot;
 
 export interface ProtocolFailure {
   code: string;

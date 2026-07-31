@@ -62,6 +62,9 @@ import {
   HandoffClarificationSchema,
   type DesktopHostInfo,
   type DesktopMenuId,
+  type DesktopAppInfo,
+  type DesktopRelease,
+  type DesktopUpdateSnapshot,
 } from "@wordless/protocol";
 import { WordlessRuntime } from "@wordless/runtime";
 import { AppearanceAssetService } from "../appearance/appearance-asset-service";
@@ -103,10 +106,14 @@ function isAppPreferences(value: unknown): value is AppPreferences {
 
 type DesktopIpcOptions = {
   hostInfo: DesktopHostInfo;
+  getAppInfo: () => DesktopAppInfo;
   showApplicationMenu: (menuId: DesktopMenuId, window: BrowserWindow) => void;
-  checkForUpdates: () => Promise<void>;
-  downloadUpdate: () => Promise<void>;
-  installUpdate: () => void;
+  getUpdateSnapshot: () => DesktopUpdateSnapshot;
+  listReleases: (refresh?: boolean) => Promise<DesktopRelease[]>;
+  checkForUpdates: () => Promise<DesktopUpdateSnapshot>;
+  downloadUpdate: () => Promise<DesktopUpdateSnapshot>;
+  installUpdate: () => Promise<DesktopUpdateSnapshot>;
+  openReleasePage: (version?: string) => Promise<void>;
   office: OfficeCliService;
 };
 
@@ -116,6 +123,7 @@ function isDesktopMenuId(value: unknown): value is DesktopMenuId {
 
 export function registerRuntimeIpc(runtime: WordlessRuntime, appearanceAssets: AppearanceAssetService, options: DesktopIpcOptions): void {
   ipcMain.handle("wordless:host:info", () => options.hostInfo);
+  ipcMain.handle("wordless:app:info", () => options.getAppInfo());
   ipcMain.handle("wordless:menu:open", (event, payload: unknown) => {
     const menuId = isRecord(payload) ? payload.menuId : undefined;
     if (!isDesktopMenuId(menuId)) throw new Error("Invalid application menu");
@@ -123,9 +131,15 @@ export function registerRuntimeIpc(runtime: WordlessRuntime, appearanceAssets: A
     if (!window) throw new Error("Application window is unavailable");
     options.showApplicationMenu(menuId, window);
   });
+  ipcMain.handle("wordless:update:snapshot", () => options.getUpdateSnapshot());
+  ipcMain.handle("wordless:update:releases", (_event, payload: unknown) => options.listReleases(isRecord(payload) && payload.refresh === true));
   ipcMain.handle("wordless:update:check", () => options.checkForUpdates());
   ipcMain.handle("wordless:update:download", () => options.downloadUpdate());
   ipcMain.handle("wordless:update:install", () => options.installUpdate());
+  ipcMain.handle("wordless:update:open-release", (_event, payload: unknown) => {
+    const version = isRecord(payload) && typeof payload.version === "string" ? payload.version : undefined;
+    return options.openReleasePage(version);
+  });
   ipcMain.handle("wordless:external:open", async (_event, payload: unknown) => {
     const input = parsePayload<{ url: string }>(OpenExternalUrlSchema, payload);
     const url = new URL(input.url);

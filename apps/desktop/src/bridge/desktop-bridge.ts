@@ -1,17 +1,21 @@
 import type { AgentInteractionModeId, AppearanceBackgroundAsset, AppPreferences, ConfiguredModelKind, ConnectorConfiguration, ConnectorPromptSummary, ConnectorResourceSummary, ConnectorSummary, MediaInlineImage, MediaLayoutUpdate, MediaOperationRequest, MediaProject, ModelReference, SessionAccessLevel, SessionDraft, SessionRecord, UsageReport, UsageReportQuery, UserMessageSubmission, UserPromptPart, WorkspaceRecord } from "@wordless/domain";
 import type { AgentExtensionSnapshot, JsonObject } from "@wordless/agent-extension-sdk";
-import type { AppSnapshot, ArtifactDescriptor, ArtifactIssue, ArtifactPreviewManifest, ArtifactSelection, DesktopHostEvent, DesktopHostInfo, DesktopMenuId, OfficeEngineHealth, PresentationTemplate, RuntimeEventEnvelope, SessionArtifactDiff, SessionContextSnapshot, SessionHistoryPage, SessionHistoryPageRequest, SessionMessageSearchRequest, SessionMessageSearchResponse, SessionSnapshot, SessionViewSnapshot, SessionWorkspaceTextFile, SpreadsheetCapabilitySnapshot, SpreadsheetChangeRecord, SpreadsheetRangeProfile, SpreadsheetSelection, WorkspaceFileEntry } from "@wordless/protocol";
+import type { AppSnapshot, ArtifactDescriptor, ArtifactIssue, ArtifactPreviewManifest, ArtifactSelection, DesktopAppInfo, DesktopHostEvent, DesktopHostInfo, DesktopMenuId, DesktopRelease, DesktopUpdateSnapshot, OfficeEngineHealth, PresentationTemplate, RuntimeEventEnvelope, SessionArtifactDiff, SessionContextSnapshot, SessionHistoryPage, SessionHistoryPageRequest, SessionMessageSearchRequest, SessionMessageSearchResponse, SessionSnapshot, SessionViewSnapshot, SessionWorkspaceTextFile, SpreadsheetCapabilitySnapshot, SpreadsheetChangeRecord, SpreadsheetRangeProfile, SpreadsheetSelection, WorkspaceFileEntry } from "@wordless/protocol";
 import type { ToolApprovalMode } from "@wordless/domain";
 
-export const DESKTOP_BRIDGE_VERSION = 23;
+export const DESKTOP_BRIDGE_VERSION = 24;
 
 export interface DesktopBridge {
   readonly version: typeof DESKTOP_BRIDGE_VERSION;
   getHostInfo(): Promise<DesktopHostInfo>;
+  getAppInfo(): Promise<DesktopAppInfo>;
   openApplicationMenu(menuId: DesktopMenuId): Promise<void>;
-  checkForUpdates(): Promise<void>;
-  downloadUpdate(): Promise<void>;
-  installUpdate(): Promise<void>;
+  getUpdateSnapshot(): Promise<DesktopUpdateSnapshot>;
+  listReleases(refresh?: boolean): Promise<DesktopRelease[]>;
+  checkForUpdates(): Promise<DesktopUpdateSnapshot>;
+  downloadUpdate(): Promise<DesktopUpdateSnapshot>;
+  installUpdate(): Promise<DesktopUpdateSnapshot>;
+  openReleasePage(version?: string): Promise<void>;
   getSnapshot(): Promise<AppSnapshot>;
   getUsageReport(query: UsageReportQuery): Promise<UsageReport>;
   getSessionSnapshot(sessionId: string): Promise<SessionSnapshot>;
@@ -119,10 +123,14 @@ export interface DesktopBridge {
 
 const requiredMethods: Array<Exclude<keyof DesktopBridge, "version">> = [
   "getHostInfo",
+  "getAppInfo",
   "openApplicationMenu",
+  "getUpdateSnapshot",
+  "listReleases",
   "checkForUpdates",
   "downloadUpdate",
   "installUpdate",
+  "openReleasePage",
   "getSnapshot",
   "getUsageReport",
   "getSessionSnapshot",
