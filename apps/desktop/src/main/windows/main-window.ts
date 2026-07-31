@@ -22,9 +22,9 @@ export function createMainWindow(preloadPath: string, preferences: AppPreference
   if (host.menuPresentation === "in-window") mainWindow.setMenuBarVisibility(false);
 
   if (process.env.WORDLESS_RENDERER_URL) {
-    void mainWindow.loadURL(process.env.WORDLESS_RENDERER_URL);
+    void mainWindow.loadURL(process.env.WORDLESS_RENDERER_URL).catch((error) => console.error("Failed to load the Wordless development renderer", error));
   } else {
-    void mainWindow.loadFile(path.join(__dirname, "../renderer/index.html"));
+    void mainWindow.loadFile(path.join(__dirname, "../renderer/index.html")).catch((error) => console.error("Failed to load the packaged Wordless renderer", error));
   }
   return mainWindow;
 }

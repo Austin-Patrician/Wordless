@@ -14,7 +14,7 @@
     "dev": "vite --config vite.renderer.config.ts --host 127.0.0.1",
     "electron:install": "node ../../node_modules/electron/install.js",
     "build:electron": "node scripts/build-electron.mjs",
-    "build:renderer": "vite build --config vite.renderer.config.ts",
+    "build:renderer": "vite build --config vite.renderer.config.ts && node scripts/verify-renderer-build.mjs",
     "prepare:officecli": "node scripts/prepare-officecli-assets.mjs",
     "update:officecli": "node scripts/update-officecli-lock.mjs",
     "build:desktop": "npm run prepare:officecli && npm run build:renderer && npm run build:electron",
