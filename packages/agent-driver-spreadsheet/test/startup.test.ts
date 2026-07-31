@@ -1,9 +1,10 @@
-import { InMemorySessionStorage, Session } from "@wordless/agent";
+import { InMemorySessionStorage, Session, type AgentTool } from "@wordless/agent";
 import { NodeExecutionEnv } from "@wordless/agent/node";
-import { createModels, fauxAssistantMessage, fauxProvider } from "@wordless/ai";
+import { createModels, fauxAssistantMessage, fauxProvider, fauxToolCall } from "@wordless/ai";
 import type { AgentDriverSessionContext } from "@wordless/agent-driver-sdk";
 import type { SpreadsheetOfficeService } from "@wordless/capability-office";
 import type { SessionRecord } from "@wordless/domain";
+import { Type } from "typebox";
 import { describe, expect, it } from "vitest";
 import { compileSpreadsheetToolOperations, createSpreadsheetAgentDriver } from "../src/index.ts";
 
@@ -12,7 +13,7 @@ function unused(): never {
 }
 
 const office: SpreadsheetOfficeService = {
-  catalogSpreadsheets: unused,
+  catalogSpreadsheets: async () => ({ artifacts: [] }),
   spreadsheetCapabilities: unused,
   createSpreadsheet: unused,
   openSpreadsheet: unused,
@@ -78,10 +79,19 @@ describe("spreadsheet driver startup", () => {
   });
 
   it("creates a session and reaches the model on the first prompt", async () => {
+    const advertisedTools: string[][] = [];
+    const workspacePreflightCalls: string[] = [];
     const models = createModels();
     const faux = fauxProvider({ provider: `spreadsheet-${crypto.randomUUID()}` });
     models.setProvider(faux.provider);
-    faux.setResponses([fauxAssistantMessage("Ready")]);
+    faux.setResponses([
+      (request) => {
+        advertisedTools.push((request.tools ?? []).map((tool) => tool.name));
+        return fauxAssistantMessage([fauxToolCall("read", {}, { id: "read-1" })], { stopReason: "toolUse" });
+      },
+      fauxAssistantMessage([fauxToolCall("spreadsheet_catalog", {}, { id: "catalog-1" })], { stopReason: "toolUse" }),
+      fauxAssistantMessage("Ready"),
+    ]);
     const model = faux.getModel();
     const session = new Session(new InMemorySessionStorage());
     const record: SessionRecord = {
@@ -93,15 +103,33 @@ describe("spreadsheet driver startup", () => {
       record,
       profile: {
         reference: record.profile, driverId: "spreadsheet", modelRequirements: { requiresToolUse: true }, systemPrompt: "Use spreadsheet tools.",
-        activeToolNames: ["spreadsheet_catalog", "spreadsheet_create", "spreadsheet_open", "spreadsheet_import", "spreadsheet_help", "spreadsheet_read", "spreadsheet_edit", "spreadsheet_profile_range", "spreadsheet_format_range", "spreadsheet_create_table", "spreadsheet_create_chart", "spreadsheet_create_pivot", "spreadsheet_apply_validation", "spreadsheet_apply_conditional_format", "spreadsheet_sort_filter", "spreadsheet_render", "spreadsheet_quality_scan", "spreadsheet_publish"],
-        capabilityIds: ["filesystem", "office"], skills: [], artifactKinds: ["spreadsheet"], workbenchId: "workbook",
+        activeToolNames: ["read", "spreadsheet_catalog", "spreadsheet_create", "spreadsheet_open", "spreadsheet_import", "spreadsheet_help", "spreadsheet_read", "spreadsheet_edit", "spreadsheet_profile_range", "spreadsheet_format_range", "spreadsheet_create_table", "spreadsheet_create_chart", "spreadsheet_create_pivot", "spreadsheet_apply_validation", "spreadsheet_apply_conditional_format", "spreadsheet_sort_filter", "spreadsheet_render", "spreadsheet_quality_scan", "spreadsheet_publish"],
+        capabilityIds: ["filesystem", "shell", "office"], skills: [], artifactKinds: ["spreadsheet"], workbenchId: "workbook",
       },
       model,
       modelCapabilities: { supportsText: true, supportsVision: false, supportsToolUse: true, supportsReasoning: false, contextWindow: model.contextWindow, maxOutputTokens: model.maxTokens },
       models, session, env: new NodeExecutionEnv({ cwd: process.cwd() }), skills: [], connectorTools: [], connectorToolPolicies: [], security: { fileRules: [], commandRules: [] }, resolveModel: () => model,
     };
-    const driverSession = await createSpreadsheetAgentDriver(office).createSession(context);
+    const readTool: AgentTool = {
+      name: "read",
+      label: "Read file",
+      description: "Read a workspace text file.",
+      parameters: Type.Object({}),
+      async execute() {
+        return { content: [{ type: "text", text: "source material" }], details: {} };
+      },
+    };
+    const driverSession = await createSpreadsheetAgentDriver(office, {
+      createWorkspaceTools: () => [readTool],
+      async preflightWorkspaceOperation(_driverContext, request) {
+        workspacePreflightCalls.push(request.toolName);
+        return { type: "allow" };
+      },
+    }).createSession(context);
     await driverSession.execute({ type: "prompt", text: "Create a budget workbook." });
-    expect(faux.state.callCount).toBe(1);
+    expect(faux.state.callCount).toBe(3);
+    expect(advertisedTools[0]).toEqual(expect.arrayContaining(["read", "spreadsheet_catalog", "spreadsheet_read", "spreadsheet_edit"]));
+    expect(workspacePreflightCalls).toEqual(["read"]);
+    driverSession.dispose();
   });
 });

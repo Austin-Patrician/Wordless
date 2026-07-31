@@ -3,7 +3,7 @@ import type { AgentExtensionSnapshot, JsonObject } from "@wordless/agent-extensi
 import type { AppSnapshot, ArtifactDescriptor, ArtifactIssue, ArtifactPreviewManifest, ArtifactSelection, DesktopHostEvent, DesktopHostInfo, DesktopMenuId, OfficeEngineHealth, PresentationTemplate, RuntimeEventEnvelope, SessionArtifactDiff, SessionContextSnapshot, SessionHistoryPage, SessionHistoryPageRequest, SessionMessageSearchRequest, SessionMessageSearchResponse, SessionSnapshot, SessionViewSnapshot, SessionWorkspaceTextFile, SpreadsheetCapabilitySnapshot, SpreadsheetChangeRecord, SpreadsheetRangeProfile, SpreadsheetSelection, WorkspaceFileEntry } from "@wordless/protocol";
 import type { ToolApprovalMode } from "@wordless/domain";
 
-export const DESKTOP_BRIDGE_VERSION = 22;
+export const DESKTOP_BRIDGE_VERSION = 23;
 
 export interface DesktopBridge {
   readonly version: typeof DESKTOP_BRIDGE_VERSION;
@@ -37,6 +37,7 @@ export interface DesktopBridge {
   createManagedWorkspace(name: string): Promise<WorkspaceRecord>;
   openWorkspace(path: string): Promise<WorkspaceRecord>;
   pickWorkspace(): Promise<WorkspaceRecord | null>;
+  openExternalUrl(url: string): Promise<void>;
   createAndPrompt(draft: SessionDraft, parts: UserPromptPart[], submission: UserMessageSubmission): Promise<SessionRecord>;
   promptSession(sessionId: string, parts: UserPromptPart[], submission: UserMessageSubmission): Promise<void>;
   compactSession(sessionId: string): Promise<void>;
@@ -147,6 +148,7 @@ const requiredMethods: Array<Exclude<keyof DesktopBridge, "version">> = [
   "createManagedWorkspace",
   "openWorkspace",
   "pickWorkspace",
+  "openExternalUrl",
   "createAndPrompt",
   "promptSession",
   "compactSession",

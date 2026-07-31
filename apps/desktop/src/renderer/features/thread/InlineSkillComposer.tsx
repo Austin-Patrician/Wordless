@@ -234,7 +234,7 @@ function WorkspaceReferenceToken({ nodeKey, name, path, kind }: { nodeKey: NodeK
   return (
     <span className="group ml-1 mr-1.5 my-0.5 inline-flex h-6 max-w-[250px] select-none items-center gap-1 rounded-[5px] border border-[#c2d9d1] bg-[#f0f8f5] px-1.5 align-middle font-sans text-[12px] font-medium leading-none text-[#34574d] shadow-[inset_0_1px_0_rgba(255,255,255,0.8)] transition-colors duration-150 hover:border-[#a9cbbf] hover:bg-[#e7f4ef] dark:border-[#3b675c] dark:bg-[#20332d] dark:text-[#c5e3d9] dark:hover:border-[#4a786c] dark:hover:bg-[#274036]" contentEditable={false} title={path}>
       <FileTypeIcon className="h-3 w-3 [&_svg]:h-3 [&_svg]:w-3" kind={kind} name={name} />
-      <span className="min-w-0 truncate">@{name}</span>
+      <span className="min-w-0 truncate">{name}</span>
       <button aria-label={`Remove ${name}`} className="grid h-4 w-4 shrink-0 place-items-center rounded-[3px] text-[#5e8278] opacity-0 pointer-events-none transition-opacity duration-150 group-focus-within:pointer-events-auto group-focus-within:opacity-100 group-hover:pointer-events-auto group-hover:opacity-100 hover:bg-[#cfe9e1] hover:text-[#23483d] focus-visible:pointer-events-auto focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[#6eaa99] dark:hover:bg-[#36554a] dark:hover:text-white" onClick={() => editor.update(() => $getNodeByKey(nodeKey)?.remove())} onMouseDown={(event) => event.preventDefault()} type="button"><X className="h-3 w-3" /></button>
     </span>
   );

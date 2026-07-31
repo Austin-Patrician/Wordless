@@ -37,6 +37,7 @@ const wordlessBridge: DesktopBridge = {
   createManagedWorkspace: (name) => ipcRenderer.invoke("wordless:workspace:create", { name }),
   openWorkspace: (path) => ipcRenderer.invoke("wordless:workspace:open", { path }),
   pickWorkspace: () => ipcRenderer.invoke("wordless:workspace:pick"),
+  openExternalUrl: (url) => ipcRenderer.invoke("wordless:external:open", { url }),
   createAndPrompt: (draft, parts, submission) => ipcRenderer.invoke("wordless:session:create-and-prompt", { draft, parts, submission }),
   promptSession: (sessionId, parts, submission) => ipcRenderer.invoke("wordless:session:prompt", { sessionId, parts, submission }),
   compactSession: (sessionId) => ipcRenderer.invoke("wordless:session:compact", { sessionId }),

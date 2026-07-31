@@ -25,6 +25,7 @@ import {
   SessionMessageSearchRequestSchema,
   SessionToolOutputRequestSchema,
   ListWorkspaceDirectorySchema,
+  OpenExternalUrlSchema,
   OpenWorkspaceSchema,
   MediaProjectRequestSchema,
   PromptSessionSchema,
@@ -125,6 +126,12 @@ export function registerRuntimeIpc(runtime: WordlessRuntime, appearanceAssets: A
   ipcMain.handle("wordless:update:check", () => options.checkForUpdates());
   ipcMain.handle("wordless:update:download", () => options.downloadUpdate());
   ipcMain.handle("wordless:update:install", () => options.installUpdate());
+  ipcMain.handle("wordless:external:open", async (_event, payload: unknown) => {
+    const input = parsePayload<{ url: string }>(OpenExternalUrlSchema, payload);
+    const url = new URL(input.url);
+    if (url.protocol !== "http:" && url.protocol !== "https:" && url.protocol !== "mailto:") throw new Error("Unsupported external URL protocol");
+    await shell.openExternal(url.toString());
+  });
   ipcMain.handle("wordless:snapshot", () => runtime.getSnapshot());
   ipcMain.handle("wordless:usage:report", async (_event, payload: unknown) => {
     const input = parsePayload<{ startAt: number; endAt: number; groupBy: "provider" | "model" }>(UsageReportQuerySchema, payload);

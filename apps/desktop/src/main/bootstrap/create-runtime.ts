@@ -47,8 +47,14 @@ export function createDesktopRuntime(userData: string, office: OfficeCliService)
         preflightOperation: preflightWorkspaceOperation,
       }),
       createCodingAgentDriver({ createExtensionHost: extensions }),
-      createPresentationAgentDriver(office),
-      createSpreadsheetAgentDriver(office),
+      createPresentationAgentDriver(office, {
+        createWorkspaceTools: (context) => createHeadlessCodingTools(context.env),
+        preflightWorkspaceOperation,
+      }),
+      createSpreadsheetAgentDriver(office, {
+        createWorkspaceTools: (context) => createHeadlessCodingTools(context.env),
+        preflightWorkspaceOperation,
+      }),
     ]),
   });
 }

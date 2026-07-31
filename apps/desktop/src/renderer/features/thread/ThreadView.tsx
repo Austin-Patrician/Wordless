@@ -1,6 +1,6 @@
 import { Tooltip, TooltipContent, TooltipTrigger } from "@wordless/ui-kit";
-import { Archive, ArrowDown, ChevronDown, CircleAlert, Command, Copy, FileText, Folder, Layers3, LoaderCircle, RotateCcw } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { Archive, ArrowDown, ChevronDown, ChevronUp, CircleAlert, Command, Copy, FileText, Folder, Layers3, LoaderCircle, RotateCcw } from "lucide-react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Virtuoso, type VirtuosoHandle } from "react-virtuoso";
 import type { ArtifactSelection, ConversationMessage, RuntimeEventEnvelope, SessionHistoryPage, SessionSnapshot, SessionTurnSummary, SessionViewSnapshot } from "@wordless/protocol";
 import { calculateCurrentTurnUsage, type ContextCompactionRecord, type MessageToolBlock, type MessageUserRequest, type ModelReference, type ToolApprovalMode, type ToolOperationApproval, type UserPromptPart, type UserRequestAnswer, type WorkbenchId } from "@wordless/domain";
@@ -16,6 +16,7 @@ import { createThreadTimeline, dataIndexFromReportedIndex, firstItemIndexAfterPr
 import { advanceAssistantRunPresentation, assistantRunActivityAt, assistantRunPresentationFromMessages, createAssistantRunPresentation, isNewerRunEvent, mergeCompletedAssistantMessage, nextAssistantRunActivityUpdateAt, runEventCursor, type AssistantRunActivity, type AssistantRunPresentation, type RunEventCursor } from "./thread-run-state";
 import { TurnTokenUsageRow } from "./TurnTokenUsageRow";
 import { ThreadContentFrame } from "./ThreadContentFrame";
+import { MessageMarkdown } from "./MessageMarkdown";
 import wordlessIcon from "../../../icons/common-icons/wordless.png";
 
 type ThreadViewProps = {
@@ -126,7 +127,7 @@ function applyEvent(snapshot: SessionSnapshot, event: RuntimeEventEnvelope): Ses
       return { ...snapshot, messages, isRunning: true };
     }
     const nextMessages = [...messages, payload.message];
-    return { ...snapshot, messages: nextMessages, turnUsage: calculateCurrentTurnUsage(nextMessages), isRunning: true };
+    return { ...snapshot, messages: nextMessages, turnUsage: calculateCurrentTurnUsage(nextMessages) ?? snapshot.turnUsage, isRunning: true };
   }
   if (payload.type === "message.text.delta") {
     const index = messages.findIndex((message) => message.id === payload.messageId);
@@ -154,11 +155,11 @@ function applyEvent(snapshot: SessionSnapshot, event: RuntimeEventEnvelope): Ses
     const index = messages.findIndex((message) => message.id === payload.message.id);
     if (index === -1) {
       const nextMessages = [...messages, payload.message];
-      return { ...snapshot, messages: nextMessages, turnUsage: calculateCurrentTurnUsage(nextMessages) };
+      return { ...snapshot, messages: nextMessages, turnUsage: calculateCurrentTurnUsage(nextMessages) ?? snapshot.turnUsage };
     }
     const previous = messages[index]!;
     messages[index] = mergeCompletedAssistantMessage(previous, payload.message);
-    return { ...snapshot, messages, turnUsage: calculateCurrentTurnUsage(messages) };
+    return { ...snapshot, messages, turnUsage: calculateCurrentTurnUsage(messages) ?? snapshot.turnUsage };
   }
   if (payload.type === "tool.started" || payload.type === "tool.updated" || payload.type === "tool.completed") {
     const index = messages.findIndex((message) => message.id === payload.messageId);
@@ -191,7 +192,7 @@ function applyEvent(snapshot: SessionSnapshot, event: RuntimeEventEnvelope): Ses
       };
     const blocks = existing ? message.blocks.map((block) => block.type === "tool" && block.callId === payload.callId ? next : block) : [...message.blocks, next];
     messages[index] = { ...message, blocks };
-    return { ...snapshot, messages, turnUsage: calculateCurrentTurnUsage(messages), isRunning: true };
+    return { ...snapshot, messages, turnUsage: calculateCurrentTurnUsage(messages) ?? snapshot.turnUsage, isRunning: true };
   }
   if (payload.type === "approval.requested") {
     const index = messages.findIndex((message) => message.id === payload.messageId);
@@ -247,7 +248,7 @@ function applyEvent(snapshot: SessionSnapshot, event: RuntimeEventEnvelope): Ses
     };
   }
   if (payload.type === "run.started") {
-    return { ...snapshot, isRunning: true, compactionTrigger: undefined, compactionError: undefined, turnUsage: undefined };
+    return { ...snapshot, isRunning: true, compactionTrigger: undefined, compactionError: undefined };
   }
   return snapshot;
 }
@@ -255,58 +256,10 @@ function applyEvent(snapshot: SessionSnapshot, event: RuntimeEventEnvelope): Ses
 function ThinkingBlock({ text }: { text: string }) {
   return (
     <details className="mt-4 border-l-2 border-[#d9dfca] pl-3.5 dark:border-[#4c5939]" data-thread-search-exclude>
-      <summary className="cursor-pointer select-none text-[13px] font-semibold text-[#5a6250] marker:text-[#89957a] dark:text-[#c3cbb4]">深度思考</summary>
+      <summary className="group flex w-fit cursor-pointer list-none items-center gap-1 select-none text-[13px] font-semibold text-[#5a6250] outline-none focus-visible:ring-2 focus-visible:ring-ring [&::-webkit-details-marker]:hidden dark:text-[#c3cbb4]"><span>深度思考</span><ChevronDown aria-hidden className="h-3.5 w-3.5 text-[#89957a] transition-transform duration-150 group-open:rotate-180" /></summary>
       <p className="mt-2 whitespace-pre-wrap text-[13px] leading-5 text-[#74746d] dark:text-muted-foreground">{text}</p>
     </details>
   );
-}
-
-function InlineMarkdown({ text }: { text: string }) {
-  return <>{text.split(/(`[^`]+`|\*\*[^*]+\*\*)/g).map((part, index) => {
-    if (part.startsWith("`") && part.endsWith("`")) return <code className="rounded bg-[#f0f0ed] px-1 py-0.5 font-mono text-[12px] text-[#454540] dark:bg-muted dark:text-foreground" key={index}>{part.slice(1, -1)}</code>;
-    if (part.startsWith("**") && part.endsWith("**")) return <strong key={index}>{part.slice(2, -2)}</strong>;
-    return part;
-  })}</>;
-}
-
-function MarkdownText({ text }: { text: string }) {
-  const lines = text.split("\n");
-  const rendered: ReactNode[] = [];
-  for (let index = 0; index < lines.length; index += 1) {
-    const line = lines[index]!;
-    if (line.startsWith("```")) {
-      const code: string[] = [];
-      index += 1;
-      while (index < lines.length && !lines[index]!.startsWith("```")) {
-        code.push(lines[index]!);
-        index += 1;
-      }
-      rendered.push(<pre className="mt-3 max-h-72 overflow-auto border-y border-[#e1e1dc] bg-[#fafaf9] px-3 py-2 font-mono text-[12px] leading-5 text-[#4d4d47] dark:border-border dark:bg-muted dark:text-muted-foreground" key={`code-${index}`}>{code.join("\n")}</pre>);
-      continue;
-    }
-    if (line.includes("|") && /^\s*\|?\s*:?-{3,}/.test(lines[index + 1] ?? "")) {
-      const rows = [line];
-      index += 2;
-      while (index < lines.length && lines[index]!.includes("|")) {
-        rows.push(lines[index]!);
-        index += 1;
-      }
-      index -= 1;
-      const cells = rows.map((row) => row.split("|").map((cell) => cell.trim()).filter(Boolean));
-      rendered.push(<div className="mt-3 overflow-x-auto" key={`table-${index}`}><table className="w-full border-collapse text-left text-[12px]"><thead className="border-b border-[#dcdcd7] font-mono text-[#888881]">{cells[0]?.map((cell, cellIndex) => <th className="py-2 pr-3 font-normal" key={cellIndex}>{cell}</th>)}</thead><tbody className="divide-y divide-[#e9e9e4] text-[#5d5d57] dark:divide-border dark:text-muted-foreground">{cells.slice(1).map((row, rowIndex) => <tr key={rowIndex}>{row.map((cell, cellIndex) => <td className="py-2.5 pr-3" key={cellIndex}><InlineMarkdown text={cell} /></td>)}</tr>)}</tbody></table></div>);
-      continue;
-    }
-    if (/^#{1,3}\s+/.test(line)) {
-      rendered.push(<p className="mt-4 text-[15px] font-semibold text-[#343431] dark:text-foreground" key={`heading-${index}`}><InlineMarkdown text={line.replace(/^#{1,3}\s+/, "")} /></p>);
-      continue;
-    }
-    if (/^[-*]\s+/.test(line)) {
-      rendered.push(<p className="mt-1 flex gap-2 text-[14px] leading-6 text-[#51514d] dark:text-muted-foreground" key={`list-${index}`}><span>•</span><span><InlineMarkdown text={line.replace(/^[-*]\s+/, "")} /></span></p>);
-      continue;
-    }
-    if (line.trim()) rendered.push(<p className="mt-4 whitespace-pre-wrap text-[14px] leading-6 text-[#51514d] dark:text-muted-foreground" key={`text-${index}`}><InlineMarkdown text={line} /></p>);
-  }
-  return <>{rendered}</>;
 }
 
 function PlanModePanel({ snapshot, mode }: { snapshot: SessionSnapshot; mode: "planning" | "executing" }) {
@@ -348,7 +301,7 @@ function ContextCompactionActivity({ compaction }: { compaction: ContextCompacti
         <span className="ml-auto shrink-0 font-mono text-[9px] text-[#99a28c] dark:text-[#8f9d82]">{new Date(compaction.timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</span>
         <ChevronDown aria-hidden="true" className="h-3.5 w-3.5 shrink-0 text-[#849272] transition-transform duration-150 group-open:rotate-180 dark:text-[#9aaa8d]" />
       </summary>
-      <div className="border-t border-[#dce8cc] px-3 pb-3 pt-2.5 dark:border-[#46583a]"><p className="mb-2 font-mono text-[9px] text-[#7f8d6c] dark:text-[#9cab8f]">{compaction.model.modelId}</p><div className="text-[12px] leading-5 text-[#5d694d] dark:text-[#c1cfb2]"><MarkdownText text={compaction.summary} /></div></div>
+      <div className="border-t border-[#dce8cc] px-3 pb-3 pt-2.5 dark:border-[#46583a]"><p className="mb-2 font-mono text-[9px] text-[#7f8d6c] dark:text-[#9cab8f]">{compaction.model.modelId}</p><div className="text-[12px] leading-5 text-[#5d694d] dark:text-[#c1cfb2]"><MessageMarkdown text={compaction.summary} /></div></div>
     </details>
   );
 }
@@ -392,7 +345,7 @@ function AssistantMessageBlocks({ clarificationHandoffAvailable, message, onHand
       );
       continue;
     }
-    if (block.type === "text") rendered.push(<MarkdownText key={`text-${index}`} text={block.text} />);
+    if (block.type === "text") rendered.push(<MessageMarkdown key={`text-${index}`} text={block.text} />);
     if (block.type === "reasoning") rendered.push(<ThinkingBlock key={`reasoning-${index}`} text={block.text} />);
     if (block.type === "artifact") rendered.push(<p className="mt-4 text-[13px] font-semibold text-[#59732d]" key={`artifact-${block.artifactId}`}>{block.name}</p>);
   }
@@ -501,6 +454,32 @@ function AssistantMessageBody({ messages, onHandoffClarification, onLoadToolOutp
   );
 }
 
+const USER_MESSAGE_COLLAPSED_HEIGHT = 72;
+
+function CollapsibleUserMessage({ children, contentKey }: { children: ReactNode; contentKey: string }) {
+  const { locale } = usePreferences();
+  const contentRef = useRef<HTMLDivElement>(null);
+  const [expanded, setExpanded] = useState(false);
+  const [truncated, setTruncated] = useState(false);
+  const measure = useCallback(() => {
+    const element = contentRef.current;
+    if (!element) return;
+    setTruncated(element.scrollHeight > USER_MESSAGE_COLLAPSED_HEIGHT + 1);
+  }, []);
+
+  useLayoutEffect(() => {
+    setExpanded(false);
+    measure();
+    const element = contentRef.current;
+    if (!element) return;
+    const observer = new ResizeObserver(measure);
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [contentKey, measure]);
+
+  return <div><div className={!expanded && truncated ? "max-h-[72px] overflow-hidden" : undefined} ref={contentRef}>{children}</div>{truncated ? <button aria-expanded={expanded} className="mt-1 flex h-5 items-center gap-0.5 text-[10px] font-medium text-[#6d7f53] hover:text-[#45582f] dark:text-[#b8d98e] dark:hover:text-[#d6edaf]" onClick={() => setExpanded((value) => !value)} type="button">{expanded ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}{expanded ? locale === "zh-CN" ? "收起" : "Collapse" : locale === "zh-CN" ? "展开全文" : "Show more"}</button> : null}</div>;
+}
+
 function MessageBody({ messages, onHandoffClarification, onLoadToolOutput, onResolveApproval, onResolveClarificationQuestion, onResolveUserRequest, onResolvePlanResult, canPlan, isFirstMessage, planMode, runPresentation, showFooter, workbenchId }: { messages: ConversationMessage[]; onHandoffClarification: (interactionMode: "default" | "clarify" | "plan") => Promise<void>; onLoadToolOutput: (callId: string) => Promise<void>; onResolveApproval: (approvalId: string, approved: boolean, feedback?: string) => void; onResolveClarificationQuestion: (callId: string, value: string | boolean) => Promise<void>; onResolveUserRequest: (requestId: string, resolution: { status: "submitted" | "cancelled"; answers?: Record<string, UserRequestAnswer>; feedback?: string }) => void; onResolvePlanResult: (action: "implement" | "stay") => Promise<void>; canPlan: boolean; isFirstMessage: boolean; planMode: "off" | "planning" | "executing"; runPresentation: AssistantRunPresentation | null; showFooter: boolean; workbenchId: WorkbenchId }) {
   const { t } = usePreferences();
   const message = messages[0]!;
@@ -510,11 +489,11 @@ function MessageBody({ messages, onHandoffClarification, onLoadToolOutput, onRes
     return (
       <div className={`group relative min-h-px ${isFirstMessage ? "pt-4" : "pt-8"} outline-none focus-visible:ring-2 focus-visible:ring-ring ${contentBlocks.length > 0 ? "pb-7" : ""}`} data-thread-message-id={message.id} tabIndex={-1}>
         <div className="ml-auto flex w-fit max-w-[88%] flex-col items-end sm:max-w-[560px]">
-          {contentBlocks.length > 0 ? <div className="w-fit max-w-full break-words rounded-[10px] bg-[#f0f0ed] px-3.5 py-2.5 text-[14px] leading-6 text-[#343431] dark:bg-muted dark:text-foreground">{contentBlocks.map((block, index) => block.type === "text"
+          {contentBlocks.length > 0 ? <div className="w-fit max-w-full break-words rounded-[10px] bg-[#f0f0ed] px-3.5 py-2.5 text-[14px] leading-6 text-[#343431] dark:bg-muted dark:text-foreground"><CollapsibleUserMessage contentKey={message.id}>{contentBlocks.map((block, index) => block.type === "text"
             ? <span className="whitespace-pre-wrap break-words" key={`text-${index}`}>{block.text}</span>
-            : block.type === "workspace-reference" ? <span className="mx-1.5 inline-flex h-6 max-w-[230px] select-none items-center gap-1 rounded-[5px] border border-[#bed7cf] bg-[#eef8f5] px-1.5 align-middle text-[13px] font-normal leading-6 text-[#34574d] shadow-[inset_0_1px_0_rgba(255,255,255,0.65)] dark:border-[#3b675c] dark:bg-[#20332d] dark:text-[#c5e3d9]" key={block.id} title={block.path}>{block.kind === "directory" ? <Folder aria-hidden className="h-3 w-3 shrink-0 text-[#4f8b79]" /> : <FileText aria-hidden className="h-3 w-3 shrink-0 text-[#4f8b79]" />}<span className="min-w-0 truncate">@{block.name}</span></span>
+            : block.type === "workspace-reference" ? <span className="mx-1.5 inline-flex h-6 max-w-[230px] select-none items-center gap-1 rounded-[5px] border border-[#bed7cf] bg-[#eef8f5] px-1.5 align-middle text-[13px] font-normal leading-6 text-[#34574d] shadow-[inset_0_1px_0_rgba(255,255,255,0.65)] dark:border-[#3b675c] dark:bg-[#20332d] dark:text-[#c5e3d9]" key={block.id} title={block.path}>{block.kind === "directory" ? <Folder aria-hidden className="h-3 w-3 shrink-0 text-[#4f8b79]" /> : <FileText aria-hidden className="h-3 w-3 shrink-0 text-[#4f8b79]" />}<span className="min-w-0 truncate">{block.name}</span></span>
             : block.type === "artifact" ? <span className="mx-1.5 inline-flex h-6 max-w-[250px] select-none items-center gap-1 rounded-[5px] border border-[#b8d6cb] bg-[#edf8f4] px-1.5 align-middle text-[13px] font-normal leading-6 text-[#345f53] shadow-[inset_0_1px_0_rgba(255,255,255,0.65)] dark:border-[#416b5e] dark:bg-[#20372f] dark:text-[#bae2d3]" key={`${block.artifactId}:${block.surfaceId ?? block.name}`} title={block.locator ?? block.name}><Layers3 aria-hidden className="h-3 w-3 shrink-0 text-[#4f8b79] dark:text-[#9ccfbd]" /><span className="min-w-0 truncate">{block.name}</span></span>
-            : <span className="mx-1.5 inline-flex h-6 max-w-[210px] select-none items-center gap-1 rounded-[5px] border border-[#deded9] bg-[#f8f8f6] px-1.5 align-middle text-[13px] font-normal leading-6 text-[#45453f] shadow-[inset_0_1px_0_rgba(255,255,255,0.65)] dark:border-[#4b4c45] dark:bg-[#2b2c27] dark:text-[#deded8]" key={block.id} title={block.name}><Command aria-hidden className="h-3 w-3 shrink-0 text-[#686861] dark:text-[#b7b8ae]" /><span className="min-w-0 truncate">{block.name}</span></span>)}</div> : null}
+            : <span className="mx-1.5 inline-flex h-6 max-w-[210px] select-none items-center gap-1 rounded-[5px] border border-[#deded9] bg-[#f8f8f6] px-1.5 align-middle text-[13px] font-normal leading-6 text-[#45453f] shadow-[inset_0_1px_0_rgba(255,255,255,0.65)] dark:border-[#4b4c45] dark:bg-[#2b2c27] dark:text-[#deded8]" key={block.id} title={block.name}><Command aria-hidden className="h-3 w-3 shrink-0 text-[#686861] dark:text-[#b7b8ae]" /><span className="min-w-0 truncate">{block.name}</span></span>)}</CollapsibleUserMessage></div> : null}
           {attachments.length > 0 ? <div className="mt-1 flex w-fit max-w-full flex-wrap justify-end gap-1.5">{attachments.map((attachment) => <span className="max-w-full truncate rounded-[5px] bg-[#f0f0ed] px-2 py-1 font-mono text-[11px] text-[#6d6d67] dark:bg-muted" key={attachment.id}>{attachment.name}</span>)}</div> : null}
         </div>
         {contentBlocks.length > 0 ? <button aria-label={t("copyMessage")} className="pointer-events-none absolute bottom-0 right-0 grid h-6 w-6 place-items-center rounded-[5px] text-[#898981] opacity-0 transition-opacity hover:bg-[#efefeb] hover:text-[#454540] focus-visible:pointer-events-auto focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-hover:opacity-100 group-focus-within:opacity-100 dark:hover:bg-muted" onClick={() => void navigator.clipboard.writeText(contentBlocks.map((block) => block.type === "text" ? block.text : `@${block.name}`).join(""))} title={t("copyMessage")} type="button"><Copy className="h-3.5 w-3.5" /></button> : null}
@@ -534,7 +513,6 @@ function withPendingTurn(snapshot: SessionSnapshot, pendingTurn: PendingThreadTu
     ...snapshot,
     messages: [...snapshot.messages, pendingTurn.message],
     isRunning: true,
-    turnUsage: undefined,
   };
 }
 

@@ -104,6 +104,7 @@ import { RuntimeModelConfiguration, type ModelConfigurationPaths } from "./model
 import { SessionSubagentRunner, type SubagentFileChange } from "./subagent-runner.ts";
 import { estimateSessionContextUsage } from "./context-usage.ts";
 import { createSessionHistoryPage, createSessionHistoryProjection, searchSessionHistoryMessages, type SessionHistoryProjection } from "./session-history.ts";
+import { sessionTitleFromPrompt } from "./session-title.ts";
 import { UsageReportService, conversationUsageFromAiUsage } from "./usage-report.ts";
 
 const SUBAGENT_FILE_CHANGE_JOURNAL_TYPE = "wordless.subagent-file-change";
@@ -332,11 +333,6 @@ const DEFAULT_PREFERENCES = (defaultWorkspaceRoot: string): AppPreferences => ({
 
 function connectionSecretId(connectionId: string): string {
   return `provider:${connectionId}`;
-}
-
-function titleFromPrompt(prompt: string): string {
-  const normalized = prompt.replace(/\s+/g, " ").trim();
-  return normalized.length > 54 ? `${normalized.slice(0, 53)}...` : normalized || "New task";
 }
 
 function isCompatible(model: EnabledModelRecord, entry: WorkbenchEntryDefinition): boolean {
@@ -1261,7 +1257,7 @@ export class WordlessRuntime {
     const defaultConnectorIds = availableConnectors.filter((connector) => connector.templateId && defaultConnectorTemplates.has(connector.templateId)).map((connector) => connector.id);
     const record: SessionRecord = {
       id,
-      title: titleFromPrompt(prompt),
+      title: sessionTitleFromPrompt(prompt),
       workspaceId: workspace?.id ?? null,
       runtimeRootPath,
       mode: draft.mode,

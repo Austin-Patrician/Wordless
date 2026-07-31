@@ -43,6 +43,14 @@ const AdvancedOperationSchema = Type.Union([
   Type.Object({ kind: Type.Literal("merge-template"), data: Type.Record(Type.String({ minLength: 1, maxLength: 256 }), Type.Unknown()) }),
 ]);
 
+export interface PresentationAgentDriverOptions {
+  createWorkspaceTools(context: AgentDriverSessionContext): AgentTool[];
+  preflightWorkspaceOperation(
+    context: AgentDriverSessionContext,
+    request: { toolName: string; input: Record<string, unknown> },
+  ): Promise<OperationPreflightDecision>;
+}
+
 function text(value: string) {
   return [{ type: "text" as const, text: value }];
 }
@@ -132,7 +140,7 @@ function createTools(office: PresentationOfficeService, context: AgentDriverSess
       async execute(_id, input) {
         const request = input as { name: string; referencePath?: string };
         const output = await office.guidance(request.name, request.referencePath);
-        return { content: text(`Apply this guidance through the structured presentation_* tools. Treat CLI and shell snippets as conceptual OfficeCLI examples; never call bash, shell, or an officecli command directly.\n\n${output.slice(0, 60_000)}`), details: request };
+        return { content: text(`Apply this guidance through the structured presentation_* tools. Treat CLI and shell snippets as conceptual OfficeCLI examples; never execute officecli or use shell commands to inspect or modify PPTX contents. Workspace shell tools remain available for ordinary non-PPT tasks.\n\n${output.slice(0, 60_000)}`), details: request };
       },
     },
     {
@@ -232,15 +240,17 @@ function createTools(office: PresentationOfficeService, context: AgentDriverSess
   ];
 }
 
-export function createPresentationAgentDriver(office: PresentationOfficeService): AgentDriver {
+export function createPresentationAgentDriver(office: PresentationOfficeService, options: PresentationAgentDriverOptions): AgentDriver {
   return createAgentHarnessDriver({
     id: "presentation",
     features: ["steer", "follow-up", "thinking", "compact", "artifacts", "approval", "user-request"],
-    createTools: (context) => createTools(office, context),
-    preflightOperation: preflightPresentationOperation,
+    createTools: (context) => [...options.createWorkspaceTools(context), ...createTools(office, context)],
+    preflightOperation: (context, request) => request.toolName.startsWith("presentation_")
+      ? preflightPresentationOperation(context, request)
+      : options.preflightWorkspaceOperation(context, request),
     async systemPromptContribution() {
       const guidance = await office.guidance("pptx");
-      return `The required OfficeCLI skill below is version-matched design and document guidance. Apply it through the structured presentation_* tools. Treat CLI and shell snippets as conceptual examples only; never call bash, shell, or officecli directly.\n\n<required_skill name="officecli-pptx">\n${guidance}\n</required_skill>`;
+      return `The required OfficeCLI skill below is version-matched design and document guidance. Apply it through the structured presentation_* tools. Treat CLI and shell snippets as conceptual examples only; never execute officecli or use shell commands to inspect or modify PPTX contents. Workspace shell tools remain available for ordinary non-PPT tasks.\n\n<required_skill name="officecli-pptx">\n${guidance}\n</required_skill>`;
     },
   });
 }

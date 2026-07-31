@@ -2,6 +2,7 @@ import type { ComponentType, ReactNode } from "react";
 import {
   Check,
   CheckCircle2,
+  ChevronDown,
   CircleAlert,
   Code2,
   FileOutput,
@@ -21,10 +22,12 @@ import {
   X,
 } from "lucide-react";
 import { useEffect, useState } from "react";
-import type { MessageArtifactBlock, MessageToolBlock, WorkbenchId } from "@wordless/domain";
+import type { ConnectorSummary, MessageArtifactBlock, MessageToolBlock, WorkbenchId } from "@wordless/domain";
 import grepIcon from "../../../icons/common-icons/grep.svg";
 import readFileIcon from "../../../icons/common-icons/read_file.svg";
+import { ConnectorIcon } from "../../shared/ConnectorIcon";
 import { usePreferences } from "../../shared/preferences";
+import { useRuntime } from "../../shared/runtime";
 import { ClarificationBriefToolActivity, ClarificationQuestionToolActivity } from "./ClarificationToolActivity";
 import { UserRequestToolActivity } from "./UserRequestToolActivity";
 
@@ -77,6 +80,24 @@ function readRecord(value: unknown): Record<string, unknown> | undefined {
 
 function textValue(value: unknown): string | undefined {
   return typeof value === "string" && value.length > 0 ? value : undefined;
+}
+
+function connectorToolSegment(value: string): string {
+  return value.replace(/[^a-zA-Z0-9_]/g, "_").replace(/_+/g, "_").replace(/^_+|_+$/g, "");
+}
+
+function connectorForMcpTool(block: MessageToolBlock, connectors: readonly ConnectorSummary[]): ConnectorSummary | undefined {
+  if (!block.name.startsWith("mcp_")) return undefined;
+  const connectorId = textValue(readRecord(block.details)?.connectorId);
+  if (connectorId) return connectors.find((connector) => connector.id === connectorId);
+  return connectors.find((connector) => block.name.startsWith(`mcp_${connectorToolSegment(connector.id)}_`));
+}
+
+function McpToolIcon({ block }: { block: MessageToolBlock }) {
+  const { snapshot } = useRuntime();
+  const connector = connectorForMcpTool(block, snapshot?.connectors.connectors ?? []);
+  if (!connector) return <Wrench className="h-3.5 w-3.5" />;
+  return <span aria-label={connector.name} role="img" title={connector.name}><ConnectorIcon className="h-3.5 w-3.5" templateId={connector.templateId} transport={connector.transport} /></span>;
 }
 
 function activityIcon(block: MessageToolBlock) {
@@ -143,14 +164,14 @@ function ToolOutput({ block, onLoadToolOutput }: Pick<ToolActivityProps, "block"
     void onLoadToolOutput(block.callId).catch(() => {}).finally(() => setLoading(false));
   };
   if (!block.output) return null;
-  return <details className="mt-2" onToggle={(event) => { if ((event.currentTarget as HTMLDetailsElement).open) load(); }}><summary className="cursor-pointer font-mono text-[11px] text-[#777770]">{loading ? "Loading output" : "View output"}</summary><pre className="m-0 mt-2 max-h-52 overflow-auto border-y border-[#e1e1dc] bg-[#fafaf9] px-3 py-2 font-mono text-[11px] leading-5 text-[#4d4d47] dark:border-border dark:bg-muted dark:text-muted-foreground">{block.output}</pre></details>;
+  return <details className="group mt-2" onToggle={(event) => { if ((event.currentTarget as HTMLDetailsElement).open) load(); }}><summary className="flex w-fit cursor-pointer list-none items-center gap-1 font-mono text-[11px] text-[#777770] outline-none focus-visible:ring-2 focus-visible:ring-ring [&::-webkit-details-marker]:hidden">{loading ? "Loading output" : "View output"}<ChevronDown aria-hidden className="h-3.5 w-3.5 text-[#999991] transition-transform duration-150 group-open:rotate-180" /></summary><pre className="m-0 mt-2 max-h-52 overflow-auto border-y border-[#e1e1dc] bg-[#fafaf9] px-3 py-2 font-mono text-[11px] leading-5 text-[#4d4d47] dark:border-border dark:bg-muted dark:text-muted-foreground">{block.output}</pre></details>;
 }
 
 function GenericToolActivity({ block, onLoadToolOutput, onResolveApproval }: ToolActivityProps) {
   if (block.state === "awaiting-approval" && block.approval) return <ToolApprovalCard block={block} onResolveApproval={onResolveApproval} />;
   return (
     <section className="py-3">
-      <ToolActivityRow block={block} icon={<Wrench className="h-3.5 w-3.5" />} />
+      <ToolActivityRow block={block} icon={block.name.startsWith("mcp_") ? <McpToolIcon block={block} /> : <Wrench className="h-3.5 w-3.5" />} />
       <ToolOutput block={block} onLoadToolOutput={onLoadToolOutput} />
     </section>
   );
@@ -415,6 +436,7 @@ export function createWorkbenchRendererRegistry(
   const artifacts = new Map(artifactRenderers.map((renderer) => [artifactKey(renderer.workbenchId, renderer.artifactKind), renderer.component]));
   return {
     resolveTool(workbenchId, toolName) {
+      if (toolName.startsWith("mcp_")) return GenericToolActivity;
       return tools.get(toolKey(workbenchId, toolName)) ?? tools.get(toolKey(undefined, toolName)) ?? tools.get(toolKey(workbenchId)) ?? tools.get(toolKey()) ?? GenericToolActivity;
     },
     resolveArtifact(workbenchId, artifactKind) {

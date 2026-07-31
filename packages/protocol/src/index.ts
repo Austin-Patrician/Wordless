@@ -153,6 +153,10 @@ export const OpenWorkspaceSchema = Type.Object({
   path: Type.String({ minLength: 1 }),
 });
 
+export const OpenExternalUrlSchema = Type.Object({
+  url: Type.String({ minLength: 1, maxLength: 8_192 }),
+});
+
 export const CreateAndPromptSchema = Type.Object({
   draft: SessionDraftSchema,
   parts: UserPromptPartsSchema,
@@ -505,6 +509,7 @@ export type SessionDraftDto = Static<typeof SessionDraftSchema>;
 export type SessionAccessLevelDto = Static<typeof SessionAccessLevelSchema>;
 export type CreateWorkspaceDto = Static<typeof CreateWorkspaceSchema>;
 export type OpenWorkspaceDto = Static<typeof OpenWorkspaceSchema>;
+export type OpenExternalUrlDto = Static<typeof OpenExternalUrlSchema>;
 export type CreateAndPromptDto = Static<typeof CreateAndPromptSchema>;
 export type PromptSessionDto = Static<typeof PromptSessionSchema>;
 export type CompactSessionDto = Static<typeof CompactSessionSchema>;

@@ -58,6 +58,14 @@ const ValidationSchema = Type.Intersect([ArtifactSheetRangeSchema, Type.Object({
 const ConditionalFormattingSchema = Type.Intersect([ArtifactSheetRangeSchema, Type.Object({ type: Type.String({ minLength: 1, maxLength: 64 }), operator: Type.Optional(Type.String({ minLength: 1, maxLength: 64 })), value: Type.Optional(Type.String({ maxLength: 512 })), value2: Type.Optional(Type.String({ maxLength: 512 })), formula: Type.Optional(Type.String({ maxLength: 1_024 })), fill: Type.Optional(Type.String({ minLength: 3, maxLength: 64 })), color: Type.Optional(Type.String({ minLength: 3, maxLength: 64 })), iconSet: Type.Optional(Type.String({ minLength: 1, maxLength: 64 })) })]);
 const SortFilterSchema = Type.Intersect([ArtifactSheetRangeSchema, Type.Object({ sort: Type.String({ minLength: 1, maxLength: 128 }), header: Type.Optional(Type.Boolean()), filterColumn: Type.Optional(Type.Integer({ minimum: 0, maximum: 16_383 })), filter: Type.Optional(Type.String({ minLength: 1, maxLength: 512 })) })]);
 
+export interface SpreadsheetAgentDriverOptions {
+  createWorkspaceTools(context: AgentDriverSessionContext): AgentTool[];
+  preflightWorkspaceOperation(
+    context: AgentDriverSessionContext,
+    request: { toolName: string; input: Record<string, unknown> },
+  ): Promise<OperationPreflightDecision>;
+}
+
 function definedProperties(value: Record<string, unknown>): Record<string, unknown> {
   return Object.fromEntries(Object.entries(value).filter((entry) => entry[1] !== undefined));
 }
@@ -276,11 +284,13 @@ function createTools(office: SpreadsheetOfficeService, context: AgentDriverSessi
   ];
 }
 
-export function createSpreadsheetAgentDriver(office: SpreadsheetOfficeService): AgentDriver {
+export function createSpreadsheetAgentDriver(office: SpreadsheetOfficeService, options: SpreadsheetAgentDriverOptions): AgentDriver {
   return createAgentHarnessDriver({
     id: "spreadsheet",
     features: ["steer", "follow-up", "thinking", "compact", "artifacts", "approval", "user-request"],
-    createTools: (context) => createTools(office, context),
-    preflightOperation: (context, request) => preflightSpreadsheetOperation(office, context, request),
+    createTools: (context) => [...options.createWorkspaceTools(context), ...createTools(office, context)],
+    preflightOperation: (context, request) => request.toolName.startsWith("spreadsheet_")
+      ? preflightSpreadsheetOperation(office, context, request)
+      : options.preflightWorkspaceOperation(context, request),
   });
 }
