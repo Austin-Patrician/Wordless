@@ -52,6 +52,8 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run check --workspace=@wordless/desktop
+      - name: Prepare Linux OfficeCLI test assets
+        run: npm run prepare:officecli --workspace=@wordless/desktop
       - run: npm run test:host --workspace=@wordless/desktop
 
   build-macos:
