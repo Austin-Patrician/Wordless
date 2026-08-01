@@ -15,7 +15,7 @@ body {
 }
 
 :root[data-platform="darwin"] {
-  --wordless-chrome-height: 38px;
+  --wordless-chrome-height: 34px;
 }
 
 .wordless-chrome {
@@ -30,23 +30,6 @@ body {
   width: 82px;
   height: 100%;
   flex: 0 0 auto;
-}
-
-.wordless-chrome__action {
-  display: grid;
-  width: 28px;
-  height: 28px;
-  place-items: center;
-  border-radius: 6px;
-  color: var(--muted-foreground);
-  transition: background-color 150ms ease-out, color 150ms ease-out;
-}
-
-.wordless-chrome__action:hover,
-.wordless-chrome__action:focus-visible {
-  background: color-mix(in srgb, var(--foreground) 7%, transparent);
-  color: var(--foreground);
-  outline: none;
 }
 
 .wordless-update-notice {

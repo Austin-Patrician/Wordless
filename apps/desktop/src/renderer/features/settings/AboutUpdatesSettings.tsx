@@ -6,6 +6,7 @@ import remarkGfm from "remark-gfm";
 import { useDesktopUpdate } from "../../platform/desktop-update";
 import { useRuntime } from "../../shared/runtime";
 import wordlessIcon from "../../../icons/common-icons/wordless.png";
+import githubIcon from "../../../icons/common-icons/github.svg";
 
 function releaseDate(value: string): string {
   if (!value) return "";
@@ -39,7 +40,7 @@ export function AboutUpdatesSettings() {
               <span>Version {appInfo?.version ?? "-"}</span><span aria-hidden="true">/</span><span>{appInfo ? `${appInfo.platform} ${appInfo.arch}` : "Loading platform"}</span>
             </div>
           </div>
-          <Button onClick={() => void update.openReleasePage()} type="button" variant="outline"><ExternalLink className="h-4 w-4" />github.com/Austin-Patrician/Wordless</Button>
+          <Button onClick={() => void update.openReleasePage()} type="button" variant="outline"><img alt="" aria-hidden="true" className="h-4 w-4 object-contain dark:invert" src={githubIcon} />github.com/Austin-Patrician/Wordless</Button>
         </section>
 
         <section className="about-update-row" aria-label="Update status">

@@ -91,6 +91,19 @@ describe("automatic operation approval", () => {
     scenario.driverSession.dispose();
   });
 
+  it("approves an already pending normal operation when switching to auto", async () => {
+    const scenario = await createApprovalScenario({ mode: "manual", severity: "normal" });
+    const prompt = scenario.driverSession.execute({ type: "prompt", text: "Update the value" });
+    await scenario.approvalRequested;
+
+    await scenario.driverSession.execute({ type: "set-tool-approval-mode", mode: "auto" });
+    await prompt;
+
+    expect(scenario.executions()).toBe(1);
+    expect(scenario.events.some((event) => event.type === "approval.resolved" && event.resolution.approved)).toBe(true);
+    scenario.driverSession.dispose();
+  });
+
   it("keeps high-risk operations pending in auto mode", async () => {
     const scenario = await createApprovalScenario({ mode: "auto", severity: "high" });
     const prompt = scenario.driverSession.execute({ type: "prompt", text: "Update the value" });

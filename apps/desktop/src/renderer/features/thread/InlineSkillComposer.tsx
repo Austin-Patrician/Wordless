@@ -60,12 +60,14 @@ export type InlineSkillComposerValue = {
 };
 
 export type InlineSkillComposerHandle = {
+  canNavigateHistory(direction: "next" | "previous"): boolean;
   clear(): void;
   focus(): void;
   getCursorRect(): DOMRect | null;
   getValue(): InlineSkillComposerValue;
   insertSkill(skill: InlineSkillToken): void;
   insertWorkspaceReference(reference: InlineWorkspaceReferenceToken): void;
+  setValue(parts: readonly UserPromptPart[]): void;
 };
 
 type InlineSkillComposerProps = {
@@ -394,6 +396,20 @@ export const InlineSkillComposer = forwardRef<InlineSkillComposerHandle, InlineS
   onChangeRef.current = onChange;
 
   useImperativeHandle(ref, () => ({
+    canNavigateHistory(direction) {
+      const editor = editorRef.current;
+      if (!editor) return false;
+      return editor.getEditorState().read(() => {
+        const selection = $getSelection();
+        if (!$isRangeSelection(selection) || !selection.isCollapsed()) return false;
+        const root = $getRoot();
+        const topLevel = selection.anchor.getNode().getTopLevelElement();
+        if (!topLevel) return root.getChildrenSize() <= 1;
+        return direction === "previous"
+          ? topLevel === root.getFirstChild()
+          : topLevel === root.getLastChild();
+      });
+    },
     clear() {
       const editor = editorRef.current;
       if (!editor) return;
@@ -467,6 +483,34 @@ export const InlineSkillComposer = forwardRef<InlineSkillComposerHandle, InlineS
           selection.insertNodes([token, spacer]);
           spacer.selectEnd();
         }
+      });
+      editor.focus();
+    },
+    setValue(parts) {
+      const editor = editorRef.current;
+      if (!editor || disabled || readOnly) return;
+      editor.update(() => {
+        const root = $getRoot();
+        root.clear();
+        let paragraph = $createParagraphNode();
+        root.append(paragraph);
+        for (const part of parts) {
+          if (part.type === "text") {
+            const lines = part.text.split("\n");
+            lines.forEach((line, index) => {
+              if (index > 0) {
+                paragraph = $createParagraphNode();
+                root.append(paragraph);
+              }
+              if (line) paragraph.append($createTextNode(line));
+            });
+          } else if (part.type === "skill-reference") {
+            paragraph.append($createSkillTokenNode(part.skillId, part.name, part.source));
+          } else if (part.type === "workspace-reference") {
+            paragraph.append($createWorkspaceReferenceNode(part.path, part.name, part.kind));
+          }
+        }
+        root.selectEnd();
       });
       editor.focus();
     },

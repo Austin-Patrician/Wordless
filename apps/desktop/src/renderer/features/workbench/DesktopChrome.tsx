@@ -1,5 +1,5 @@
 import { useEffect } from "react";
-import { AlertCircle, Download, ExternalLink, RefreshCw, RotateCcw, Settings2, SquarePen, X } from "lucide-react";
+import { AlertCircle, Download, ExternalLink, RefreshCw, RotateCcw, X } from "lucide-react";
 import type { DesktopMenuId } from "@wordless/protocol";
 import { useRuntime } from "../../shared/runtime";
 import { useDesktopHost } from "../../platform/desktop-host";
@@ -42,7 +42,6 @@ export function DesktopChrome({ onNewThread, onOpenSettings }: DesktopChromeProp
             <><span className="flex items-center gap-1.5 pl-3 font-semibold"><span className="size-1.5 rounded-full bg-[#1f2933] dark:bg-[#eef4dc]" />Wordless</span><nav aria-label="Application menu" className="ml-2 flex h-full items-center gap-0.5 [-webkit-app-region:no-drag]">{menus.map((menu) => <button className="h-full px-1.5 text-left transition-colors hover:bg-black/5 focus-visible:bg-black/5 focus-visible:outline-none dark:hover:bg-white/10 dark:focus-visible:bg-white/10" key={menu.id} onClick={() => openMenu(menu.id)} type="button">{menu.label}</button>)}</nav></>
           )}
         </div>
-        {isMac ? <div className="mr-2 flex items-center gap-0.5 [-webkit-app-region:no-drag]"><button aria-label="New thread" className="wordless-chrome__action" onClick={onNewThread} title="New thread"><SquarePen className="h-3.5 w-3.5" /></button><button aria-label="Open settings" className="wordless-chrome__action" onClick={() => onOpenSettings()} title="Settings"><Settings2 className="h-3.5 w-3.5" /></button></div> : null}
       </header>
       <UpdateNotice onViewDetails={() => onOpenSettings("about")} />
     </>

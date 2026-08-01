@@ -56,6 +56,7 @@ type ComposerProps = {
   onPendingWorkspaceReferencesConsumed?: () => void;
   artifactSelection?: ArtifactSelection | null;
   onArtifactSelectionConsumed?: () => void;
+  userMessageHistory?: Array<{ id: string; parts: UserPromptPart[] }>;
 };
 
 const EMPTY_INLINE_SKILL_COMPOSER_VALUE: InlineSkillComposerValue = { parts: [], skillIds: [], skillTokenCounts: {}, text: "", workspaceReferenceCount: 0, workspaceQuery: null };
@@ -102,6 +103,7 @@ export function Composer({
   onPendingWorkspaceReferencesConsumed,
   artifactSelection,
   onArtifactSelectionConsumed,
+  userMessageHistory = [],
 }: ComposerProps) {
   const [draft, setDraft] = useState<InlineSkillComposerValue>(EMPTY_INLINE_SKILL_COMPOSER_VALUE);
   const [menuOpen, setMenuOpen] = useState(false);
@@ -140,6 +142,9 @@ export function Composer({
   const draftFrameRef = useRef<number | undefined>(undefined);
   const workspaceSearchReferencesRef = useRef(searchWorkspaceReferences);
   const workspaceSearchCacheRef = useRef(new Map<string, { expiresAt: number; results?: WorkspaceFileEntry[]; promise?: Promise<WorkspaceFileEntry[]> }>());
+  const historyIndexRef = useRef<number | null>(null);
+  const historyDraftRef = useRef<InlineSkillComposerValue>(EMPTY_INLINE_SKILL_COMPOSER_VALUE);
+  const applyingHistoryRef = useRef(false);
   const { locale, t } = usePreferences();
   workspaceSearchReferencesRef.current = searchWorkspaceReferences;
   const hasActionMenu = Boolean(onInteractionModeChange || onTogglePlanMode || onCompactContext || onImportSkill || onOpenSkills || onToolApprovalModeChange || skills.length > 0 || connectors.length > 0);
@@ -226,6 +231,12 @@ export function Composer({
     if (draftFrameRef.current !== undefined) cancelAnimationFrame(draftFrameRef.current);
   }, []);
 
+  const userMessageHistoryKey = userMessageHistory.map((message) => message.id).join("\u0000");
+  useEffect(() => {
+    historyIndexRef.current = null;
+    historyDraftRef.current = EMPTY_INLINE_SKILL_COMPOSER_VALUE;
+  }, [userMessageHistoryKey]);
+
   useEffect(() => {
     const query = draft.workspaceQuery;
     if (query === null || !searchWorkspaceReferences || disabled || running) {
@@ -254,6 +265,11 @@ export function Composer({
   }, [disabled, onPendingWorkspaceReferencesConsumed, pendingWorkspaceReferences, running]);
 
   const updateDraft = useCallback((nextDraft: InlineSkillComposerValue) => {
+    if (applyingHistoryRef.current) applyingHistoryRef.current = false;
+    else if (historyIndexRef.current !== null) {
+      historyIndexRef.current = null;
+      historyDraftRef.current = EMPTY_INLINE_SKILL_COMPOSER_VALUE;
+    }
     draftRef.current = nextDraft;
     if (nextDraft.parts.length > 0) setSendError(null);
     const cursor = inputRef.current?.getCursorRect();
@@ -305,6 +321,8 @@ export function Composer({
       draftFrameRef.current = undefined;
       draftRef.current = EMPTY_INLINE_SKILL_COMPOSER_VALUE;
       setDraft(EMPTY_INLINE_SKILL_COMPOSER_VALUE);
+      historyIndexRef.current = null;
+      historyDraftRef.current = EMPTY_INLINE_SKILL_COMPOSER_VALUE;
     } catch (cause) {
       setSendError(cause instanceof Error ? cause.message : String(cause));
     }
@@ -401,6 +419,40 @@ export function Composer({
     return false;
   };
 
+  const composerKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>): boolean => {
+    if (workspacePickerKeyDown(event)) return true;
+    if (event.nativeEvent.isComposing || event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return false;
+    if (event.key !== "ArrowUp" && event.key !== "ArrowDown") return false;
+
+    const direction = event.key === "ArrowUp" ? "previous" : "next";
+    if (!inputRef.current?.canNavigateHistory(direction)) return false;
+    if (direction === "previous") {
+      if (userMessageHistory.length === 0) return false;
+      const currentIndex = historyIndexRef.current;
+      if (currentIndex === null) historyDraftRef.current = inputRef.current.getValue();
+      const nextIndex = currentIndex === null
+        ? userMessageHistory.length - 1
+        : Math.max(0, currentIndex - 1);
+      historyIndexRef.current = nextIndex;
+      applyingHistoryRef.current = true;
+      inputRef.current.setValue(userMessageHistory[nextIndex]!.parts);
+      return true;
+    }
+
+    const currentIndex = historyIndexRef.current;
+    if (currentIndex === null) return false;
+    const nextIndex = currentIndex + 1;
+    applyingHistoryRef.current = true;
+    if (nextIndex >= userMessageHistory.length) {
+      historyIndexRef.current = null;
+      inputRef.current.setValue(historyDraftRef.current.parts);
+    } else {
+      historyIndexRef.current = nextIndex;
+      inputRef.current.setValue(userMessageHistory[nextIndex]!.parts);
+    }
+    return true;
+  };
+
   return (
     <>
     <div
@@ -431,7 +483,7 @@ export function Composer({
           className="min-h-[40px] w-full min-w-0 flex-1 resize-none overflow-y-auto bg-transparent px-0.5 text-[16px] font-medium leading-7 text-[#353532] caret-[#252624] outline-none placeholder:font-normal placeholder:text-[#a2a29b] selection:bg-[#dff09b] disabled:cursor-not-allowed read-only:cursor-default dark:text-foreground dark:caret-foreground dark:placeholder:text-muted-foreground dark:selection:bg-[#4a5a26]"
           disabled={interactionDisabled}
           onChange={updateDraft}
-          onWorkspaceReferenceKeyDown={workspacePickerKeyDown}
+          onWorkspaceReferenceKeyDown={composerKeyDown}
           onStop={() => void onStop?.()}
           onSubmit={() => void send()}
           placeholder={effectiveInteractionMode === "plan" ? t("planPromptPlaceholder") : effectiveInteractionMode === "clarify" ? locale === "zh-CN" ? "输入想要理清的问题..." : "Describe what you want to clarify..." : compact ? t("compactPromptPlaceholder") : t("promptPlaceholder")}

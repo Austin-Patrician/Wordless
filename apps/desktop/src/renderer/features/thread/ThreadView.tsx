@@ -324,7 +324,7 @@ function compactionFailureMessage(cause: unknown): string {
     .trim();
 }
 
-function AssistantMessageBlocks({ clarificationHandoffAvailable, message, onHandoffClarification, onLoadToolOutput, onResolveApproval, onResolveClarificationQuestion, onResolveUserRequest, canPlan, workbenchId }: { clarificationHandoffAvailable: boolean; message: ConversationMessage; onHandoffClarification: (interactionMode: "default" | "clarify" | "plan") => Promise<void>; onLoadToolOutput: (callId: string) => Promise<void>; onResolveApproval: (approvalId: string, approved: boolean, feedback?: string) => void; onResolveClarificationQuestion: (callId: string, value: string | boolean) => Promise<void>; onResolveUserRequest: (requestId: string, resolution: { status: "submitted" | "cancelled"; answers?: Record<string, UserRequestAnswer>; feedback?: string }) => void; canPlan: boolean; workbenchId: WorkbenchId }) {
+function AssistantMessageBlocks({ clarificationHandoffAvailable, message, onEnableAutoApprove, onHandoffClarification, onLoadToolOutput, onResolveApproval, onResolveClarificationQuestion, onResolveUserRequest, canPlan, workbenchId }: { clarificationHandoffAvailable: boolean; message: ConversationMessage; onEnableAutoApprove?: () => Promise<void>; onHandoffClarification: (interactionMode: "default" | "clarify" | "plan") => Promise<void>; onLoadToolOutput: (callId: string) => Promise<void>; onResolveApproval: (approvalId: string, approved: boolean, feedback?: string) => void; onResolveClarificationQuestion: (callId: string, value: string | boolean) => Promise<void>; onResolveUserRequest: (requestId: string, resolution: { status: "submitted" | "cancelled"; answers?: Record<string, UserRequestAnswer>; feedback?: string }) => void; canPlan: boolean; workbenchId: WorkbenchId }) {
   const rendered: ReactNode[] = [];
   for (let index = 0; index < message.blocks.length; index += 1) {
     const block = message.blocks[index]!;
@@ -339,7 +339,7 @@ function AssistantMessageBlocks({ clarificationHandoffAvailable, message, onHand
         <div className="mt-4 divide-y divide-[#e7e7e2] border-y border-[#e7e7e2] dark:divide-border dark:border-border" data-thread-search-exclude key={`tools-${tools[0]?.callId}`}>
           {tools.map((tool) => {
             const ToolActivity = workbenchRendererRegistry.resolveTool(workbenchId, tool.name);
-            return <ToolActivity block={tool} canPlan={canPlan} clarificationHandoffAvailable={clarificationHandoffAvailable} key={tool.callId} onHandoffClarification={onHandoffClarification} onLoadToolOutput={onLoadToolOutput} onResolveApproval={onResolveApproval} onResolveClarificationQuestion={onResolveClarificationQuestion} onResolveUserRequest={onResolveUserRequest} />;
+            return <ToolActivity block={tool} canPlan={canPlan} clarificationHandoffAvailable={clarificationHandoffAvailable} key={tool.callId} onEnableAutoApprove={onEnableAutoApprove} onHandoffClarification={onHandoffClarification} onLoadToolOutput={onLoadToolOutput} onResolveApproval={onResolveApproval} onResolveClarificationQuestion={onResolveClarificationQuestion} onResolveUserRequest={onResolveUserRequest} />;
           })}
         </div>,
       );
@@ -431,7 +431,7 @@ function PlanResultActions({ onResolve }: { onResolve: (action: "implement" | "s
   return <div className="mt-3 border-l-2 border-[#a9bc70] bg-[#f7f9ef] px-3 py-2 dark:border-[#9fba55] dark:bg-[#28321d]"><div className="flex flex-wrap gap-1"><button className="h-6 rounded-[5px] bg-[#252624] px-2 text-[10px] font-semibold text-white hover:bg-[#3a3b37] disabled:opacity-50 dark:bg-[#d9f37a] dark:text-[#252624] dark:hover:bg-[#e4f99c]" disabled={pending !== null} onClick={() => void resolve("implement")} type="button">{pending === "implement" ? "..." : t("implementPlan")}</button><button className="h-6 rounded-[5px] border border-[#b7c98b] bg-white px-2 text-[10px] font-medium text-[#53652d] hover:bg-[#eef4dc] disabled:opacity-50 dark:border-[#718b43] dark:bg-[#202719] dark:text-[#d7ec9a] dark:hover:bg-[#354321]" disabled={pending !== null} onClick={() => void resolve("stay")} type="button">{pending === "stay" ? "..." : t("stayInPlanMode")}</button></div>{error ? <p className="mt-1.5 text-[10px] text-destructive" role="alert">{error}</p> : null}</div>;
 }
 
-function AssistantMessageBody({ messages, onHandoffClarification, onLoadToolOutput, onResolveApproval, onResolveClarificationQuestion, onResolveUserRequest, onResolvePlanResult, canPlan, planMode, runPresentation, showFooter, workbenchId }: { messages: ConversationMessage[]; onHandoffClarification: (interactionMode: "default" | "clarify" | "plan") => Promise<void>; onLoadToolOutput: (callId: string) => Promise<void>; onResolveApproval: (approvalId: string, approved: boolean, feedback?: string) => void; onResolveClarificationQuestion: (callId: string, value: string | boolean) => Promise<void>; onResolveUserRequest: (requestId: string, resolution: { status: "submitted" | "cancelled"; answers?: Record<string, UserRequestAnswer>; feedback?: string }) => void; onResolvePlanResult: (action: "implement" | "stay") => Promise<void>; canPlan: boolean; planMode: "off" | "planning" | "executing"; runPresentation: AssistantRunPresentation | null; showFooter: boolean; workbenchId: WorkbenchId }) {
+function AssistantMessageBody({ messages, onEnableAutoApprove, onHandoffClarification, onLoadToolOutput, onResolveApproval, onResolveClarificationQuestion, onResolveUserRequest, onResolvePlanResult, canPlan, planMode, runPresentation, showFooter, workbenchId }: { messages: ConversationMessage[]; onEnableAutoApprove?: () => Promise<void>; onHandoffClarification: (interactionMode: "default" | "clarify" | "plan") => Promise<void>; onLoadToolOutput: (callId: string) => Promise<void>; onResolveApproval: (approvalId: string, approved: boolean, feedback?: string) => void; onResolveClarificationQuestion: (callId: string, value: string | boolean) => Promise<void>; onResolveUserRequest: (requestId: string, resolution: { status: "submitted" | "cancelled"; answers?: Record<string, UserRequestAnswer>; feedback?: string }) => void; onResolvePlanResult: (action: "implement" | "stay") => Promise<void>; canPlan: boolean; planMode: "off" | "planning" | "executing"; runPresentation: AssistantRunPresentation | null; showFooter: boolean; workbenchId: WorkbenchId }) {
   const message = messages.at(-1)!;
   const blocks = messages.flatMap((candidate) => candidate.blocks);
   const hasPendingInteraction = blocks.some((block) => block.type === "tool" && (block.state === "awaiting-approval" || block.state === "awaiting-user-input"));
@@ -442,7 +442,7 @@ function AssistantMessageBody({ messages, onHandoffClarification, onLoadToolOutp
     <article>
       <AssistantIdentityHeader />
       <div className="mt-2 min-w-0">
-        {messages.map((candidate, index) => <section className={`min-h-px outline-none focus-visible:ring-2 focus-visible:ring-ring ${index > 0 ? "mt-5" : ""}`} data-thread-message-id={candidate.id} key={candidate.id} tabIndex={-1}><AssistantMessageBlocks canPlan={canPlan} clarificationHandoffAvailable={showFooter && !isStreaming && !hasPendingInteraction && candidate.id === message.id} message={candidate} onHandoffClarification={onHandoffClarification} onLoadToolOutput={onLoadToolOutput} onResolveApproval={onResolveApproval} onResolveClarificationQuestion={onResolveClarificationQuestion} onResolveUserRequest={onResolveUserRequest} workbenchId={workbenchId} /><AssistantResponseError message={candidate} /></section>)}
+        {messages.map((candidate, index) => <section className={`min-h-px outline-none focus-visible:ring-2 focus-visible:ring-ring ${index > 0 ? "mt-5" : ""}`} data-thread-message-id={candidate.id} key={candidate.id} tabIndex={-1}><AssistantMessageBlocks canPlan={canPlan} clarificationHandoffAvailable={showFooter && !isStreaming && !hasPendingInteraction && candidate.id === message.id} message={candidate} onEnableAutoApprove={onEnableAutoApprove} onHandoffClarification={onHandoffClarification} onLoadToolOutput={onLoadToolOutput} onResolveApproval={onResolveApproval} onResolveClarificationQuestion={onResolveClarificationQuestion} onResolveUserRequest={onResolveUserRequest} workbenchId={workbenchId} /><AssistantResponseError message={candidate} /></section>)}
         {showRunStatus && runPresentation ? <AssistantRunStatus activity={runPresentation.activity} /> : null}
         {showFooter && !isStreaming && !hasPendingInteraction && planMode === "planning" ? <PlanResultActions onResolve={onResolvePlanResult} /> : null}
         {showFooter && !isStreaming && !hasPendingInteraction ? <div className="mt-4 flex items-center gap-2 text-[#898981]">
@@ -480,7 +480,7 @@ function CollapsibleUserMessage({ children, contentKey }: { children: ReactNode;
   return <div><div className={!expanded && truncated ? "max-h-[72px] overflow-hidden" : undefined} ref={contentRef}>{children}</div>{truncated ? <button aria-expanded={expanded} className="mt-1 flex h-5 items-center gap-0.5 text-[10px] font-medium text-[#6d7f53] hover:text-[#45582f] dark:text-[#b8d98e] dark:hover:text-[#d6edaf]" onClick={() => setExpanded((value) => !value)} type="button">{expanded ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}{expanded ? locale === "zh-CN" ? "收起" : "Collapse" : locale === "zh-CN" ? "展开全文" : "Show more"}</button> : null}</div>;
 }
 
-function MessageBody({ messages, onHandoffClarification, onLoadToolOutput, onResolveApproval, onResolveClarificationQuestion, onResolveUserRequest, onResolvePlanResult, canPlan, isFirstMessage, planMode, runPresentation, showFooter, workbenchId }: { messages: ConversationMessage[]; onHandoffClarification: (interactionMode: "default" | "clarify" | "plan") => Promise<void>; onLoadToolOutput: (callId: string) => Promise<void>; onResolveApproval: (approvalId: string, approved: boolean, feedback?: string) => void; onResolveClarificationQuestion: (callId: string, value: string | boolean) => Promise<void>; onResolveUserRequest: (requestId: string, resolution: { status: "submitted" | "cancelled"; answers?: Record<string, UserRequestAnswer>; feedback?: string }) => void; onResolvePlanResult: (action: "implement" | "stay") => Promise<void>; canPlan: boolean; isFirstMessage: boolean; planMode: "off" | "planning" | "executing"; runPresentation: AssistantRunPresentation | null; showFooter: boolean; workbenchId: WorkbenchId }) {
+function MessageBody({ messages, onEnableAutoApprove, onHandoffClarification, onLoadToolOutput, onResolveApproval, onResolveClarificationQuestion, onResolveUserRequest, onResolvePlanResult, canPlan, isFirstMessage, planMode, runPresentation, showFooter, workbenchId }: { messages: ConversationMessage[]; onEnableAutoApprove?: () => Promise<void>; onHandoffClarification: (interactionMode: "default" | "clarify" | "plan") => Promise<void>; onLoadToolOutput: (callId: string) => Promise<void>; onResolveApproval: (approvalId: string, approved: boolean, feedback?: string) => void; onResolveClarificationQuestion: (callId: string, value: string | boolean) => Promise<void>; onResolveUserRequest: (requestId: string, resolution: { status: "submitted" | "cancelled"; answers?: Record<string, UserRequestAnswer>; feedback?: string }) => void; onResolvePlanResult: (action: "implement" | "stay") => Promise<void>; canPlan: boolean; isFirstMessage: boolean; planMode: "off" | "planning" | "executing"; runPresentation: AssistantRunPresentation | null; showFooter: boolean; workbenchId: WorkbenchId }) {
   const { t } = usePreferences();
   const message = messages[0]!;
   if (message.role === "user") {
@@ -500,7 +500,7 @@ function MessageBody({ messages, onHandoffClarification, onLoadToolOutput, onRes
       </div>
     );
   }
-  return <AssistantMessageBody canPlan={canPlan} messages={messages} onHandoffClarification={onHandoffClarification} onLoadToolOutput={onLoadToolOutput} onResolveApproval={onResolveApproval} onResolveClarificationQuestion={onResolveClarificationQuestion} onResolvePlanResult={onResolvePlanResult} onResolveUserRequest={onResolveUserRequest} planMode={planMode} runPresentation={runPresentation} showFooter={showFooter} workbenchId={workbenchId} />;
+  return <AssistantMessageBody canPlan={canPlan} messages={messages} onEnableAutoApprove={onEnableAutoApprove} onHandoffClarification={onHandoffClarification} onLoadToolOutput={onLoadToolOutput} onResolveApproval={onResolveApproval} onResolveClarificationQuestion={onResolveClarificationQuestion} onResolvePlanResult={onResolvePlanResult} onResolveUserRequest={onResolveUserRequest} planMode={planMode} runPresentation={runPresentation} showFooter={showFooter} workbenchId={workbenchId} />;
 }
 
 function createTimeline(snapshot: SessionSnapshot, runPresentation: AssistantRunPresentation | null): ThreadTimelineItem[] {
@@ -527,6 +527,19 @@ type LoadedHistory = {
 
 function messagesFromHistoryPage(page: SessionHistoryPage): ConversationMessage[] {
   return page.items.flatMap((item) => item.type === "turn" ? item.turn.messages : []);
+}
+
+function userMessageHistory(messages: readonly ConversationMessage[]): Array<{ id: string; parts: UserPromptPart[] }> {
+  return messages.flatMap((message) => {
+    if (message.role !== "user") return [];
+    const parts = message.blocks.flatMap((block): UserPromptPart[] => {
+      if (block.type === "text") return [{ type: "text", text: block.text }];
+      if (block.type === "skill-reference") return [{ type: "skill-reference", skillId: block.skillId, name: block.name, source: block.source }];
+      if (block.type === "workspace-reference") return [{ type: "workspace-reference", path: block.path, name: block.name, kind: block.kind }];
+      return [];
+    });
+    return parts.length > 0 ? [{ id: message.id, parts }] : [];
+  });
 }
 
 function compactionsFromHistoryPage(page: SessionHistoryPage): ContextCompactionRecord[] {
@@ -1073,6 +1086,8 @@ export function ThreadView({ artifactSelection, initialPendingTurn, messageNavig
 
   if (!snapshot || snapshot.session.id !== sessionId || !appSnapshot || !entry) return <div className="grid min-h-0 flex-1 place-items-center text-[13px] text-muted-foreground">Loading session</div>;
 
+  const composerUserMessageHistory = userMessageHistory(snapshot.messages);
+
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <div className="relative min-h-0 flex-1">
@@ -1092,7 +1107,7 @@ export function ThreadView({ artifactSelection, initialPendingTurn, messageNavig
             return <ThreadContentFrame className={followsCompaction ? "pt-[26px]" : ""} densityRail={showDensityRail}>{item.type === "compaction"
               ? <ContextCompactionActivity compaction={item.compaction} />
               : item.type === "assistant-run" ? <AssistantRunPlaceholder presentation={item.presentation} />
-              : <MessageBody canPlan={canPlan} isFirstMessage={item.messages[0]?.id === snapshot.messages[0]?.id} messages={item.messages} onHandoffClarification={handoffClarification} onLoadToolOutput={loadToolOutput} onResolveApproval={resolveApproval} onResolveClarificationQuestion={resolveClarificationQuestion} onResolvePlanResult={resolvePlanResult} onResolveUserRequest={resolveUserRequest} planMode={planMode} runPresentation={runPresentation?.userMessageId && item.turnId === `turn:${runPresentation.userMessageId}` ? runPresentation : null} showFooter={!snapshot.isRunning && index === firstItemIndex + timeline.length - 1} workbenchId={snapshot.session.workbenchId} />}</ThreadContentFrame>;
+              : <MessageBody canPlan={canPlan} isFirstMessage={item.messages[0]?.id === snapshot.messages[0]?.id} messages={item.messages} onEnableAutoApprove={snapshot.toolApprovalMode === "manual" ? () => setToolApprovalMode("auto") : undefined} onHandoffClarification={handoffClarification} onLoadToolOutput={loadToolOutput} onResolveApproval={resolveApproval} onResolveClarificationQuestion={resolveClarificationQuestion} onResolvePlanResult={resolvePlanResult} onResolveUserRequest={resolveUserRequest} planMode={planMode} runPresentation={runPresentation?.userMessageId && item.turnId === `turn:${runPresentation.userMessageId}` ? runPresentation : null} showFooter={!snapshot.isRunning && index === firstItemIndex + timeline.length - 1} workbenchId={snapshot.session.workbenchId} />}</ThreadContentFrame>;
           }}
           rangeChanged={(range) => {
             const middleReportedIndex = range.startIndex + Math.floor((range.endIndex - range.startIndex) / 2);
@@ -1152,6 +1167,7 @@ export function ThreadView({ artifactSelection, initialPendingTurn, messageNavig
               skills={availableSkills}
               showWorkspacePicker={false}
               showAccessControl={snapshot.session.workbenchId === "code"}
+              userMessageHistory={composerUserMessageHistory}
             />
             <ModelPicker connections={appSnapshot.connections} entry={entry} models={appSnapshot.models} onConfigure={onOpenModels} onOpenChange={setModelOpen} onSelect={(connectionId, modelId) => void selectModel({ connectionId, modelId })} open={modelOpen} selected={currentModel} />
           </div>

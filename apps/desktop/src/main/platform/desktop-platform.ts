@@ -77,7 +77,7 @@ export function mainWindowOptions(preloadPath: string, preferences: AppPreferenc
     return {
       ...common,
       titleBarStyle: "hiddenInset",
-      trafficLightPosition: { x: 14, y: 12 },
+      trafficLightPosition: { x: 14, y: 11 },
     };
   }
   if (host.capabilities.titleBarOverlay) {

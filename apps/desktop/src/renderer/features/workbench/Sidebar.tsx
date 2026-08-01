@@ -1,5 +1,5 @@
 import { Button, DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger, Tooltip, TooltipContent, TooltipTrigger } from "@wordless/ui-kit";
-import { Bell, ChevronDown, ChevronLeft, ChevronRight, Command, Ellipsis, Folder, FolderOpen, Images, Pin, PinOff, Search, Settings, Trash2, Pencil, X } from "lucide-react";
+import { Bell, ChevronDown, ChevronLeft, Command, Ellipsis, Folder, FolderOpen, Images, Pin, PinOff, Search, Settings, Trash2, Pencil, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import type { SessionRecord } from "@wordless/domain";
@@ -229,8 +229,6 @@ export function Sidebar({ collapsed, mediaActive, onNewThread, onOpenMedia, onOp
     { id: "new", label: t("newThread"), icon: Folder, onClick: onNewThread },
     { id: "media", label: t("imageVideoGeneration"), icon: Images, onClick: onOpenMedia },
     { id: "skills", label: t("skills"), icon: Command, onClick: onOpenSkills },
-    { id: "assistants", label: t("assistants"), icon: ChevronRight },
-    { id: "projects", label: t("projects"), icon: Folder },
   ];
 
   const sessionRow = (session: SessionRecord) => <SessionRow active={selectedSessionId === session.id} editingTitle={renaming?.id === session.id ? title : null} entryIconKey={entryIconKeys.get(session.entryId)} key={session.id} onDelete={(candidate) => { setDeleteError(null); setDeleting(candidate); }} onEditCancel={() => setRenaming(null)} onEditSave={() => void saveRename()} onEditTitleChange={setTitle} onOpen={openSession} onOpenFolder={(candidate) => void run(async () => await client.openSessionFolder(candidate.id))} onRename={beginRename} onSetPinned={(candidate, pinned) => void run(async () => await client.setSessionPinned(candidate.id, pinned))} session={session} t={t} timeLabel={relativeTime(session.updatedAt, locale)} />;

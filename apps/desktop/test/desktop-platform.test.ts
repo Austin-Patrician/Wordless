@@ -31,7 +31,7 @@ test("describes macOS as a native hidden-inset host", () => {
 
   const options = mainWindowOptions("/tmp/preload.cjs", preferences, false, host);
   assert.equal(options.titleBarStyle, "hiddenInset");
-  assert.deepEqual(options.trafficLightPosition, { x: 14, y: 12 });
+  assert.deepEqual(options.trafficLightPosition, { x: 14, y: 11 });
   assert.equal(options.titleBarOverlay, undefined);
   assert.equal(options.frame, undefined);
 });
