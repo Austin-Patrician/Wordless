@@ -37,3 +37,39 @@ test("lists stable releases, revalidates with ETag, and caches the result", asyn
     }
   });
 });
+
+test("resolves the architecture-specific macOS DMG from a cached release", async () => {
+  await withTemporaryDirectories(async (userData) => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = async () => new Response(JSON.stringify([
+      {
+        tag_name: "v2.0.0",
+        name: "Wordless 2.0.0",
+        body: "",
+        published_at: "2026-08-01T00:00:00Z",
+        html_url: "https://github.com/Austin-Patrician/Wordless/releases/tag/v2.0.0",
+        draft: false,
+        prerelease: false,
+        assets: [
+          { name: "Wordless-2.0.0-mac-arm64.dmg", browser_download_url: "https://example.invalid/arm.dmg", size: 10 },
+          { name: "Wordless-2.0.0-mac-x64.dmg", browser_download_url: "https://example.invalid/x64.dmg", size: 11 },
+        ],
+      },
+    ]));
+    try {
+      const service = new DesktopReleaseService(userData);
+      assert.deepEqual(await service.findMacDmgAsset("2.0.0", "arm64"), {
+        name: "Wordless-2.0.0-mac-arm64.dmg",
+        url: "https://example.invalid/arm.dmg",
+        size: 10,
+      });
+      assert.deepEqual(await service.findMacDmgAsset("v2.0.0", "x64"), {
+        name: "Wordless-2.0.0-mac-x64.dmg",
+        url: "https://example.invalid/x64.dmg",
+        size: 11,
+      });
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});

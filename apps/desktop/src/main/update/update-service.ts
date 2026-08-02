@@ -1,3 +1,5 @@
+import { spawnSync } from "node:child_process";
+import path from "node:path";
 import { BrowserWindow, Notification, app, shell } from "electron";
 import { autoUpdater, type UpdateInfo } from "electron-updater";
 import type { DesktopAppInfo, DesktopHostEvent, DesktopRelease, DesktopUpdateSnapshot } from "@wordless/protocol";
@@ -18,13 +20,21 @@ function notesFrom(info: UpdateInfo): string | undefined {
 }
 
 export class DesktopUpdateService {
-  private snapshot: DesktopUpdateSnapshot = { state: "idle", currentVersion: app.getVersion() };
+  private readonly autoInstallSupported = supportsMacAutoInstall();
+  private readonly downloadsDirectory: string;
+  private manualInstallerPath: string | undefined;
+  private snapshot: DesktopUpdateSnapshot = {
+    state: "idle",
+    currentVersion: app.getVersion(),
+    installMode: this.autoInstallSupported ? "restart-install" : "manual-dmg",
+  };
   private readonly releases: DesktopReleaseService;
   private readonly send: SendHostEvent;
 
-  constructor(send: SendHostEvent, userDataPath = app.getPath("userData")) {
+  constructor(send: SendHostEvent, userDataPath = app.getPath("userData"), downloadsPath = app.getPath("downloads")) {
     this.send = send;
     this.releases = new DesktopReleaseService(userDataPath);
+    this.downloadsDirectory = downloadsPath;
   }
 
   initialize(): void {
@@ -41,7 +51,7 @@ export class DesktopUpdateService {
         checkedAt: Date.now(),
         progress: undefined,
         error: undefined,
-        installMode: "restart-install",
+        installMode: this.snapshot.installMode,
       });
       if (Notification.isSupported()) {
         const notification = new Notification({ title: "Wordless update available", body: availableVersion ? `Version ${availableVersion} is ready to download.` : "A new version is ready to download." });
@@ -54,7 +64,7 @@ export class DesktopUpdateService {
       }
     });
     autoUpdater.on("download-progress", (progress) => this.update({ state: "downloading", progress: Math.round(progress.percent), error: undefined }));
-    autoUpdater.on("update-downloaded", (info) => this.update({ state: "ready", availableVersion: versionFrom(info) ?? this.snapshot.availableVersion, releaseNotes: notesFrom(info) ?? this.snapshot.releaseNotes, progress: 100, installMode: "restart-install", error: undefined }));
+    autoUpdater.on("update-downloaded", (info) => this.update({ state: "ready", availableVersion: versionFrom(info) ?? this.snapshot.availableVersion, releaseNotes: notesFrom(info) ?? this.snapshot.releaseNotes, progress: 100, installMode: this.snapshot.installMode, error: undefined }));
     autoUpdater.on("error", (error) => this.fail(error));
   }
 
@@ -85,6 +95,22 @@ export class DesktopUpdateService {
     if (!app.isPackaged) return this.getSnapshot();
     if (!this.snapshot.availableVersion) throw new Error("No Wordless update is available to download");
     this.update({ state: "downloading", progress: 0, error: undefined });
+
+    if (!this.autoInstallSupported && process.platform === "darwin") {
+      try {
+        this.manualInstallerPath = await this.releases.downloadMacInstaller(
+          this.snapshot.availableVersion,
+          process.arch,
+          this.downloadsDirectory,
+          (progress) => this.update({ state: "downloading", progress, error: undefined }),
+        );
+        this.update({ state: "ready", progress: 100, installMode: "manual-dmg", error: undefined });
+      } catch (error) {
+        this.fail(error);
+      }
+      return this.getSnapshot();
+    }
+
     try {
       await autoUpdater.downloadUpdate();
     } catch (error) {
@@ -95,6 +121,14 @@ export class DesktopUpdateService {
 
   async install(): Promise<DesktopUpdateSnapshot> {
     if (this.snapshot.state !== "ready") throw new Error("No downloaded Wordless update is ready to install");
+
+    if (this.snapshot.installMode === "manual-dmg") {
+      if (!this.manualInstallerPath) throw new Error("The macOS DMG has not been downloaded yet");
+      const error = await shell.openPath(this.manualInstallerPath);
+      if (error) throw new Error(`Unable to open the downloaded macOS installer: ${error}`);
+      return this.getSnapshot();
+    }
+
     autoUpdater.quitAndInstall(false, true);
     return this.getSnapshot();
   }
@@ -112,4 +146,16 @@ export class DesktopUpdateService {
   private fail(error: unknown): void {
     this.update({ state: "error", error: error instanceof Error ? error.message : String(error), progress: undefined });
   }
+}
+
+function supportsMacAutoInstall(): boolean {
+  if (process.platform !== "darwin" || !app.isPackaged) return true;
+
+  const executablePath = app.getPath("exe");
+  const appBundlePath = path.dirname(path.dirname(path.dirname(executablePath)));
+  if (!appBundlePath.endsWith(".app")) return false;
+
+  const result = spawnSync("codesign", ["-dv", "--verbose=4", appBundlePath], { encoding: "utf8" });
+  const output = [result.stdout, result.stderr].filter(Boolean).join("\n");
+  return result.status === 0 && !/Signature=adhoc/i.test(output) && /Authority=Developer ID Application:/i.test(output);
 }

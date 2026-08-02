@@ -1,70 +1,127 @@
 import { useEffect, useRef } from 'react'
 import * as THREE from 'three'
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js'
 
-export function SceneBackdrop() {
+type SceneBackdropProps = {
+  onProgress?: (progress: number, phase: string) => void
+  onReady?: () => void
+  onError?: () => void
+}
+
+type SceneModel = {
+  url: string
+  size: number
+  position: [number, number, number]
+  rotation: [number, number, number]
+  opacity?: number
+}
+
+const heroModels: SceneModel[] = [
+  { url: '/glb/optimized/logo-companion-frame.glb', size: 5.7, position: [0.55, 0, -0.5], rotation: [0.04, -0.28, -0.08], opacity: 0.32 },
+  { url: '/glb/optimized/wordless.glb', size: 4.35, position: [0.32, 0.02, 1.05], rotation: [0.06, 0.22, 0.02] },
+  { url: '/glb/optimized/intent-glyph.glb', size: 1.12, position: [-2.55, 1.7, 1.2], rotation: [0.22, -0.35, -0.2], opacity: 0.72 },
+  { url: '/glb/optimized/archive-flower.glb', size: 0.9, position: [2.75, -1.75, 0.2], rotation: [-0.12, 0.4, 0.15], opacity: 0.48 },
+]
+
+function fitModel(model: THREE.Object3D, targetSize: number) {
+  const box = new THREE.Box3().setFromObject(model)
+  const size = box.getSize(new THREE.Vector3())
+  const center = box.getCenter(new THREE.Vector3())
+  const scale = targetSize / Math.max(size.x, size.y, size.z, 0.001)
+  model.scale.setScalar(scale)
+  model.position.copy(center).multiplyScalar(-scale)
+}
+
+function setOpacity(model: THREE.Object3D, opacity: number) {
+  model.traverse((object) => {
+    if (!(object instanceof THREE.Mesh)) return
+    const materials = Array.isArray(object.material) ? object.material : [object.material]
+    object.material = materials.map((material) => {
+      const clone = material.clone()
+      clone.transparent = opacity < 1
+      clone.opacity = opacity
+      clone.depthWrite = opacity > 0.7
+      return clone
+    })
+  })
+}
+
+export function SceneBackdrop({ onProgress, onReady, onError }: SceneBackdropProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
 
   useEffect(() => {
     const canvas = canvasRef.current
-    if (!canvas || window.matchMedia('(prefers-reduced-motion: reduce)').matches) return
+    if (!canvas) return
 
-    const renderer = new THREE.WebGLRenderer({ canvas, alpha: true, antialias: true })
+    let renderer: THREE.WebGLRenderer
+    try {
+      renderer = new THREE.WebGLRenderer({ canvas, alpha: true, antialias: true, powerPreference: 'high-performance' })
+    } catch {
+      onError?.()
+      return
+    }
+
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5))
     renderer.setClearColor(0x000000, 0)
+    renderer.outputColorSpace = THREE.SRGBColorSpace
+    renderer.toneMapping = THREE.ACESFilmicToneMapping
+    renderer.toneMappingExposure = 1.05
 
     const scene = new THREE.Scene()
-    const camera = new THREE.PerspectiveCamera(34, 1, 0.1, 100)
-    camera.position.set(0, 0, 8.2)
+    const camera = new THREE.PerspectiveCamera(28, 1, 0.1, 100)
+    camera.position.set(0, 0.1, 10)
 
     const stage = new THREE.Group()
-    stage.rotation.x = 0.22
+    stage.userData.baseX = 0
     scene.add(stage)
+    scene.add(new THREE.HemisphereLight(0xe6ffd0, 0x080b08, 2.4))
 
-    const lime = new THREE.Color('#c9ff79')
-    const mutedLime = new THREE.Color('#6e9a46')
-    const ringMaterial = new THREE.MeshBasicMaterial({
-      color: lime,
-      transparent: true,
-      opacity: 0.28,
-      side: THREE.DoubleSide,
-      blending: THREE.AdditiveBlending,
-    })
+    const keyLight = new THREE.DirectionalLight(0xd8ff9e, 5.5)
+    keyLight.position.set(4, 5, 7)
+    scene.add(keyLight)
+    const rimLight = new THREE.PointLight(0x75d7ff, 32, 15, 1.7)
+    rimLight.position.set(-4, -2, 4)
+    scene.add(rimLight)
 
-    const rings = [
-      { radius: 2.38, tube: 0.006, rotation: [0.2, 0.08, 0.1] },
-      { radius: 3.08, tube: 0.004, rotation: [0.5, -0.48, 0.24] },
-      { radius: 3.76, tube: 0.003, rotation: [-0.28, 0.64, -0.38] },
-    ].map(({ radius, tube, rotation }) => {
-      const ring = new THREE.Mesh(new THREE.TorusGeometry(radius, tube, 8, 128), ringMaterial.clone())
-      ring.rotation.set(rotation[0], rotation[1], rotation[2])
-      stage.add(ring)
-      return ring
-    })
+    const manager = new THREE.LoadingManager()
+    manager.onStart = () => onProgress?.(3, 'SCENE LINK')
+    manager.onProgress = (_url, loaded, total) => onProgress?.(Math.round((loaded / total) * 92), loaded < total ? 'DECODING FORM' : 'COMPOSING LIGHT')
+    manager.onError = () => onError?.()
+    const loader = new GLTFLoader(manager)
+    let disposed = false
 
-    const grid = new THREE.GridHelper(12, 32, mutedLime, 0x253a1b)
-    grid.position.set(0, -2.7, -1.2)
-    grid.material.transparent = true
-    grid.material.opacity = 0.2
-    stage.add(grid)
+    Promise.all(heroModels.map(({ url, size, position, rotation, opacity = 1 }) => new Promise<void>((resolve, reject) => {
+      loader.load(url, (gltf) => {
+        if (disposed) return resolve()
+        fitModel(gltf.scene, size)
+        setOpacity(gltf.scene, opacity)
+        const anchor = new THREE.Group()
+        anchor.position.set(...position)
+        anchor.rotation.set(...rotation)
+        anchor.add(gltf.scene)
+        stage.add(anchor)
+        resolve()
+      }, undefined, reject)
+    }))).then(() => {
+      if (disposed) return
+      renderer.render(scene, camera)
+      onProgress?.(100, 'READY')
+      onReady?.()
+    }).catch(() => onError?.())
 
-    const outline = new THREE.LineSegments(
-      new THREE.EdgesGeometry(new THREE.BoxGeometry(5.6, 3.6, 0.4)),
-      new THREE.LineBasicMaterial({ color: lime, transparent: true, opacity: 0.1 }),
-    )
-    outline.rotation.set(-0.13, 0.16, -0.03)
-    outline.position.set(0, 0, -1.8)
-    stage.add(outline)
-
-    const pointer = { x: 0, y: 0 }
+    const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches
+    const pointer = new THREE.Vector2()
+    const targetPointer = new THREE.Vector2()
     const onPointerMove = (event: PointerEvent) => {
-      pointer.x = (event.clientX / window.innerWidth - 0.5) * 2
-      pointer.y = (event.clientY / window.innerHeight - 0.5) * 2
+      targetPointer.set((event.clientX / window.innerWidth - 0.5) * 2, (event.clientY / window.innerHeight - 0.5) * 2)
     }
-    window.addEventListener('pointermove', onPointerMove, { passive: true })
+    if (!reducedMotion) window.addEventListener('pointermove', onPointerMove, { passive: true })
 
     const resize = () => {
       const { width, height } = canvas.getBoundingClientRect()
-      if (width === 0 || height === 0) return
+      if (!width || !height) return
+      stage.userData.baseX = width > 760 ? Math.min(0.65, width / 1600) : 0
+      stage.position.x = stage.userData.baseX
       camera.aspect = width / height
       camera.updateProjectionMatrix()
       renderer.setSize(width, height, false)
@@ -73,23 +130,31 @@ export function SceneBackdrop() {
     resizeObserver.observe(canvas)
     resize()
 
-    let frameId = 0
     let visible = true
-    const observer = new IntersectionObserver(([entry]) => {
-      visible = entry?.isIntersecting ?? false
-    })
-    observer.observe(canvas)
-
+    const visibilityObserver = new IntersectionObserver(([entry]) => { visible = entry?.isIntersecting ?? false })
+    visibilityObserver.observe(canvas)
     const clock = new THREE.Clock()
+    let frameId = 0
+
     const render = () => {
-      const elapsed = clock.getElapsedTime()
       if (visible) {
-        stage.rotation.y += (pointer.x * 0.1 - stage.rotation.y) * 0.018
-        stage.rotation.x += (0.22 - pointer.y * 0.06 - stage.rotation.x) * 0.018
-        rings[0].rotation.z += 0.002
-        rings[1].rotation.z -= 0.0014
-        rings[2].rotation.z += 0.0008
-        grid.position.z = -1.2 + Math.sin(elapsed * 0.25) * 0.08
+        const elapsed = clock.getElapsedTime()
+        if (!reducedMotion) {
+          pointer.lerp(targetPointer, 0.045)
+          stage.rotation.y += (pointer.x * 0.28 - stage.rotation.y) * 0.035
+          stage.rotation.x += (-pointer.y * 0.16 - stage.rotation.x) * 0.035
+          stage.position.x += (stage.userData.baseX + pointer.x * 0.34 - stage.position.x) * 0.03
+          stage.position.y = Math.sin(elapsed * 0.42) * 0.08
+          rimLight.position.x += (pointer.x * 3.8 - rimLight.position.x) * 0.035
+          rimLight.position.y += (-pointer.y * 2.5 - rimLight.position.y) * 0.035
+          stage.children.forEach((child, index) => {
+            child.rotation.z += (index % 2 ? -1 : 1) * (0.0026 + index * 0.0005)
+            child.position.y += (Math.sin(elapsed * (0.52 + index * 0.08) + index) * 0.045 + (index === 1 ? 0.02 : 0) - child.position.y) * 0.04
+          })
+          camera.position.x += (pointer.x * 0.35 - camera.position.x) * 0.025
+          camera.position.y += (0.1 - pointer.y * 0.2 - camera.position.y) * 0.025
+          camera.lookAt(0, 0, 0)
+        }
         renderer.render(scene, camera)
       }
       frameId = window.requestAnimationFrame(render)
@@ -97,21 +162,25 @@ export function SceneBackdrop() {
     render()
 
     return () => {
+      disposed = true
       window.cancelAnimationFrame(frameId)
-      observer.disconnect()
-      resizeObserver.disconnect()
       window.removeEventListener('pointermove', onPointerMove)
-      stage.traverse((object) => {
-        if (object instanceof THREE.Mesh || object instanceof THREE.LineSegments) {
-          object.geometry.dispose()
-          const material = object.material
-          if (Array.isArray(material)) material.forEach((entry) => entry.dispose())
-          else material.dispose()
-        }
+      resizeObserver.disconnect()
+      visibilityObserver.disconnect()
+      scene.traverse((object) => {
+        if (!(object instanceof THREE.Mesh)) return
+        object.geometry.dispose()
+        const materials = Array.isArray(object.material) ? object.material : [object.material]
+        materials.forEach((material) => {
+          Object.values(material).forEach((value) => {
+            if (value instanceof THREE.Texture) value.dispose()
+          })
+          material.dispose()
+        })
       })
       renderer.dispose()
     }
-  }, [])
+  }, [onError, onProgress, onReady])
 
   return <canvas ref={canvasRef} className="scene-backdrop" aria-hidden="true" />
 }

@@ -107,7 +107,7 @@ export type DesktopUpdateSnapshot = {
   progress?: number;
   checkedAt?: number;
   error?: string;
-  installMode?: "restart-install";
+  installMode?: "restart-install" | "manual-dmg";
 };
 
 export type DesktopHostEvent =

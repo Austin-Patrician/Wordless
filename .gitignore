@@ -19,3 +19,6 @@ apps/desktop/resources/officecli/*
 !apps/desktop/resources/officecli/.gitkeep
 apps/desktop/resources/presentation-templates/*
 !apps/desktop/resources/presentation-templates/.gitkeep
+
+# Local high-resolution sources; optimized website models are committed from public/glb.
+apps/website/assets/glb-source/

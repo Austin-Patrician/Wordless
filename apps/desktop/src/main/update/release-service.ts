@@ -1,4 +1,8 @@
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { createWriteStream } from "node:fs";
+import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { Readable, Transform } from "node:stream";
+import { pipeline } from "node:stream/promises";
 import path from "node:path";
 import type { DesktopRelease } from "@wordless/protocol";
 
@@ -8,6 +12,12 @@ const CACHE_MAX_AGE_MS = 6 * 60 * 60 * 1_000;
 type GithubAsset = {
   name: string;
   browser_download_url: string;
+  size: number;
+};
+
+export type DesktopMacDmgAsset = {
+  name: string;
+  url: string;
   size: number;
 };
 
@@ -60,6 +70,56 @@ export class DesktopReleaseService {
     return releases.map(publicRelease);
   }
 
+  async findMacDmgAsset(version: string, arch: string): Promise<DesktopMacDmgAsset> {
+    const release = await this.release(version);
+    const asset = this.macDmgAsset(release, version, arch);
+    return { name: asset.name, url: asset.browser_download_url, size: asset.size };
+  }
+
+  async downloadMacInstaller(version: string, arch: string, downloadsPath: string, onProgress: (percent: number) => void): Promise<string> {
+    const release = await this.release(version);
+    const installer = this.macDmgAsset(release, version, arch);
+    const checksums = release.assets.find((asset) => asset.name === "SHA256SUMS.txt");
+    if (!checksums) throw new Error(`The macOS ${arch} installer checksum is missing from this release`);
+
+    const checksumResponse = await fetch(checksums.browser_download_url, { headers: requestHeaders(), redirect: "follow", signal: AbortSignal.timeout(30_000) });
+    if (!checksumResponse.ok) throw new Error(`Unable to download update checksum (${checksumResponse.status})`);
+    const checksumText = await checksumResponse.text();
+    const expectedHash = checksumText.split(/\r?\n/).map((line) => line.trim().split(/\s+/)).find((parts) => parts.at(-1)?.replace(/^\*/, "") === installer.name)?.[0]?.toLowerCase();
+    if (!expectedHash || !/^[a-f0-9]{64}$/.test(expectedHash)) throw new Error("The update checksum is invalid or missing");
+
+    await mkdir(downloadsPath, { recursive: true });
+    const targetPath = path.join(downloadsPath, path.basename(installer.name));
+    const temporaryPath = `${targetPath}.download`;
+    const response = await fetch(installer.browser_download_url, { headers: requestHeaders(), redirect: "follow", signal: AbortSignal.timeout(30 * 60_000) });
+    if (!response.ok || !response.body) throw new Error(`Unable to download the macOS update (${response.status})`);
+
+    const total = Number(response.headers.get("content-length")) || installer.size;
+    let received = 0;
+    const hash = createHash("sha256");
+    const progress = new Transform({
+      transform(chunk: Buffer, _encoding, callback) {
+        received += chunk.length;
+        hash.update(chunk);
+        if (total > 0) onProgress(Math.min(99, Math.round((received / total) * 100)));
+        callback(null, chunk);
+      },
+    });
+
+    try {
+      await rm(temporaryPath, { force: true });
+      await pipeline(Readable.fromWeb(response.body as never), progress, createWriteStream(temporaryPath));
+      if (hash.digest("hex") !== expectedHash) throw new Error("The downloaded update failed checksum verification");
+      await rm(targetPath, { force: true });
+      await rename(temporaryPath, targetPath);
+      onProgress(100);
+      return targetPath;
+    } catch (error) {
+      await rm(temporaryPath, { force: true });
+      throw error;
+    }
+  }
+
   private async load(refresh: boolean): Promise<GithubRelease[]> {
     if (!this.cache) this.cache = await this.readCache();
     if (!refresh && this.cache && Date.now() - this.cache.fetchedAt < CACHE_MAX_AGE_MS) return this.cache.releases;
@@ -82,6 +142,27 @@ export class DesktopReleaseService {
       if (this.cache) return this.cache.releases;
       throw error;
     }
+  }
+
+  private async release(version: string): Promise<GithubRelease> {
+    const normalized = version.replace(/^v/i, "");
+    const releases = await this.load(false);
+    const match = releases.find((candidate) => candidate.tag_name.replace(/^v/i, "") === normalized);
+    if (match) return match;
+    const refreshed = await this.load(true);
+    const refreshedMatch = refreshed.find((candidate) => candidate.tag_name.replace(/^v/i, "") === normalized);
+    if (!refreshedMatch) throw new Error(`Wordless ${normalized} is no longer available on GitHub`);
+    return refreshedMatch;
+  }
+
+  private macDmgAsset(release: GithubRelease, version: string, arch: string): GithubAsset {
+    const normalizedVersion = version.replace(/^v/i, "");
+    const escapedVersion = normalizedVersion.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const installerPattern = new RegExp(`^Wordless-${escapedVersion}-mac-${arch}\\.dmg$`, "i");
+    const universalPattern = new RegExp(`^Wordless-${escapedVersion}-mac-universal\\.dmg$`, "i");
+    const installer = release.assets.find((asset) => installerPattern.test(asset.name)) ?? release.assets.find((asset) => universalPattern.test(asset.name));
+    if (!installer) throw new Error(`The macOS ${arch} installer is missing from release ${normalizedVersion}`);
+    return installer;
   }
 
   private async readCache(): Promise<ReleaseCache | null> {

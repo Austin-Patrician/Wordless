@@ -1,5 +1,5 @@
 import { Button } from "@wordless/ui-kit";
-import { AlertCircle, Check, Download, ExternalLink, LoaderCircle, RefreshCw, RotateCcw } from "lucide-react";
+import { AlertCircle, Check, Download, ExternalLink, FolderOpen, LoaderCircle, RefreshCw, RotateCcw } from "lucide-react";
 import { useEffect } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -27,6 +27,7 @@ export function AboutUpdatesSettings() {
   const downloading = snapshot?.state === "downloading";
   const ready = snapshot?.state === "ready";
   const available = snapshot?.state === "available";
+  const manualMacUpdate = appInfo?.platform === "darwin" && snapshot?.installMode === "manual-dmg";
 
   return (
     <div className="min-h-0 flex-1 overflow-y-auto">
@@ -48,15 +49,15 @@ export function AboutUpdatesSettings() {
             {checking || downloading ? <LoaderCircle className="animate-spin" /> : snapshot?.state === "error" ? <AlertCircle /> : ready || snapshot?.state === "up-to-date" ? <Check /> : <RefreshCw />}
           </div>
           <div className="min-w-0 flex-1">
-            <h3>{snapshot?.state === "error" ? "Update check failed" : ready ? "Update ready" : downloading ? "Downloading update" : available ? `Version ${snapshot.availableVersion} is available` : snapshot?.state === "up-to-date" ? "Wordless is up to date" : checking ? "Checking for updates" : "Updates"}</h3>
-            <p>{snapshot?.state === "error" ? snapshot.error : ready ? "Restart Wordless to finish installing the update." : downloading ? `${snapshot.progress ?? 0}% downloaded` : available ? "Installation is optional. You can continue using the current version." : appInfo?.packaged === false ? "Update checks are available in packaged builds." : snapshot?.checkedAt ? `Last checked ${new Date(snapshot.checkedAt).toLocaleString()}` : "Check GitHub for the latest stable release."}</p>
+            <h3>{snapshot?.state === "error" ? "Update check failed" : ready ? manualMacUpdate ? "DMG ready to open" : "Update ready" : downloading ? "Downloading update" : available ? `Version ${snapshot.availableVersion} is available` : snapshot?.state === "up-to-date" ? "Wordless is up to date" : checking ? "Checking for updates" : "Updates"}</h3>
+            <p>{snapshot?.state === "error" ? snapshot.error : ready ? manualMacUpdate ? "Open the DMG, then drag Wordless to Applications to replace the current version." : "Restart Wordless to finish installing the update." : downloading ? `${snapshot.progress ?? 0}% downloaded` : available ? manualMacUpdate ? "Download the DMG and install it manually. Your settings and data remain unchanged." : "Installation is optional. You can continue using the current version." : appInfo?.packaged === false ? "Update checks are available in packaged builds." : snapshot?.checkedAt ? `Last checked ${new Date(snapshot.checkedAt).toLocaleString()}` : "Check GitHub for the latest stable release."}</p>
             {downloading ? <div className="about-update-progress"><i style={{ width: `${Math.max(0, Math.min(100, snapshot?.progress ?? 0))}%` }} /></div> : null}
           </div>
           <div className="flex shrink-0 items-center gap-2">
-            {available ? <Button disabled={downloading} onClick={() => void update.download()} type="button"><Download className="h-4 w-4" />Download</Button> : ready ? <Button onClick={() => void update.install()} type="button"><RotateCcw className="h-4 w-4" />Restart & install</Button> : <Button disabled={checking || downloading || appInfo?.packaged === false} onClick={() => void update.check()} type="button" variant="outline"><RefreshCw className={`h-4 w-4 ${checking ? "animate-spin" : ""}`} />Check now</Button>}
+            {available ? <Button disabled={downloading} onClick={() => void update.download()} type="button"><Download className="h-4 w-4" />{manualMacUpdate ? "Download DMG" : "Download"}</Button> : ready ? <Button onClick={() => void update.install()} type="button">{manualMacUpdate ? <FolderOpen className="h-4 w-4" /> : <RotateCcw className="h-4 w-4" />}{manualMacUpdate ? "Open DMG" : "Restart & install"}</Button> : <Button disabled={checking || downloading || appInfo?.packaged === false} onClick={() => void update.check()} type="button" variant="outline"><RefreshCw className={`h-4 w-4 ${checking ? "animate-spin" : ""}`} />Check now</Button>}
           </div>
         </section>
-        {appInfo?.platform === "darwin" ? <p className="border-b border-border py-3 text-[10px] leading-4 text-muted-foreground">Automatic macOS updates require a release signed with an Apple Developer certificate.</p> : null}
+        {appInfo?.platform === "darwin" ? <p className="border-b border-border py-3 text-[10px] leading-4 text-muted-foreground">{manualMacUpdate ? "This build uses manual DMG updates because it is not signed with an Apple Developer certificate." : "Automatic macOS updates are available for releases signed with an Apple Developer certificate."}</p> : null}
 
         <section className="mt-10">
           <div className="flex items-end justify-between border-b border-border pb-3">

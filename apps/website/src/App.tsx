@@ -1,8 +1,10 @@
-import { lazy, Suspense, useEffect, useMemo, useState } from 'react'
+import { lazy, Suspense, useCallback, useEffect, useMemo, useState } from 'react'
 import { ArrowDown, ArrowUpRight, Check, GitBranch, Globe2, Menu, MoveDown, Play, ShieldCheck, X } from 'lucide-react'
 import { ReleaseDownload } from './components/ReleaseDownload'
+import { WebsiteLoader } from './components/WebsiteLoader'
 import { copy, type Locale } from './content/site-content'
 const SceneBackdrop = lazy(() => import('./scene/SceneBackdrop'))
+const SectionModel = lazy(() => import('./scene/SectionModel'))
 
 const githubUrl = 'https://github.com/Austin-Patrician/Wordless'
 const demoVideo = import.meta.env.VITE_WORKSPACE_VIDEO as string | undefined
@@ -25,12 +27,29 @@ function App() {
   const [locale, setLocale] = useLocale()
   const [menuOpen, setMenuOpen] = useState(false)
   const [videoFailed, setVideoFailed] = useState(false)
+  const [sceneProgress, setSceneProgress] = useState(1)
+  const [scenePhase, setScenePhase] = useState('INITIALIZING SPACE')
+  const [sceneReady, setSceneReady] = useState(false)
+  const [sceneFailed, setSceneFailed] = useState(false)
   const t = copy[locale]
   const activeVideo = demoVideo && !videoFailed ? demoVideo : undefined
   const signals = useMemo(() => t.capabilities.items.map((item) => item.signal), [t.capabilities.items])
+  const handleSceneProgress = useCallback((progress: number, phase: string) => {
+    setSceneProgress((current) => Math.max(current, progress))
+    setScenePhase(phase)
+  }, [])
+  const handleSceneReady = useCallback(() => setSceneReady(true), [])
+  const handleSceneError = useCallback(() => setSceneFailed(true), [])
 
   return (
     <main>
+      <WebsiteLoader
+        progress={sceneProgress}
+        phase={scenePhase}
+        ready={sceneReady}
+        failed={sceneFailed}
+        onContinue={() => setSceneReady(true)}
+      />
       <header className="site-header">
         <a className="brand" href="#top" aria-label="Wordless home">
           <span className="brand-mark"><img src="/images/wordless.webp" alt="" /></span>
@@ -59,7 +78,7 @@ function App() {
       </header>
 
       <section className="hero" id="top">
-        <Suspense fallback={null}><SceneBackdrop /></Suspense>
+        <div className={`hero-static-fallback${sceneReady && !sceneFailed ? ' hero-static-fallback--loaded' : ''}`} aria-hidden="true" />
         <div className="hero-raster" aria-hidden="true" />
         <div className="hero-content page-grid">
           <div className="hero-copy reveal">
@@ -77,17 +96,17 @@ function App() {
           </div>
 
           <div className="hero-product reveal reveal--late">
-            <div className="product-orbit product-orbit--one" />
-            <div className="product-orbit product-orbit--two" />
-            <div className="product-stage">
-              <div className="product-stage__label"><span>WORDLESS / CORE</span><span>LOCAL 01</span></div>
-              <img src="/images/wordless-workspace.webp" alt="Wordless agent workspace" />
-              <div className="product-stage__scan" />
+            <div className="hero-scene">
+              <Suspense fallback={null}>
+                <SceneBackdrop onProgress={handleSceneProgress} onReady={handleSceneReady} onError={handleSceneError} />
+              </Suspense>
             </div>
+            <div className="hero-model-caption"><span>WORDLESS / CORE</span><b>LIVE OBJECT</b></div>
+            <div className="hero-model-axis" aria-hidden="true"><i /><i /><i /></div>
             <div className="product-coordinates">
-              <span>SYS / 01</span>
+              <span>OBJECT / 01</span>
+              <span>POINTER / LINKED</span>
               <span>CONTEXT / ACTIVE</span>
-              <span>37.7749 N</span>
             </div>
           </div>
         </div>
@@ -104,18 +123,12 @@ function App() {
         </div>
         <div className="architecture-grid page-grid">
           <div className="architecture-visual">
-            <div className="architecture-terminal">
-              <div className="terminal-bar"><span /><span /><span /><b>WORDLESS / LOCAL SIGNAL</b></div>
-              <div className="terminal-grid">
-                <div className="terminal-core"><img src="/images/wordless.webp" alt="" /></div>
-                <span className="terminal-line terminal-line--one" />
-                <span className="terminal-line terminal-line--two" />
-                <span className="terminal-line terminal-line--three" />
-                <span className="terminal-node terminal-node--one">FILES</span>
-                <span className="terminal-node terminal-node--two">MODEL</span>
-                <span className="terminal-node terminal-node--three">CONTROL</span>
-              </div>
-            </div>
+            <Suspense fallback={<div className="model-placeholder" />}>
+              <SectionModel src="/glb/optimized/context-ribbon.glb" label="CONTEXT RIBBON / LOCAL SIGNAL" variant="wide" />
+            </Suspense>
+            <span className="architecture-tag architecture-tag--one">FILES</span>
+            <span className="architecture-tag architecture-tag--two">MODEL</span>
+            <span className="architecture-tag architecture-tag--three">CONTROL</span>
           </div>
           <div className="architecture-points">
             {t.architecture.points.map((point, index) => (
@@ -139,6 +152,12 @@ function App() {
         <div className="mode-signal-strip" aria-label="Available work modes">
           {[...signals, ...signals].map((signal, index) => <span key={`${signal}-${index}`}>{signal}<i /></span>)}
         </div>
+        <div className="mode-artifact page-grid">
+          <Suspense fallback={<div className="model-placeholder" />}>
+            <SectionModel src="/glb/optimized/signal-creature.glb" label="SIGNAL CREATURE / ADAPTIVE MODE" variant="wide" />
+          </Suspense>
+          <p>ONE CONTEXT<br /><span>MULTIPLE FORMS</span></p>
+        </div>
         <div className="mode-grid page-grid">
           {t.capabilities.items.map((item) => (
             <article className="mode-item" key={item.title}>
@@ -159,18 +178,23 @@ function App() {
             <h2>{t.approval.heading}</h2>
             <p className="section-description">{t.approval.body}</p>
           </div>
-          <div className="approval-console">
-            <div className="console-title"><ShieldCheck size={17} /><span>TOOL APPROVAL</span><em>LIVE</em></div>
-            <div className="approval-track">
-              {t.approval.steps.map((step, index) => (
-                <article className={index === 2 ? 'approval-step approval-step--active' : 'approval-step'} key={step.name}>
-                  <span className="approval-count">0{index + 1}</span>
-                  <div><h3>{step.name}</h3><p>{step.description}</p></div>
-                  {index < t.approval.steps.length - 1 && <i className="approval-path" />}
-                </article>
-              ))}
+          <div className="control-visual">
+            <Suspense fallback={<div className="model-placeholder" />}>
+              <SectionModel src="/glb/optimized/permission-fold.glb" label="PERMISSION FOLD / CONTROL SURFACE" variant="fold" />
+            </Suspense>
+            <div className="approval-console">
+              <div className="console-title"><ShieldCheck size={17} /><span>TOOL APPROVAL</span><em>LIVE</em></div>
+              <div className="approval-track">
+                {t.approval.steps.map((step, index) => (
+                  <article className={index === 2 ? 'approval-step approval-step--active' : 'approval-step'} key={step.name}>
+                    <span className="approval-count">0{index + 1}</span>
+                    <div><h3>{step.name}</h3><p>{step.description}</p></div>
+                    {index < t.approval.steps.length - 1 && <i className="approval-path" />}
+                  </article>
+                ))}
+              </div>
+              <div className="console-result"><Check size={16} /><span>execution state visible in thread</span></div>
             </div>
-            <div className="console-result"><Check size={16} /><span>execution state visible in thread</span></div>
           </div>
         </div>
       </section>
