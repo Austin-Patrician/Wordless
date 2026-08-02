@@ -1,5 +1,5 @@
 import { useEffect } from "react";
-import { AlertCircle, Download, ExternalLink, RefreshCw, RotateCcw, X } from "lucide-react";
+import { AlertCircle, Download, RefreshCw, RotateCcw, X } from "lucide-react";
 import type { DesktopMenuId } from "@wordless/protocol";
 import { useRuntime } from "../../shared/runtime";
 import { useDesktopHost } from "../../platform/desktop-host";
@@ -57,7 +57,7 @@ function UpdateNotice({ onViewDetails }: { onViewDetails: () => void }) {
   const ready = snapshot.state === "ready";
   const failed = snapshot.state === "error";
   const title = failed ? "Update could not be completed" : ready ? "Update is ready" : downloading ? "Downloading Wordless" : `Wordless ${snapshot.availableVersion ?? "update"} is available`;
-  const detail = failed ? snapshot.error ?? "Please try again or view the release on GitHub." : ready ? snapshot.installMode === "open-installer" ? "Open the verified DMG, then move Wordless to Applications." : "Restart Wordless when you are ready to install." : downloading ? `${Math.max(0, Math.min(100, snapshot.progress ?? 0))}% downloaded` : "Review what changed or download it when convenient.";
+  const detail = failed ? snapshot.error ?? "Please try again or view the release on GitHub." : ready ? "Restart Wordless when you are ready to install." : downloading ? `${Math.max(0, Math.min(100, snapshot.progress ?? 0))}% downloaded` : "Review what changed or download it when convenient.";
 
   return (
     <section aria-live="polite" className="wordless-update-notice" role="status">
@@ -66,7 +66,7 @@ function UpdateNotice({ onViewDetails }: { onViewDetails: () => void }) {
       <div className="wordless-update-notice__actions">
         {!downloading && !ready ? <button onClick={onViewDetails} type="button">Details</button> : null}
         {snapshot.state === "available" ? <button className="is-primary" onClick={() => void update.download()} type="button"><Download />Download</button> : null}
-        {ready ? <button className="is-primary" onClick={() => void update.install()} type="button">{snapshot.installMode === "open-installer" ? <ExternalLink /> : <RotateCcw />}{snapshot.installMode === "open-installer" ? "Open DMG" : "Restart & install"}</button> : null}
+        {ready ? <button className="is-primary" onClick={() => void update.install()} type="button"><RotateCcw />Restart & install</button> : null}
         {failed ? <button className="is-primary" onClick={() => void update.check()} type="button"><RefreshCw />Retry</button> : null}
         {!downloading ? <button aria-label="Remind me next launch" className="is-icon" onClick={update.dismiss} title="Later"><X /></button> : null}
       </div>

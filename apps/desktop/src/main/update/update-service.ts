@@ -18,14 +18,13 @@ function notesFrom(info: UpdateInfo): string | undefined {
 }
 
 export class DesktopUpdateService {
-  private installerPath: string | null = null;
   private snapshot: DesktopUpdateSnapshot = { state: "idle", currentVersion: app.getVersion() };
   private readonly releases: DesktopReleaseService;
   private readonly send: SendHostEvent;
 
-  constructor(send: SendHostEvent, userDataPath = app.getPath("userData"), downloadsPath = app.getPath("downloads")) {
+  constructor(send: SendHostEvent, userDataPath = app.getPath("userData")) {
     this.send = send;
-    this.releases = new DesktopReleaseService(userDataPath, downloadsPath);
+    this.releases = new DesktopReleaseService(userDataPath);
   }
 
   initialize(): void {
@@ -42,7 +41,7 @@ export class DesktopUpdateService {
         checkedAt: Date.now(),
         progress: undefined,
         error: undefined,
-        installMode: process.platform === "darwin" ? "open-installer" : "restart-install",
+        installMode: "restart-install",
       });
       if (Notification.isSupported()) {
         const notification = new Notification({ title: "Wordless update available", body: availableVersion ? `Version ${availableVersion} is ready to download.` : "A new version is ready to download." });
@@ -87,12 +86,7 @@ export class DesktopUpdateService {
     if (!this.snapshot.availableVersion) throw new Error("No Wordless update is available to download");
     this.update({ state: "downloading", progress: 0, error: undefined });
     try {
-      if (process.platform === "darwin") {
-        this.installerPath = await this.releases.downloadMacInstaller(this.snapshot.availableVersion, process.arch, (progress) => this.update({ state: "downloading", progress }));
-        this.update({ state: "ready", progress: 100, installMode: "open-installer" });
-      } else {
-        await autoUpdater.downloadUpdate();
-      }
+      await autoUpdater.downloadUpdate();
     } catch (error) {
       this.fail(error);
     }
@@ -101,12 +95,6 @@ export class DesktopUpdateService {
 
   async install(): Promise<DesktopUpdateSnapshot> {
     if (this.snapshot.state !== "ready") throw new Error("No downloaded Wordless update is ready to install");
-    if (this.snapshot.installMode === "open-installer") {
-      if (!this.installerPath) throw new Error("The downloaded macOS installer is unavailable");
-      const error = await shell.openPath(this.installerPath);
-      if (error) throw new Error(error);
-      return this.getSnapshot();
-    }
     autoUpdater.quitAndInstall(false, true);
     return this.getSnapshot();
   }

@@ -107,7 +107,7 @@ export type DesktopUpdateSnapshot = {
   progress?: number;
   checkedAt?: number;
   error?: string;
-  installMode?: "restart-install" | "open-installer";
+  installMode?: "restart-install";
 };
 
 export type DesktopHostEvent =
