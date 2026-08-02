@@ -69,6 +69,8 @@ import {
 import { WordlessRuntime } from "@wordless/runtime";
 import { AppearanceAssetService } from "../appearance/appearance-asset-service";
 import { OfficeCliService } from "../office/office-cli-service";
+import { GoogleAccountService } from "../account/google-account-service";
+import { CloudSyncService } from "../cloud-sync/cloud-sync-service";
 import { updateTitleBarOverlays } from "../windows/main-window";
 
 function parsePayload<T>(schema: TSchema, payload: unknown): T {
@@ -114,6 +116,8 @@ type DesktopIpcOptions = {
   downloadUpdate: () => Promise<DesktopUpdateSnapshot>;
   installUpdate: () => Promise<DesktopUpdateSnapshot>;
   openReleasePage: (version?: string) => Promise<void>;
+  account: GoogleAccountService;
+  cloudSync: CloudSyncService;
   office: OfficeCliService;
 };
 
@@ -140,6 +144,19 @@ export function registerRuntimeIpc(runtime: WordlessRuntime, appearanceAssets: A
     const version = isRecord(payload) && typeof payload.version === "string" ? payload.version : undefined;
     return options.openReleasePage(version);
   });
+  ipcMain.handle("wordless:account:snapshot", () => options.account.getSnapshot());
+  ipcMain.handle("wordless:account:google:login", async () => {
+    const snapshot = await options.account.login();
+    if (options.cloudSync.getSnapshot().enabled) void options.cloudSync.syncNow();
+    return snapshot;
+  });
+  ipcMain.handle("wordless:account:logout", async () => { await options.account.logout(); options.cloudSync.onAccountLoggedOut(); });
+  ipcMain.handle("wordless:cloud-sync:snapshot", () => options.cloudSync.getSnapshot());
+  ipcMain.handle("wordless:cloud-sync:enable", (_event, strategy: unknown) => options.cloudSync.enable(strategy === "local" || strategy === "remote" ? strategy : "merge"));
+  ipcMain.handle("wordless:cloud-sync:disable", () => options.cloudSync.disable());
+  ipcMain.handle("wordless:cloud-sync:sync-now", () => options.cloudSync.syncNow());
+  ipcMain.handle("wordless:cloud-sync:resolve-conflict", (_event, resolution: unknown) => options.cloudSync.resolveConflicts(resolution === "remote" ? "remote" : "local"));
+  ipcMain.handle("wordless:cloud-sync:delete-remote", () => options.cloudSync.deleteRemote());
   ipcMain.handle("wordless:external:open", async (_event, payload: unknown) => {
     const input = parsePayload<{ url: string }>(OpenExternalUrlSchema, payload);
     const url = new URL(input.url);
@@ -416,6 +433,7 @@ export function registerRuntimeIpc(runtime: WordlessRuntime, appearanceAssets: A
     const input = parsePayload<{ key: string; value: unknown }>(SetPreferenceSchema, payload);
     if (input.key !== "app" || !isAppPreferences(input.value)) throw new Error("Invalid preferences payload");
     runtime.setPreferences(input.value);
+    options.cloudSync.markDirty();
     updateTitleBarOverlays(input.value);
   });
   ipcMain.handle("wordless:appearance:import", async (_event, payload: unknown) => {
@@ -500,14 +518,17 @@ export function registerRuntimeIpc(runtime: WordlessRuntime, appearanceAssets: A
   ipcMain.handle("wordless:model-config:save-provider", async (_event, payload: unknown) => {
     const input = parsePayload<{ kind: "chat" | "image"; providerId: string; configuration: Record<string, unknown> }>(SaveProviderConfigurationSchema, payload);
     await runtime.saveProviderConfiguration(input.kind, input.providerId, input.configuration);
+    options.cloudSync.markDirty();
   });
   ipcMain.handle("wordless:model-config:set-enabled", async (_event, payload: unknown) => {
     const input = parsePayload<{ kind: "chat" | "image"; providerId: string; modelId: string; enabled: boolean }>(SetConfiguredModelEnabledSchema, payload);
     await runtime.setConfiguredModelEnabled(input.kind, input.providerId, input.modelId, input.enabled);
+    options.cloudSync.markDirty();
   });
   ipcMain.handle("wordless:model-config:delete-custom-provider", async (_event, payload: unknown) => {
     const input = parsePayload<{ kind: "chat" | "image"; providerId: string }>(DeleteCustomProviderSchema, payload);
     await runtime.deleteCustomProvider(input.kind, input.providerId);
+    options.cloudSync.markDirty();
   });
   ipcMain.handle("wordless:model-config:oauth", async (_event, providerId: unknown) => {
     await runtime.loginProviderOAuth(String(providerId), {

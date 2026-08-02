@@ -20,6 +20,10 @@ async function buildEntry(entry, name, emptyOutDir) {
     logLevel: "error",
     publicDir: false,
     root: appRoot,
+    define: {
+      __WORDLESS_GOOGLE_CLIENT_ID__: JSON.stringify(process.env.WORDLESS_GOOGLE_CLIENT_ID?.trim() ?? ""),
+      __WORDLESS_GOOGLE_CLIENT_SECRET__: JSON.stringify(process.env.WORDLESS_GOOGLE_CLIENT_SECRET?.trim() ?? ""),
+    },
     build: {
       emptyOutDir,
       lib: { entry, fileName: () => `${name}.cjs`, formats: ["cjs"] },

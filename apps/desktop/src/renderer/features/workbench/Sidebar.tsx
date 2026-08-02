@@ -1,5 +1,5 @@
 import { Button, DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger, Tooltip, TooltipContent, TooltipTrigger } from "@wordless/ui-kit";
-import { Bell, ChevronDown, ChevronLeft, Command, Ellipsis, Folder, FolderOpen, Images, Pin, PinOff, Search, Settings, Trash2, Pencil, X } from "lucide-react";
+import { Bell, ChevronDown, ChevronLeft, Cloud, Command, Ellipsis, Folder, FolderOpen, Images, LoaderCircle, LogIn, LogOut, Pin, PinOff, Search, Settings, Trash2, Pencil, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import type { SessionRecord } from "@wordless/domain";
@@ -9,12 +9,14 @@ import folderIcon from "../../../icons/common-icons/floder.svg";
 import wordlessIcon from "../../../icons/common-icons/wordless.png";
 import { AgentEntryIcon } from "./AgentEntryIcon";
 import { SessionSearchDialog } from "./SessionSearchDialog";
+import { useDesktopAccount } from "../../shared/account";
+import type { SettingsPage } from "../settings/SettingsDialog";
 
 type SidebarProps = {
   collapsed: boolean;
   onNewThread: () => void;
   onOpenMedia: () => void;
-  onOpenSettings: () => void;
+  onOpenSettings: (page?: SettingsPage) => void;
   onOpenSkills: () => void;
   onOpenSession: (sessionId: string) => void;
   onSessionDeleted: (sessionId: string) => void;
@@ -257,11 +259,44 @@ export function Sidebar({ collapsed, mediaActive, onNewThread, onOpenMedia, onOp
         return <section key={workspace.id}><button aria-expanded={expanded} className="flex h-8 w-full items-center gap-2 rounded-[7px] px-2 text-left text-[11px] text-[#4f4f4a] outline-none hover:bg-[#e7e7e3] focus-visible:ring-2 focus-visible:ring-ring dark:text-muted-foreground dark:hover:bg-[#282a21]" onClick={() => setExpandedWorkspaceIds((current) => { const next = new Set(current); if (next.has(workspace.id)) next.delete(workspace.id); else next.add(workspace.id); return next; })} type="button"><img alt="" className="h-3.5 w-3.5 shrink-0 opacity-75 dark:invert" src={folderIcon} /><span className="min-w-0 flex-1 truncate font-medium">{workspace.name}</span><ChevronDown className={`h-3.5 w-3.5 transition-transform ${expanded ? "" : "-rotate-90"}`} /></button>{expanded ? <div className="mt-0.5 space-y-1 pl-2">{workspaceSessions.map(sessionRow)}</div> : null}</section>;
       })}</div></section></div> : null}
 
-      <div className={`mt-auto flex shrink-0 items-center ${collapsed ? "justify-center" : "justify-between px-2"}`}><button className="flex min-w-0 items-center gap-2 rounded-lg p-1.5 text-left hover:bg-muted" onClick={collapsed ? onToggle : onOpenSettings} type="button"><span className="grid h-7 w-7 shrink-0 place-items-center rounded-full bg-[#d9efaa] text-[10px] font-extrabold text-[#314008]">MA</span>{!collapsed ? <span className="truncate text-xs font-semibold">Mina Ahn</span> : null}</button>{!collapsed ? <div className="flex gap-1"><Button aria-label={t("settings")} onClick={onOpenSettings} size="icon" type="button" variant="ghost"><Settings className="h-4 w-4" /></Button><Button aria-label={t("notifications")} size="icon" type="button" variant="ghost"><Bell className="h-4 w-4" /></Button></div> : null}</div>
+      <div className={`mt-auto flex shrink-0 items-center ${collapsed ? "justify-center" : "justify-between px-2"}`}><AccountMenu collapsed={collapsed} onOpenSettings={onOpenSettings} onToggle={onToggle} t={t} />{!collapsed ? <div className="flex gap-1"><Button aria-label={t("settings")} onClick={() => onOpenSettings()} size="icon" type="button" variant="ghost"><Settings className="h-4 w-4" /></Button><Button aria-label={t("notifications")} size="icon" type="button" variant="ghost"><Bell className="h-4 w-4" /></Button></div> : null}</div>
 
       <SessionDeleteConfirm error={deleteError} onCancel={() => { setDeleteError(null); setDeleting(null); }} onConfirm={() => void confirmDelete()} saving={saving} session={deleting} t={t} />
       <SessionSearchDialog entries={entries} onOpenChange={setSessionSearchOpen} onSelectSession={openSession} open={sessionSearchOpen} sessions={sessions} workspaces={workspaces} />
       <SidebarActionNotice message={actionError} onDismiss={() => setActionError(null)} />
     </aside>
   );
+}
+
+function AccountMenu({ collapsed, onOpenSettings, onToggle, t }: { collapsed: boolean; onOpenSettings: (page?: SettingsPage) => void; onToggle: () => void; t: ReturnType<typeof usePreferences>["t"] }) {
+  const { account, error, login, logout, operation } = useDesktopAccount();
+  const [imageFailed, setImageFailed] = useState(false);
+  useEffect(() => setImageFailed(false), [account?.pictureUrl]);
+  const signedIn = account?.status === "signed-in" || account?.status === "needs-login";
+  const label = signedIn ? account?.name ?? account?.email ?? t("accountSignIn") : t("accountSignIn");
+  const initials = (account?.name || account?.email || "W").split(/\s+/).map((part) => part[0]).join("").slice(0, 2).toUpperCase();
+  const avatar = account?.pictureUrl && !imageFailed ? <img alt="" className="h-full w-full object-cover" onError={() => setImageFailed(true)} src={account.pictureUrl} /> : <span>{signedIn ? initials : "W"}</span>;
+
+  if (collapsed) return <button aria-label={t("accountMenu")} className="grid h-8 w-8 place-items-center overflow-hidden rounded-full bg-[#d9efaa] text-[10px] font-extrabold text-[#314008] hover:ring-2 hover:ring-ring" onClick={onToggle} type="button">{avatar}</button>;
+
+  return <DropdownMenu>
+    <DropdownMenuTrigger asChild>
+      <button aria-label={t("accountMenu")} className="flex min-w-0 items-center gap-2 rounded-lg p-1.5 text-left outline-none hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring" type="button">
+        <span className="grid h-7 w-7 shrink-0 place-items-center overflow-hidden rounded-full bg-[#d9efaa] text-[10px] font-extrabold text-[#314008]">{avatar}</span>
+        <span className="min-w-0 truncate text-xs font-semibold">{label}</span>
+      </button>
+    </DropdownMenuTrigger>
+    <DropdownMenuContent align="start" side="top" className="w-[260px]">
+      <div className="border-b border-border px-2.5 pb-2.5 pt-1">
+        <p className="truncate text-[12px] font-semibold">{label}</p>
+        {account?.email ? <p className="mt-0.5 truncate text-[10px] text-muted-foreground">{account.email}</p> : null}
+        <p className="mt-1 text-[10px] text-muted-foreground">{account?.status === "needs-login" ? t("accountNeedsLogin") : account?.status === "signed-in" ? t("accountSignedIn") : t("accountSignInHelp")}</p>
+      </div>
+      {account?.status === "signed-in" ? <DropdownMenuItem onSelect={() => onOpenSettings("dataPrivacy")}><Cloud className="h-3.5 w-3.5" />{t("accountCloudSync")}</DropdownMenuItem> : null}
+      {account?.status === "signed-in" ? <DropdownMenuItem disabled={operation !== "idle"} onSelect={() => void logout()}><LogOut className="h-3.5 w-3.5" />{operation === "signing-out" ? t("accountSigningOut") : t("accountSignOut")}</DropdownMenuItem> : <DropdownMenuItem disabled={operation !== "idle"} onSelect={() => void login()}><LogIn className="h-3.5 w-3.5" />{operation === "signing-in" ? t("accountSigningIn") : t("accountSignInWithGoogle")}</DropdownMenuItem>}
+      <DropdownMenuItem onSelect={() => onOpenSettings()}><Settings className="h-3.5 w-3.5" />{t("settings")}</DropdownMenuItem>
+      {operation !== "idle" ? <div className="flex items-center gap-2 px-2.5 py-1.5 text-[10px] text-muted-foreground"><LoaderCircle className="h-3 w-3 animate-spin" />{operation === "signing-in" ? t("accountSigningIn") : t("accountSigningOut")}</div> : null}
+      {error ? <p className="border-t border-border px-2.5 py-2 text-[10px] leading-4 text-destructive">{error}</p> : null}
+    </DropdownMenuContent>
+  </DropdownMenu>;
 }

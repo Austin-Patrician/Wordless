@@ -1,0 +1,80 @@
+name: Deploy website
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'apps/website/**'
+      - '.github/workflows/deploy-website.yml'
+      - 'package-lock.json'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: wordless-website-production
+  cancel-in-progress: true
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    environment: website-production
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+      - run: npm run build --workspace @wordless/website
+
+      - name: Configure deploy key
+        env:
+          DEPLOY_KEY: ${{ secrets.WEBSITE_DEPLOY_KEY }}
+          DEPLOY_KNOWN_HOSTS: ${{ secrets.WEBSITE_DEPLOY_KNOWN_HOSTS }}
+        run: |
+          install -d -m 700 ~/.ssh
+          printf '%s\n' "$DEPLOY_KEY" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          printf '%s\n' "$DEPLOY_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/known_hosts
+
+      - name: Upload and activate release
+        env:
+          DEPLOY_HOST: ${{ secrets.WEBSITE_DEPLOY_HOST }}
+          DEPLOY_USER: ${{ secrets.WEBSITE_DEPLOY_USER }}
+          DEPLOY_PATH: ${{ secrets.WEBSITE_DEPLOY_PATH }}
+        run: |
+          release_id="${GITHUB_RUN_NUMBER}-${GITHUB_SHA::12}"
+          remote_temp="/tmp/wordless-website-${release_id}"
+          rsync -az --delete -e 'ssh -i ~/.ssh/id_ed25519' apps/website/dist/ "${DEPLOY_USER}@${DEPLOY_HOST}:${remote_temp}/"
+          ssh -i ~/.ssh/id_ed25519 "${DEPLOY_USER}@${DEPLOY_HOST}" \
+            "DEPLOY_PATH='${DEPLOY_PATH}' RELEASE_ID='${release_id}' REMOTE_TEMP='${remote_temp}' bash -s" <<'REMOTE'
+          set -euo pipefail
+          case "$DEPLOY_PATH" in
+            ''|/) echo 'WEBSITE_DEPLOY_PATH must be a dedicated absolute directory.' >&2; exit 1 ;;
+          esac
+          releases_dir="$DEPLOY_PATH/releases"
+          release_dir="$releases_dir/$RELEASE_ID"
+          test -f "$REMOTE_TEMP/index.html"
+          mkdir -p "$releases_dir"
+          test ! -e "$release_dir"
+          mv "$REMOTE_TEMP" "$release_dir"
+          ln -sfn "$release_dir" "$DEPLOY_PATH/current"
+          find "$releases_dir" -mindepth 1 -maxdepth 1 -type d -print | sort -r | tail -n +4 | while IFS= read -r old_release; do
+            case "$old_release" in "$releases_dir"/*) rm -rf "$old_release" ;; esac
+          done
+          sudo nginx -t
+          sudo systemctl reload nginx
+          REMOTE
+
+        
+# Required repository secrets:
+# WEBSITE_DEPLOY_HOST: server hostname or IPv4 address
+# WEBSITE_DEPLOY_USER: unprivileged SSH deployment account
+# WEBSITE_DEPLOY_KEY: private SSH key for WEBSITE_DEPLOY_USER
+# WEBSITE_DEPLOY_KNOWN_HOSTS: pinned `ssh-keyscan -H <host>` result, captured and reviewed once
+# WEBSITE_DEPLOY_PATH: absolute deployment root, for example /var/www/wordless

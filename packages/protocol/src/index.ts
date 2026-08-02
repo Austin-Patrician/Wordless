@@ -63,6 +63,33 @@ export type DesktopAppInfo = {
   arch: string;
 };
 
+export type AccountStatus = "signed-out" | "signed-in" | "needs-login";
+
+export interface AccountSnapshot {
+  status: AccountStatus;
+  subject: string | null;
+  email: string | null;
+  name: string | null;
+  pictureUrl: string | null;
+  emailVerified: boolean;
+  signedInAt: number | null;
+}
+
+export type CloudSyncStatus = "disabled" | "idle" | "syncing" | "synced" | "offline" | "error" | "needs-reconnect" | "conflict";
+
+export interface CloudSyncSnapshot {
+  enabled: boolean;
+  status: CloudSyncStatus;
+  lastSyncAt: number | null;
+  lastError: string | null;
+  pendingCount: number;
+  conflicts: string[];
+  accountEmail: string | null;
+}
+
+export type CloudSyncInitialStrategy = "merge" | "local" | "remote";
+export type CloudSyncConflictResolution = "local" | "remote";
+
 export type DesktopRelease = {
   version: string;
   title: string;
@@ -86,7 +113,9 @@ export type DesktopUpdateSnapshot = {
 export type DesktopHostEvent =
   | { type: "command"; command: DesktopCommand }
   | { type: "deep-link"; url: string }
-  | { type: "update"; snapshot: DesktopUpdateSnapshot };
+  | { type: "update"; snapshot: DesktopUpdateSnapshot }
+  | { type: "account.changed"; account: AccountSnapshot }
+  | { type: "cloud-sync.changed"; snapshot: CloudSyncSnapshot };
 
 export type DesktopUpdateState = DesktopUpdateSnapshot;
 
@@ -851,6 +880,7 @@ export type SessionArtifactDiff =
   | { status: "unavailable"; reason: "baseline-missing" | "binary" | "missing" | "too-large" };
 
 export type RuntimeEvent =
+  | { type: "preferences.changed" }
   | { type: "skills.changed" }
   | { type: "connectors.changed" }
   | { type: "model-configuration.changed" }

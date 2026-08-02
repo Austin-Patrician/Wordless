@@ -1870,6 +1870,7 @@ export class WordlessRuntime {
   setPreferences(preferences: AppPreferences): void {
     this.preferences = preferences;
     this.database.savePreferences(preferences);
+    this.emitApp({ type: "preferences.changed" });
   }
 
   async saveProviderConfiguration(kind: "chat" | "image", providerId: string, configuration: Record<string, unknown>): Promise<void> {

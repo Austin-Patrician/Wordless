@@ -20,7 +20,7 @@ import { WordlessRuntime } from "@wordless/runtime";
 import { ElectronCredentialVault } from "../adapters/electron-credential-vault";
 import { OfficeCliService } from "../office/office-cli-service";
 
-export function createDesktopRuntime(userData: string, office: OfficeCliService): WordlessRuntime {
+export function createDesktopRuntime(userData: string, office: OfficeCliService, credentialVault = new ElectronCredentialVault(path.join(userData, "credentials.json"))): WordlessRuntime {
   const extensions = new AgentExtensionManager({
     path: path.join(userData, "agent-extensions.json"),
     definitions: [planModeExtension, subagentExtension, contextCompactionExtension],
@@ -37,7 +37,7 @@ export function createDesktopRuntime(userData: string, office: OfficeCliService)
       },
       sessionWorkspacesRoot: path.join(userData, "session-workspaces"),
     },
-    credentialVault: new ElectronCredentialVault(path.join(userData, "credentials.json")),
+    credentialVault,
     defaultWorkspaceRoot: path.join(app.getPath("documents"), "Wordless"),
     profiles: createProfileRegistry([generalProfile, codingProfile, pptProfile, excelProfile]),
     extensions,

@@ -38,6 +38,21 @@ jobs:
           fi
           echo "tag=$RELEASE_TAG" >> "$GITHUB_OUTPUT"
           echo "version=${RELEASE_TAG#v}" >> "$GITHUB_OUTPUT"
+      - name: Validate Google OAuth configuration
+        shell: bash
+        env:
+          GOOGLE_OAUTH_CLIENT_ID: ${{ vars.GOOGLE_OAUTH_CLIENT_ID }}
+          GOOGLE_OAUTH_CLIENT_SECRET: ${{ secrets.GOOGLE_OAUTH_CLIENT_SECRET }}
+        run: |
+          set -euo pipefail
+          if [[ ! "$GOOGLE_OAUTH_CLIENT_ID" =~ \.apps\.googleusercontent\.com$ ]]; then
+            echo "Repository variable GOOGLE_OAUTH_CLIENT_ID must contain a Google Desktop OAuth client ID" >&2
+            exit 1
+          fi
+          if [[ -z "$GOOGLE_OAUTH_CLIENT_SECRET" ]]; then
+            echo "Repository secret GOOGLE_OAUTH_CLIENT_SECRET is required for Google Desktop OAuth" >&2
+            exit 1
+          fi
 
   verify:
     needs: prepare
@@ -74,6 +89,8 @@ jobs:
         working-directory: apps/desktop
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: "false"
+          WORDLESS_GOOGLE_CLIENT_ID: ${{ vars.GOOGLE_OAUTH_CLIENT_ID }}
+          WORDLESS_GOOGLE_CLIENT_SECRET: ${{ secrets.GOOGLE_OAUTH_CLIENT_SECRET }}
         run: |
           node scripts/prepare-officecli-assets.mjs --platform darwin --arch arm64
           node scripts/prepare-officecli-assets.mjs --platform darwin --arch x64
@@ -141,6 +158,8 @@ jobs:
         env:
           WIN_CSC_LINK: ${{ runner.temp }}\wordless-internal-signing.pfx
           CSC_KEY_PASSWORD: ${{ secrets.WINDOWS_CSC_KEY_PASSWORD }}
+          WORDLESS_GOOGLE_CLIENT_ID: ${{ vars.GOOGLE_OAUTH_CLIENT_ID }}
+          WORDLESS_GOOGLE_CLIENT_SECRET: ${{ secrets.GOOGLE_OAUTH_CLIENT_SECRET }}
         run: npm run dist:win --workspace=@wordless/desktop
       - uses: actions/upload-artifact@v4
         with:

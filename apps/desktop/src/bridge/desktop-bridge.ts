@@ -1,9 +1,9 @@
 import type { AgentInteractionModeId, AppearanceBackgroundAsset, AppPreferences, ConfiguredModelKind, ConnectorConfiguration, ConnectorPromptSummary, ConnectorResourceSummary, ConnectorSummary, MediaInlineImage, MediaLayoutUpdate, MediaOperationRequest, MediaProject, ModelReference, SessionAccessLevel, SessionDraft, SessionRecord, UsageReport, UsageReportQuery, UserMessageSubmission, UserPromptPart, WorkspaceRecord } from "@wordless/domain";
 import type { AgentExtensionSnapshot, JsonObject } from "@wordless/agent-extension-sdk";
-import type { AppSnapshot, ArtifactDescriptor, ArtifactIssue, ArtifactPreviewManifest, ArtifactSelection, DesktopAppInfo, DesktopHostEvent, DesktopHostInfo, DesktopMenuId, DesktopRelease, DesktopUpdateSnapshot, OfficeEngineHealth, PresentationTemplate, RuntimeEventEnvelope, SessionArtifactDiff, SessionContextSnapshot, SessionHistoryPage, SessionHistoryPageRequest, SessionMessageSearchRequest, SessionMessageSearchResponse, SessionSnapshot, SessionViewSnapshot, SessionWorkspaceTextFile, SpreadsheetCapabilitySnapshot, SpreadsheetChangeRecord, SpreadsheetRangeProfile, SpreadsheetSelection, WorkspaceFileEntry } from "@wordless/protocol";
+import type { AccountSnapshot, AppSnapshot, ArtifactDescriptor, ArtifactIssue, ArtifactPreviewManifest, ArtifactSelection, CloudSyncConflictResolution, CloudSyncInitialStrategy, CloudSyncSnapshot, DesktopAppInfo, DesktopHostEvent, DesktopHostInfo, DesktopMenuId, DesktopRelease, DesktopUpdateSnapshot, OfficeEngineHealth, PresentationTemplate, RuntimeEventEnvelope, SessionArtifactDiff, SessionContextSnapshot, SessionHistoryPage, SessionHistoryPageRequest, SessionMessageSearchRequest, SessionMessageSearchResponse, SessionSnapshot, SessionViewSnapshot, SessionWorkspaceTextFile, SpreadsheetCapabilitySnapshot, SpreadsheetChangeRecord, SpreadsheetRangeProfile, SpreadsheetSelection, WorkspaceFileEntry } from "@wordless/protocol";
 import type { ToolApprovalMode } from "@wordless/domain";
 
-export const DESKTOP_BRIDGE_VERSION = 24;
+export const DESKTOP_BRIDGE_VERSION = 26;
 
 export interface DesktopBridge {
   readonly version: typeof DESKTOP_BRIDGE_VERSION;
@@ -16,6 +16,15 @@ export interface DesktopBridge {
   downloadUpdate(): Promise<DesktopUpdateSnapshot>;
   installUpdate(): Promise<DesktopUpdateSnapshot>;
   openReleasePage(version?: string): Promise<void>;
+  getAccountSnapshot(): Promise<AccountSnapshot>;
+  loginGoogle(): Promise<AccountSnapshot>;
+  logoutGoogle(): Promise<void>;
+  getCloudSyncSnapshot(): Promise<CloudSyncSnapshot>;
+  enableCloudSync(strategy?: CloudSyncInitialStrategy): Promise<CloudSyncSnapshot>;
+  disableCloudSync(): Promise<CloudSyncSnapshot>;
+  syncCloudNow(): Promise<CloudSyncSnapshot>;
+  resolveCloudSyncConflict(resolution: CloudSyncConflictResolution): Promise<CloudSyncSnapshot>;
+  deleteCloudSyncRemote(): Promise<CloudSyncSnapshot>;
   getSnapshot(): Promise<AppSnapshot>;
   getUsageReport(query: UsageReportQuery): Promise<UsageReport>;
   getSessionSnapshot(sessionId: string): Promise<SessionSnapshot>;
@@ -131,6 +140,15 @@ const requiredMethods: Array<Exclude<keyof DesktopBridge, "version">> = [
   "downloadUpdate",
   "installUpdate",
   "openReleasePage",
+  "getAccountSnapshot",
+  "loginGoogle",
+  "logoutGoogle",
+  "getCloudSyncSnapshot",
+  "enableCloudSync",
+  "disableCloudSync",
+  "syncCloudNow",
+  "resolveCloudSyncConflict",
+  "deleteCloudSyncRemote",
   "getSnapshot",
   "getUsageReport",
   "getSessionSnapshot",
