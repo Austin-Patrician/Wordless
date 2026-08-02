@@ -14,20 +14,53 @@
 }
 
 .message-markdown-table::-webkit-scrollbar,
-.message-code-scroll::-webkit-scrollbar {
+.message-code-scroll::-webkit-scrollbar,
+.message-markdown .katex-display::-webkit-scrollbar {
   width: 6px;
   height: 6px;
 }
 
 .message-markdown-table::-webkit-scrollbar-thumb,
-.message-code-scroll::-webkit-scrollbar-thumb {
+.message-code-scroll::-webkit-scrollbar-thumb,
+.message-markdown .katex-display::-webkit-scrollbar-thumb {
   border-radius: 999px;
   background: #c8c8c1;
 }
 
 [data-theme="dark"] .message-markdown-table::-webkit-scrollbar-thumb,
-[data-theme="dark"] .message-code-scroll::-webkit-scrollbar-thumb {
+[data-theme="dark"] .message-code-scroll::-webkit-scrollbar-thumb,
+[data-theme="dark"] .message-markdown .katex-display::-webkit-scrollbar-thumb {
   background: #55584f;
+}
+
+.message-markdown .katex {
+  color: inherit;
+  font-size: 1.02em;
+  text-rendering: optimizeLegibility;
+}
+
+.message-markdown .katex-display {
+  max-width: 100%;
+  margin: 1rem 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding: 0.35rem 0.15rem 0.45rem;
+}
+
+.message-markdown .katex-display > .katex {
+  min-width: max-content;
+  padding: 0 0.3rem;
+}
+
+.message-markdown .katex-error {
+  color: #9a4f45;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 0.88em;
+  overflow-wrap: anywhere;
+}
+
+[data-theme="dark"] .message-markdown .katex-error {
+  color: #e6a096;
 }
 
 .message-code-block .hljs-comment,
