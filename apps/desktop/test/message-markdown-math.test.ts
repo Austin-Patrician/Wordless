@@ -5,6 +5,8 @@ import { renderToStaticMarkup } from "react-dom/server";
 import ReactMarkdown from "react-markdown";
 import rehypeKatex from "rehype-katex";
 import remarkMath from "remark-math";
+import remarkParse from "remark-parse";
+import { unified } from "unified";
 import { remarkWordlessMath } from "../src/renderer/features/thread/message-markdown-math.ts";
 
 function renderMath(markdown: string): string {
@@ -14,6 +16,11 @@ function renderMath(markdown: string): string {
     remarkPlugins: [remarkMath, remarkWordlessMath],
     skipHtml: true,
   }));
+}
+
+function parseMath(markdown: string) {
+  const processor = unified().use(remarkParse).use(remarkMath).use(remarkWordlessMath);
+  return processor.runSync(processor.parse(markdown));
 }
 
 test("renders inline and display LaTeX with KaTeX", () => {
@@ -72,6 +79,17 @@ test("keeps escaped TeX delimiters literal", () => {
   assert.doesNotMatch(html, /class="katex"/);
   assert.match(html, /\\\(I = U\/R\\\)/);
   assert.match(html, /\\\[R = V\/I\\\]/);
+});
+
+test("does not close TeX math on an escaped backslash pair", () => {
+  const tree = parseMath("\\(a\\\\) + b\\)");
+  const paragraph = tree.children[0];
+  assert.equal(paragraph?.type, "paragraph");
+  if (paragraph?.type !== "paragraph") return;
+  const math = paragraph.children[0];
+  assert.equal(math?.type, "inlineMath");
+  if (math?.type !== "inlineMath") return;
+  assert.equal(math.value, "a\\\\) + b");
 });
 
 test("renders invalid LaTeX as a non-fatal KaTeX error", () => {

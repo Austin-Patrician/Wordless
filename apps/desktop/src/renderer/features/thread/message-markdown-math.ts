@@ -91,6 +91,10 @@ function createDelimitedMathConstruct(openCode: number, closeCode: number, displ
           return ok;
         }
         marker.type = "wordlessMathData";
+        if (code === BACKSLASH) {
+          effects.consume(code);
+          return data;
+        }
         return data(code);
       }
     },
