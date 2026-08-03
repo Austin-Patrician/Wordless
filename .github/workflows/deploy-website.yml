@@ -1,12 +1,6 @@
-name: Deploy website
+name: Deploy website manually
 
 on:
-  push:
-    branches: [main]
-    paths:
-      - 'apps/website/**'
-      - '.github/workflows/deploy-website.yml'
-      - 'package-lock.json'
   workflow_dispatch:
 
 permissions:
