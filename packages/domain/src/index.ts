@@ -202,11 +202,14 @@ export interface ModelReference {
   modelId: string;
 }
 
+export type ThinkingLevel = "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
+
 export interface ModelCapabilities {
   supportsText: true;
   supportsVision: boolean;
   supportsToolUse: boolean | "unknown";
   supportsReasoning: boolean;
+  supportedThinkingLevels: ThinkingLevel[];
   contextWindow: number;
   maxOutputTokens: number;
 }
@@ -254,6 +257,7 @@ export interface SessionRecord {
   workbenchId: WorkbenchId;
   accessLevel: SessionAccessLevel;
   model: ModelReference;
+  thinkingLevel: ThinkingLevel;
   journalPath: string;
   connectorIds: string[];
   interactionMode?: AgentInteractionModeId;
@@ -448,6 +452,7 @@ export interface ConfiguredModelSummary {
   enabled: boolean;
   supportsVision: boolean;
   supportsReasoning: boolean;
+  supportedThinkingLevels: ThinkingLevel[];
   contextWindow: number | null;
   api: string;
   imageCapabilities: ImageModelCapabilities | null;
@@ -582,6 +587,7 @@ export interface SessionDraft {
   workspaceId: string | null;
   accessLevel: SessionAccessLevel;
   model: ModelReference | null;
+  thinkingLevel?: ThinkingLevel;
   connectorIds?: string[];
   interactionMode?: AgentInteractionModeId;
   toolApprovalMode?: ToolApprovalMode;

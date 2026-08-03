@@ -3,7 +3,7 @@ import { SubagentTaskPool, type SubagentTaskExecutor } from "@wordless/agent-ext
 import type { SubagentResult, SubagentRoleDefinition, SubagentRunner, SubagentTask, SubagentTaskProgress } from "@wordless/agent-extension-sdk";
 import type { AgentDriver, AgentDriverEvent, AgentDriverSession, AgentDriverSessionContext, AgentProfileDefinition, AgentRuntimeSkill, ConnectorToolPolicy } from "@wordless/agent-driver-sdk";
 import type { AgentTool, ExecutionEnv } from "@wordless/agent";
-import type { Api, Model, Models } from "@wordless/ai";
+import { clampThinkingLevel, type Api, type Model, type Models } from "@wordless/ai";
 import { mergeConversationUsage, type ModelCapabilities, type ModelReference, type SecurityPolicySnapshot, type SessionRecord, type ToolApprovalMode } from "@wordless/domain";
 import { createWordlessSession, openWordlessSession } from "@wordless/persistence";
 
@@ -127,6 +127,7 @@ export class SessionSubagentRunner implements SubagentRunner, SubagentTaskExecut
       title: `${task.role}: ${task.prompt.slice(0, 54)}`,
       profile: profile.reference,
       model: modelReference,
+      thinkingLevel: model.reasoning ? clampThinkingLevel(model, this.options.parent.thinkingLevel) : "off",
       journalPath: path,
       connectorIds: task.role === "worker" ? this.options.parent.connectorIds : [],
       createdAt: Date.now(),
@@ -139,6 +140,8 @@ export class SessionSubagentRunner implements SubagentRunner, SubagentTaskExecut
       path,
       metadata: { parentSessionId: this.options.parent.id, subagentTaskId: task.id, role: task.role },
     });
+    await journal.appendModelChange(modelReference.connectionId, modelReference.modelId);
+    await journal.appendThinkingLevelChange(record.thinkingLevel);
     const childContext: AgentDriverSessionContext = {
       record,
       profile,

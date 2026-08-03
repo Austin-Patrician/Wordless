@@ -74,6 +74,7 @@ test("persists session rename, pin state, and deletion", async (context) => {
     workbenchId: "conversation" as const,
     accessLevel: "default" as const,
     model: { connectionId: "openai", modelId: "gpt-4.1-mini" },
+    thinkingLevel: "medium" as const,
     journalPath: join(root, "sessions", `${id}.jsonl`),
     connectorIds: [],
     interactionMode: id === "older" ? "clarify" as const : undefined,
@@ -93,6 +94,7 @@ test("persists session rename, pin state, and deletion", async (context) => {
   assert.equal(database.getSession("newer")?.interactionMode, "default");
   assert.equal(database.getSession("older")?.toolApprovalMode, "bypass");
   assert.equal(database.getSession("newer")?.toolApprovalMode, "auto");
+  assert.equal(database.getSession("newer")?.thinkingLevel, "medium");
 
   const renamed = database.renameSession("older", "Renamed session");
   assert.equal(renamed?.title, "Renamed session");

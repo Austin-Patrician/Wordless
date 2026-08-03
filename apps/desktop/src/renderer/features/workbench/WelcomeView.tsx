@@ -1,6 +1,6 @@
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue, cn } from "@wordless/ui-kit";
 import { useEffect, useMemo, useState } from "react";
-import type { AgentInteractionModeId, ModelReference, PresentationGenerationMode, SessionAccessLevel, ToolApprovalMode, UserPromptPart, WorkbenchEntryDefinition, WorkbenchMode } from "@wordless/domain";
+import type { AgentInteractionModeId, ModelReference, PresentationGenerationMode, SessionAccessLevel, ThinkingLevel, ToolApprovalMode, UserPromptPart, WorkbenchEntryDefinition, WorkbenchMode } from "@wordless/domain";
 import type { PresentationTemplate } from "@wordless/protocol";
 import codeDevelopmentIcon from "../../../icons/common-icons/代码开发.svg";
 import everydayWorkIcon from "../../../icons/common-icons/everydaywork.svg";
@@ -9,7 +9,7 @@ import { usePreferences } from "../../shared/preferences";
 import { useRuntime, useRuntimeClient } from "../../shared/runtime";
 import { Composer } from "../thread/Composer";
 import { createPendingThreadTurn, createUserMessageSubmission, type PendingThreadTurn } from "../thread/pending-thread-turn";
-import { ModelPicker } from "./ModelPicker";
+import { ModelPicker, thinkingLevelForModelSelection } from "./ModelPicker";
 import { WorkspacePicker } from "./WorkspacePicker";
 import { AgentEntryIcon } from "./AgentEntryIcon";
 
@@ -95,6 +95,7 @@ export function WelcomeView({ onOpenModels, onOpenSkillImport, onOpenSkills, onS
   const [entryId, setEntryId] = useState("general-work");
   const [workspaceId, setWorkspaceId] = useState<string | null>(null);
   const [model, setModel] = useState<ModelReference | null>(null);
+  const [thinkingLevel, setThinkingLevel] = useState<ThinkingLevel>("medium");
   const [accessLevel, setAccessLevel] = useState<SessionAccessLevel>("default");
   const [workspaceOpen, setWorkspaceOpen] = useState(false);
   const [modelOpen, setModelOpen] = useState(false);
@@ -162,7 +163,7 @@ export function WelcomeView({ onOpenModels, onOpenSkillImport, onOpenSkills, onS
     const submission = createUserMessageSubmission();
     const pendingTurn = createPendingThreadTurn(parts, submission);
     try {
-      const session = await client.createAndPrompt({ mode, entryId: entry.id, workspaceId, accessLevel, model, connectorIds, interactionMode, toolApprovalMode, ...(entry.workbenchId === "presentation" ? { presentation: { generationMode: presentationMode, templateId: presentationTemplateId === "auto" ? null : presentationTemplateId } } : {}) }, parts, submission);
+      const session = await client.createAndPrompt({ mode, entryId: entry.id, workspaceId, accessLevel, model, thinkingLevel, connectorIds, interactionMode, toolApprovalMode, ...(entry.workbenchId === "presentation" ? { presentation: { generationMode: presentationMode, templateId: presentationTemplateId === "auto" ? null : presentationTemplateId } } : {}) }, parts, submission);
       onSessionCreated(session.id, pendingTurn);
       void refresh();
     } catch (cause) {
@@ -298,9 +299,15 @@ export function WelcomeView({ onOpenModels, onOpenSkillImport, onOpenSkills, onS
                   models={snapshot.models}
                   onConfigure={onOpenModels}
                   onOpenChange={setModelOpen}
-                  onSelect={(connectionId, modelId) => setModel({ connectionId, modelId })}
+                  onSelect={(connectionId, modelId, selectedThinkingLevel) => {
+                    const next = snapshot.models.find((candidate) => candidate.connectionId === connectionId && candidate.modelId === modelId);
+                    if (!next) return;
+                    setThinkingLevel(selectedThinkingLevel ?? thinkingLevelForModelSelection(next, selectedModel, thinkingLevel));
+                    setModel({ connectionId, modelId });
+                  }}
                   open={modelOpen}
                   selected={model}
+                  thinkingLevel={thinkingLevel}
                 />
               </>
             ) : null}

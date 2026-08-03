@@ -900,8 +900,8 @@ export function ThreadView({ artifactSelection, initialPendingTurn, messageNavig
     }
   };
 
-  const selectModel = async (model: ModelReference) => {
-    await client.setSessionModel(sessionId, model);
+  const selectModel = async (model: ModelReference, thinkingLevel?: Parameters<typeof client.setSessionModel>[2]) => {
+    await client.setSessionModel(sessionId, model, thinkingLevel);
     const view = await client.getSessionView(sessionId);
     setSnapshot((current) => current ? { ...current, session: view.session } : snapshotFromSessionView(view));
     setHistory(loadedHistoryFromView(view));
@@ -1169,7 +1169,7 @@ export function ThreadView({ artifactSelection, initialPendingTurn, messageNavig
               showAccessControl={snapshot.session.workbenchId === "code"}
               userMessageHistory={composerUserMessageHistory}
             />
-            <ModelPicker connections={appSnapshot.connections} entry={entry} models={appSnapshot.models} onConfigure={onOpenModels} onOpenChange={setModelOpen} onSelect={(connectionId, modelId) => void selectModel({ connectionId, modelId })} open={modelOpen} selected={currentModel} />
+            <ModelPicker connections={appSnapshot.connections} disabled={snapshot.isRunning} entry={entry} models={appSnapshot.models} onConfigure={onOpenModels} onOpenChange={setModelOpen} onSelect={(connectionId, modelId, thinkingLevel) => selectModel({ connectionId, modelId }, thinkingLevel)} open={modelOpen} selected={currentModel} thinkingLevel={snapshot.session.thinkingLevel} />
           </div>
           <TurnTokenUsageRow usage={snapshot.turnUsage} />
           <p className="mt-2 text-center text-[11px] text-[#96968e] dark:text-muted-foreground">{t("aiContentNotice")}</p>

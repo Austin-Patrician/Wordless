@@ -30,6 +30,7 @@ import { openaiImagesApi } from "@wordless/ai/api/openai-images";
 import {
   createImagesProvider,
   createProvider,
+  getSupportedThinkingLevels,
   type Api,
   type AssistantImages,
   type ApiKeyAuth,
@@ -327,7 +328,7 @@ export class RuntimeModelConfiguration {
         supportsOAuth: provider.auth.oauth !== undefined,
         configuration,
       });
-      for (const model of providerModels) models.push({ providerId: provider.id, providerAvatarId: avatarId, modelId: model.id, displayName: model.name, kind: "chat", enabled: chatEnabled.has(modelReferenceKey(provider.id, model.id)), supportsVision: model.input.includes("image"), supportsReasoning: model.reasoning, contextWindow: model.contextWindow, api: model.api, imageCapabilities: null });
+      for (const model of providerModels) models.push({ providerId: provider.id, providerAvatarId: avatarId, modelId: model.id, displayName: model.name, kind: "chat", enabled: chatEnabled.has(modelReferenceKey(provider.id, model.id)), supportsVision: model.input.includes("image"), supportsReasoning: model.reasoning, supportedThinkingLevels: getSupportedThinkingLevels(model), contextWindow: model.contextWindow, api: model.api, imageCapabilities: null });
     }
     for (const provider of this.options.imageModels.getProviders()) {
       const providerModels = provider.getModels();
@@ -348,7 +349,7 @@ export class RuntimeModelConfiguration {
         supportsOAuth: provider.auth.oauth !== undefined,
         configuration,
       });
-      for (const model of providerModels) models.push({ providerId: provider.id, providerAvatarId: avatarId, modelId: model.id, displayName: model.name, kind: "image", enabled: imageEnabled.has(modelReferenceKey(provider.id, model.id)), supportsVision: model.input.includes("image"), supportsReasoning: false, contextWindow: null, api: model.api, imageCapabilities: { supportsMaskEditing: model.capabilities?.supportsMaskEditing ?? false, supportsTransparentBackground: model.capabilities?.supportsTransparentBackground ?? false } });
+      for (const model of providerModels) models.push({ providerId: provider.id, providerAvatarId: avatarId, modelId: model.id, displayName: model.name, kind: "image", enabled: imageEnabled.has(modelReferenceKey(provider.id, model.id)), supportsVision: model.input.includes("image"), supportsReasoning: false, supportedThinkingLevels: ["off"], contextWindow: null, api: model.api, imageCapabilities: { supportsMaskEditing: model.capabilities?.supportsMaskEditing ?? false, supportsTransparentBackground: model.capabilities?.supportsTransparentBackground ?? false } });
     }
     for (const [id, configuration] of Object.entries(this.modelsConfiguration.providers)) {
       if (providers.some((provider) => provider.kind === "chat" && provider.id === id)) continue;

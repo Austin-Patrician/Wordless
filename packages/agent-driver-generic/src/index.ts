@@ -660,7 +660,7 @@ class AgentHarnessDriverSession implements AgentDriverSession {
       systemPrompt: baseSystemPrompt,
       tools,
       activeToolNames,
-      thinkingLevel: context.model.reasoning ? "medium" : "off",
+      thinkingLevel: context.record.thinkingLevel,
       resources: { skills: context.skills },
     });
     this.harness.on("before_agent_start", (event) => {

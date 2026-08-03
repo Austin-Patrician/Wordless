@@ -29,6 +29,7 @@ function sessionRecord(root: string, journalPath: string): SessionRecord {
     workbenchId: "conversation",
     accessLevel: "default",
     model: { connectionId: "openai", modelId: "gpt-5" },
+    thinkingLevel: "medium",
     journalPath,
     connectorIds: [],
     toolApprovalMode: "manual",

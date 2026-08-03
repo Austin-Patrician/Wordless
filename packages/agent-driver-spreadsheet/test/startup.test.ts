@@ -97,7 +97,7 @@ describe("spreadsheet driver startup", () => {
     const record: SessionRecord = {
       id: crypto.randomUUID(), title: "Spreadsheet", workspaceId: null, runtimeRootPath: process.cwd(), mode: "everyday", entryId: "spreadsheet",
       profile: { id: "excel", version: "1" }, driverId: "spreadsheet", journalFormat: "wordless-agent-v1", workbenchId: "workbook", accessLevel: "default",
-      model: { connectionId: model.provider, modelId: model.id }, journalPath: "memory", connectorIds: [], interactionMode: "default", toolApprovalMode: "manual", pinnedAt: null, createdAt: Date.now(), updatedAt: Date.now(),
+      model: { connectionId: model.provider, modelId: model.id }, thinkingLevel: "off", journalPath: "memory", connectorIds: [], interactionMode: "default", toolApprovalMode: "manual", pinnedAt: null, createdAt: Date.now(), updatedAt: Date.now(),
     };
     const context: AgentDriverSessionContext = {
       record,
@@ -107,7 +107,7 @@ describe("spreadsheet driver startup", () => {
         capabilityIds: ["filesystem", "shell", "office"], skills: [], artifactKinds: ["spreadsheet"], workbenchId: "workbook",
       },
       model,
-      modelCapabilities: { supportsText: true, supportsVision: false, supportsToolUse: true, supportsReasoning: false, contextWindow: model.contextWindow, maxOutputTokens: model.maxTokens },
+      modelCapabilities: { supportsText: true, supportsVision: false, supportsToolUse: true, supportsReasoning: false, supportedThinkingLevels: ["off"], contextWindow: model.contextWindow, maxOutputTokens: model.maxTokens },
       models, session, env: new NodeExecutionEnv({ cwd: process.cwd() }), skills: [], connectorTools: [], connectorToolPolicies: [], security: { fileRules: [], commandRules: [] }, resolveModel: () => model,
     };
     const readTool: AgentTool = {

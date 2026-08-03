@@ -7,15 +7,12 @@ import {
   CircleAlert,
   Code2,
   FileOutput,
-  FilePenLine,
-  FolderSearch,
   Image,
   ListTree,
   LoaderCircle,
   Presentation,
   ScanSearch,
   ShieldCheck,
-  Terminal,
   Table2,
   UsersRound,
   WandSparkles,
@@ -24,13 +21,28 @@ import {
 } from "lucide-react";
 import { useEffect, useState } from "react";
 import type { ConnectorSummary, MessageArtifactBlock, MessageToolBlock, WorkbenchId } from "@wordless/domain";
+import editIcon from "../../../icons/common-icons/edit.svg";
+import findIcon from "../../../icons/common-icons/find.svg";
 import grepIcon from "../../../icons/common-icons/grep.svg";
-import readFileIcon from "../../../icons/common-icons/read_file.svg";
+import listIcon from "../../../icons/common-icons/list.svg";
+import readIcon from "../../../icons/common-icons/read.svg";
+import writeIcon from "../../../icons/common-icons/Write.svg";
+import terminalBashIcon from "../../../icons/common-icons/terminal-bash.svg";
 import { ConnectorIcon } from "../../shared/ConnectorIcon";
 import { usePreferences } from "../../shared/preferences";
 import { useRuntime } from "../../shared/runtime";
 import { ClarificationBriefToolActivity, ClarificationQuestionToolActivity } from "./ClarificationToolActivity";
 import { UserRequestToolActivity } from "./UserRequestToolActivity";
+
+const standardToolIconSources: Record<string, string> = {
+  bash: terminalBashIcon,
+  edit: editIcon,
+  find: findIcon,
+  grep: grepIcon,
+  ls: listIcon,
+  read: readIcon,
+  write: writeIcon,
+};
 
 export type ToolActivityProps = {
   block: MessageToolBlock;
@@ -100,6 +112,11 @@ function McpToolIcon({ block }: { block: MessageToolBlock }) {
   const connector = connectorForMcpTool(block, snapshot?.connectors.connectors ?? []);
   if (!connector) return <Wrench className="h-3.5 w-3.5" />;
   return <span aria-label={connector.name} role="img" title={connector.name}><ConnectorIcon className="h-3.5 w-3.5" templateId={connector.templateId} transport={connector.transport} /></span>;
+}
+
+function standardToolIcon(toolName: string): ReactNode | undefined {
+  const source = standardToolIconSources[toolName];
+  return source ? <img alt="" className="h-3.5 w-3.5 object-contain dark:invert" src={source} /> : undefined;
 }
 
 function AutoApproveIcon({ className }: { className?: string }) {
@@ -185,7 +202,7 @@ function GenericToolActivity({ block, onEnableAutoApprove, onLoadToolOutput, onR
   if (block.state === "awaiting-approval" && block.approval) return <ToolApprovalCard block={block} onEnableAutoApprove={onEnableAutoApprove} onResolveApproval={onResolveApproval} />;
   return (
     <section className="py-3">
-      <ToolActivityRow block={block} icon={block.name.startsWith("mcp_") ? <McpToolIcon block={block} /> : <Wrench className="h-3.5 w-3.5" />} />
+      <ToolActivityRow block={block} icon={block.name.startsWith("mcp_") ? <McpToolIcon block={block} /> : standardToolIcon(block.name) ?? <Wrench className="h-3.5 w-3.5" />} />
       <ToolOutput block={block} onLoadToolOutput={onLoadToolOutput} />
     </section>
   );
@@ -294,7 +311,7 @@ function CodeToolActivity({ block, onEnableAutoApprove, onLoadToolOutput, onReso
   const oldText = textValue(changed?.oldText);
   const newText = textValue(changed?.newText);
   const exitCode = typeof details?.exitCode === "number" ? details.exitCode : undefined;
-  const icon = block.name === "bash" ? <Terminal className="h-3.5 w-3.5" /> : block.name === "edit" || block.name === "write" ? <FilePenLine className="h-3.5 w-3.5" /> : block.name === "read" ? <img alt="" className="h-3.5 w-3.5 dark:invert" src={readFileIcon} /> : block.name === "grep" ? <img alt="" className="h-3.5 w-3.5 dark:invert" src={grepIcon} /> : block.name === "ls" || block.name === "find" ? <FolderSearch className="h-3.5 w-3.5" /> : <Code2 className="h-3.5 w-3.5" />;
+  const icon = standardToolIcon(block.name) ?? <Code2 className="h-3.5 w-3.5" />;
   if (block.state === "awaiting-approval" && block.approval) return <ToolApprovalCard block={block} onEnableAutoApprove={onEnableAutoApprove} onResolveApproval={onResolveApproval} />;
   const summary = block.name === "read" && typeof details?.lineCount === "number"
     ? `${details.lineCount} lines read`
@@ -326,6 +343,7 @@ function jsonRecord(value: string | undefined): Record<string, unknown> | undefi
 function PresentationToolActivity({ block, onEnableAutoApprove, onLoadToolOutput, onResolveApproval }: ToolActivityProps) {
   if (block.state === "awaiting-approval" && block.approval) return <ToolApprovalCard block={block} onEnableAutoApprove={onEnableAutoApprove} onResolveApproval={onResolveApproval} />;
 
+  const sharedToolIcon = standardToolIcon(block.name);
   const details = readRecord(block.details);
   const artifact = readRecord(details?.artifact);
   const quality = readRecord(details?.quality);
@@ -342,7 +360,9 @@ function PresentationToolActivity({ block, onEnableAutoApprove, onLoadToolOutput
     : Array.isArray(block.input?.operations) ? block.input.operations.length : undefined;
   const slideCount = typeof outline?.totalSlides === "number" ? outline.totalSlides : undefined;
 
-  const presentation = block.name === "presentation_create"
+  const presentation = sharedToolIcon
+    ? { icon: sharedToolIcon, running: "Running presentation tool", detail: undefined, summary: "Completed" }
+    : block.name === "presentation_create"
     ? { icon: <Presentation className="h-3.5 w-3.5" />, running: "Creating presentation", detail: displayName, summary: displayName ? `Created ${displayName}` : "Presentation created" }
     : block.name === "presentation_apply" || block.name === "presentation_edit"
       ? { icon: <WandSparkles className="h-3.5 w-3.5" />, running: "Applying changes", detail: displayName, summary: [operationCount === undefined ? undefined : `${operationCount} changes`, revision === undefined ? undefined : `revision ${revision}`].filter(Boolean).join(" · ") || "Changes applied" }
@@ -394,7 +414,7 @@ function SpreadsheetToolActivity({ block, onEnableAutoApprove, onLoadToolOutput,
                 : block.name === "spreadsheet_read"
                   ? { running: "Reading workbook", summary: "Workbook inspected", detail: textValue(block.input?.artifactId) }
                   : { running: "Loading spreadsheet schema", summary: "Spreadsheet operation complete", detail: textValue(block.input?.element) };
-  return <section className="py-3"><ToolActivityRow block={block} detail={activity.detail} icon={<Table2 className="h-3.5 w-3.5" />} runningLabel={activity.running} summary={activity.summary} />{block.state === "error" && block.output ? <p className="mt-2 max-h-10 overflow-hidden whitespace-pre-wrap break-words font-mono text-[10px] leading-5 text-destructive">{block.output}</p> : null}<ToolOutput block={block} onLoadToolOutput={onLoadToolOutput} /></section>;
+  return <section className="py-3"><ToolActivityRow block={block} detail={activity.detail} icon={standardToolIcon(block.name) ?? <Table2 className="h-3.5 w-3.5" />} runningLabel={activity.running} summary={activity.summary} />{block.state === "error" && block.output ? <p className="mt-2 max-h-10 overflow-hidden whitespace-pre-wrap break-words font-mono text-[10px] leading-5 text-destructive">{block.output}</p> : null}<ToolOutput block={block} onLoadToolOutput={onLoadToolOutput} /></section>;
 }
 
 function ToolApprovalCard({ block, onEnableAutoApprove, onResolveApproval }: ToolActivityProps) {

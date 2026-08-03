@@ -4,7 +4,7 @@ import { app, BrowserWindow, dialog, ipcMain, shell } from "electron";
 import { Type } from "typebox";
 import { Value } from "typebox/value";
 import type { TSchema } from "typebox";
-import type { AppearancePreferences, AppPreferences, SessionAccessLevel, ToolApprovalMode, UserMessageSubmission, UserPromptPart } from "@wordless/domain";
+import type { AppearancePreferences, AppPreferences, SessionAccessLevel, ThinkingLevel, ToolApprovalMode, UserMessageSubmission, UserPromptPart } from "@wordless/domain";
 import { formatPromptWithSkillReferences, selectedSkillIdsFromPromptParts } from "@wordless/agent-driver-sdk";
 import {
   CreateAndPromptSchema,
@@ -49,6 +49,7 @@ import {
   SetPreferenceSchema,
   SetSkillEnabledSchema,
   SetSessionModelSchema,
+  SetSessionThinkingLevelSchema,
   SessionExtensionInteractionSchema,
   UpdateExtensionSettingsSchema,
   UpdateMediaLayoutSchema,
@@ -410,8 +411,12 @@ export function registerRuntimeIpc(runtime: WordlessRuntime, appearanceAssets: A
   });
   ipcMain.handle("wordless:session:cancel", async (_event, sessionId: unknown) => await runtime.cancelSession(String(sessionId)));
   ipcMain.handle("wordless:session:model", async (_event, payload: unknown) => {
-    const input = parsePayload<{ sessionId: string; model: { connectionId: string; modelId: string } }>(SetSessionModelSchema, payload);
-    await runtime.setSessionModel(input.sessionId, input.model);
+    const input = parsePayload<{ sessionId: string; model: { connectionId: string; modelId: string }; thinkingLevel?: ThinkingLevel }>(SetSessionModelSchema, payload);
+    await runtime.setSessionModel(input.sessionId, input.model, input.thinkingLevel);
+  });
+  ipcMain.handle("wordless:session:thinking-level", async (_event, payload: unknown) => {
+    const input = parsePayload<{ sessionId: string; level: ThinkingLevel }>(SetSessionThinkingLevelSchema, payload);
+    return await runtime.setSessionThinkingLevel(input.sessionId, input.level);
   });
   ipcMain.handle("wordless:session:access", (_event, payload: unknown) => {
     const input = parsePayload<{ sessionId: string; accessLevel: SessionAccessLevel }>(SetSessionAccessSchema, payload);

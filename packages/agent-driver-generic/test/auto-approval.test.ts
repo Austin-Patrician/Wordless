@@ -19,7 +19,7 @@ function createRecord(model: { provider: string; id: string }, title: string): S
   return {
     id: crypto.randomUUID(), title, workspaceId: null, runtimeRootPath: process.cwd(), mode: "everyday", entryId: "generic",
     profile: { id: "generic", version: "1" }, driverId: "generic", journalFormat: "wordless-agent-v1", workbenchId: "general", accessLevel: "default",
-    model: { connectionId: model.provider, modelId: model.id }, journalPath: "memory", connectorIds: [], interactionMode: "default", toolApprovalMode: "manual", pinnedAt: null, createdAt: Date.now(), updatedAt: Date.now(),
+    model: { connectionId: model.provider, modelId: model.id }, thinkingLevel: "off", journalPath: "memory", connectorIds: [], interactionMode: "default", toolApprovalMode: "manual", pinnedAt: null, createdAt: Date.now(), updatedAt: Date.now(),
   };
 }
 
@@ -56,7 +56,7 @@ async function createApprovalScenario(options: {
       activeToolNames: [tool.name], capabilityIds: ["filesystem"], skills: [], artifactKinds: [], workbenchId: "general",
     },
     model,
-    modelCapabilities: { supportsText: true, supportsVision: false, supportsToolUse: true, supportsReasoning: false, contextWindow: model.contextWindow, maxOutputTokens: model.maxTokens },
+    modelCapabilities: { supportsText: true, supportsVision: false, supportsToolUse: true, supportsReasoning: false, supportedThinkingLevels: ["off"], contextWindow: model.contextWindow, maxOutputTokens: model.maxTokens },
     models, session, env: new NodeExecutionEnv({ cwd: process.cwd() }), skills: [], connectorTools: [], connectorToolPolicies: [], security: { fileRules: [], commandRules: [] }, resolveModel: () => model,
     toolApprovalMode: options.mode,
   };
@@ -167,7 +167,7 @@ describe("automatic operation approval", () => {
       record: recordValue,
       profile: { reference: recordValue.profile, driverId: "generic", modelRequirements: { requiresToolUse: true }, systemPrompt: "Ask the user.", activeToolNames: [], capabilityIds: [], skills: [], artifactKinds: [], workbenchId: "general" },
       model,
-      modelCapabilities: { supportsText: true, supportsVision: false, supportsToolUse: true, supportsReasoning: false, contextWindow: model.contextWindow, maxOutputTokens: model.maxTokens },
+      modelCapabilities: { supportsText: true, supportsVision: false, supportsToolUse: true, supportsReasoning: false, supportedThinkingLevels: ["off"], contextWindow: model.contextWindow, maxOutputTokens: model.maxTokens },
       models, session, env: new NodeExecutionEnv({ cwd: process.cwd() }), skills: [], connectorTools: [], connectorToolPolicies: [], security: { fileRules: [], commandRules: [] }, resolveModel: () => model,
       toolApprovalMode: "bypass",
     };

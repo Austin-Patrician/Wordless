@@ -17,7 +17,7 @@ function densityThickness(tokens: number): number {
 
 export function ConversationDensityRail({ activeTurnId, fallbackExcerpt, navigationLabel, onNavigate, summaries }: ConversationDensityRailProps) {
   const [open, setOpen] = useState(false);
-  const listHeight = Math.min(244, Math.max(42, summaries.length * 32 + 12));
+  const listHeight = Math.min(244, Math.max(48, summaries.length * 40));
   if (summaries.length < 2) return null;
 
   return (
@@ -49,14 +49,15 @@ export function ConversationDensityRail({ activeTurnId, fallbackExcerpt, navigat
               const active = item.turnId === activeTurnId;
               const excerpt = item.excerpt || fallbackExcerpt;
               const displayExcerpt = truncateExcerpt(excerpt, 15);
-              return <button
-                aria-current={active ? "location" : undefined}
-                className={cn("mx-1.5 my-1 flex h-8 w-[calc(100%_-_12px)] items-center rounded-[5px] px-2 text-left text-[11px] font-medium outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring", active ? "bg-[#efefed] text-[#3f3f3a] dark:bg-muted dark:text-foreground" : "text-[#555550] hover:bg-[#f1f1ef] dark:text-muted-foreground dark:hover:bg-muted/60")}
-                key={item.turnId}
-                onClick={() => { onNavigate(item.turnId); setOpen(false); }}
-                title={excerpt}
-                type="button"
-              ><span className="min-w-0 truncate">{displayExcerpt}</span></button>;
+              return <div className="px-1.5 py-1" key={item.turnId}>
+                <button
+                  aria-current={active ? "location" : undefined}
+                  className={cn("flex h-8 w-full items-center rounded-[5px] px-2 text-left text-[11px] font-medium outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring", active ? "bg-[#efefed] text-[#3f3f3a] dark:bg-muted dark:text-foreground" : "text-[#555550] hover:bg-[#f1f1ef] dark:text-muted-foreground dark:hover:bg-muted/60")}
+                  onClick={() => { onNavigate(item.turnId); setOpen(false); }}
+                  title={excerpt}
+                  type="button"
+                ><span className="min-w-0 truncate">{displayExcerpt}</span></button>
+              </div>;
           }}
         />
       </HoverCardContent>

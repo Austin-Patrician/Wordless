@@ -38,6 +38,8 @@ import {
   type MutableModels,
   createImagesModels,
   createModels,
+  clampThinkingLevel,
+  getSupportedThinkingLevels,
 } from "@wordless/ai";
 import { calculateCurrentTurnUsage, conversationUsageFromUnknown } from "@wordless/domain";
 import type {
@@ -70,6 +72,7 @@ import type {
   SecurityPolicySnapshot,
   SessionDraft,
   SessionRecord,
+  ThinkingLevel,
   ToolApprovalMode,
   ToolSecurityRuleMatch,
   UsageReport,
@@ -341,6 +344,11 @@ function isCompatible(model: EnabledModelRecord, entry: WorkbenchEntryDefinition
   if (requirements.requiresToolUse && model.capabilities.supportsToolUse === false) return false;
   if (requirements.minimumContextWindow && model.capabilities.contextWindow < requirements.minimumContextWindow) return false;
   return true;
+}
+
+function thinkingLevelForModel(model: Model<Api>, requested: ThinkingLevel = "medium"): ThinkingLevel {
+  if (!model.reasoning) return "off";
+  return clampThinkingLevel(model, requested) as ThinkingLevel;
 }
 
 function asRecord(value: unknown): Record<string, unknown> | undefined {
@@ -1268,6 +1276,7 @@ export class WordlessRuntime {
       workbenchId: entry.workbenchId,
       accessLevel: draft.accessLevel,
       model,
+      thinkingLevel: thinkingLevelForModel(this.requireRuntimeModel(model), draft.thinkingLevel ?? "medium"),
       journalPath,
       connectorIds: [...new Set([...(draft.connectorIds ?? []), ...defaultConnectorIds])].filter((id) => availableConnectors.some((connector) => connector.id === id)),
       interactionMode: draft.interactionMode ?? "default",
@@ -1292,6 +1301,7 @@ export class WordlessRuntime {
     };
     const journal = await createWordlessSession(metadata);
     await journal.appendModelChange(model.connectionId, model.modelId);
+    await journal.appendThinkingLevelChange(record.thinkingLevel);
     if (record.interactionMode === "plan") await this.persistPlanModeState(record, "planning");
     this.database.upsertSession(record);
     this.rememberEntryModel(entry.id, model);
@@ -1476,6 +1486,7 @@ export class WordlessRuntime {
       workbenchId: entry.workbenchId,
       accessLevel: "default",
       model,
+      thinkingLevel: thinkingLevelForModel(this.requireRuntimeModel(model)),
       journalPath,
       connectorIds: [],
       interactionMode: "default",
@@ -1492,6 +1503,7 @@ export class WordlessRuntime {
       metadata: { workspaceId: null, entryId: entry.id, profile: record.profile, driverId: record.driverId, accessLevel: record.accessLevel, model },
     });
     await journal.appendModelChange(model.connectionId, model.modelId);
+    await journal.appendThinkingLevelChange(record.thinkingLevel);
     this.database.upsertSession(record);
     const project: MediaProject = {
       documentVersion: 3,
@@ -1856,15 +1868,36 @@ export class WordlessRuntime {
     });
   }
 
-  async setSessionModel(sessionId: string, model: ModelReference): Promise<void> {
+  async setSessionModel(sessionId: string, model: ModelReference, requestedThinkingLevel?: ThinkingLevel): Promise<void> {
     const session = this.requireSession(sessionId);
     const entry = this.getEntry(session.entryId);
     this.requireCompatibleEnabledModel(model, entry);
     if (this.runs.has(sessionId)) throw new Error("Wait for the current response before changing the model");
+    const currentRuntimeModel = this.models.getModel(session.model.connectionId, session.model.modelId);
+    const nextRuntimeModel = this.requireRuntimeModel(model);
+    const requestedLevel = requestedThinkingLevel ?? (currentRuntimeModel?.reasoning ? session.thinkingLevel : "medium");
+    if (requestedThinkingLevel && !getSupportedThinkingLevels(nextRuntimeModel).includes(requestedThinkingLevel)) {
+      throw new Error("The selected model does not support this thinking depth");
+    }
+    const thinkingLevel = thinkingLevelForModel(nextRuntimeModel, requestedLevel);
     const journal = await openWordlessSession(session.journalPath);
     await journal.appendModelChange(model.connectionId, model.modelId);
-    this.database.upsertSession({ ...session, model, updatedAt: Date.now() });
+    if (thinkingLevel !== session.thinkingLevel) await journal.appendThinkingLevelChange(thinkingLevel);
+    this.database.upsertSession({ ...session, model, thinkingLevel, updatedAt: Date.now() });
     this.rememberEntryModel(session.entryId, model);
+  }
+
+  async setSessionThinkingLevel(sessionId: string, level: ThinkingLevel): Promise<SessionRecord> {
+    const session = this.requireSession(sessionId);
+    if (this.runs.has(sessionId)) throw new Error("Wait for the current response before changing the thinking depth");
+    const model = this.requireRuntimeModel(session.model);
+    if (!getSupportedThinkingLevels(model).includes(level)) throw new Error("The selected model does not support this thinking depth");
+    if (session.thinkingLevel === level) return session;
+    const journal = await openWordlessSession(session.journalPath);
+    await journal.appendThinkingLevelChange(level);
+    const next = { ...session, thinkingLevel: level, updatedAt: Date.now() };
+    this.database.upsertSession(next);
+    return next;
   }
 
   setPreferences(preferences: AppPreferences): void {
@@ -2222,7 +2255,11 @@ export class WordlessRuntime {
     if (!model) return session;
     const journal = await openWordlessSession(session.journalPath);
     await journal.appendModelChange(model.connectionId, model.modelId);
-    const next = { ...session, model, updatedAt: Date.now() };
+    const previousModel = this.models.getModel(session.model.connectionId, session.model.modelId);
+    const nextRuntimeModel = this.requireRuntimeModel(model);
+    const thinkingLevel = thinkingLevelForModel(nextRuntimeModel, previousModel?.reasoning ? session.thinkingLevel : "medium");
+    if (thinkingLevel !== session.thinkingLevel) await journal.appendThinkingLevelChange(thinkingLevel);
+    const next = { ...session, model, thinkingLevel, updatedAt: Date.now() };
     this.database.upsertSession(next);
     this.historyCache.delete(sessionId);
     return next;
@@ -2623,6 +2660,7 @@ export class WordlessRuntime {
         supportsVision: model.supportsVision,
         supportsToolUse: "unknown",
         supportsReasoning: model.supportsReasoning,
+        supportedThinkingLevels: model.supportedThinkingLevels,
         contextWindow: model.contextWindow ?? 128000,
         maxOutputTokens: 16384,
       },

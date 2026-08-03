@@ -132,6 +132,16 @@ export const ModelReferenceSchema = Type.Object({
   modelId: Type.String({ minLength: 1 }),
 });
 
+export const ThinkingLevelSchema = Type.Union([
+  Type.Literal("off"),
+  Type.Literal("minimal"),
+  Type.Literal("low"),
+  Type.Literal("medium"),
+  Type.Literal("high"),
+  Type.Literal("xhigh"),
+  Type.Literal("max"),
+]);
+
 export const SessionAccessLevelSchema = Type.Union([Type.Literal("default"), Type.Literal("full")]);
 
 export const AgentInteractionModeSchema = Type.Union([
@@ -194,6 +204,7 @@ export const SessionDraftSchema = Type.Object({
   workspaceId: Type.Union([Type.String({ minLength: 1 }), Type.Null()]),
   accessLevel: SessionAccessLevelSchema,
   model: Type.Union([ModelReferenceSchema, Type.Null()]),
+  thinkingLevel: Type.Optional(ThinkingLevelSchema),
   connectorIds: Type.Optional(Type.Array(Type.String({ minLength: 1 }), { maxItems: 64 })),
   interactionMode: Type.Optional(AgentInteractionModeSchema),
   toolApprovalMode: Type.Optional(ToolApprovalModeSchema),
@@ -350,6 +361,12 @@ export const DeleteSessionSchema = Type.Object({
 export const SetSessionModelSchema = Type.Object({
   sessionId: Type.String({ minLength: 1 }),
   model: ModelReferenceSchema,
+  thinkingLevel: Type.Optional(ThinkingLevelSchema),
+});
+
+export const SetSessionThinkingLevelSchema = Type.Object({
+  sessionId: Type.String({ minLength: 1 }),
+  level: ThinkingLevelSchema,
 });
 
 export const SetSessionAccessSchema = Type.Object({

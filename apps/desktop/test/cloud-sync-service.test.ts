@@ -20,7 +20,7 @@ function runtimeFixture(): WordlessRuntime {
   return {
     getSnapshot: () => ({ preferences, modelConfiguration: {
       providers: [{ id: "custom", kind: "chat", source: "custom", displayName: "Custom", avatarId: null, baseUrl: "https://models.example", authStatus: "configured", enabledModelCount: 1, modelCount: 1, apiKeyConfigured: true, supportsOAuth: false, configuration: { name: "Custom", apiKey: "secret", headers: { Authorization: "Bearer secret" }, models: [{ id: "model", headers: { "X-Secret": "secret" } }] } }],
-      models: [{ kind: "chat", providerId: "custom", providerAvatarId: null, modelId: "model", displayName: "Model", enabled: true, supportsVision: false, supportsReasoning: false, contextWindow: 1000, api: "openai-responses", imageCapabilities: null }], diagnostics: [],
+      models: [{ kind: "chat", providerId: "custom", providerAvatarId: null, modelId: "model", displayName: "Model", enabled: true, supportsVision: false, supportsReasoning: false, supportedThinkingLevels: ["off"], contextWindow: 1000, api: "openai-responses", imageCapabilities: null }], diagnostics: [],
     } }),
     setPreferences: () => undefined,
     saveProviderConfiguration: async () => undefined,

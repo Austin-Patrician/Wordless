@@ -1,5 +1,6 @@
 export type Api = string;
 export type ImagesApi = string;
+export type ModelThinkingLevel = "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
 
 export interface ProviderHeaders {
   [name: string]: string | null;
@@ -12,6 +13,7 @@ export interface Model<TApi extends Api = Api> {
   provider: string;
   baseUrl: string;
   reasoning: boolean;
+  thinkingLevelMap?: Partial<Record<ModelThinkingLevel, string | null>>;
   input: Array<"text" | "image">;
   cost: { input: number; output: number; cacheRead: number; cacheWrite: number };
   contextWindow: number;
@@ -19,6 +21,9 @@ export interface Model<TApi extends Api = Api> {
   headers?: ProviderHeaders;
   compat?: Record<string, unknown>;
 }
+
+export function getSupportedThinkingLevels(model: Model): ModelThinkingLevel[];
+export function clampThinkingLevel(model: Model, level: ModelThinkingLevel): ModelThinkingLevel;
 
 export interface AssistantMessage {
   role: "assistant";

@@ -87,6 +87,7 @@ export class Session<TMetadata extends SessionMetadata = SessionMetadata> {
   getBranch(): Promise<SessionTreeEntry[]>;
   moveTo(entryId: string | null): Promise<string | undefined>;
   appendModelChange(provider: string, modelId: string): Promise<string>;
+  appendThinkingLevelChange(thinkingLevel: string): Promise<string>;
   appendCustomEntry(customType: string, data?: unknown): Promise<string>;
 }
 

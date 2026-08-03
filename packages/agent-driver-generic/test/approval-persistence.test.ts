@@ -25,7 +25,7 @@ describe("operation approval persistence", () => {
     const recordValue: SessionRecord = {
       id: crypto.randomUUID(), title: "Approval", workspaceId: null, runtimeRootPath: process.cwd(), mode: "everyday", entryId: "generic",
       profile: { id: "generic", version: "1" }, driverId: "generic", journalFormat: "wordless-agent-v1", workbenchId: "general", accessLevel: "default",
-      model: { connectionId: model.provider, modelId: model.id }, journalPath: "memory", connectorIds: [], interactionMode: "default", toolApprovalMode: "manual", pinnedAt: null, createdAt: Date.now(), updatedAt: Date.now(),
+      model: { connectionId: model.provider, modelId: model.id }, thinkingLevel: "off", journalPath: "memory", connectorIds: [], interactionMode: "default", toolApprovalMode: "manual", pinnedAt: null, createdAt: Date.now(), updatedAt: Date.now(),
     };
     const tool: AgentTool = {
       name: "write_value",
@@ -43,7 +43,7 @@ describe("operation approval persistence", () => {
         activeToolNames: [tool.name], capabilityIds: ["filesystem"], skills: [], artifactKinds: [], workbenchId: "general",
       },
       model,
-      modelCapabilities: { supportsText: true, supportsVision: false, supportsToolUse: true, supportsReasoning: false, contextWindow: model.contextWindow, maxOutputTokens: model.maxTokens },
+      modelCapabilities: { supportsText: true, supportsVision: false, supportsToolUse: true, supportsReasoning: false, supportedThinkingLevels: ["off"], contextWindow: model.contextWindow, maxOutputTokens: model.maxTokens },
       models, session, env: new NodeExecutionEnv({ cwd: process.cwd() }), skills: [], connectorTools: [], connectorToolPolicies: [], security: { fileRules: [], commandRules: [] }, resolveModel: () => model,
     };
     const driverSession = await createGenericAgentDriver({

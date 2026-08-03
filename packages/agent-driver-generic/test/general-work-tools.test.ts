@@ -12,12 +12,14 @@ import { createGenericAgentDriver } from "../src/index.ts";
 describe("General Work tools", () => {
   it("advertises foundational workspace tools to the model", async () => {
     const advertisedTools: string[][] = [];
+    const reasoningLevels: Array<string | undefined> = [];
     const models = createModels();
-    const faux = fauxProvider({ provider: `general-tools-${crypto.randomUUID()}` });
+    const faux = fauxProvider({ provider: `general-tools-${crypto.randomUUID()}`, models: [{ id: "reasoning-model", reasoning: true }] });
     models.setProvider(faux.provider);
     faux.setResponses([
-      (context) => {
+      (context, options) => {
         advertisedTools.push((context.tools ?? []).map((tool) => tool.name));
+        reasoningLevels.push((options as { reasoning?: string } | undefined)?.reasoning);
         return fauxAssistantMessage([fauxText("Done")]);
       },
     ]);
@@ -35,6 +37,7 @@ describe("General Work tools", () => {
       workbenchId: generalProfile.workbenchId,
       accessLevel: "default",
       model: { connectionId: model.provider, modelId: model.id },
+      thinkingLevel: "high",
       journalPath: "memory",
       connectorIds: [],
       interactionMode: "default",
@@ -51,7 +54,8 @@ describe("General Work tools", () => {
         supportsText: true,
         supportsVision: false,
         supportsToolUse: true,
-        supportsReasoning: false,
+        supportsReasoning: true,
+        supportedThinkingLevels: ["off", "minimal", "low", "medium", "high"],
         contextWindow: model.contextWindow,
         maxOutputTokens: model.maxTokens,
       },
@@ -72,6 +76,7 @@ describe("General Work tools", () => {
     await driverSession.execute({ type: "prompt", text: "Inspect the workspace." });
 
     expect(advertisedTools[0]).toEqual(expect.arrayContaining(["read", "grep", "find", "ls", "write", "edit", "bash"]));
+    expect(reasoningLevels).toEqual(["high"]);
     driverSession.dispose();
   });
 });

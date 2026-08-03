@@ -1,4 +1,4 @@
-import type { AgentInteractionModeId, AppearanceBackgroundAsset, AppPreferences, ConfiguredModelKind, ConnectorConfiguration, ConnectorPromptSummary, ConnectorResourceSummary, ConnectorSummary, MediaInlineImage, MediaLayoutUpdate, MediaOperationRequest, MediaProject, ModelReference, SessionAccessLevel, SessionDraft, SessionRecord, UsageReport, UsageReportQuery, UserMessageSubmission, UserPromptPart, WorkspaceRecord } from "@wordless/domain";
+import type { AgentInteractionModeId, AppearanceBackgroundAsset, AppPreferences, ConfiguredModelKind, ConnectorConfiguration, ConnectorPromptSummary, ConnectorResourceSummary, ConnectorSummary, MediaInlineImage, MediaLayoutUpdate, MediaOperationRequest, MediaProject, ModelReference, SessionAccessLevel, SessionDraft, SessionRecord, ThinkingLevel, UsageReport, UsageReportQuery, UserMessageSubmission, UserPromptPart, WorkspaceRecord } from "@wordless/domain";
 import type { AgentExtensionSnapshot, JsonObject } from "@wordless/agent-extension-sdk";
 import type { AccountSnapshot, AppSnapshot, ArtifactDescriptor, ArtifactIssue, ArtifactPreviewManifest, ArtifactSelection, CloudSyncConflictResolution, CloudSyncInitialStrategy, CloudSyncSnapshot, DesktopAppInfo, DesktopHostEvent, DesktopHostInfo, DesktopMenuId, DesktopRelease, DesktopUpdateSnapshot, OfficeEngineHealth, PresentationTemplate, RuntimeEventEnvelope, SessionArtifactDiff, SessionContextSnapshot, SessionHistoryPage, SessionHistoryPageRequest, SessionMessageSearchRequest, SessionMessageSearchResponse, SessionSnapshot, SessionViewSnapshot, SessionWorkspaceTextFile, SpreadsheetCapabilitySnapshot, SpreadsheetChangeRecord, SpreadsheetRangeProfile, SpreadsheetSelection, WorkspaceFileEntry } from "@wordless/protocol";
 import type { ToolApprovalMode } from "@wordless/domain";
@@ -92,7 +92,8 @@ export interface DesktopBridge {
     resolution: { status: "submitted" | "cancelled"; answers?: Record<string, string | string[] | boolean>; feedback?: string },
   ): Promise<void>;
   cancelSession(sessionId: string): Promise<void>;
-  setSessionModel(sessionId: string, model: ModelReference): Promise<void>;
+  setSessionModel(sessionId: string, model: ModelReference, thinkingLevel?: ThinkingLevel): Promise<void>;
+  setSessionThinkingLevel(sessionId: string, level: ThinkingLevel): Promise<SessionRecord>;
   setSessionAccess(sessionId: string, accessLevel: SessionAccessLevel): Promise<SessionRecord>;
   setSessionInteractionMode(sessionId: string, interactionMode: AgentInteractionModeId): Promise<SessionRecord>;
   resolveClarificationQuestion(sessionId: string, callId: string, value: string | boolean): Promise<void>;
@@ -213,6 +214,7 @@ const requiredMethods: Array<Exclude<keyof DesktopBridge, "version">> = [
   "resolveUserRequest",
   "cancelSession",
   "setSessionModel",
+  "setSessionThinkingLevel",
   "setSessionAccess",
   "setSessionInteractionMode",
   "resolveClarificationQuestion",

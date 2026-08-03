@@ -164,8 +164,8 @@ export class WordlessDatabase {
   upsertSession(session: SessionRecord): void {
     this.database
       .prepare(
-        `INSERT INTO sessions(id, title, workspace_id, runtime_root_path, mode, entry_id, profile_id, profile_version, driver_id, journal_format, workbench_id, access_level, model_connection_id, model_id, journal_path, connector_ids, interaction_mode, tool_approval_mode, pinned_at, created_at, updated_at)
-         VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `INSERT INTO sessions(id, title, workspace_id, runtime_root_path, mode, entry_id, profile_id, profile_version, driver_id, journal_format, workbench_id, access_level, model_connection_id, model_id, journal_path, connector_ids, interaction_mode, tool_approval_mode, thinking_level, pinned_at, created_at, updated_at)
+         VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(id) DO UPDATE SET
            title = excluded.title,
            workspace_id = excluded.workspace_id,
@@ -184,6 +184,7 @@ export class WordlessDatabase {
            connector_ids = excluded.connector_ids,
            interaction_mode = excluded.interaction_mode,
            tool_approval_mode = excluded.tool_approval_mode,
+           thinking_level = excluded.thinking_level,
            pinned_at = excluded.pinned_at,
            updated_at = excluded.updated_at`,
       )
@@ -206,6 +207,7 @@ export class WordlessDatabase {
         JSON.stringify(session.connectorIds),
         session.interactionMode ?? "default",
         session.toolApprovalMode,
+        session.thinkingLevel,
         session.pinnedAt,
         session.createdAt,
         session.updatedAt,
@@ -513,6 +515,7 @@ export class WordlessDatabase {
     }
     if (this.claimMigration(8)) this.database.exec("ALTER TABLE sessions ADD COLUMN interaction_mode TEXT NOT NULL DEFAULT 'default';");
     if (this.claimMigration(9)) this.database.exec("ALTER TABLE sessions ADD COLUMN tool_approval_mode TEXT NOT NULL DEFAULT 'manual';");
+    if (this.claimMigration(10)) this.database.exec("ALTER TABLE sessions ADD COLUMN thinking_level TEXT NOT NULL DEFAULT 'medium';");
   }
 
   private readWorkspace(row: SqlRow): WorkspaceRecord {
@@ -553,6 +556,9 @@ export class WordlessDatabase {
       })().filter((id): id is string => typeof id === "string"),
       interactionMode: (asString(row.interaction_mode) || "default") as SessionRecord["interactionMode"],
       toolApprovalMode: asString(row.tool_approval_mode) === "auto" ? "auto" : asString(row.tool_approval_mode) === "bypass" ? "bypass" : "manual",
+      thinkingLevel: (["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const).includes(asString(row.thinking_level) as SessionRecord["thinkingLevel"])
+        ? asString(row.thinking_level) as SessionRecord["thinkingLevel"]
+        : "medium",
       pinnedAt: row.pinned_at === null || row.pinned_at === undefined ? null : asNumber(row.pinned_at),
       createdAt: asNumber(row.created_at),
       updatedAt: asNumber(row.updated_at),
