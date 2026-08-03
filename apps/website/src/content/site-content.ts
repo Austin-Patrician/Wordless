@@ -55,14 +55,21 @@ type Copy = {
     secondary: string
     unsupported: string
   }
+  contact: {
+    index: string
+    eyebrow: string
+    heading: string
+    body: string
+    action: string
+  }
   footer: string
 }
 
 export const copy: Record<Locale, Copy> = {
   en: {
     navigation: [
-      { label: 'System', href: '#system' },
       { label: 'Work modes', href: '#modes' },
+      { label: 'System', href: '#system' },
       { label: 'Control', href: '#control' },
       { label: 'Download', href: '#download' },
     ],
@@ -136,20 +143,27 @@ export const copy: Record<Locale, Copy> = {
       secondary: 'View all releases',
       unsupported: 'Desktop builds are currently available for macOS and Windows.',
     },
+    contact: {
+      index: '07 / Work together',
+      eyebrow: 'Commercial collaboration & custom delivery.',
+      heading: 'Put an agent workflow to work for your team.',
+      body: 'Talk to us about commercial partnerships, bespoke agent workflows, or deployment and integration for your team.',
+      action: 'Contact us',
+    },
     footer: 'Wordless. An agent workspace for work that moves.',
   },
   zh: {
     navigation: [
-      { label: '系统', href: '#system' },
       { label: '工作模式', href: '#modes' },
+      { label: '系统', href: '#system' },
       { label: '控制流', href: '#control' },
       { label: '下载', href: '#download' },
     ],
     utility: { language: 'English', github: 'GitHub' },
     hero: {
       index: '01 / Agent 工作空间',
-      heading: '让工作始终保持上下文。',
-      body: 'Wordless 将可适配的 Agent、工具能力与工作区上下文，组织进一个安静而连贯的操作界面。',
+      heading: '让工作始终保持上下文',
+      body: 'Wordless 将可适配的 Agent、工具能力与工作区上下文，组织进一个安静而连贯的操作界面',
       primary: '下载 Wordless',
       secondary: '探索系统',
       availability: '现已支持 macOS 与 Windows',
@@ -163,9 +177,9 @@ export const copy: Record<Locale, Copy> = {
     },
     capabilities: {
       index: '02 / 工作模式',
-      eyebrow: '一个 Agent，多种工作方式。',
-      heading: '不止回答第一句，而是持续推进工作。',
-      body: '在已经拥有文件与会话上下文的同一个工作空间中，切换不同的专注工作模式。',
+      eyebrow: '一个 Agent，多种工作方式',
+      heading: '不止回答第一句，而是持续推进工作',
+      body: '在已经拥有文件与会话上下文的同一个工作空间中，切换不同的专注工作模式',
       items: [
         { number: '01', title: '日常办公', description: '研究、草稿、规划与日常任务，都在一个会话中完成。', signal: 'General' },
         { number: '02', title: '代码开发', description: '结合工作区上下文，理解、修改和解释代码。', signal: 'Code' },
@@ -177,44 +191,51 @@ export const copy: Record<Locale, Copy> = {
     },
     architecture: {
       index: '03 / 本地优先',
-      eyebrow: '工作区始终是你的核心。',
-      heading: '上下文应当贴近工作发生的地方。',
+      eyebrow: '工作区始终是你的核心',
+      heading: '上下文应当贴近工作发生的地方',
       points: [
-        { title: '感知工作区', description: '从会话中直接引用真正相关的文件与文件夹。' },
-        { title: '模型可配置', description: '按工作需要选择模型配置，而不是被固定的提供商界面限制。' },
-        { title: '同步可选', description: 'Google 云同步为主动开启的能力，本地工作不依赖网络往返。' },
-        { title: '跨平台桌面端', description: 'macOS 与 Windows 保持一致的工作空间体验。' },
+        { title: '感知工作区', description: '从会话中直接引用真正相关的文件与文件夹' },
+        { title: '模型可配置', description: '按工作需要选择模型配置，而不是被固定的提供商界面限制' },
+        { title: '同步可选', description: 'Google 云同步为主动开启的能力，本地工作不依赖网络往返' },
+        { title: '跨平台桌面端', description: 'macOS 与 Windows 保持一致的工作空间体验' },
       ],
     },
     approval: {
       index: '04 / 受控执行',
-      eyebrow: '行动可见，控制明确。',
-      heading: '当你准备好时，Agent 才会执行。',
-      body: '工具调用成为会话中的清晰检查点，执行反馈不会被隐藏在工作过程之外。',
+      eyebrow: '行动可见，控制明确',
+      heading: '当你准备好时，Agent 才会执行',
+      body: '工具调用成为会话中的清晰检查点，执行反馈不会被隐藏在工作过程之外',
       steps: [
-        { name: '请求', description: '结合工作区上下文理解任务。' },
-        { name: '审阅', description: '清晰展示计划执行的工具操作。' },
+        { name: '请求', description: '结合工作区上下文理解任务' },
+        { name: '审阅', description: '清晰展示计划执行的工具操作' },
         { name: '批准', description: '选择手动批准或本次会话自动批准。' },
-        { name: '结果', description: '在工作发生的位置看到成功或失败状态。' },
+        { name: '结果', description: '在工作发生的位置看到成功或失败状态' },
       ],
     },
     showcase: {
       index: '05 / 工作空间界面',
-      eyebrow: '看到执行过程，而不只是答案。',
-      heading: '为持续工作而组织的界面。',
-      body: '这里将放入产品录屏，用于展示会话、工具结果、文档工作流或演示文稿生成过程。',
+      eyebrow: '看到执行过程，而不只是答案',
+      heading: '为持续工作而组织的界面',
+      body: '这里将放入产品录屏，用于展示会话、工具结果、文档工作流或演示文稿生成过程',
       videoLabel: '工作空间演示',
-      videoHint: '将录屏放入 /public/media/workspace-tour.webm 后会自动替换当前静态画面。',
+      videoHint: '将录屏放入 /public/media/workspace-tour.webm 后会自动替换当前静态画面',
     },
     download: {
       index: '06 / 开始使用',
-      eyebrow: '在本地运行你的工作空间。',
-      heading: '将 Wordless 带到桌面端。',
-      body: '按你的平台下载。新的版本保持可选，并可在 GitHub 上查看。',
+      eyebrow: '在本地运行你的工作空间',
+      heading: '将 Wordless 带到桌面端',
+      body: '按你的平台下载。新的版本保持可选，并可在 GitHub 上查看',
       primary: '下载',
       secondary: '查看全部版本',
-      unsupported: '桌面版本目前支持 macOS 与 Windows。',
+      unsupported: '桌面版本目前支持 macOS 与 Windows',
     },
-    footer: 'Wordless，一个让工作持续推进的 Agent 工作空间。',
+    contact: {
+      index: '07 / 合作联系',
+      eyebrow: '商业合作与定制需求',
+      heading: '把 Agent 工作流带进你的业务。',
+      body: '无论是商业合作、定制 Agent 工作流，还是面向团队的部署与集成，都可以直接联系我们。',
+      action: '联系我们',
+    },
+    footer: 'Wordless，一个让工作持续推进的 Agent 工作空间',
   },
 }

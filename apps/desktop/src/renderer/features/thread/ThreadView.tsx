@@ -257,7 +257,7 @@ function ThinkingBlock({ text }: { text: string }) {
   return (
     <details className="mt-4 border-l-2 border-[#d9dfca] pl-3.5 dark:border-[#4c5939]" data-thread-search-exclude>
       <summary className="group flex w-fit cursor-pointer list-none items-center gap-1 select-none text-[13px] font-semibold text-[#5a6250] outline-none focus-visible:ring-2 focus-visible:ring-ring [&::-webkit-details-marker]:hidden dark:text-[#c3cbb4]"><span>深度思考</span><ChevronDown aria-hidden className="h-3.5 w-3.5 text-[#89957a] transition-transform duration-150 group-open:rotate-180" /></summary>
-      <p className="mt-2 whitespace-pre-wrap text-[13px] leading-5 text-[#74746d] dark:text-muted-foreground">{text}</p>
+      <div className="message-markdown-reasoning mt-2 text-[#74746d] dark:text-muted-foreground"><MessageMarkdown text={text} /></div>
     </details>
   );
 }

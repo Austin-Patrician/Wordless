@@ -27,7 +27,7 @@ import remarkMath from "remark-math";
 import { Dialog, DialogContent, DialogTitle, Tooltip, TooltipContent, TooltipTrigger, cn } from "@wordless/ui-kit";
 import { usePreferences } from "../../shared/preferences";
 import { useRuntimeClient } from "../../shared/runtime";
-import { normalizeMessageMath } from "./message-markdown-math";
+import { remarkWordlessMath } from "./message-markdown-math";
 import { codeLanguageLabel, hasClosedCodeFence, isOversizedMermaid, markdownUrlTransform, normalizeCodeLanguage, safeExternalUrl, safeRemoteImageUrl } from "./message-markdown-policy";
 import "katex/dist/katex.min.css";
 import "./message-markdown.css";
@@ -215,8 +215,7 @@ type MarkdownPreProps = ComponentPropsWithoutRef<"pre"> & ExtraProps;
 
 export const MessageMarkdown = memo(function MessageMarkdown({ text }: { text: string }) {
   const client = useRuntimeClient();
-  const normalizedText = useMemo(() => normalizeMessageMath(text), [text]);
-  const deferredText = useDeferredValue(normalizedText);
+  const deferredText = useDeferredValue(text);
   const components = useMemo<Components>(() => ({
     a: ({ children, href }) => {
       const safeUrl = typeof href === "string" ? safeExternalUrl(href) : null;
@@ -252,5 +251,5 @@ export const MessageMarkdown = memo(function MessageMarkdown({ text }: { text: s
     thead: ({ children }) => <thead className="border-b border-[#dbdbd6] dark:border-border">{children}</thead>,
     ul: ({ children }) => <ul className="my-3 list-disc space-y-0.5 pl-6">{children}</ul>,
   }), [client, deferredText]);
-  return <div className="message-markdown min-w-0"><ReactMarkdown components={components} rehypePlugins={[[rehypeKatex, { errorColor: "#a85a4f", throwOnError: false, trust: false, strict: false }]]} remarkPlugins={[remarkGfm, remarkMath]} skipHtml urlTransform={markdownUrlTransform}>{deferredText}</ReactMarkdown></div>;
+  return <div className="message-markdown min-w-0"><ReactMarkdown components={components} rehypePlugins={[[rehypeKatex, { errorColor: "#a85a4f", throwOnError: false, trust: false, strict: false }]]} remarkPlugins={[remarkGfm, remarkMath, remarkWordlessMath]} skipHtml urlTransform={markdownUrlTransform}>{deferredText}</ReactMarkdown></div>;
 });

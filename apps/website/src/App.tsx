@@ -1,5 +1,5 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useState } from 'react'
-import { ArrowDown, ArrowUpRight, Check, GitBranch, Globe2, Menu, MoveDown, Play, ShieldCheck, X } from 'lucide-react'
+import { ArrowDown, ArrowUpRight, Check, GitBranch, Globe2, Mail, Menu, MoveDown, Play, ShieldCheck, X } from 'lucide-react'
 import { ReleaseDownload } from './components/ReleaseDownload'
 import { WebsiteLoader } from './components/WebsiteLoader'
 import { copy, type Locale } from './content/site-content'
@@ -7,6 +7,7 @@ const SceneBackdrop = lazy(() => import('./scene/SceneBackdrop'))
 const SectionModel = lazy(() => import('./scene/SectionModel'))
 
 const githubUrl = 'https://github.com/Austin-Patrician/Wordless'
+const contactEmail = '15014915381z@gmail.com'
 const demoVideo = import.meta.env.VITE_WORKSPACE_VIDEO as string | undefined
 
 function useLocale() {
@@ -87,7 +88,7 @@ function App() {
             <p className="hero-description">{t.hero.body}</p>
             <div className="hero-actions">
               <ReleaseDownload compact releaseCopy={t.release} downloadCopy={t.download} />
-              <a className="text-link" href="#system">
+              <a className="text-link" href="#modes">
                 <span>{t.hero.secondary}</span>
                 <ArrowDown size={16} strokeWidth={1.7} />
               </a>
@@ -110,7 +111,38 @@ function App() {
             </div>
           </div>
         </div>
-        <a className="scroll-signal" href="#system"><MoveDown size={18} /><span>SCROLL TO EXPLORE</span></a>
+        <a className="scroll-signal" href="#modes"><MoveDown size={18} /><span>SCROLL TO EXPLORE</span></a>
+      </section>
+
+      <section className="modes-section section-shell" id="modes">
+        <div className="section-heading page-grid">
+          <div>
+            <p className="section-index">{t.capabilities.index}</p>
+            <p className="eyebrow">{t.capabilities.eyebrow}</p>
+          </div>
+          <div><h2>{t.capabilities.heading}</h2><p className="section-description">{t.capabilities.body}</p></div>
+        </div>
+        <div className="mode-signal-strip" aria-label="Available work modes">
+          <div className="mode-signal-strip__track">
+            {Array.from({ length: 4 }, (_, cycle) => signals.map((signal, index) => <span key={`${cycle}-${signal}-${index}`}>{signal}<i /></span>))}
+          </div>
+        </div>
+        <div className="mode-artifact page-grid">
+          <Suspense fallback={<div className="model-placeholder" />}>
+            <SectionModel src="/glb/geometric%20sculpture%203d%20model.glb" label="CONTEXT LATTICE / MULTI-FORM CORE" variant="lattice" />
+          </Suspense>
+          <p>ONE CONTEXT<br /><span>MULTIPLE FORMS</span></p>
+        </div>
+        <div className="mode-grid page-grid">
+          {t.capabilities.items.map((item) => (
+            <article className="mode-item" key={item.title}>
+              <div className="mode-topline"><span>{item.number}</span><span>{item.signal}</span></div>
+              <h3>{item.title}</h3>
+              <p>{item.description}</p>
+              <ArrowUpRight className="mode-arrow" size={18} strokeWidth={1.5} />
+            </article>
+          ))}
+        </div>
       </section>
 
       <section className="system-section section-shell" id="system">
@@ -141,35 +173,6 @@ function App() {
         </div>
       </section>
 
-      <section className="modes-section section-shell" id="modes">
-        <div className="section-heading page-grid">
-          <div>
-            <p className="section-index">{t.capabilities.index}</p>
-            <p className="eyebrow">{t.capabilities.eyebrow}</p>
-          </div>
-          <div><h2>{t.capabilities.heading}</h2><p className="section-description">{t.capabilities.body}</p></div>
-        </div>
-        <div className="mode-signal-strip" aria-label="Available work modes">
-          {[...signals, ...signals].map((signal, index) => <span key={`${signal}-${index}`}>{signal}<i /></span>)}
-        </div>
-        <div className="mode-artifact page-grid">
-          <Suspense fallback={<div className="model-placeholder" />}>
-            <SectionModel src="/glb/optimized/signal-creature.glb" label="SIGNAL CREATURE / ADAPTIVE MODE" variant="wide" />
-          </Suspense>
-          <p>ONE CONTEXT<br /><span>MULTIPLE FORMS</span></p>
-        </div>
-        <div className="mode-grid page-grid">
-          {t.capabilities.items.map((item) => (
-            <article className="mode-item" key={item.title}>
-              <div className="mode-topline"><span>{item.number}</span><span>{item.signal}</span></div>
-              <h3>{item.title}</h3>
-              <p>{item.description}</p>
-              <ArrowUpRight className="mode-arrow" size={18} strokeWidth={1.5} />
-            </article>
-          ))}
-        </div>
-      </section>
-
       <section className="control-section section-shell" id="control">
         <div className="control-grid page-grid">
           <div className="control-copy">
@@ -179,9 +182,6 @@ function App() {
             <p className="section-description">{t.approval.body}</p>
           </div>
           <div className="control-visual">
-            <Suspense fallback={<div className="model-placeholder" />}>
-              <SectionModel src="/glb/optimized/permission-fold.glb" label="PERMISSION FOLD / CONTROL SURFACE" variant="fold" />
-            </Suspense>
             <div className="approval-console">
               <div className="console-title"><ShieldCheck size={17} /><span>TOOL APPROVAL</span><em>LIVE</em></div>
               <div className="approval-track">
@@ -232,6 +232,24 @@ function App() {
             <p>{t.download.body}</p>
             <ReleaseDownload releaseCopy={t.release} downloadCopy={t.download} />
           </div>
+        </div>
+      </section>
+
+      <section className="contact-section" aria-labelledby="contact-heading">
+        <div className="contact-panel page-grid">
+          <div>
+            <p className="section-index">{t.contact.index}</p>
+            <p className="eyebrow">{t.contact.eyebrow}</p>
+          </div>
+          <div className="contact-panel__content">
+            <h2 id="contact-heading">{t.contact.heading}</h2>
+            <p>{t.contact.body}</p>
+          </div>
+          <a className="contact-email" href={`mailto:${contactEmail}`} aria-label={`${t.contact.action}: ${contactEmail}`}>
+            <span className="contact-email__label"><Mail size={16} strokeWidth={1.6} />{t.contact.action}</span>
+            <span className="contact-email__address">{contactEmail}</span>
+            <ArrowUpRight size={19} strokeWidth={1.6} aria-hidden="true" />
+          </a>
         </div>
       </section>
 

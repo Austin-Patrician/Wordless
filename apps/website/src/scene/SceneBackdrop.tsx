@@ -17,10 +17,8 @@ type SceneModel = {
 }
 
 const heroModels: SceneModel[] = [
-  { url: '/glb/optimized/logo-companion-frame.glb', size: 5.7, position: [0.55, 0, -0.5], rotation: [0.04, -0.28, -0.08], opacity: 0.32 },
-  { url: '/glb/optimized/wordless.glb', size: 4.35, position: [0.32, 0.02, 1.05], rotation: [0.06, 0.22, 0.02] },
-  { url: '/glb/optimized/intent-glyph.glb', size: 1.12, position: [-2.55, 1.7, 1.2], rotation: [0.22, -0.35, -0.2], opacity: 0.72 },
-  { url: '/glb/optimized/archive-flower.glb', size: 0.9, position: [2.75, -1.75, 0.2], rotation: [-0.12, 0.4, 0.15], opacity: 0.48 },
+  { url: '/glb/optimized/logo-companion-frame.glb', size: 4.5, position: [0.24, 0.28, -0.5], rotation: [0, 0, 0], opacity: 0.68 },
+  { url: '/glb/optimized/wordless.glb', size: 1.85, position: [0.24, 0.28, 1.05], rotation: [0, 0, 0] },
 ]
 
 function fitModel(model: THREE.Object3D, targetSize: number) {
@@ -35,14 +33,16 @@ function fitModel(model: THREE.Object3D, targetSize: number) {
 function setOpacity(model: THREE.Object3D, opacity: number) {
   model.traverse((object) => {
     if (!(object instanceof THREE.Mesh)) return
-    const materials = Array.isArray(object.material) ? object.material : [object.material]
-    object.material = materials.map((material) => {
+    const multipleMaterials = Array.isArray(object.material)
+    const materials: THREE.Material[] = multipleMaterials ? object.material : [object.material]
+    const nextMaterials = materials.map((material) => {
       const clone = material.clone()
       clone.transparent = opacity < 1
       clone.opacity = opacity
       clone.depthWrite = opacity > 0.7
       return clone
     })
+    object.material = multipleMaterials ? nextMaterials : nextMaterials[0]!
   })
 }
 
@@ -83,14 +83,13 @@ export function SceneBackdrop({ onProgress, onReady, onError }: SceneBackdropPro
     rimLight.position.set(-4, -2, 4)
     scene.add(rimLight)
 
-    const manager = new THREE.LoadingManager()
-    manager.onStart = () => onProgress?.(3, 'SCENE LINK')
-    manager.onProgress = (_url, loaded, total) => onProgress?.(Math.round((loaded / total) * 92), loaded < total ? 'DECODING FORM' : 'COMPOSING LIGHT')
-    manager.onError = () => onError?.()
-    const loader = new GLTFLoader(manager)
+    const coreManager = new THREE.LoadingManager()
+    coreManager.onStart = () => onProgress?.(3, 'SCENE LINK')
+    coreManager.onProgress = (_url, loaded, total) => onProgress?.(Math.round((loaded / total) * 92), loaded < total ? 'DECODING FORM' : 'COMPOSING LIGHT')
+    const loader = new GLTFLoader(coreManager)
     let disposed = false
 
-    Promise.all(heroModels.map(({ url, size, position, rotation, opacity = 1 }) => new Promise<void>((resolve, reject) => {
+    const loadModel = (loader: GLTFLoader, { url, size, position, rotation, opacity = 1 }: SceneModel) => new Promise<void>((resolve, reject) => {
       loader.load(url, (gltf) => {
         if (disposed) return resolve()
         fitModel(gltf.scene, size)
@@ -102,7 +101,9 @@ export function SceneBackdrop({ onProgress, onReady, onError }: SceneBackdropPro
         stage.add(anchor)
         resolve()
       }, undefined, reject)
-    }))).then(() => {
+    })
+
+    Promise.all(heroModels.map((model) => loadModel(loader, model))).then(() => {
       if (disposed) return
       renderer.render(scene, camera)
       onProgress?.(100, 'READY')
@@ -110,17 +111,11 @@ export function SceneBackdrop({ onProgress, onReady, onError }: SceneBackdropPro
     }).catch(() => onError?.())
 
     const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches
-    const pointer = new THREE.Vector2()
-    const targetPointer = new THREE.Vector2()
-    const onPointerMove = (event: PointerEvent) => {
-      targetPointer.set((event.clientX / window.innerWidth - 0.5) * 2, (event.clientY / window.innerHeight - 0.5) * 2)
-    }
-    if (!reducedMotion) window.addEventListener('pointermove', onPointerMove, { passive: true })
 
     const resize = () => {
       const { width, height } = canvas.getBoundingClientRect()
       if (!width || !height) return
-      stage.userData.baseX = width > 760 ? Math.min(0.65, width / 1600) : 0
+      stage.userData.baseX = width > 760 ? -0.82 : 0
       stage.position.x = stage.userData.baseX
       camera.aspect = width / height
       camera.updateProjectionMatrix()
@@ -140,20 +135,7 @@ export function SceneBackdrop({ onProgress, onReady, onError }: SceneBackdropPro
       if (visible) {
         const elapsed = clock.getElapsedTime()
         if (!reducedMotion) {
-          pointer.lerp(targetPointer, 0.045)
-          stage.rotation.y += (pointer.x * 0.28 - stage.rotation.y) * 0.035
-          stage.rotation.x += (-pointer.y * 0.16 - stage.rotation.x) * 0.035
-          stage.position.x += (stage.userData.baseX + pointer.x * 0.34 - stage.position.x) * 0.03
-          stage.position.y = Math.sin(elapsed * 0.42) * 0.08
-          rimLight.position.x += (pointer.x * 3.8 - rimLight.position.x) * 0.035
-          rimLight.position.y += (-pointer.y * 2.5 - rimLight.position.y) * 0.035
-          stage.children.forEach((child, index) => {
-            child.rotation.z += (index % 2 ? -1 : 1) * (0.0026 + index * 0.0005)
-            child.position.y += (Math.sin(elapsed * (0.52 + index * 0.08) + index) * 0.045 + (index === 1 ? 0.02 : 0) - child.position.y) * 0.04
-          })
-          camera.position.x += (pointer.x * 0.35 - camera.position.x) * 0.025
-          camera.position.y += (0.1 - pointer.y * 0.2 - camera.position.y) * 0.025
-          camera.lookAt(0, 0, 0)
+          stage.position.y = Math.sin(elapsed * 0.42) * 0.045
         }
         renderer.render(scene, camera)
       }
@@ -164,7 +146,6 @@ export function SceneBackdrop({ onProgress, onReady, onError }: SceneBackdropPro
     return () => {
       disposed = true
       window.cancelAnimationFrame(frameId)
-      window.removeEventListener('pointermove', onPointerMove)
       resizeObserver.disconnect()
       visibilityObserver.disconnect()
       scene.traverse((object) => {

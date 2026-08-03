@@ -63,6 +63,21 @@
   color: #e6a096;
 }
 
+.message-markdown-reasoning .message-markdown p,
+.message-markdown-reasoning .message-markdown li {
+  color: inherit;
+  font-size: 13px;
+  line-height: 1.25rem;
+}
+
+.message-markdown-reasoning .message-markdown > :first-child {
+  margin-top: 0;
+}
+
+.message-markdown-reasoning .message-markdown > :last-child {
+  margin-bottom: 0;
+}
+
 .message-code-block .hljs-comment,
 .message-code-block .hljs-quote {
   color: #8a9182;
