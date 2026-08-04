@@ -925,10 +925,47 @@ export function ThreadView({ artifactSelection, initialPendingTurn, messageNavig
   };
 
   const resolveClarificationQuestion = async (callId: string, value: string | boolean) => {
-    await client.resolveClarificationQuestion(sessionId, callId, value);
-    const view = await client.getSessionView(sessionId);
-    setSnapshot((current) => current ? { ...current, session: view.session, messages: messagesFromHistoryPage(view.history), contextUsage: view.contextUsage, turnUsage: view.turnUsage, extensions: view.extensions } : snapshotFromSessionView(view));
-    setHistory(loadedHistoryFromView(view));
+    // 1. 获取问题文本以便显示
+    const question = snapshot?.messages
+      .flatMap((message) => message.blocks)
+      .find((block): block is MessageToolBlock =>
+        block.type === "tool" && block.callId === callId && block.name === "ask_clarifying_question"
+      );
+
+    const questionDetails = question ? asObject(question.details) : undefined;
+    const clarificationQuestion = asObject(questionDetails?.clarificationQuestion);
+    const questionText = typeof clarificationQuestion?.question === "string" ? clarificationQuestion.question : "question";
+
+    // 2. 调用服务器端，获取 submission 信息
+    const submission = await client.resolveClarificationQuestion(sessionId, callId, value);
+
+    // 3. 立即创建 pending turn（用户消息 + 运行状态）
+    const displayValue = typeof value === "boolean" ? (value ? "Yes" : "No") : value;
+    const parts: UserPromptPart[] = [
+      { type: "text", text: `Clarification answer to "${questionText}": ${displayValue}` }
+    ];
+    const pendingTurn = createPendingThreadTurn(parts, submission);
+
+    // 4. 立即更新 UI（乐观更新）
+    setSnapshot((current) => current ? withPendingTurn(current, pendingTurn) : current);
+    setRunPresentation(createAssistantRunPresentation(submission.messageId, submission.submittedAt));
+
+    // 5. 稍后获取完整状态进行同步（保险措施）
+    try {
+      const view = await client.getSessionView(sessionId);
+      setSnapshot((current) => current ? {
+        ...current,
+        session: view.session,
+        messages: messagesFromHistoryPage(view.history),
+        contextUsage: view.contextUsage,
+        turnUsage: view.turnUsage,
+        extensions: view.extensions
+      } : snapshotFromSessionView(view));
+      setHistory(loadedHistoryFromView(view));
+    } catch (error) {
+      // 错误处理：如果同步失败，至少乐观更新已经显示了
+      console.error("Failed to sync after clarification answer:", error);
+    }
   };
 
   const handoffClarification = async (nextMode: "default" | "clarify" | "plan") => {

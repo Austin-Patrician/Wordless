@@ -3,6 +3,9 @@
   "private": true,
   "version": "0.0.0",
   "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
   "dependencies": {
     "@wordless/capability-browser": "0.0.0",
     "@wordless/capability-data": "0.0.0",

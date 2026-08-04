@@ -115,7 +115,7 @@ export function WelcomeView({ onOpenModels, onOpenSkillImport, onOpenSkills, onS
   const selectedWorkspaceAvailable = workspaceId === null || selectedWorkspace?.availability === "available";
   const selectedModel = snapshot?.models.find((candidate) => candidate.connectionId === model?.connectionId && candidate.modelId === model.modelId);
   const selectedConnection = snapshot?.connections.find((connection) => connection.id === model?.connectionId);
-  const workspaceRequired = entry?.workbenchId === "code";
+  const workspaceRequired = entry?.workbenchId === "code" || entry?.workbenchId === "analysis";
   const canPlan = entry?.workbenchId === "code" && (snapshot?.extensions.configurations["wordless.plan-mode"]?.enabled ?? false);
 
   useEffect(() => {

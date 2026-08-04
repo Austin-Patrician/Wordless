@@ -40,10 +40,12 @@ const DEFAULT_ROLES: SubagentRoleDefinition[] = [
   { id: "planner", name: "Planner", description: "Produce execution plans and break complex goals into actionable steps.", model: null },
   { id: "reviewer", name: "Reviewer", description: "Inspect completed work, verify correctness, and identify risks.", model: null },
   { id: "worker", name: "Worker", description: "Execute a concrete implementation task.", model: null },
+  { id: "researcher", name: "Researcher", description: "Collect source-grounded evidence for one research dimension.", model: null },
+  { id: "research-reviewer", name: "Research reviewer", description: "Review source-grounded evidence and identify gaps or conflicts.", model: null },
 ];
 
 const DelegationTaskSchema = Type.Object({
-  agent: Type.Union([Type.Literal("scout"), Type.Literal("planner"), Type.Literal("reviewer"), Type.Literal("worker")]),
+  agent: Type.Union([Type.Literal("scout"), Type.Literal("planner"), Type.Literal("reviewer"), Type.Literal("worker"), Type.Literal("researcher"), Type.Literal("research-reviewer")]),
   task: Type.String({ minLength: 1, maxLength: 12_000 }),
 });
 
@@ -58,11 +60,11 @@ type DelegationTask = Static<typeof DelegationTaskSchema>;
 const SUBAGENT_DELEGATION_POLICY = `
 A delegated task must be self-contained, independently solvable, and narrowly scoped.
 
-Choose scout to discover information by searching, inspecting, and summarizing. Choose planner to produce execution plans for complex goals. Choose worker to execute a concrete implementation task. Choose reviewer only to inspect completed work when the user explicitly asks for review, audit, verification, or a second opinion.
+Choose scout to discover workspace information, researcher to collect source-grounded evidence for one confirmed data-research dimension, research-reviewer to inspect research evidence for support and gaps, planner to produce execution plans, and worker to execute implementation tasks. Choose reviewer only to inspect completed work when the user explicitly asks for review, audit, verification, or a second opinion.
 
 Prefer delegation when specialization improves quality, the task can run independently, and the result can be summarized. Avoid delegation when the work is trivial, continuous interaction is required, or context sharing outweighs the benefit. Never delegate just to use this tool. Child agents cannot delegate further work.
 
-Use exactly this argument shape: { mode: "single" | "parallel" | "sequential", tasks: [{ agent: "scout" | "planner" | "worker" | "reviewer", task: "..." }] }.
+Use exactly this argument shape: { mode: "single" | "parallel" | "sequential", tasks: [{ agent: "scout" | "planner" | "worker" | "reviewer" | "researcher" | "research-reviewer", task: "..." }] }.
 For one reviewer: { mode: "single", tasks: [{ agent: "reviewer", task: "Review the current Git workspace changes" }] }.
 For independent research: { mode: "parallel", tasks: [{ agent: "scout", task: "..." }, { agent: "scout", task: "..." }] }.
 For ordered work: { mode: "sequential", tasks: [{ agent: "scout", task: "..." }, { agent: "planner", task: "..." }] }.
@@ -191,11 +193,11 @@ function validateDelegation(mode: DelegationParams["mode"], tasks: DelegationTas
 }
 
 function delegationReason(agent: DelegationTask["agent"]): DelegationReason {
-  return agent === "scout" ? "independent-research" : agent === "planner" ? "complex-planning" : agent === "worker" ? "isolated-implementation" : "explicit-user-review";
+  return agent === "scout" || agent === "researcher" || agent === "research-reviewer" ? "independent-research" : agent === "planner" ? "complex-planning" : agent === "worker" ? "isolated-implementation" : "explicit-user-review";
 }
 
 function expectedOutput(agent: DelegationTask["agent"]): string {
-  return agent === "scout" ? "A concise findings summary with file references" : agent === "planner" ? "An actionable implementation plan" : agent === "worker" ? "A concise implementation and verification summary" : "A review of correctness, risks, and suggested improvements";
+  return agent === "scout" ? "A concise findings summary with file references" : agent === "researcher" ? "Structured source-grounded claims submitted for one research dimension" : agent === "research-reviewer" ? "A review of evidence support, gaps, conflicts, and suggested supplement research" : agent === "planner" ? "An actionable implementation plan" : agent === "worker" ? "A concise implementation and verification summary" : "A review of correctness, risks, and suggested improvements";
 }
 
 function configuredRoleModels(settings: JsonObject): Partial<Record<SubagentRoleDefinition["id"], { connectionId: string; modelId: string }>> {
@@ -229,7 +231,7 @@ function cloneDetails(details: DelegationDetails): DelegationDetails {
 function isRole(value: unknown): value is SubagentRoleDefinition {
   if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
   const role = value as Record<string, unknown>;
-  return (role.id === "scout" || role.id === "planner" || role.id === "reviewer" || role.id === "worker") && typeof role.name === "string" && typeof role.description === "string" && (role.model === null || isModelReference(role.model));
+  return (role.id === "scout" || role.id === "planner" || role.id === "reviewer" || role.id === "worker" || role.id === "researcher" || role.id === "research-reviewer") && typeof role.name === "string" && typeof role.description === "string" && (role.model === null || isModelReference(role.model));
 }
 
 function isModelReference(value: unknown): value is { connectionId: string; modelId: string } {

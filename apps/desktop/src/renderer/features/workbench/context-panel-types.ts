@@ -3,7 +3,7 @@ import type { WorkbenchId } from "@wordless/domain";
 import type { ArtifactSelection } from "@wordless/protocol";
 import type { InlineWorkspaceReferenceToken } from "../thread/InlineSkillComposer";
 
-export type ContextPanelView = "overview" | "files" | "changes" | "preview" | "slides" | "sheets" | "assets" | "issues";
+export type ContextPanelView = "overview" | "files" | "changes" | "preview" | "slides" | "sheets" | "assets" | "issues" | "report" | "research" | "data" | "charts";
 
 export type ContextPanelTab = {
   id: ContextPanelView;

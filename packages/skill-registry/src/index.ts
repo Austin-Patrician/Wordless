@@ -27,6 +27,7 @@ export interface SkillRegistryPaths {
 export interface SkillRegistryOptions {
   paths: SkillRegistryPaths;
   homeDir: string;
+  builtInRoots?: string[];
 }
 
 type SkillConfig = {
@@ -82,9 +83,11 @@ function parseSkillFile(content: string): { name: string; description: string; b
 export class SkillRegistry {
   private readonly paths: SkillRegistryPaths;
   private readonly homeDir: string;
+  private readonly builtInRoots: string[];
   private config: SkillConfig = DEFAULT_CONFIG;
   private snapshotValue: SkillCatalogSnapshot = { skills: [], diagnostics: [], updatedAt: 0 };
   private readonly resolvedGlobal = new Map<string, ResolvedSkill>();
+  private readonly requiredBuiltIn = new Map<string, ResolvedSkill>();
   private readonly resolvedWorkspace = new Map<string, Map<string, ResolvedSkill>>();
   private readonly listeners = new Set<() => void>();
   private readonly watchers = new Map<string, FSWatcher>();
@@ -94,6 +97,7 @@ export class SkillRegistry {
   constructor(options: SkillRegistryOptions) {
     this.paths = options.paths;
     this.homeDir = options.homeDir;
+    this.builtInRoots = options.builtInRoots ?? [];
   }
 
   async initialize(workspaces: WorkspaceRecord[]): Promise<void> {
@@ -127,10 +131,18 @@ export class SkillRegistry {
     return [...byName.values()];
   }
 
+  getRequiredBuiltInSkill(name: string): ResolvedSkill | undefined {
+    return this.requiredBuiltIn.get(name);
+  }
+
   async refresh(workspaces = this.workspaces): Promise<SkillCatalogSnapshot> {
     this.workspaces = workspaces.filter((workspace) => workspace.availability === "available");
     const diagnostics: SkillDiagnostic[] = [];
     const globalCandidates = await this.scanSources(this.globalSources(), null, diagnostics);
+    this.requiredBuiltIn.clear();
+    for (const candidate of globalCandidates) {
+      if (candidate.resolved.source === "built-in" && !this.requiredBuiltIn.has(candidate.resolved.name)) this.requiredBuiltIn.set(candidate.resolved.name, candidate.resolved);
+    }
     const global = this.resolveCandidates(globalCandidates);
     this.resolvedGlobal.clear();
     for (const candidate of global.active) this.resolvedGlobal.set(candidate.resolved.id, candidate.resolved);
@@ -200,6 +212,7 @@ export class SkillRegistry {
   private globalSources(): Array<{ source: SkillSource; root: string }> {
     return [
       { source: "wordless", root: this.paths.managedRoot },
+      ...this.builtInRoots.map((root) => ({ source: "built-in" as const, root })),
       { source: "pi", root: join(this.homeDir, ".pi", "agent", "skills") },
       { source: "agents", root: join(this.homeDir, ".agents", "skills") },
       { source: "claude", root: join(this.homeDir, ".claude", "skills") },

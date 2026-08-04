@@ -142,7 +142,7 @@ type SerializedArtifactReference = {
   version: 1;
   id: string;
   artifactId: string;
-  kind: "presentation" | "document" | "spreadsheet" | "browser";
+  kind: "presentation" | "document" | "spreadsheet" | "browser" | "report" | "dataset" | "chart" | "image";
   name: string;
   revision: number;
   surfaceId: string;
@@ -295,7 +295,7 @@ function parseArtifactReference(value: string): SerializedArtifactReference | un
     if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return undefined;
     const record = parsed as Record<string, unknown>;
     if (record.version !== 1 || typeof record.id !== "string" || typeof record.artifactId !== "string" || typeof record.name !== "string" || typeof record.revision !== "number" || !Number.isInteger(record.revision) || record.revision < 1 || typeof record.surfaceId !== "string" || typeof record.locator !== "string") return undefined;
-    if (record.kind !== "presentation" && record.kind !== "document" && record.kind !== "spreadsheet" && record.kind !== "browser") return undefined;
+    if (record.kind !== "presentation" && record.kind !== "document" && record.kind !== "spreadsheet" && record.kind !== "browser" && record.kind !== "report" && record.kind !== "dataset" && record.kind !== "chart" && record.kind !== "image") return undefined;
     if (record.locators !== undefined && (!Array.isArray(record.locators) || record.locators.some((locator) => typeof locator !== "string"))) return undefined;
     if (record.intent !== undefined && record.intent !== "reference" && record.intent !== "analyze" && record.intent !== "formula" && record.intent !== "chart" && record.intent !== "pivot") return undefined;
     return record as SerializedArtifactReference;

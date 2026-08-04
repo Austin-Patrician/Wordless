@@ -211,6 +211,7 @@ export interface CredentialVault {
 export interface RuntimePaths {
   dataRoot: string;
   databasePath: string;
+  builtInSkillsRoot?: string;
   journalsRoot: string;
   modelConfiguration?: ModelConfigurationPaths;
   sessionWorkspacesRoot: string;
@@ -267,7 +268,7 @@ export const BUILTIN_ENTRIES: WorkbenchEntryDefinition[] = [
     iconKey: "chart",
     profile: { id: "data", version: "1" },
     workbenchId: "analysis",
-    availability: "unavailable",
+    availability: "available",
     modelRequirements: { requiresToolUse: true },
   },
   {
@@ -716,6 +717,7 @@ export class WordlessRuntime {
         managedRoot: join(options.paths.dataRoot, "skills"),
       },
       homeDir: homedir(),
+      builtInRoots: options.paths.builtInSkillsRoot ? [options.paths.builtInSkillsRoot] : [],
     });
     this.connectorRegistry = new ConnectorRegistry({ configPath: join(options.paths.dataRoot, "connectors.json") });
     this.models = createModels({ credentials: new VaultCredentialStore(options.credentialVault) });
@@ -1253,7 +1255,7 @@ export class WordlessRuntime {
     const model = this.resolveSessionModel(draft, entry);
     this.assertInteractionModeAvailable(draft.interactionMode ?? "default", profile.driverId, model);
     const workspace = draft.workspaceId ? await this.resolveAvailableWorkspace(draft.workspaceId) : undefined;
-    if (entry.workbenchId === "code" && !workspace) throw new Error("Coding sessions require a workspace");
+    if ((entry.workbenchId === "code" || entry.workbenchId === "analysis") && !workspace) throw new Error(`${entry.workbenchId === "code" ? "Coding" : "Data analysis"} sessions require a workspace`);
 
     const now = Date.now();
     const id = randomUUID();
@@ -1321,7 +1323,7 @@ export class WordlessRuntime {
       await active.driverSession.execute({ type: "steer", text: prompt, submission });
       return;
     }
-    const selectedSkills = this.resolveSelectedSkills(record.workspaceId, skillIds);
+    const selectedSkills = this.resolveSelectedSkills(record, skillIds);
     const automaticCompaction = this.isAutomaticContextCompactionEnabled();
     const run = await this.createActiveRun(sessionId, automaticCompaction ? "compaction" : "prompt", submission?.messageId);
     void this.executeActiveRun(sessionId, run, prompt, selectedSkills, automaticCompaction, submission).catch(() => {});
@@ -1390,7 +1392,7 @@ export class WordlessRuntime {
     return next;
   }
 
-  async resolveClarificationQuestion(sessionId: string, callId: string, value: string | boolean): Promise<void> {
+  async resolveClarificationQuestion(sessionId: string, callId: string, value: string | boolean): Promise<UserMessageSubmission> {
     if (this.runs.has(sessionId)) throw new Error("Wait for the current response before answering a clarification question");
     const session = this.requireSession(sessionId);
     if (session.interactionMode !== "clarify") throw new Error("The session is not in clarification mode");
@@ -1412,8 +1414,13 @@ export class WordlessRuntime {
     const journal = await openWordlessSession(session.journalPath);
     await (journal as unknown as { appendCustomEntry(customType: string, data?: unknown): Promise<string> }).appendCustomEntry(CLARIFICATION_ANSWER_JOURNAL_TYPE, answer);
     this.historyCache.delete(sessionId);
+    const submission: UserMessageSubmission = {
+      messageId: randomUUID(),
+      submittedAt: Date.now(),
+    };
     const displayValue = typeof value === "boolean" ? value ? "Yes" : "No" : value;
-    await this.promptSession(sessionId, `Clarification answer to "${question.question}": ${displayValue}`);
+    await this.promptSession(sessionId, `Clarification answer to "${question.question}": ${displayValue}`, [], submission);
+    return submission;
   }
 
   async handoffClarification(sessionId: string, interactionMode: AgentInteractionModeId): Promise<void> {
@@ -2336,16 +2343,22 @@ export class WordlessRuntime {
     };
   }
 
-  private resolveSelectedSkills(workspaceId: string | null, skillIds: string[]): ReturnType<SkillRegistry["getSessionSkills"]> {
-    if (skillIds.length === 0) return [];
-    const available = new Map(this.skillRegistry.getSessionSkills(workspaceId).map((skill) => [skill.id, skill]));
+  private resolveSelectedSkills(record: SessionRecord, skillIds: string[]): ReturnType<SkillRegistry["getSessionSkills"]> {
+    const profile = this.requireProfile(record);
+    const selectedIds = [...profile.skills.map((skill) => skill.id), ...skillIds];
+    if (selectedIds.length === 0) return [];
+    const available = new Map(this.skillRegistry.getSessionSkills(record.workspaceId).map((skill) => [skill.id, skill]));
     const selected = [] as ReturnType<SkillRegistry["getSessionSkills"]>;
     const seen = new Set<string>();
-    for (const skillId of skillIds) {
-      if (seen.has(skillId)) continue;
-      seen.add(skillId);
-      const skill = available.get(skillId);
-      if (!skill) throw new Error("A selected skill is no longer available for this session");
+    for (const skillId of selectedIds) {
+      const required = profile.skills.find((skill) => skill.id === skillId);
+      const skill = required?.source === "built-in"
+        ? this.skillRegistry.getRequiredBuiltInSkill(skillId) ?? available.get(skillId)
+        : available.get(skillId);
+      const identity = skill?.id ?? skillId;
+      if (seen.has(identity)) continue;
+      seen.add(identity);
+      if (!skill) throw new Error(`Required or selected skill is unavailable: ${skillId}`);
       selected.push(skill);
     }
     return selected;

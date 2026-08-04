@@ -10,6 +10,8 @@ files:
   - package.json
 asar: true
 extraResources:
+  - from: resources/skills
+    to: skills
   - from: resources/officecli/${os}-${arch}
     to: officecli/${os}-${arch}
   - from: resources/presentation-templates

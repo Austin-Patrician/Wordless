@@ -43,9 +43,11 @@ export function WorkbenchShell() {
   const [messageNavigationTarget, setMessageNavigationTarget] = useState<ThreadMessageNavigationTarget | null>(null);
   const [pendingInitialTurn, setPendingInitialTurn] = useState<{ sessionId: string; turn: PendingThreadTurn } | null>(null);
   const messageNavigationSequenceRef = useRef(0);
+  const autoOpenedAnalysisSessionsRef = useRef(new Set<string>());
   const { t } = usePreferences();
   const { client, error, refresh, snapshot, status } = useRuntime();
   const hasSelectedThread = mainView === "thread" && snapshot?.sessions.some((session) => session.id === selectedSessionId) === true;
+  const selectedWorkbenchId = snapshot?.sessions.find((session) => session.id === selectedSessionId)?.workbenchId;
 
   const newThread = () => {
     setPendingWorkspaceReferences([]);
@@ -88,11 +90,14 @@ export function WorkbenchShell() {
   }, [client, pendingInitialTurn]);
 
   useEffect(() => {
-    const session = snapshot?.sessions.find((candidate) => candidate.id === selectedSessionId);
-    const definition = workbenchContextPanelRegistry.resolve(session?.workbenchId);
+    const definition = workbenchContextPanelRegistry.resolve(selectedWorkbenchId);
     setContextView(definition.tabs[0]?.id ?? "overview");
-    if (session?.workbenchId === "presentation") setRightOpen(true);
-  }, [selectedSessionId, snapshot?.sessions]);
+    if (selectedWorkbenchId === "presentation") setRightOpen(true);
+    if (selectedWorkbenchId === "analysis" && selectedSessionId && !autoOpenedAnalysisSessionsRef.current.has(selectedSessionId)) {
+      autoOpenedAnalysisSessionsRef.current.add(selectedSessionId);
+      setRightOpen(true);
+    }
+  }, [selectedSessionId, selectedWorkbenchId]);
 
   useEffect(() => {
     if (!hasSelectedThread) return;

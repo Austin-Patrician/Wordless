@@ -91,7 +91,7 @@ export interface AgentExtensionHostFactory {
 }
 
 export interface SubagentRoleDefinition {
-  id: "scout" | "planner" | "reviewer" | "worker";
+  id: "scout" | "planner" | "reviewer" | "worker" | "researcher" | "research-reviewer";
   name: string;
   description: string;
   model: { connectionId: string; modelId: string } | null;

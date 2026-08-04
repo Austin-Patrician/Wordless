@@ -8,6 +8,7 @@ import { AppearanceAssetService } from "./appearance/appearance-asset-service";
 import { registerAppearanceProtocol } from "./protocols/appearance";
 import { registerMediaProtocol } from "./protocols/media";
 import { registerPresentationProtocol } from "./protocols/presentation";
+import { registerAnalysisProtocol } from "./protocols/analysis";
 import { createMainWindow, updateTitleBarOverlays } from "./windows/main-window";
 import { createDesktopHostInfo } from "./platform/desktop-platform";
 import { ApplicationMenuController } from "./menu/application-menu";
@@ -18,6 +19,7 @@ import { ElectronCredentialVault } from "./adapters/electron-credential-vault";
 import { GoogleAccountService } from "./account/google-account-service";
 import { CloudSyncService } from "./cloud-sync/cloud-sync-service";
 import { GoogleDriveAppData } from "./cloud-sync/google-drive-app-data";
+import { DesktopDataAnalysisService } from "./data-analysis/data-analysis-service";
 
 declare const __WORDLESS_GOOGLE_CLIENT_ID__: string;
 declare const __WORDLESS_GOOGLE_CLIENT_SECRET__: string;
@@ -59,6 +61,8 @@ app.whenReady().then(async () => {
   registerMediaProtocol(path.join(userData.path, "media-assets"));
   const presentationArtifactsRoot = path.join(userData.path, "presentation-artifacts");
   registerPresentationProtocol(presentationArtifactsRoot);
+  const dataAnalysis = new DesktopDataAnalysisService({ metadataRoot: path.join(userData.path, "analysis-metadata"), resourcesRoot: app.isPackaged ? process.resourcesPath : path.resolve(__dirname, "../../resources") });
+  registerAnalysisProtocol(dataAnalysis);
   const officeResourcesPath = app.isPackaged ? process.resourcesPath : path.resolve(__dirname, "../../resources");
   office = new OfficeCliService({ artifactsRoot: presentationArtifactsRoot, resourcesPath: officeResourcesPath });
   const credentialVault = new ElectronCredentialVault(path.join(userData.path, "credentials.json"));
@@ -83,7 +87,7 @@ app.whenReady().then(async () => {
     openExternal: async (url) => await shell.openExternal(url),
   });
   await account.initialize();
-  runtime = createDesktopRuntime(userData.path, office, credentialVault);
+  runtime = createDesktopRuntime(userData.path, office, credentialVault, dataAnalysis);
   await runtime.initialize();
   cloudSync = new CloudSyncService({
     statePath: path.join(userData.path, "cloud-sync", "state.json"),
@@ -119,6 +123,7 @@ app.whenReady().then(async () => {
     account,
     cloudSync,
     office,
+    dataAnalysis,
   });
   mainWindow = createMainWindow(path.join(__dirname, "preload.cjs"), runtime.getSnapshot().preferences);
   mainWindow.on("focus", () => notifications.clearBadge());

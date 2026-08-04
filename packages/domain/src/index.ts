@@ -8,13 +8,14 @@ export type SessionJournalFormat = "wordless-agent-v1" | "wordless-coding-v1";
 
 export type WorkbenchId = "conversation" | "code" | "presentation" | "workbook" | "analysis" | "ui-preview" | "media-canvas";
 
-export type ArtifactKind = "presentation" | "document" | "spreadsheet" | "browser";
+export type ArtifactKind = "presentation" | "document" | "spreadsheet" | "browser" | "report" | "dataset" | "chart" | "image";
 
 export type WorkspaceKind = "managed" | "linked";
 
 export type WorkspaceAvailability = "available" | "missing";
 
 export type SkillSource =
+  | "built-in"
   | "wordless"
   | "pi"
   | "agents"

@@ -44,17 +44,21 @@ const ROLE_PROMPTS: Record<SubagentRoleDefinition["id"], string> = {
   planner: "You are the Planner subagent. Inspect the workspace and produce an actionable implementation plan. Explain dependencies, risks, and verification. Do not make changes and do not delegate work.",
   reviewer: "You are the Reviewer subagent. Inspect the completed work, verify correctness, identify risks, and suggest focused improvements. Do not make changes and do not delegate work.",
   worker: "You are the Worker subagent. Complete the assigned implementation task within its stated scope. Use the smallest coherent change, respect all approvals, and report files changed plus verification. Do not delegate work.",
+  researcher: "You are a Researcher subagent. Work only on the assigned confirmed research dimension. Use available search connectors to discover sources, call research_snapshot for every source actually used, then call research_submit_dimension with concise claims whose evidenceRefs contain only returned source ids. Never rely on model memory for factual claims, never write the shared report directly, and do not delegate work.",
+  "research-reviewer": "You are a Research Reviewer subagent. Read the submitted dimension evidence and source snapshots. Check whether every claim is supported, whether sources are sufficiently independent and current, and whether conflicts or material gaps remain. Record the verdict with research_review_dimension. Do not add new factual claims and do not delegate work.",
 };
 
 const READ_ONLY_TOOLS = ["read", "grep", "find", "ls"];
 const REVIEWER_TOOLS = [...READ_ONLY_TOOLS, "workspace_changes"];
+const RESEARCHER_TOOLS = [...READ_ONLY_TOOLS, "research_snapshot", "research_submit_dimension"];
+const RESEARCH_REVIEWER_TOOLS = [...READ_ONLY_TOOLS, "research_review_dimension"];
 
 function textFromMessage(event: Extract<AgentDriverEvent, { type: "message.completed" }>["message"]): string {
   return event.blocks.flatMap((block) => block.type === "text" ? [block.text] : []).join("\n");
 }
 
 function roleProfile(profile: AgentProfileDefinition, role: SubagentRoleDefinition["id"]): AgentProfileDefinition {
-  const activeToolNames = role === "worker" ? profile.activeToolNames : role === "reviewer" ? REVIEWER_TOOLS : READ_ONLY_TOOLS;
+  const activeToolNames = role === "worker" ? profile.activeToolNames : role === "reviewer" ? REVIEWER_TOOLS : role === "researcher" ? RESEARCHER_TOOLS : role === "research-reviewer" ? RESEARCH_REVIEWER_TOOLS : READ_ONLY_TOOLS;
   return {
     ...profile,
     systemPrompt: `${profile.systemPrompt}\n\n${ROLE_PROMPTS[role]}`,
@@ -129,7 +133,7 @@ export class SessionSubagentRunner implements SubagentRunner, SubagentTaskExecut
       model: modelReference,
       thinkingLevel: model.reasoning ? clampThinkingLevel(model, this.options.parent.thinkingLevel) : "off",
       journalPath: path,
-      connectorIds: task.role === "worker" ? this.options.parent.connectorIds : [],
+      connectorIds: task.role === "worker" || task.role === "researcher" ? this.options.parent.connectorIds : [],
       createdAt: Date.now(),
       updatedAt: Date.now(),
     };
@@ -151,8 +155,8 @@ export class SessionSubagentRunner implements SubagentRunner, SubagentTaskExecut
       session: journal,
       env: this.options.env,
       skills: this.options.skills,
-      connectorTools: task.role === "worker" ? this.options.connectorTools : [],
-      connectorToolPolicies: task.role === "worker" ? this.options.connectorToolPolicies : [],
+      connectorTools: task.role === "worker" || task.role === "researcher" ? this.options.connectorTools : [],
+      connectorToolPolicies: task.role === "worker" || task.role === "researcher" ? this.options.connectorToolPolicies : [],
       security: this.options.security,
       resolveModel: this.options.resolveModel,
       executionKind: "subagent",

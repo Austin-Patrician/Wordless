@@ -120,6 +120,25 @@ export async function preflightWorkspaceOperation(
   request: { toolName: string; input: Record<string, unknown> },
 ): Promise<OperationPreflightDecision> {
   if (request.toolName === "bash") return commandApproval(context, request);
+  if (request.toolName === "data_materialize" || request.toolName === "data_publish") {
+    if (context.record.accessLevel === "full") return { type: "allow" };
+    const analysisId = stringInput(request.input, "analysisId") ?? "unknown";
+    const action = request.toolName === "data_materialize"
+      ? `Materialize ${stringInput(request.input, "sourcePath") ?? "data"} into analysis ${analysisId}`
+      : `Publish analysis ${analysisId}`;
+    return {
+      type: "approval",
+      approval: {
+        risk: "file-write",
+        severity: "normal",
+        matchedRules: [],
+        summary: request.toolName === "data_materialize"
+          ? "This operation creates an intermediate dataset inside analysis-output."
+          : "This operation validates and writes the final report inside analysis-output.",
+        preview: { type: "command", command: action, cwd: context.record.runtimeRootPath, timeoutSeconds: undefined },
+      },
+    };
+  }
   if (request.toolName !== "write" && request.toolName !== "edit") return { type: "allow" };
   const result = await fileOperation(context, request);
   if ("block" in result) return { type: "block", reason: result.block };

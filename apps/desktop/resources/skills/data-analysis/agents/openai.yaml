@@ -1,0 +1,4 @@
+interface:
+  display_name: "Data Analysis"
+  short_description: "Analyze local datasets and produce evidence-backed reports"
+  default_prompt: "Use $data-analysis to analyze the referenced local data and produce a concise report."

@@ -153,6 +153,7 @@ export const AgentInteractionModeSchema = Type.Union([
 export const ToolApprovalModeSchema = Type.Union([Type.Literal("manual"), Type.Literal("auto"), Type.Literal("bypass")]);
 
 const SkillSourceSchema = Type.Union([
+  Type.Literal("built-in"),
   Type.Literal("wordless"),
   Type.Literal("pi"),
   Type.Literal("agents"),
@@ -762,7 +763,117 @@ export interface SessionContextSnapshot {
   changes: SessionArtifactFile[];
 }
 
-export type ArtifactKind = "presentation" | "document" | "spreadsheet" | "browser";
+export type ArtifactKind = "presentation" | "document" | "spreadsheet" | "browser" | "report" | "dataset" | "chart" | "image";
+
+export interface DataAnalysisCapabilitySnapshot {
+  status: "ready" | "missing" | "error";
+  command: string | null;
+  version: string | null;
+  message?: string;
+  supportedFormats: string[];
+  dependencies?: Record<string, boolean>;
+}
+
+export type AnalysisResearchMode = "quick" | "normal" | "heavy";
+export type AnalysisResearchStatus = "not-needed" | "awaiting-confirmation" | "blocked" | "researching" | "reviewing" | "ready" | "failed";
+
+export interface AnalysisResearchSource {
+  id: string;
+  url: string;
+  title: string;
+  publisher: string | null;
+  publishedAt: string | null;
+  accessedAt: number;
+  snapshotPath: string | null;
+  contentHash: string | null;
+  sourceType: "web" | "academic" | "filing" | "workspace" | "other";
+}
+
+export interface AnalysisResearchClaim {
+  id: string;
+  dimensionId: string;
+  statement: string;
+  kind: "external" | "synthesis";
+  evidenceRefs: string[];
+  confidence: "high" | "medium" | "low" | "contested";
+  caveats: string[];
+}
+
+export interface AnalysisResearchDimension {
+  id: string;
+  name: string;
+  question: string;
+  status: "planned" | "researching" | "ready" | "needs-research" | "failed";
+  claimCount: number;
+  sourceCount: number;
+  review?: { verdict: "pass" | "revise"; notes: string[] };
+}
+
+export interface AnalysisResearchState {
+  status: AnalysisResearchStatus;
+  mode: AnalysisResearchMode | null;
+  objective: string | null;
+  questions: string[];
+  dimensions: AnalysisResearchDimension[];
+  sources: AnalysisResearchSource[];
+  claims: AnalysisResearchClaim[];
+  conflicts: string[];
+  sourceCount: number;
+  completedDimensions: number;
+  updatedAt: number;
+  blockedReason?: string;
+  error?: string;
+}
+
+export interface AnalysisDatasetSummary {
+  path: string;
+  name: string;
+  format: string;
+  size: number;
+  fingerprint: string;
+  datasets: Array<{ name: string; rows: number; columns: Array<{ name: string; inferredType: string; nullCount: number | null }>; sample: Array<Record<string, unknown>>; warnings: string[] }>;
+  warnings: string[];
+}
+
+export interface AnalysisChartSummary {
+  id: string;
+  title: string;
+  path: string;
+  mimeType: "image/png" | "image/svg+xml";
+  url: string;
+}
+
+export interface AnalysisOutputFile {
+  path: string;
+  name: string;
+  kind: "report" | "manifest" | "chart" | "script" | "data" | "other";
+  size: number;
+  updatedAt: number;
+}
+
+export interface AnalysisRunDescriptor {
+  id: string;
+  sessionId: string;
+  title: string;
+  status: "inspecting" | "working" | "validated" | "published" | "failed";
+  outputRoot: string;
+  reportPath: string | null;
+  reportContent: string | null;
+  datasets: AnalysisDatasetSummary[];
+  charts: AnalysisChartSummary[];
+  files: AnalysisOutputFile[];
+  errors: string[];
+  warnings: string[];
+  research?: AnalysisResearchState;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface AnalysisSessionSnapshot {
+  sessionId: string;
+  capabilities: DataAnalysisCapabilitySnapshot;
+  runs: AnalysisRunDescriptor[];
+}
 
 export interface ArtifactDescriptor {
   id: string;

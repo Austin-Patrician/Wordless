@@ -60,4 +60,33 @@ describe("SkillRegistry", () => {
       registry.dispose();
     }
   });
+
+  it("discovers built-in skills after managed skills and does not remove them", async () => {
+    const root = await mkdtemp(join(tmpdir(), "wordless-built-in-skill-"));
+    temporaryRoots.push(root);
+    const home = join(root, "home");
+    const managed = join(root, "managed");
+    const builtIn = join(root, "built-in");
+    await writeSkill(join(builtIn, "data-analysis"), "data-analysis", "Built-in analysis");
+
+    const registry = new SkillRegistry({
+      paths: { configPath: join(root, "skills.json"), managedRoot: managed },
+      homeDir: home,
+      builtInRoots: [builtIn],
+    });
+    await registry.initialize([]);
+    try {
+      const skill = registry.snapshot().skills.find((candidate) => candidate.name === "data-analysis");
+      expect(skill).toMatchObject({ source: "built-in", state: "active", enabled: true });
+      expect(registry.getSessionSkills(null).map((candidate) => candidate.name)).toContain("data-analysis");
+      expect(registry.getRequiredBuiltInSkill("data-analysis")?.description).toBe("Built-in analysis");
+
+      await registry.setEnabled(skill!.id, false);
+      expect(registry.getSessionSkills(null).map((candidate) => candidate.name)).not.toContain("data-analysis");
+      expect(registry.getRequiredBuiltInSkill("data-analysis")?.description).toBe("Built-in analysis");
+      await expect(registry.removeManagedSkill(skill!.id)).rejects.toThrow("Only imported Wordless skills can be removed");
+    } finally {
+      registry.dispose();
+    }
+  });
 });

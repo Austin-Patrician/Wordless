@@ -1,9 +1,9 @@
 import type { AgentInteractionModeId, AppearanceBackgroundAsset, AppPreferences, ConfiguredModelKind, ConnectorConfiguration, ConnectorPromptSummary, ConnectorResourceSummary, ConnectorSummary, MediaInlineImage, MediaLayoutUpdate, MediaOperationRequest, MediaProject, ModelReference, SessionAccessLevel, SessionDraft, SessionRecord, ThinkingLevel, UsageReport, UsageReportQuery, UserMessageSubmission, UserPromptPart, WorkspaceRecord } from "@wordless/domain";
 import type { AgentExtensionSnapshot, JsonObject } from "@wordless/agent-extension-sdk";
-import type { AccountSnapshot, AppSnapshot, ArtifactDescriptor, ArtifactIssue, ArtifactPreviewManifest, ArtifactSelection, CloudSyncConflictResolution, CloudSyncInitialStrategy, CloudSyncSnapshot, DesktopAppInfo, DesktopHostEvent, DesktopHostInfo, DesktopMenuId, DesktopRelease, DesktopUpdateSnapshot, OfficeEngineHealth, PresentationTemplate, RuntimeEventEnvelope, SessionArtifactDiff, SessionContextSnapshot, SessionHistoryPage, SessionHistoryPageRequest, SessionMessageSearchRequest, SessionMessageSearchResponse, SessionSnapshot, SessionViewSnapshot, SessionWorkspaceTextFile, SpreadsheetCapabilitySnapshot, SpreadsheetChangeRecord, SpreadsheetRangeProfile, SpreadsheetSelection, WorkspaceFileEntry } from "@wordless/protocol";
+import type { AccountSnapshot, AnalysisSessionSnapshot, AppSnapshot, ArtifactDescriptor, ArtifactIssue, ArtifactPreviewManifest, ArtifactSelection, CloudSyncConflictResolution, CloudSyncInitialStrategy, CloudSyncSnapshot, DataAnalysisCapabilitySnapshot, DesktopAppInfo, DesktopHostEvent, DesktopHostInfo, DesktopMenuId, DesktopRelease, DesktopUpdateSnapshot, OfficeEngineHealth, PresentationTemplate, RuntimeEventEnvelope, SessionArtifactDiff, SessionContextSnapshot, SessionHistoryPage, SessionHistoryPageRequest, SessionMessageSearchRequest, SessionMessageSearchResponse, SessionSnapshot, SessionViewSnapshot, SessionWorkspaceTextFile, SpreadsheetCapabilitySnapshot, SpreadsheetChangeRecord, SpreadsheetRangeProfile, SpreadsheetSelection, WorkspaceFileEntry } from "@wordless/protocol";
 import type { ToolApprovalMode } from "@wordless/domain";
 
-export const DESKTOP_BRIDGE_VERSION = 26;
+export const DESKTOP_BRIDGE_VERSION = 27;
 
 export interface DesktopBridge {
   readonly version: typeof DESKTOP_BRIDGE_VERSION;
@@ -75,6 +75,10 @@ export interface DesktopBridge {
   validateSpreadsheetArtifact(sessionId: string, artifactId: string): Promise<ArtifactIssue[]>;
   openSpreadsheetArtifact(sessionId: string, artifactId: string): Promise<void>;
   revealSpreadsheetArtifact(sessionId: string, artifactId: string): Promise<void>;
+  getDataAnalysisCapabilities(): Promise<DataAnalysisCapabilitySnapshot>;
+  getAnalysisSnapshot(sessionId: string): Promise<AnalysisSessionSnapshot>;
+  openAnalysisOutput(sessionId: string, analysisId: string, path: string): Promise<void>;
+  revealAnalysisOutput(sessionId: string, analysisId: string, path: string): Promise<void>;
   getSessionArtifactDiff(sessionId: string, path: string): Promise<SessionArtifactDiff>;
   listSessionWorkspaceDirectory(sessionId: string, path: string): Promise<WorkspaceFileEntry[]>;
   searchSessionWorkspace(sessionId: string, query: string): Promise<WorkspaceFileEntry[]>;
@@ -96,7 +100,7 @@ export interface DesktopBridge {
   setSessionThinkingLevel(sessionId: string, level: ThinkingLevel): Promise<SessionRecord>;
   setSessionAccess(sessionId: string, accessLevel: SessionAccessLevel): Promise<SessionRecord>;
   setSessionInteractionMode(sessionId: string, interactionMode: AgentInteractionModeId): Promise<SessionRecord>;
-  resolveClarificationQuestion(sessionId: string, callId: string, value: string | boolean): Promise<void>;
+  resolveClarificationQuestion(sessionId: string, callId: string, value: string | boolean): Promise<UserMessageSubmission>;
   handoffClarification(sessionId: string, interactionMode: AgentInteractionModeId): Promise<void>;
   setPreferences(preferences: AppPreferences): Promise<void>;
   importAppearanceBackground(file: File): Promise<AppearanceBackgroundAsset>;
@@ -200,6 +204,10 @@ const requiredMethods: Array<Exclude<keyof DesktopBridge, "version">> = [
   "validateSpreadsheetArtifact",
   "openSpreadsheetArtifact",
   "revealSpreadsheetArtifact",
+  "getDataAnalysisCapabilities",
+  "getAnalysisSnapshot",
+  "openAnalysisOutput",
+  "revealAnalysisOutput",
   "getSessionArtifactDiff",
   "listSessionWorkspaceDirectory",
   "searchSessionWorkspace",

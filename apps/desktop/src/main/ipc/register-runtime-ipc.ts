@@ -73,6 +73,7 @@ import { OfficeCliService } from "../office/office-cli-service";
 import { GoogleAccountService } from "../account/google-account-service";
 import { CloudSyncService } from "../cloud-sync/cloud-sync-service";
 import { updateTitleBarOverlays } from "../windows/main-window";
+import type { DesktopDataAnalysisService } from "../data-analysis/data-analysis-service";
 
 function parsePayload<T>(schema: TSchema, payload: unknown): T {
   if (!Value.Check(schema, payload)) throw new Error("Invalid request payload");
@@ -120,6 +121,7 @@ type DesktopIpcOptions = {
   account: GoogleAccountService;
   cloudSync: CloudSyncService;
   office: OfficeCliService;
+  dataAnalysis: DesktopDataAnalysisService;
 };
 
 function isDesktopMenuId(value: unknown): value is DesktopMenuId {
@@ -346,6 +348,20 @@ export function registerRuntimeIpc(runtime: WordlessRuntime, appearanceAssets: A
     const input = parsePayload<{ sessionId: string; artifactId: string }>(Type.Object({ sessionId: Type.String({ minLength: 1 }), artifactId: Type.String({ minLength: 1 }) }), payload);
     shell.showItemInFolder(await options.office.sourceForSpreadsheetOpen(input.sessionId, runtime.getSessionRuntimeRoot(input.sessionId), input.artifactId));
   });
+  ipcMain.handle("wordless:analysis:capabilities", async () => await options.dataAnalysis.capabilities());
+  ipcMain.handle("wordless:analysis:snapshot", async (_event, payload: unknown) => {
+    const input = parsePayload<{ sessionId: string }>(Type.Object({ sessionId: Type.String({ minLength: 1 }) }), payload);
+    return await options.dataAnalysis.snapshot(input.sessionId, runtime.getSessionRuntimeRoot(input.sessionId));
+  });
+  ipcMain.handle("wordless:analysis:open", async (_event, payload: unknown) => {
+    const input = parsePayload<{ sessionId: string; analysisId: string; path: string }>(Type.Object({ sessionId: Type.String({ minLength: 1 }), analysisId: Type.String({ minLength: 1 }), path: Type.String({ minLength: 1 }) }), payload);
+    const failure = await shell.openPath(await options.dataAnalysis.resolveOutput(input.sessionId, runtime.getSessionRuntimeRoot(input.sessionId), input.analysisId, input.path));
+    if (failure) throw new Error(failure);
+  });
+  ipcMain.handle("wordless:analysis:reveal", async (_event, payload: unknown) => {
+    const input = parsePayload<{ sessionId: string; analysisId: string; path: string }>(Type.Object({ sessionId: Type.String({ minLength: 1 }), analysisId: Type.String({ minLength: 1 }), path: Type.String({ minLength: 1 }) }), payload);
+    shell.showItemInFolder(await options.dataAnalysis.resolveOutput(input.sessionId, runtime.getSessionRuntimeRoot(input.sessionId), input.analysisId, input.path));
+  });
   ipcMain.handle("wordless:session:artifact:diff", async (_event, payload: unknown) => {
     const input = parsePayload<{ sessionId: string; path: string }>(WorkspaceFileRequestSchema, payload);
     return await runtime.getSessionArtifactDiff(input.sessionId, input.path);
@@ -428,7 +444,7 @@ export function registerRuntimeIpc(runtime: WordlessRuntime, appearanceAssets: A
   });
   ipcMain.handle("wordless:session:clarification-question", async (_event, payload: unknown) => {
     const input = parsePayload<{ sessionId: string; callId: string; value: string | boolean }>(ResolveClarificationQuestionSchema, payload);
-    await runtime.resolveClarificationQuestion(input.sessionId, input.callId, input.value);
+    return await runtime.resolveClarificationQuestion(input.sessionId, input.callId, input.value);
   });
   ipcMain.handle("wordless:session:clarification-handoff", async (_event, payload: unknown) => {
     const input = parsePayload<{ sessionId: string; interactionMode: "default" | "clarify" | "plan" }>(HandoffClarificationSchema, payload);
