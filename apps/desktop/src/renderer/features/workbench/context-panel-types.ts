@@ -1,5 +1,6 @@
 import type { ComponentType } from "react";
 import type { WorkbenchId } from "@wordless/domain";
+import type { ResearchDelegationDetails } from "@wordless/domain";
 import type { ArtifactSelection } from "@wordless/protocol";
 import type { InlineWorkspaceReferenceToken } from "../thread/InlineSkillComposer";
 
@@ -11,10 +12,20 @@ export type ContextPanelTab = {
   icon: ComponentType<{ className?: string }>;
 };
 
+export type ResearchTaskSelection = {
+  analysisId: string;
+  callId: string;
+  taskId: string;
+  dimensionId: string;
+  details?: ResearchDelegationDetails;
+};
+
 export type WorkbenchContextPanelProps = {
   onArtifactSelection?: (selection: ArtifactSelection) => void;
   onAttachFile: (reference: InlineWorkspaceReferenceToken) => void;
   onViewChange: (view: ContextPanelView) => void;
+  onClearResearchSelection?: () => void;
+  researchSelection?: ResearchTaskSelection | null;
   sessionId: string;
   view: ContextPanelView;
 };

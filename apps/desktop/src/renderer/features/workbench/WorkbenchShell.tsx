@@ -1,5 +1,5 @@
 import { Button } from "@wordless/ui-kit";
-import { AlertTriangle, ChevronLeft, History, LoaderCircle, Search, Settings, Workflow } from "lucide-react";
+import { AlertTriangle, ChevronLeft, LoaderCircle, Search, Settings, Workflow } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { SessionContextPanel } from "../artifacts/SessionContextPanel";
 import { SettingsDialog, type SettingsPage } from "../settings/SettingsDialog";
@@ -11,7 +11,7 @@ import type { ArtifactSelection } from "@wordless/protocol";
 import { usePreferences } from "../../shared/preferences";
 import { useRuntime } from "../../shared/runtime";
 import { workbenchContextPanelRegistry } from "./context-panel-registry";
-import type { ContextPanelView } from "./context-panel-types";
+import type { ContextPanelView, ResearchTaskSelection } from "./context-panel-types";
 import { WelcomeView } from "./WelcomeView";
 import { Sidebar } from "./Sidebar";
 import { SkillsView } from "../skills/SkillsView";
@@ -38,6 +38,7 @@ export function WorkbenchShell() {
   const [mainView, setMainView] = useState<"thread" | "skills" | "media">("thread");
   const [pendingWorkspaceReferences, setPendingWorkspaceReferences] = useState<InlineWorkspaceReferenceToken[]>([]);
   const [pendingArtifactSelection, setPendingArtifactSelection] = useState<ArtifactSelection | null>(null);
+  const [researchTaskSelection, setResearchTaskSelection] = useState<ResearchTaskSelection | null>(null);
   const [skillImportOpen, setSkillImportOpen] = useState(false);
   const [conversationSearchOpen, setConversationSearchOpen] = useState(false);
   const [messageNavigationTarget, setMessageNavigationTarget] = useState<ThreadMessageNavigationTarget | null>(null);
@@ -52,6 +53,7 @@ export function WorkbenchShell() {
   const newThread = () => {
     setPendingWorkspaceReferences([]);
     setPendingArtifactSelection(null);
+    setResearchTaskSelection(null);
     setPendingInitialTurn(null);
     setSelectedSessionId(null);
     setMainView("thread");
@@ -78,6 +80,7 @@ export function WorkbenchShell() {
     setConversationSearchOpen(false);
     setMessageNavigationTarget(null);
     setPendingArtifactSelection(null);
+    setResearchTaskSelection(null);
   }, [selectedSessionId]);
 
   useEffect(() => {
@@ -175,7 +178,7 @@ export function WorkbenchShell() {
       }}
       tabs={contextPanelDefinition.tabs}
       renderContent={(view) => activeSession
-        ? <ContextPanelContent onArtifactSelection={(selection) => { setPendingArtifactSelection(selection); setRightOpen(true); }} onAttachFile={addWorkspaceReference} onViewChange={setContextView} sessionId={activeSession.id} view={view} />
+        ? <ContextPanelContent onArtifactSelection={(selection) => { setPendingArtifactSelection(selection); setRightOpen(true); }} onAttachFile={addWorkspaceReference} onClearResearchSelection={() => setResearchTaskSelection(null)} onViewChange={setContextView} researchSelection={researchTaskSelection} sessionId={activeSession.id} view={view} />
         : <div className="p-4 text-[12px] text-muted-foreground">Select a session to view its context.</div>}
       view={contextView}
     />
@@ -200,12 +203,11 @@ export function WorkbenchShell() {
             </div>
             <div className="flex items-center gap-1.5">
               <Button aria-label={t("messageSearch")} onClick={() => setConversationSearchOpen(true)} size="icon" type="button" variant="ghost"><Search className="h-4 w-4" /></Button>
-              <Button aria-label="Thread history" size="icon" type="button" variant="ghost"><History className="h-4 w-4" /></Button>
               <Button aria-label={t("generatedItems")} onClick={() => setRightOpen((value) => !value)} size="icon" type="button" variant="ghost"><Workflow className="h-4 w-4" /></Button>
               <Button aria-label={t("settings")} onClick={() => openSettings()} size="icon" type="button" variant="ghost"><Settings className="h-4 w-4" /></Button>
             </div>
           </header> : null}
-          {mainView === "skills" ? <SkillsView onOpenImport={() => setSkillImportOpen(true)} /> : mainView === "media" ? selectedSessionId && activeSession?.workbenchId === "media-canvas" ? <MediaCanvas leftOpen={leftOpen} onBackToLibrary={() => setSelectedSessionId(null)} onOpenModels={() => openSettings("models")} onToggleLeft={() => setLeftOpen((value) => !value)} sessionId={selectedSessionId} /> : <MediaLibrary onOpenProject={(sessionId) => { setSelectedSessionId(sessionId); setMainView("media"); }} /> : selectedSessionId ? <ThreadView artifactSelection={pendingArtifactSelection} initialPendingTurn={pendingInitialTurn?.sessionId === selectedSessionId ? pendingInitialTurn.turn : null} messageNavigationTarget={messageNavigationTarget} onArtifactSelectionConsumed={() => setPendingArtifactSelection(null)} onMessageNavigationConsumed={(requestId) => setMessageNavigationTarget((current) => current?.requestId === requestId ? null : current)} onOpenModels={() => openSettings("models")} onOpenSkillImport={() => setSkillImportOpen(true)} onOpenSkills={openSkills} onPendingWorkspaceReferencesConsumed={() => setPendingWorkspaceReferences([])} pendingWorkspaceReferences={pendingWorkspaceReferences} sessionId={selectedSessionId} /> : <WelcomeView onOpenModels={() => openSettings("models")} onOpenSkillImport={() => setSkillImportOpen(true)} onOpenSkills={openSkills} onSessionCreated={(sessionId, pendingTurn) => { setPendingWorkspaceReferences([]); setPendingArtifactSelection(null); setPendingInitialTurn({ sessionId, turn: pendingTurn }); setSelectedSessionId(sessionId); }} />}
+          {mainView === "skills" ? <SkillsView onOpenImport={() => setSkillImportOpen(true)} /> : mainView === "media" ? selectedSessionId && activeSession?.workbenchId === "media-canvas" ? <MediaCanvas leftOpen={leftOpen} onBackToLibrary={() => setSelectedSessionId(null)} onOpenModels={() => openSettings("models")} onToggleLeft={() => setLeftOpen((value) => !value)} sessionId={selectedSessionId} /> : <MediaLibrary onOpenProject={(sessionId) => { setSelectedSessionId(sessionId); setMainView("media"); }} /> : selectedSessionId ? <ThreadView artifactSelection={pendingArtifactSelection} initialPendingTurn={pendingInitialTurn?.sessionId === selectedSessionId ? pendingInitialTurn.turn : null} messageNavigationTarget={messageNavigationTarget} onArtifactSelectionConsumed={() => setPendingArtifactSelection(null)} onMessageNavigationConsumed={(requestId) => setMessageNavigationTarget((current) => current?.requestId === requestId ? null : current)} onOpenModels={() => openSettings("models")} onOpenResearchTask={(selection) => { setResearchTaskSelection(selection); setContextView("research"); setRightOpen(true); }} onOpenSkillImport={() => setSkillImportOpen(true)} onOpenSkills={openSkills} onPendingWorkspaceReferencesConsumed={() => setPendingWorkspaceReferences([])} pendingWorkspaceReferences={pendingWorkspaceReferences} sessionId={selectedSessionId} /> : <WelcomeView onOpenModels={() => openSettings("models")} onOpenSkillImport={() => setSkillImportOpen(true)} onOpenSkills={openSkills} onSessionCreated={(sessionId, pendingTurn) => { setPendingWorkspaceReferences([]); setPendingArtifactSelection(null); setResearchTaskSelection(null); setPendingInitialTurn({ sessionId, turn: pendingTurn }); setSelectedSessionId(sessionId); }} />}
         </section>
         {showSessionTools ? contextPanel : null}
         </>}

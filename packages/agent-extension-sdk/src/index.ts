@@ -111,7 +111,7 @@ export interface SubagentTaskProgress {
   taskId: string;
   status: SubagentTaskStatus;
   output?: string;
-  tool?: { name: string; input: Record<string, unknown>; output?: string; state: "running" | "complete" | "error" };
+  tool?: { callId?: string; name: string; input: Record<string, unknown>; output?: string; state: "running" | "complete" | "error" };
   usage?: ConversationUsage;
   approval?: unknown;
   userRequest?: unknown;

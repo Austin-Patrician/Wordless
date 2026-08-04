@@ -32,7 +32,9 @@ import { ConnectorIcon } from "../../shared/ConnectorIcon";
 import { usePreferences } from "../../shared/preferences";
 import { useRuntime } from "../../shared/runtime";
 import { ClarificationBriefToolActivity, ClarificationQuestionToolActivity } from "./ClarificationToolActivity";
+import { ResearchDelegateToolActivity } from "./ResearchDelegateToolActivity";
 import { UserRequestToolActivity } from "./UserRequestToolActivity";
+import type { ResearchTaskSelection } from "./context-panel-types";
 
 const standardToolIconSources: Record<string, string> = {
   bash: terminalBashIcon,
@@ -46,6 +48,7 @@ const standardToolIconSources: Record<string, string> = {
 
 export type ToolActivityProps = {
   block: MessageToolBlock;
+  onOpenResearchTask?: (selection: ResearchTaskSelection) => void;
   onEnableAutoApprove?: () => void | Promise<void>;
   onLoadToolOutput?: (callId: string) => Promise<void>;
   onResolveApproval?: (approvalId: string, approved: boolean, feedback?: string) => void | Promise<void>;
@@ -496,6 +499,7 @@ export const workbenchRendererRegistry = createWorkbenchRendererRegistry(
     { toolName: "ask_clarifying_question", component: ({ block, onResolveClarificationQuestion }) => <ClarificationQuestionToolActivity block={block} onResolveQuestion={onResolveClarificationQuestion} /> },
     { toolName: "complete_clarification", component: ({ block, clarificationHandoffAvailable, onHandoffClarification }) => <ClarificationBriefToolActivity block={block} handoffAvailable={clarificationHandoffAvailable} onHandoff={onHandoffClarification} /> },
     { toolName: "request_user_input", component: UserRequestToolActivity },
+    { toolName: "research_delegate", component: ResearchDelegateToolActivity },
     { toolName: "delegate_task", component: SubagentToolActivity },
     { workbenchId: "code", component: CodeToolActivity },
     { workbenchId: "presentation", component: PresentationToolActivity },

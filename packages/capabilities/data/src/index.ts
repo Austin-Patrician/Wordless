@@ -1,10 +1,87 @@
 import { randomUUID } from "node:crypto";
 import type { AgentTool, AgentToolResult } from "@wordless/agent";
 import type { SubagentRunner, SubagentTaskProgress } from "@wordless/agent-extension-sdk";
+import type { ResearchDelegationDetails, ResearchDelegationEvent, ResearchDelegationTask } from "@wordless/domain";
 import type { AnalysisResearchSource, AnalysisRunDescriptor, AnalysisSessionSnapshot, DataAnalysisCapabilitySnapshot } from "@wordless/protocol";
 import { Type, type TSchema } from "typebox";
 
 type DataToolDetails = Record<string, unknown>;
+
+const RESEARCH_EVENT_LIMIT = 40;
+const RESEARCH_OUTPUT_PREVIEW_LIMIT = 2_000;
+
+function previewText(value: string | undefined, limit = RESEARCH_OUTPUT_PREVIEW_LIMIT): string | undefined {
+  if (!value) return undefined;
+  return value.length <= limit ? value : `${value.slice(0, limit)}\n...`;
+}
+
+function safeInputSummary(input: Record<string, unknown>): string | undefined {
+  if (Object.keys(input).length === 0) return undefined;
+  const text = JSON.stringify(input, (key, value) => /token|secret|password|authorization|cookie/i.test(key) ? "[redacted]" : value);
+  return previewText(text, 800);
+}
+
+function researchToolLabel(name: string): string {
+  if (name === "research_snapshot") return "Capture source evidence";
+  if (name === "research_submit_dimension") return "Submit research claims";
+  if (name === "research_review_dimension") return "Review research evidence";
+  if (name === "read") return "Read research material";
+  if (name.startsWith("mcp_")) return "Search external sources";
+  return name.replace(/_/g, " ");
+}
+
+function cloneResearchDetails(details: ResearchDelegationDetails): ResearchDelegationDetails {
+  return {
+    ...details,
+    tasks: details.tasks.map((task) => ({
+      ...task,
+      ...(task.activeTool ? { activeTool: { ...task.activeTool } } : {}),
+      events: task.events.map((event) => ({ ...event })),
+    })),
+  };
+}
+
+function formatResearchProgress(details: ResearchDelegationDetails): string {
+  return details.tasks.map((task) => `${task.dimensionId}: ${task.status}${task.activeTool ? ` · ${task.activeTool.name}` : ""}`).join("\n");
+}
+
+function updateResearchTask(task: ResearchDelegationTask, next: SubagentTaskProgress): void {
+  const now = Date.now();
+  task.status = next.status;
+  if (next.status !== "queued" && task.startedAt === undefined) task.startedAt = now;
+  if (["completed", "failed", "cancelled"].includes(next.status)) task.completedAt = now;
+  if (next.output !== undefined) task.output = next.output;
+  if (next.usage !== undefined) task.usage = next.usage;
+  if (next.approval !== undefined) task.approval = next.approval;
+  if (next.userRequest !== undefined) task.userRequest = next.userRequest;
+  if (!next.tool) return;
+
+  const inputSummary = safeInputSummary(next.tool.input);
+  const outputPreview = previewText(next.tool.output);
+  task.activeTool = {
+    ...(next.tool.callId ? { callId: next.tool.callId } : {}),
+    name: next.tool.name,
+    state: next.tool.state,
+    ...(inputSummary ? { inputSummary } : {}),
+    ...(outputPreview ? { outputPreview } : {}),
+  };
+  const eventId = next.tool.callId ?? `${next.tool.name}:${task.events.length}`;
+  const existing = task.events.find((event) => event.id === eventId);
+  const event: ResearchDelegationEvent = {
+    id: eventId,
+    kind: "tool",
+    label: researchToolLabel(next.tool.name),
+    state: next.tool.state,
+    timestamp: existing?.timestamp ?? now,
+    ...(next.tool.callId ? { toolCallId: next.tool.callId } : {}),
+    toolName: next.tool.name,
+    ...(inputSummary ? { inputSummary } : {}),
+    ...(outputPreview ? { outputPreview } : {}),
+  };
+  if (existing) Object.assign(existing, event);
+  else task.events.push(event);
+  if (task.events.length > RESEARCH_EVENT_LIMIT) task.events.splice(0, task.events.length - RESEARCH_EVENT_LIMIT);
+}
 
 export interface DataAnalysisService {
   capabilities(): Promise<DataAnalysisCapabilitySnapshot>;
@@ -92,7 +169,8 @@ export function createDataAnalysisTools(service: DataAnalysisService, context: {
     }),
     async execute(_id, input) {
       const prepared = await service.prepareResearch(context.sessionId, context.workspaceRoot, input);
-      return result(prepared.run, { analysisId: input.analysisId, confirmationToken: prepared.confirmationToken, researchConfirmationRequired: true });
+      const confirmation = { confirmationToken: prepared.confirmationToken, researchConfirmationRequired: true };
+      return result({ ...prepared.run, ...confirmation }, { analysisId: input.analysisId, ...confirmation });
     },
   });
   const researchStart = tool({
@@ -157,25 +235,51 @@ export function createDataAnalysisTools(service: DataAnalysisService, context: {
     }),
     async execute(_id, input, signal, onUpdate) {
       if (!context.subagentRunner) throw new Error("Research subagent execution is unavailable");
-      const progress = new Map<string, SubagentTaskProgress>();
-      const runTask = async (task: typeof input.tasks[number], previous?: string) => {
-        const id = randomUUID();
+      const analysis = (await service.snapshot(context.sessionId, context.workspaceRoot)).runs.find((run) => run.id === input.analysisId);
+      const dimensions = new Map((analysis?.research?.dimensions ?? []).map((dimension) => [dimension.id, dimension]));
+      const startedAt = Date.now();
+      const taskEntries = input.tasks.map((task) => {
+        const dimension = dimensions.get(task.dimensionId);
+        const detail: ResearchDelegationTask = {
+          taskId: randomUUID(),
+          dimensionId: task.dimensionId,
+          dimensionName: dimension?.name ?? task.dimensionId.replace(/[-_]+/g, " "),
+          question: dimension?.question ?? task.task.split("\n").find((line) => line.trim().length > 0) ?? task.task,
+          agent: task.agent,
+          status: "queued",
+          events: [],
+        };
+        return {
+          input: task,
+          detail,
+        };
+      });
+      const details: ResearchDelegationDetails = { version: 1, analysisId: input.analysisId, mode: input.mode, startedAt, updatedAt: startedAt, tasks: taskEntries.map((entry) => entry.detail) };
+      const emitUpdate = () => onUpdate?.({ content: [{ type: "text", text: formatResearchProgress(details) }], details: cloneResearchDetails(details) });
+      emitUpdate();
+      const runTask = async (entry: typeof taskEntries[number], previous?: string) => {
+        const { detail, input: task } = entry;
         const prompt = `Analysis id: ${input.analysisId}\nResearch dimension: ${task.dimensionId}\n${task.task}${previous ? `\n\nPrevious research result:\n${previous.slice(0, 30000)}` : ""}`;
-        const resultValue = await context.subagentRunner!.run({ id, role: task.agent, prompt, cwd: context.workspaceRoot }, { signal, onUpdate: (next) => {
-          progress.set(id, next);
-          onUpdate?.({ content: [{ type: "text", text: [...progress.values()].map((item) => `${item.taskId}: ${item.status}${item.output ? `\n${item.output.slice(0, 2000)}` : ""}`).join("\n\n") }], details: { analysisId: input.analysisId, tasks: [...progress.values()] } });
+        const resultValue = await context.subagentRunner!.run({ id: detail.taskId, role: task.agent, prompt, cwd: context.workspaceRoot }, { signal, onUpdate: (next) => {
+          updateResearchTask(detail, next);
+          details.updatedAt = Date.now();
+          emitUpdate();
         } });
+        updateResearchTask(detail, { taskId: detail.taskId, status: resultValue.status, output: resultValue.text, usage: resultValue.usage });
+        if (resultValue.error) detail.error = resultValue.error;
+        details.updatedAt = Date.now();
+        emitUpdate();
         return resultValue;
       };
       const results = input.mode === "parallel"
-        ? await Promise.all(input.tasks.map((task) => runTask(task)))
-        : await input.tasks.reduce<Promise<Array<Awaited<ReturnType<typeof runTask>>>>>(async (promise, task) => {
+        ? await Promise.all(taskEntries.map((entry) => runTask(entry)))
+        : await taskEntries.reduce<Promise<Array<Awaited<ReturnType<typeof runTask>>>>>(async (promise, entry) => {
             const collected = await promise;
-            const next = await runTask(task, collected.at(-1)?.text);
+            const next = await runTask(entry, collected.at(-1)?.text);
             return [...collected, next];
           }, Promise.resolve([]));
       const summary = results.map((entry) => `${entry.taskId}: ${entry.status}${entry.error ? ` (${entry.error})` : ""}\n${entry.text.slice(0, 5000)}`).join("\n\n---\n\n");
-      return { content: [{ type: "text", text: summary }], details: { analysisId: input.analysisId, results }, ...(results.some((entry) => entry.status !== "completed") ? { isError: true } : {}) };
+      return { content: [{ type: "text", text: summary }], details: cloneResearchDetails(details), ...(results.some((entry) => entry.status !== "completed") ? { isError: true } : {}) };
     },
   });
   return [catalog, inspect, materialize, validate, publish, researchPrepare, researchStart, researchSnapshot, researchSubmit, researchReview, researchValidate, researchDelegate];

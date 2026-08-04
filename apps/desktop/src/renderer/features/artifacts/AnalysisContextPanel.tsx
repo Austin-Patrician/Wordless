@@ -6,6 +6,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import type { AnalysisRunDescriptor, AnalysisSessionSnapshot } from "@wordless/protocol";
 import { useRuntimeClient } from "../../shared/runtime";
 import type { WorkbenchContextPanelProps } from "../workbench/context-panel-types";
+import { ResearchInspector } from "./ResearchInspector";
 import { resolveAnalysisReportLink } from "./analysis-report-links";
 
 function emptySnapshot(): AnalysisSessionSnapshot {
@@ -19,7 +20,7 @@ function outputIcon(kind: AnalysisRunDescriptor["files"][number]["kind"]) {
   return FileText;
 }
 
-export function AnalysisContextPanel({ onViewChange, sessionId, view }: WorkbenchContextPanelProps) {
+export function AnalysisContextPanel({ onClearResearchSelection, onViewChange, researchSelection, sessionId, view }: WorkbenchContextPanelProps) {
   const client = useRuntimeClient();
   const [snapshot, setSnapshot] = useState<AnalysisSessionSnapshot>(emptySnapshot);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -50,7 +51,7 @@ export function AnalysisContextPanel({ onViewChange, sessionId, view }: Workbenc
   const content = view === "report"
     ? <AnalysisReport run={selected} loading={loading} onRefresh={() => void refresh()} />
     : view === "research"
-      ? <AnalysisResearch client={client} run={selected} />
+      ? researchSelection ? <ResearchInspector client={client} onBack={() => onClearResearchSelection?.()} run={selected} selection={researchSelection} sessionId={sessionId} /> : <AnalysisResearch client={client} run={selected} />
     : view === "data"
       ? <AnalysisData run={selected} loading={loading} />
       : view === "charts"

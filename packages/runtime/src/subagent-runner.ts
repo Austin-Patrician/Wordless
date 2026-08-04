@@ -12,6 +12,7 @@ type SubagentTaskEntry = {
   unsubscribe: () => void;
   approvals: Map<string, unknown>;
   userRequests: Map<string, unknown>;
+  tools: Map<string, { name: string; input: Record<string, unknown>; output?: string }>;
 };
 
 export interface SessionSubagentRunnerOptions {
@@ -163,7 +164,7 @@ export class SessionSubagentRunner implements SubagentRunner, SubagentTaskExecut
       toolApprovalMode: this.options.toolApprovalMode,
     };
     const session = await this.options.driver.createSession(childContext);
-    const entry: SubagentTaskEntry = { session, unsubscribe: () => {}, approvals: new Map(), userRequests: new Map() };
+    const entry: SubagentTaskEntry = { session, unsubscribe: () => {}, approvals: new Map(), userRequests: new Map(), tools: new Map() };
     let output = "";
     let usage: SubagentResult["usage"];
     entry.unsubscribe = session.subscribe((event) => {
@@ -172,9 +173,21 @@ export class SessionSubagentRunner implements SubagentRunner, SubagentTaskExecut
         usage = mergeConversationUsage(usage, event.message.usage);
         onUpdate?.({ taskId: task.id, status: "running", output, usage });
       }
-      if (event.type === "tool.started") onUpdate?.({ taskId: task.id, status: "running", tool: { name: event.name, input: event.input, state: "running" } });
-      if (event.type === "tool.updated") onUpdate?.({ taskId: task.id, status: "running", tool: { name: "tool", input: {}, output: event.output, state: "running" } });
-      if (event.type === "tool.completed") onUpdate?.({ taskId: task.id, status: "running", tool: { name: "tool", input: {}, output: event.output, state: event.isError ? "error" : "complete" } });
+      if (event.type === "tool.started") {
+        entry.tools.set(event.callId, { name: event.name, input: event.input });
+        onUpdate?.({ taskId: task.id, status: "running", tool: { callId: event.callId, name: event.name, input: event.input, state: "running" } });
+      }
+      if (event.type === "tool.updated") {
+        const current = entry.tools.get(event.callId) ?? { name: "tool", input: {} };
+        const next = { ...current, output: event.output };
+        entry.tools.set(event.callId, next);
+        onUpdate?.({ taskId: task.id, status: "running", tool: { callId: event.callId, ...next, state: "running" } });
+      }
+      if (event.type === "tool.completed") {
+        const current = entry.tools.get(event.callId) ?? { name: "tool", input: {} };
+        onUpdate?.({ taskId: task.id, status: "running", tool: { callId: event.callId, ...current, output: event.output, state: event.isError ? "error" : "complete" } });
+        entry.tools.delete(event.callId);
+      }
       if (event.type === "approval.requested") {
         entry.approvals.set(event.approval.approvalId, event.approval);
         onUpdate?.({ taskId: task.id, status: "awaiting-approval", approval: event.approval });

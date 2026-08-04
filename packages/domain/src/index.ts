@@ -699,6 +699,53 @@ export interface MessageToolBlock {
   userRequest?: MessageUserRequest;
 }
 
+export type ResearchDelegationTaskStatus = "queued" | "running" | "awaiting-approval" | "awaiting-user-input" | "completed" | "failed" | "cancelled";
+
+export interface ResearchDelegationEvent {
+  id: string;
+  kind: "tool" | "status";
+  label: string;
+  state?: "running" | "complete" | "error";
+  timestamp: number;
+  toolCallId?: string;
+  toolName?: string;
+  inputSummary?: string;
+  outputPreview?: string;
+}
+
+export interface ResearchDelegationTask {
+  taskId: string;
+  dimensionId: string;
+  dimensionName: string;
+  question: string;
+  agent: "researcher" | "research-reviewer";
+  status: ResearchDelegationTaskStatus;
+  startedAt?: number;
+  completedAt?: number;
+  activeTool?: {
+    callId?: string;
+    name: string;
+    state: "running" | "complete" | "error";
+    inputSummary?: string;
+    outputPreview?: string;
+  };
+  events: ResearchDelegationEvent[];
+  output?: string;
+  error?: string;
+  usage?: ConversationUsage;
+  approval?: unknown;
+  userRequest?: unknown;
+}
+
+export interface ResearchDelegationDetails extends Record<string, unknown> {
+  version: 1;
+  analysisId: string;
+  mode: "parallel" | "sequential";
+  startedAt: number;
+  updatedAt: number;
+  tasks: ResearchDelegationTask[];
+}
+
 export type ToolOperationApprovalPreview =
   | {
       type: "diff";
