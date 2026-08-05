@@ -79,3 +79,44 @@ export function researchEvidenceCount(task: ResearchDelegationTask): number {
 export function researchClaimsSubmitted(task: ResearchDelegationTask): boolean {
   return task.events.some((event) => event.toolName === "research_submit_dimension" && event.state === "complete");
 }
+
+export function researchDelegationPhase(details: ResearchDelegationDetails, chinese: boolean): string {
+  const active = details.tasks.some((task) => task.status === "running" || task.status === "queued");
+  const awaiting = details.tasks.some((task) => task.status === "awaiting-approval" || task.status === "awaiting-user-input");
+  const failed = details.tasks.some((task) => task.status === "failed");
+  const terminal = details.tasks.every((task) => task.status === "completed" || task.status === "failed" || task.status === "cancelled");
+  const hasReview = details.tasks.some((task) => task.agent === "research-reviewer");
+  if (awaiting) return chinese ? "需要处理" : "Action required";
+  if (active) return hasReview ? chinese ? "正在审查证据" : "Reviewing evidence" : chinese ? "正在研究" : "Researching";
+  if (failed) return chinese ? "研究失败" : "Research failed";
+  if (terminal && hasReview) return chinese ? "等待验证" : "Validation pending";
+  if (terminal) return chinese ? "证据已收集" : "Evidence collected";
+  return chinese ? "等待调度" : "Queued";
+}
+
+export type ResearchDelegationGroup = {
+  block: import("@wordless/domain").MessageToolBlock;
+  details: ResearchDelegationDetails;
+  taskCallIds: Record<string, string>;
+};
+
+export function groupResearchDelegationBlocks(blocks: readonly import("@wordless/domain").MessageToolBlock[]): ResearchDelegationGroup[] {
+  const groups = new Map<string, ResearchDelegationGroup>();
+  for (const block of blocks) {
+    const details = researchDelegationDetails(block.details);
+    if (!details) continue;
+    const existing = groups.get(details.analysisId);
+    if (!existing) {
+      groups.set(details.analysisId, { block, details: { ...details, tasks: [...details.tasks] }, taskCallIds: Object.fromEntries(details.tasks.map((task) => [task.taskId, block.callId])) });
+      continue;
+    }
+    const taskByKey = new Map(existing.details.tasks.map((task) => [`${task.dimensionId}:${task.agent}`, task]));
+    for (const task of details.tasks) {
+      const key = `${task.dimensionId}:${task.agent}`;
+      taskByKey.set(key, task);
+      existing.taskCallIds[task.taskId] = block.callId;
+    }
+    existing.details = { ...details, startedAt: Math.min(existing.details.startedAt, details.startedAt), updatedAt: Math.max(existing.details.updatedAt, details.updatedAt), tasks: [...taskByKey.values()] };
+  }
+  return [...groups.values()];
+}

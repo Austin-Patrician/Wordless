@@ -5,6 +5,16 @@ import { PROVIDER_AVATARS } from "@wordless/domain";
 const HeaderSchema = Type.Record(Type.String(), Type.String());
 const JsonObjectSchema = Type.Record(Type.String(), Type.Unknown());
 const ModelInputSchema = Type.Array(Type.Union([Type.Literal("text"), Type.Literal("image")]));
+const ThinkingLevelValueSchema = Type.Union([Type.String(), Type.Null()]);
+export const ThinkingLevelMapSchema = Type.Partial(Type.Object({
+  off: ThinkingLevelValueSchema,
+  minimal: ThinkingLevelValueSchema,
+  low: ThinkingLevelValueSchema,
+  medium: ThinkingLevelValueSchema,
+  high: ThinkingLevelValueSchema,
+  xhigh: ThinkingLevelValueSchema,
+  max: ThinkingLevelValueSchema,
+}), { additionalProperties: false });
 const ImageModelCapabilitiesSchema = Type.Object({
   supportsMaskEditing: Type.Optional(Type.Boolean()),
   supportsTransparentBackground: Type.Optional(Type.Boolean()),
@@ -20,6 +30,7 @@ export const ChatModelDefinitionSchema = Type.Object({
   input: Type.Optional(ModelInputSchema),
   contextWindow: Type.Optional(Type.Number({ minimum: 1 })),
   maxTokens: Type.Optional(Type.Number({ minimum: 1 })),
+  thinkingLevelMap: Type.Optional(ThinkingLevelMapSchema),
   headers: Type.Optional(HeaderSchema),
   compat: Type.Optional(JsonObjectSchema),
 });
@@ -75,6 +86,7 @@ export const ModelSettingsSchema = Type.Object({
 
 export type ChatModelDefinition = Static<typeof ChatModelDefinitionSchema>;
 export type ChatModelOverride = Static<typeof ChatModelOverrideSchema>;
+export type ThinkingLevelMap = Static<typeof ThinkingLevelMapSchema>;
 export type ImageModelDefinition = Static<typeof ImageModelDefinitionSchema>;
 export type ProviderConfiguration = Static<typeof ProviderConfigurationSchema>;
 export type ImageProviderConfiguration = Static<typeof ImageProviderConfigurationSchema>;

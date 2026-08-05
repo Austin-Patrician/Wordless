@@ -51,7 +51,7 @@ export function createDesktopRuntime(userData: string, office: OfficeCliService,
         createTools: (context) => [
           ...createHeadlessCodingTools(context.env),
           ...(context.profile.reference.id === "data" ? createDataAnalysisTools(dataAnalysis, {
-            sessionId: context.record.id,
+            sessionId: context.resourceOwnerSessionId ?? context.record.id,
             workspaceRoot: context.record.runtimeRootPath,
             webResearchAvailable: context.connectorTools.some((tool) => /(?:web|search)/i.test(`${tool.name} ${tool.label} ${tool.description}`)),
             subagentRunner: context.subagentRunner,

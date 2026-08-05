@@ -83,11 +83,27 @@ export class DesktopDataAnalysisService implements DataAnalysisService {
   private readonly metadataRoot: string;
   private readonly resourcesRoot: string;
   private readonly researchConfirmationTokens = new Map<string, string>();
+  private readonly sessionMutationTails = new Map<string, Promise<void>>();
   private pythonRuntimesPromise: Promise<PythonRuntime[]> | undefined;
 
   constructor(options: { metadataRoot: string; resourcesRoot: string }) {
     this.metadataRoot = options.metadataRoot;
     this.resourcesRoot = options.resourcesRoot;
+  }
+
+  private async withSessionMutation<T>(sessionId: string, mutation: () => Promise<T>): Promise<T> {
+    const previous = this.sessionMutationTails.get(sessionId) ?? Promise.resolve();
+    let release!: () => void;
+    const gate = new Promise<void>((resolveGate) => { release = resolveGate; });
+    const tail = previous.catch(() => undefined).then(() => gate);
+    this.sessionMutationTails.set(sessionId, tail);
+    await previous.catch(() => undefined);
+    try {
+      return await mutation();
+    } finally {
+      release();
+      if (this.sessionMutationTails.get(sessionId) === tail) this.sessionMutationTails.delete(sessionId);
+    }
   }
 
   async capabilities(): Promise<DataAnalysisCapabilitySnapshot> {
@@ -229,57 +245,63 @@ export class DesktopDataAnalysisService implements DataAnalysisService {
   }
 
   async prepareResearch(sessionId: string, workspaceRoot: string, input: { analysisId: string; mode: "quick" | "normal" | "heavy"; objective: string; questions: string[]; dimensions: Array<{ id: string; name: string; question: string }> }): Promise<{ run: AnalysisRunDescriptor; confirmationToken: string }> {
-    const run = await this.requireRun(sessionId, workspaceRoot, input.analysisId);
-    const now = Date.now();
-    const dimensions = input.dimensions.map((dimension) => ({ id: dimension.id, name: dimension.name, question: dimension.question, status: "planned" as const, claimCount: 0, sourceCount: 0 }));
-    const research: NonNullable<AnalysisRunDescriptor["research"]> = {
-      status: "awaiting-confirmation" as const,
-      mode: input.mode,
-      objective: input.objective,
-      questions: input.questions,
-      dimensions,
-      sources: [],
-      claims: [],
-      conflicts: [],
-      sourceCount: 0,
-      completedDimensions: 0,
-      updatedAt: now,
-    };
-    const output = resolve(run.workspaceRoot, run.outputRoot, "research");
-    await mkdir(join(output, "source-cache"), { recursive: true });
-    await writeFile(join(output, "plan.json"), `${JSON.stringify({ version: 1, ...research }, null, 2)}\n`, "utf8");
-    const confirmationToken = randomUUID();
-    this.researchConfirmationTokens.set(`${sessionId}:${input.analysisId}`, confirmationToken);
-    const updated = { ...run, research, updatedAt: now, errors: [] };
-    await this.upsertRun(sessionId, updated);
-    return { run: this.publicRun(updated), confirmationToken };
+    return await this.withSessionMutation(sessionId, async () => {
+      const run = await this.requireRun(sessionId, workspaceRoot, input.analysisId);
+      const now = Date.now();
+      const dimensions = input.dimensions.map((dimension) => ({ id: dimension.id, name: dimension.name, question: dimension.question, status: "planned" as const, claimCount: 0, sourceCount: 0 }));
+      const research: NonNullable<AnalysisRunDescriptor["research"]> = {
+        researchId: randomUUID(),
+        status: "awaiting-confirmation" as const,
+        mode: input.mode,
+        objective: input.objective,
+        questions: input.questions,
+        dimensions,
+        sources: [],
+        claims: [],
+        conflicts: [],
+        sourceCount: 0,
+        completedDimensions: 0,
+        updatedAt: now,
+      };
+      const output = resolve(run.workspaceRoot, run.outputRoot, "research");
+      await mkdir(join(output, "source-cache"), { recursive: true });
+      await writeFile(join(output, "plan.json"), `${JSON.stringify({ version: 1, ...research }, null, 2)}\n`, "utf8");
+      const confirmationToken = randomUUID();
+      this.researchConfirmationTokens.set(`${sessionId}:${input.analysisId}`, confirmationToken);
+      const updated = { ...run, research, updatedAt: now, errors: [] };
+      await this.upsertRun(sessionId, updated);
+      return { run: this.publicRun(updated), confirmationToken };
+    });
   }
 
   async startResearch(sessionId: string, workspaceRoot: string, input: { analysisId: string; confirmationToken: string; webResearchAvailable: boolean }): Promise<AnalysisRunDescriptor> {
-    const run = await this.requireRun(sessionId, workspaceRoot, input.analysisId);
-    const key = `${sessionId}:${input.analysisId}`;
-    const expectedToken = this.researchConfirmationTokens.get(key);
-    if (!expectedToken || expectedToken !== input.confirmationToken) throw new Error("Research confirmation is missing or expired. Prepare the research plan again.");
-    this.researchConfirmationTokens.delete(key);
-    if (!run.research || run.research.status !== "awaiting-confirmation") throw new Error("Research is not awaiting confirmation");
-    const research = input.webResearchAvailable
-      ? { ...run.research, status: "researching" as const, updatedAt: Date.now() }
-      : { ...run.research, status: "blocked" as const, blockedReason: "A ready Web Search Connector is required for external research.", updatedAt: Date.now() };
-    const updated = { ...run, research, updatedAt: research.updatedAt, errors: [] };
-    await this.upsertRun(sessionId, updated);
-    return this.publicRun(updated);
+    return await this.withSessionMutation(sessionId, async () => {
+      const run = await this.requireRun(sessionId, workspaceRoot, input.analysisId);
+      const key = `${sessionId}:${input.analysisId}`;
+      const expectedToken = this.researchConfirmationTokens.get(key);
+      if (!expectedToken || expectedToken !== input.confirmationToken) throw new Error("Research confirmation is missing or expired. Prepare the research plan again.");
+      this.researchConfirmationTokens.delete(key);
+      if (!run.research || run.research.status !== "awaiting-confirmation") throw new Error("Research is not awaiting confirmation");
+      const research = input.webResearchAvailable
+        ? { ...run.research, status: "researching" as const, updatedAt: Date.now() }
+        : { ...run.research, status: "blocked" as const, blockedReason: "A ready Web Search Connector is required for external research.", updatedAt: Date.now() };
+      const updated = { ...run, research, updatedAt: research.updatedAt, errors: [] };
+      await this.upsertRun(sessionId, updated);
+      return this.publicRun(updated);
+    });
   }
 
   async snapshotResearchSource(sessionId: string, workspaceRoot: string, input: { analysisId: string; dimensionId: string; url: string; title?: string; publisher?: string; publishedAt?: string; sourceType?: "web" | "academic" | "filing" | "other" }, signal?: AbortSignal): Promise<AnalysisResearchSource> {
-    const run = await this.requireRun(sessionId, workspaceRoot, input.analysisId);
-    if (!run.research || run.research.status === "blocked") throw new Error(run.research?.blockedReason ?? "Deep research has not been started");
-    const dimension = run.research.dimensions.find((candidate) => candidate.id === input.dimensionId);
-    if (!dimension) throw new Error(`Research dimension not found: ${input.dimensionId}`);
+    const initial = await this.requireRun(sessionId, workspaceRoot, input.analysisId);
+    if (!initial.research || !["researching", "reviewing", "failed"].includes(initial.research.status)) {
+      throw new Error(initial.research?.blockedReason ?? "Deep research must be confirmed and started before capturing sources");
+    }
+    if (!initial.research.dimensions.some((candidate) => candidate.id === input.dimensionId)) throw new Error(`Research dimension not found: ${input.dimensionId}`);
     const canonicalUrl = await this.assertPublicResearchUrl(input.url);
-    const existing = run.research.sources.find((source) => source.url === canonicalUrl);
+    const existing = initial.research.sources.find((source) => source.url === canonicalUrl);
     if (existing) return existing;
     const fetched = await this.fetchResearchSource(canonicalUrl, signal);
-    const output = resolve(run.workspaceRoot, run.outputRoot);
+    const output = resolve(initial.workspaceRoot, initial.outputRoot);
     const relativeSnapshot = join("research", "source-cache", `${fetched.contentHash}.md`);
     const absoluteSnapshot = resolve(output, relativeSnapshot);
     await mkdir(dirname(absoluteSnapshot), { recursive: true });
@@ -295,63 +317,80 @@ export class DesktopDataAnalysisService implements DataAnalysisService {
       contentHash: fetched.contentHash,
       sourceType: input.sourceType ?? "web",
     };
-    const sources = [...run.research.sources, source];
-    const dimensions = run.research.dimensions.map((candidate) => candidate.id === input.dimensionId ? { ...candidate, status: candidate.status === "planned" ? "researching" as const : candidate.status, sourceCount: candidate.sourceCount + 1 } : candidate);
-    const research = { ...run.research, sources, dimensions, sourceCount: sources.length, updatedAt: Date.now() };
-    await this.upsertRun(sessionId, { ...run, research, updatedAt: research.updatedAt });
-    return source;
+    return await this.withSessionMutation(sessionId, async () => {
+      const run = await this.requireRun(sessionId, workspaceRoot, input.analysisId);
+      if (!run.research || !["researching", "reviewing", "failed"].includes(run.research.status)) {
+        throw new Error(run.research?.blockedReason ?? "Deep research is no longer accepting source updates");
+      }
+      if (!run.research.dimensions.some((candidate) => candidate.id === input.dimensionId)) throw new Error(`Research dimension not found: ${input.dimensionId}`);
+      const current = run.research.sources.find((candidate) => candidate.url === canonicalUrl);
+      if (current) return current;
+      const sources = [...run.research.sources, source];
+      const dimensions = run.research.dimensions.map((candidate) => candidate.id === input.dimensionId ? { ...candidate, status: candidate.status === "planned" ? "researching" as const : candidate.status, sourceCount: candidate.sourceCount + 1 } : candidate);
+      const research = { ...run.research, sources, dimensions, sourceCount: sources.length, updatedAt: Date.now() };
+      await this.upsertRun(sessionId, { ...run, research, updatedAt: research.updatedAt });
+      return source;
+    });
   }
 
   async submitResearchDimension(sessionId: string, workspaceRoot: string, input: { analysisId: string; dimensionId: string; claims: Array<{ id: string; statement: string; kind: "external" | "synthesis"; evidenceRefs: string[]; confidence: "high" | "medium" | "low" | "contested"; caveats?: string[] }>; conflicts?: string[] }): Promise<AnalysisRunDescriptor> {
-    const run = await this.requireRun(sessionId, workspaceRoot, input.analysisId);
-    if (!run.research) throw new Error("Deep research has not been started");
-    if (!run.research.dimensions.some((dimension) => dimension.id === input.dimensionId)) throw new Error(`Research dimension not found: ${input.dimensionId}`);
-    const sourceIds = new Set(run.research.sources.map((source) => source.id));
-    for (const claim of input.claims) for (const reference of claim.evidenceRefs) if (!sourceIds.has(reference)) throw new Error(`Claim ${claim.id} references an unknown source: ${reference}`);
-    const claims: AnalysisResearchClaim[] = input.claims.map((claim) => ({ ...claim, dimensionId: input.dimensionId, caveats: claim.caveats ?? [] }));
-    const retained = run.research.claims.filter((claim) => claim.dimensionId !== input.dimensionId && !claims.some((next) => next.id === claim.id));
-    const dimensions = run.research.dimensions.map((dimension) => dimension.id === input.dimensionId ? { ...dimension, status: "ready" as const, claimCount: claims.length } : dimension);
-    const completedDimensions = dimensions.filter((dimension) => dimension.status === "ready").length;
-    const research = { ...run.research, claims: [...retained, ...claims], conflicts: input.conflicts ?? run.research.conflicts, dimensions, completedDimensions, updatedAt: Date.now() };
-    const updated = { ...run, research, updatedAt: research.updatedAt, errors: [] };
-    await this.upsertRun(sessionId, updated);
-    return this.publicRun(updated);
+    return await this.withSessionMutation(sessionId, async () => {
+      const run = await this.requireRun(sessionId, workspaceRoot, input.analysisId);
+      if (!run.research || !["researching", "reviewing", "failed"].includes(run.research.status)) throw new Error("Deep research must be confirmed and started before submitting evidence");
+      if (!run.research.dimensions.some((dimension) => dimension.id === input.dimensionId)) throw new Error(`Research dimension not found: ${input.dimensionId}`);
+      const sourceIds = new Set(run.research.sources.map((source) => source.id));
+      for (const claim of input.claims) for (const reference of claim.evidenceRefs) if (!sourceIds.has(reference)) throw new Error(`Claim ${claim.id} references an unknown source: ${reference}`);
+      const claims: AnalysisResearchClaim[] = input.claims.map((claim) => ({ ...claim, dimensionId: input.dimensionId, caveats: claim.caveats ?? [] }));
+      const retained = run.research.claims.filter((claim) => claim.dimensionId !== input.dimensionId && !claims.some((next) => next.id === claim.id));
+      const dimensions = run.research.dimensions.map((dimension) => dimension.id === input.dimensionId ? { ...dimension, status: "ready" as const, claimCount: claims.length } : dimension);
+      const completedDimensions = dimensions.filter((dimension) => dimension.status === "ready").length;
+      const research = { ...run.research, claims: [...retained, ...claims], conflicts: input.conflicts ?? run.research.conflicts, dimensions, completedDimensions, updatedAt: Date.now() };
+      const updated = { ...run, research, updatedAt: research.updatedAt, errors: [] };
+      await this.upsertRun(sessionId, updated);
+      return this.publicRun(updated);
+    });
   }
 
   async reviewResearchDimension(sessionId: string, workspaceRoot: string, input: { analysisId: string; dimensionId: string; verdict: "pass" | "revise"; notes: string[] }): Promise<AnalysisRunDescriptor> {
-    const run = await this.requireRun(sessionId, workspaceRoot, input.analysisId);
-    if (!run.research) throw new Error("Deep research has not been started");
-    const dimensions = run.research.dimensions.map((dimension) => dimension.id === input.dimensionId ? { ...dimension, review: { verdict: input.verdict, notes: input.notes } } : dimension);
-    const research = { ...run.research, dimensions, status: "reviewing" as const, updatedAt: Date.now() };
-    const updated = { ...run, research, updatedAt: research.updatedAt };
-    await this.upsertRun(sessionId, updated);
-    return this.publicRun(updated);
+    return await this.withSessionMutation(sessionId, async () => {
+      const run = await this.requireRun(sessionId, workspaceRoot, input.analysisId);
+      if (!run.research || !["researching", "reviewing", "failed"].includes(run.research.status)) throw new Error("Deep research must be confirmed and started before reviewing evidence");
+      if (!run.research.dimensions.some((dimension) => dimension.id === input.dimensionId)) throw new Error(`Research dimension not found: ${input.dimensionId}`);
+      const dimensions = run.research.dimensions.map((dimension) => dimension.id === input.dimensionId ? { ...dimension, review: { verdict: input.verdict, notes: input.notes } } : dimension);
+      const research = { ...run.research, dimensions, status: "reviewing" as const, updatedAt: Date.now() };
+      const updated = { ...run, research, updatedAt: research.updatedAt };
+      await this.upsertRun(sessionId, updated);
+      return this.publicRun(updated);
+    });
   }
 
   async validateResearch(sessionId: string, workspaceRoot: string, analysisId: string): Promise<AnalysisRunDescriptor> {
-    const run = await this.requireRun(sessionId, workspaceRoot, analysisId);
-    if (!run.research) throw new Error("Deep research has not been started");
-    if (run.research.status === "blocked") return this.publicRun(run);
-    const errors: string[] = [];
-    const sourceIds = new Set(run.research.sources.map((source) => source.id));
-    if (run.research.dimensions.some((dimension) => dimension.status !== "ready")) errors.push("Every research dimension must submit evidence before validation");
-    if (run.research.claims.length === 0) errors.push("Research must contain at least one claim");
-    for (const claim of run.research.claims) for (const reference of claim.evidenceRefs) if (!sourceIds.has(reference)) errors.push(`Claim ${claim.id} references an unknown source: ${reference}`);
-    if (run.research.conflicts.length > 0) errors.push("Unresolved source conflicts remain");
-    if (run.research.mode !== "quick" && run.research.dimensions.some((dimension) => dimension.review?.verdict !== "pass")) errors.push("Every standard/deep research dimension requires a passing review");
-    if (errors.length > 0) {
-      const research = { ...run.research, status: "failed" as const, error: errors.join("; "), updatedAt: Date.now() };
-      const updated = { ...run, research, updatedAt: research.updatedAt, errors };
+    return await this.withSessionMutation(sessionId, async () => {
+      const run = await this.requireRun(sessionId, workspaceRoot, analysisId);
+      if (!run.research) throw new Error("Deep research has not been started");
+      if (run.research.status === "blocked") return this.publicRun(run);
+      if (run.research.status === "awaiting-confirmation") throw new Error("Deep research must be confirmed and started before validation");
+      const errors: string[] = [];
+      const sourceIds = new Set(run.research.sources.map((source) => source.id));
+      if (run.research.dimensions.some((dimension) => dimension.status !== "ready")) errors.push("Every research dimension must submit evidence before validation");
+      if (run.research.claims.length === 0) errors.push("Research must contain at least one claim");
+      for (const claim of run.research.claims) for (const reference of claim.evidenceRefs) if (!sourceIds.has(reference)) errors.push(`Claim ${claim.id} references an unknown source: ${reference}`);
+      if (run.research.conflicts.length > 0) errors.push("Unresolved source conflicts remain");
+      if (run.research.mode !== "quick" && run.research.dimensions.some((dimension) => dimension.review?.verdict !== "pass")) errors.push("Every standard/deep research dimension requires a passing review");
+      if (errors.length > 0) {
+        const research = { ...run.research, status: "failed" as const, error: errors.join("; "), updatedAt: Date.now() };
+        const updated = { ...run, research, updatedAt: research.updatedAt, errors };
+        await this.upsertRun(sessionId, updated);
+        throw new Error(errors.join("; "));
+      }
+      const research = { ...run.research, status: "ready" as const, error: undefined, updatedAt: Date.now() };
+      const output = resolve(run.workspaceRoot, run.outputRoot);
+      await writeFile(join(output, "research", "evidence.json"), `${JSON.stringify({ version: 1, researchId: research.researchId, mode: research.mode, objective: research.objective, questions: research.questions, dimensions: research.dimensions, sources: research.sources, claims: research.claims, conflicts: research.conflicts }, null, 2)}\n`, "utf8");
+      await this.persistResearchManifest(output, research);
+      const updated = { ...run, research, updatedAt: research.updatedAt, errors: [] };
       await this.upsertRun(sessionId, updated);
-      throw new Error(errors.join("; "));
-    }
-    const research = { ...run.research, status: "ready" as const, error: undefined, updatedAt: Date.now() };
-    const updated = { ...run, research, updatedAt: research.updatedAt, errors: [] };
-    await this.upsertRun(sessionId, updated);
-    const output = resolve(run.workspaceRoot, run.outputRoot);
-    await writeFile(join(output, "research", "evidence.json"), `${JSON.stringify({ version: 1, mode: research.mode, objective: research.objective, questions: research.questions, dimensions: research.dimensions, sources: research.sources, claims: research.claims, conflicts: research.conflicts }, null, 2)}\n`, "utf8").catch(() => undefined);
-    await this.persistResearchManifest(output, research);
-    return this.publicRun(updated);
+      return this.publicRun(updated);
+    });
   }
 
   private async persistResearchManifest(output: string, research: NonNullable<AnalysisRunDescriptor["research"]>): Promise<void> {
@@ -359,7 +398,7 @@ export class DesktopDataAnalysisService implements DataAnalysisService {
     try {
       const value = JSON.parse(await readFile(manifestPath, "utf8")) as Record<string, unknown>;
       value.version = Math.max(typeof value.version === "number" ? value.version : 1, 2);
-      value.research = { mode: research.mode, objective: research.objective, questions: research.questions, evidencePath: "research/evidence.json", sourceCount: research.sourceCount, claimCount: research.claims.length };
+      value.research = { researchId: research.researchId, mode: research.mode, objective: research.objective, questions: research.questions, evidencePath: "research/evidence.json", sourceCount: research.sourceCount, claimCount: research.claims.length };
       await writeFile(manifestPath, `${JSON.stringify(value, null, 2)}\n`, "utf8");
     } catch {
       // data_publish will report a missing or malformed manifest through its normal validator.
@@ -662,7 +701,13 @@ export class DesktopDataAnalysisService implements DataAnalysisService {
   private async readSession(sessionId: string): Promise<StoredSession> {
     try {
       const value = JSON.parse(await readFile(this.metadataPath(sessionId), "utf8")) as StoredSession;
-      return value.version === 1 && Array.isArray(value.runs) ? value : { version: 1, runs: [] };
+      if (value.version !== 1 || !Array.isArray(value.runs)) return { version: 1, runs: [] };
+      return {
+        ...value,
+        runs: value.runs.map((run) => run.research && typeof run.research.researchId !== "string"
+          ? { ...run, research: { ...run.research, researchId: `legacy-${stableAnalysisId(`${sessionId}:${run.id}:${run.research.updatedAt}`)}` } }
+          : run),
+      };
     } catch {
       return { version: 1, runs: [] };
     }
@@ -739,10 +784,18 @@ export class DesktopDataAnalysisService implements DataAnalysisService {
     if (!value || typeof value !== "object" || Array.isArray(value)) return run;
     const evidence = value as Record<string, unknown>;
     if (!Array.isArray(evidence.sources) || !Array.isArray(evidence.claims) || !Array.isArray(evidence.dimensions)) return run;
+    const evidenceUpdatedAt = (await stat(evidencePath)).mtimeMs;
+    const evidenceResearchId = typeof evidence.researchId === "string" ? evidence.researchId : null;
+    if (run.research) {
+      if (evidenceResearchId && evidenceResearchId !== run.research.researchId) return run;
+      if (!evidenceResearchId && run.research.status !== "ready") return run;
+      if (evidenceUpdatedAt < run.research.updatedAt && run.research.status !== "ready") return run;
+    }
     const dimensions = evidence.dimensions as NonNullable<AnalysisRunDescriptor["research"]>["dimensions"];
     const sources = evidence.sources as AnalysisResearchSource[];
     const claims = evidence.claims as AnalysisResearchClaim[];
     const research: NonNullable<AnalysisRunDescriptor["research"]> = {
+      researchId: evidenceResearchId ?? run.research?.researchId ?? `legacy-${createHash("sha256").update(JSON.stringify(evidence)).digest("hex").slice(0, 24)}`,
       status: "ready" as const,
       mode: evidence.mode === "quick" || evidence.mode === "normal" || evidence.mode === "heavy" ? evidence.mode : null,
       objective: typeof evidence.objective === "string" ? evidence.objective : null,
@@ -753,7 +806,7 @@ export class DesktopDataAnalysisService implements DataAnalysisService {
       conflicts: Array.isArray(evidence.conflicts) ? evidence.conflicts.filter((conflict): conflict is string => typeof conflict === "string") : [],
       sourceCount: sources.length,
       completedDimensions: dimensions.filter((dimension) => dimension.status === "ready").length,
-      updatedAt: (await stat(evidencePath)).mtimeMs,
+      updatedAt: evidenceUpdatedAt,
     };
     if (JSON.stringify(run.research) === JSON.stringify(research)) return run;
     return { ...run, research, updatedAt: Math.max(run.updatedAt, research.updatedAt) };

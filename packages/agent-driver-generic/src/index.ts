@@ -630,26 +630,30 @@ class AgentHarnessDriverSession implements AgentDriverSession {
     this.persistedFileBaselinePaths = persistedFileBaselinePaths;
     this.clarificationMode = isClarificationMode(context);
     const clarificationMode = this.clarificationMode;
-    const supportsUserRequests = context.modelCapabilities.supportsToolUse !== false;
+    const supportsToolUse = context.modelCapabilities.supportsToolUse !== false;
+    const canRequestUserInput = supportsToolUse && context.allowUserRequests !== false;
     const skillPrompt = formatSkillsForSystemPrompt(context.skills, {
       loadingInstruction: "Use the load_skill tool to load a skill's complete instructions when the task matches its description.",
     });
     const profileSystemPrompt = `${context.profile.systemPrompt}${systemPromptContribution ? `\n\n${systemPromptContribution}` : ""}`;
     const baseSystemPrompt = clarificationMode
       ? `${profileSystemPrompt}${skillPrompt ? `\n\n${skillPrompt}` : ""}\n\n${CLARIFICATION_MODE_PROMPT}`
-      : supportsUserRequests
+      : canRequestUserInput
         ? `${profileSystemPrompt}${skillPrompt ? `\n\n${skillPrompt}` : ""}\n\nWhen a user decision or missing requirement blocks progress, call request_user_input with a concise form. Group related questions together. Do not use it to approve file changes or commands.`
+        : context.executionKind === "subagent"
+          ? `${profileSystemPrompt}${skillPrompt ? `\n\n${skillPrompt}` : ""}\n\nComplete the delegated task without asking the user for input. If required information is missing, return a concise blocker to the parent agent.`
         : `${profileSystemPrompt}${skillPrompt ? `\n\n${skillPrompt}` : ""}\n\nThis model cannot call tools. When you need a user decision, ask a concise question in normal response text instead.`;
     const skillTools = context.skills.length > 0 ? [createLoadSkillTool(context.skills)] : [];
-    const clarificationTools = clarificationMode && supportsUserRequests ? [createClarificationQuestionTool(), createClarificationBriefTool()] : [];
-    const tools = supportsUserRequests
-      ? [...baseTools, ...context.connectorTools, ...skillTools, createUserRequestTool((callId, params, signal) => this.requestUserInput(callId, params, signal)), ...clarificationTools]
+    const clarificationTools = clarificationMode && supportsToolUse ? [createClarificationQuestionTool(), createClarificationBriefTool()] : [];
+    const userRequestTools = canRequestUserInput ? [createUserRequestTool((callId, params, signal) => this.requestUserInput(callId, params, signal))] : [];
+    const tools = supportsToolUse
+      ? [...baseTools, ...context.connectorTools, ...skillTools, ...userRequestTools, ...clarificationTools]
       : [...baseTools, ...context.connectorTools];
     const clarificationToolNames = new Set(["read", "grep", "find", "ls", "workspace_changes", "load_skill", "ask_clarifying_question", "complete_clarification"]);
     const activeToolNames = clarificationMode
       ? tools.filter((tool) => clarificationToolNames.has(tool.name)).map((tool) => tool.name)
-      : supportsUserRequests
-        ? [...context.profile.activeToolNames, ...context.connectorTools.map((tool) => tool.name), ...skillTools.map((tool) => tool.name), "request_user_input"]
+      : supportsToolUse
+        ? [...context.profile.activeToolNames, ...context.connectorTools.map((tool) => tool.name), ...skillTools.map((tool) => tool.name), ...(canRequestUserInput ? ["request_user_input"] : [])]
         : [...context.profile.activeToolNames, ...context.connectorTools.map((tool) => tool.name)];
     const toolContract = `Only call tools exposed for this session: ${activeToolNames.join(", ") || "none"}. Never invent or call tools outside this list.`;
     this.harness = new AgentHarness<Skill>({

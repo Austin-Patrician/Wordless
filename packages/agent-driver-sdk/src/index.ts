@@ -469,6 +469,8 @@ export interface AgentDriverSessionContext {
   security: SecurityPolicySnapshot;
   resolveModel(reference: ModelReference): Model<Api>;
   executionKind?: "primary" | "subagent";
+  resourceOwnerSessionId?: string;
+  allowUserRequests?: boolean;
   subagentRunner?: SubagentRunner;
   toolApprovalMode?: ToolApprovalMode;
 }

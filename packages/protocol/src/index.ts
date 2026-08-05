@@ -810,6 +810,7 @@ export interface AnalysisResearchDimension {
 }
 
 export interface AnalysisResearchState {
+  researchId: string;
   status: AnalysisResearchStatus;
   mode: AnalysisResearchMode | null;
   objective: string | null;

@@ -1,11 +1,14 @@
 import { Button, Switch, cn, Tooltip, TooltipContent, TooltipTrigger } from "@wordless/ui-kit";
-import { Archive, ArrowUpRight, ChevronDown, ChevronRight, CircleHelp, FileText, Folder, Layers3, Mic, Pin, PinOff, Plus, Send, ShieldCheck, Sparkles, Square, X } from "lucide-react";
-import { useCallback, useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
+import { ArrowUpRight, ChevronDown, ChevronRight, CircleHelp, FileText, Folder, Layers3, Mic, Pin, PinOff, Plus, Send, Square, X } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import { usePreferences } from "../../shared/preferences";
 import type { AgentInteractionModeId, ConnectorSummary, ProviderAvatarId, SessionAccessLevel, SessionContextUsage, SkillSummary, ToolApprovalMode, UserPromptPart } from "@wordless/domain";
+import agentModeIcon from "../../../icons/common-icons/agent-mode.svg";
+import compressContextIcon from "../../../icons/common-icons/compress-context.svg";
 import planIcon from "../../../icons/common-icons/plan.svg";
 import mcpIcon from "../../../icons/common-icons/mcp.svg";
 import skillsIcon from "../../../icons/common-icons/skills.svg";
+import toolApprovalIcon from "../../../icons/common-icons/tool-approval.svg";
 import { ConnectorIcon } from "../../shared/ConnectorIcon";
 import { AccessPicker } from "./AccessPicker";
 import { BypassPermissionsDialog } from "./BypassPermissionsDialog";
@@ -61,6 +64,96 @@ type ComposerProps = {
 
 const EMPTY_INLINE_SKILL_COMPOSER_VALUE: InlineSkillComposerValue = { parts: [], skillIds: [], skillTokenCounts: {}, text: "", workspaceReferenceCount: 0, workspaceQuery: null };
 
+function skillIconText(skill: SkillSummary): string {
+  const firstChar = skill.name.trim()[0];
+  if (!firstChar) return "?";
+  if (/[一-龥]/.test(firstChar)) return firstChar;
+  return firstChar.toUpperCase();
+}
+
+type SkillsSubmenuProps = {
+  availableSkills: SkillSummary[];
+  onImportSkill?: () => void | Promise<void>;
+  onInsertSkill: (skill: SkillSummary) => void;
+  onManageSkills?: () => void;
+  onTogglePinned: (skillId: string) => void;
+  pinnedSkillIds: string[];
+  searchLabel: string;
+  noSkillsLabel: string;
+  importLabel: string;
+  manageLabel: string;
+  skillTokenCounts: Record<string, number>;
+  pinLabel: (pinned: boolean) => string;
+};
+
+function SkillsSubmenu({
+  availableSkills,
+  importLabel,
+  manageLabel,
+  noSkillsLabel,
+  onImportSkill,
+  onInsertSkill,
+  onManageSkills,
+  onTogglePinned,
+  pinLabel,
+  pinnedSkillIds,
+  searchLabel,
+  skillTokenCounts,
+}: SkillsSubmenuProps) {
+  const [query, setQuery] = useState("");
+  const normalizedQuery = query.trim().toLocaleLowerCase();
+  const searchableSkills = useMemo(
+    () => availableSkills.map((skill) => ({ searchableText: `${skill.name} ${skill.description}`.toLocaleLowerCase(), skill })),
+    [availableSkills],
+  );
+  const filteredSkills = useMemo(
+    () => searchableSkills.filter((entry) => entry.searchableText.includes(normalizedQuery)).map((entry) => entry.skill),
+    [normalizedQuery, searchableSkills],
+  );
+
+  return (
+    <div className="w-[294px] rounded-[10px] border border-[#dfdfdb] bg-white p-2 shadow-[0_14px_34px_rgba(28,28,25,0.12)] dark:border-border dark:bg-card">
+      <input aria-label={searchLabel} autoFocus className="h-8 w-full rounded-[6px] border border-[#e4e4df] bg-[#fafaf8] px-2 text-[12px] text-[#3f3f3a] outline-none placeholder:text-[#9b9b94] focus:border-[#9dad75] dark:border-border dark:bg-muted dark:text-foreground" onChange={(event) => setQuery(event.target.value)} placeholder={searchLabel} value={query} />
+      <div className="mt-1 h-[232px] shrink-0 overflow-y-auto">
+        {filteredSkills.map((skill) => {
+          const tokenCount = skillTokenCounts[skill.id] ?? 0;
+          const pinned = pinnedSkillIds.includes(skill.id);
+          return (
+            <div className="group flex items-center gap-1 rounded-[7px] px-1 py-0.5 hover:bg-[#f3f3f0] dark:hover:bg-muted" key={skill.id}>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <button className="flex min-w-0 flex-1 items-start gap-2 rounded-[6px] px-1.5 py-1.5 text-left" onClick={() => onInsertSkill(skill)} type="button">
+                    <span className="mt-0.5 grid h-5 w-5 shrink-0 place-items-center rounded-[5px] bg-[#f2f2ef] text-[#55554f] dark:bg-muted dark:text-muted-foreground"><span className="text-[10px] font-semibold">{skillIconText(skill)}</span></span>
+                    <span className="min-w-0">
+                      <span className="block truncate text-[12px] font-semibold text-[#3f3f3a] dark:text-foreground">{skill.name}</span>
+                      <span className="mt-0.5 block truncate text-[10px] leading-4 text-[#86867e] dark:text-muted-foreground">{skill.description}</span>
+                    </span>
+                  </button>
+                </TooltipTrigger>
+                <TooltipContent align="start" className="max-w-[260px] text-[11px] leading-4" collisionPadding={10} side="right" sideOffset={10}>{skill.description}</TooltipContent>
+              </Tooltip>
+              {tokenCount > 0 ? <span className="mr-0.5 min-w-4 rounded-[4px] bg-[#e9eee0] px-1 text-center font-mono text-[9px] leading-4 text-[#58633e] dark:bg-[#3b4728] dark:text-[#d5e3ad]">{tokenCount}</span> : null}
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <button aria-label={pinLabel(pinned)} className={cn("mt-1 grid h-6 w-6 shrink-0 place-items-center rounded-[5px] text-[#92928b] hover:bg-white hover:text-[#42423e] dark:hover:bg-card dark:hover:text-foreground", pinned && "text-[#60773a] dark:text-[#c4eb58]")} onClick={() => onTogglePinned(skill.id)} type="button">
+                    {pinned ? <PinOff className="h-3.5 w-3.5" /> : <Pin className="h-3.5 w-3.5" />}
+                  </button>
+                </TooltipTrigger>
+                <TooltipContent>{pinLabel(pinned)}</TooltipContent>
+              </Tooltip>
+            </div>
+          );
+        })}
+        {filteredSkills.length === 0 ? <p className="px-2 py-3 text-[11px] text-[#8b8b84] dark:text-muted-foreground">{noSkillsLabel}</p> : null}
+      </div>
+      <div className="mt-1 space-y-0.5 border-t border-[#ecece8] pt-1 dark:border-border">
+        <button className="w-full rounded-[6px] px-2 py-1.5 text-left text-[11px] text-[#565650] hover:bg-[#f3f3f0] dark:text-foreground dark:hover:bg-muted" onClick={() => void onImportSkill?.()} type="button">{importLabel}</button>
+        <button className="w-full rounded-[6px] px-2 py-1.5 text-left text-[11px] text-[#565650] hover:bg-[#f3f3f0] dark:text-foreground dark:hover:bg-muted" onClick={onManageSkills} type="button">{manageLabel}</button>
+      </div>
+    </div>
+  );
+}
+
 export function Composer({
   compact = false,
   compacting = false,
@@ -115,7 +208,6 @@ export function Composer({
   const [approvalError, setApprovalError] = useState<string | null>(null);
   const [sendError, setSendError] = useState<string | null>(null);
   const [bypassConfirmOpen, setBypassConfirmOpen] = useState(false);
-  const [skillQuery, setSkillQuery] = useState("");
   const [activeConnectorId, setActiveConnectorId] = useState<string | null>(null);
   const [workspaceMatches, setWorkspaceMatches] = useState<WorkspaceFileEntry[]>([]);
   const [workspacePickerIndex, setWorkspacePickerIndex] = useState(0);
@@ -328,15 +420,17 @@ export function Composer({
     }
   };
 
-  const availableSkills = skills
-    .filter((skill) => skill.state === "active")
-    .sort((left, right) => {
-      const leftPinned = pinnedSkillIds.includes(left.id);
-      const rightPinned = pinnedSkillIds.includes(right.id);
-      if (leftPinned !== rightPinned) return leftPinned ? -1 : 1;
-      return left.name.localeCompare(right.name);
-    });
-  const filteredSkills = availableSkills.filter((skill) => `${skill.name} ${skill.description}`.toLowerCase().includes(skillQuery.trim().toLowerCase()));
+  const availableSkills = useMemo(
+    () => skills
+      .filter((skill) => skill.state === "active")
+      .sort((left, right) => {
+        const leftPinned = pinnedSkillIds.includes(left.id);
+        const rightPinned = pinnedSkillIds.includes(right.id);
+        if (leftPinned !== rightPinned) return leftPinned ? -1 : 1;
+        return left.name.localeCompare(right.name);
+      }),
+    [pinnedSkillIds, skills],
+  );
   const selectedSkills = draft.skillIds.flatMap((id) => {
     const skill = availableSkills.find((candidate) => candidate.id === id);
     return skill ? [skill] : [];
@@ -498,15 +592,20 @@ export function Composer({
       </div>
       {skillWarning ? <p className="mt-1 shrink-0 text-[10px] text-[#9b6c2d] dark:text-[#d7b47d]">{t("skillContextWarning")}</p> : null}
       {sendError ? <p className="mt-1 shrink-0 text-[10px] leading-4 text-destructive" role="alert">{sendError}</p> : null}
-      {hasActionMenu && menuOpen ? <div className="absolute bottom-[48px] left-2 z-30 flex items-end gap-1.5" onMouseLeave={() => showActionSubmenu(null)} ref={menuRef}>
+      {hasActionMenu && menuOpen ? <div className="absolute bottom-[48px] left-2 z-30 flex items-end gap-1.5" onMouseLeave={(event) => {
+        const relatedTarget = event.relatedTarget;
+        if (relatedTarget instanceof Node && menuRef.current?.contains(relatedTarget)) return;
+        if (relatedTarget instanceof Element && relatedTarget.closest("[data-radix-tooltip-content]")) return;
+        showActionSubmenu(null);
+      }} ref={menuRef}>
         <div className="w-[188px] rounded-[10px] border border-[#dfdfdb] bg-white p-1.5 shadow-[0_14px_34px_rgba(28,28,25,0.12)] dark:border-border dark:bg-card">
           {onInteractionModeChange || onTogglePlanMode ? <button className={cn("flex w-full items-center gap-2 rounded-[7px] px-2.5 py-2 text-left text-[12px] text-[#3f3f3a] hover:bg-[#f3f3f0] dark:text-foreground dark:hover:bg-muted", modeOpen && "bg-[#eeeeeb] dark:bg-muted")} onClick={() => showActionSubmenu("mode")} onFocus={() => showActionSubmenu("mode")} onMouseEnter={() => showActionSubmenu("mode")} type="button">
-            <Sparkles className="h-4 w-4 text-[#62625d]" /><span className="flex-1">{t("mode")}</span><ChevronRight className="h-3 w-3 text-[#898981]" />
+            <img alt="" className="h-4 w-4 shrink-0 object-contain dark:invert" draggable={false} src={agentModeIcon} /><span className="flex-1">{t("mode")}</span><ChevronRight className="h-3 w-3 text-[#898981]" />
           </button> : null}
           {onToolApprovalModeChange ? <button aria-expanded={approvalOpen} className={cn("flex w-full items-center gap-2 rounded-[7px] px-2.5 py-2 text-left text-[12px] text-[#3f3f3a] hover:bg-[#f3f3f0] dark:text-foreground dark:hover:bg-muted", approvalOpen && "bg-[#eeeeeb] dark:bg-muted")} onClick={() => showActionSubmenu("approval")} onFocus={() => showActionSubmenu("approval")} onMouseEnter={() => showActionSubmenu("approval")} type="button">
-            <ShieldCheck className={cn("h-4 w-4", toolApprovalMode === "bypass" ? "text-[#bd5147] dark:text-[#f09a90]" : toolApprovalMode === "auto" ? "text-[#a47a2a]" : "text-[#62625d]")} /><span className="min-w-0 flex-1 truncate">{locale === "zh-CN" ? "工具审批" : "Tool approval"}</span><ChevronRight className="h-3 w-3 shrink-0 text-[#898981]" />
+            <img alt="" className="h-4 w-4 shrink-0 object-contain" draggable={false} src={toolApprovalIcon} /><span className="min-w-0 flex-1 truncate">{locale === "zh-CN" ? "工具审批" : "Tool approval"}</span><ChevronRight className="h-3 w-3 shrink-0 text-[#898981]" />
           </button> : null}
-          {onCompactContext ? <button className="flex w-full items-center gap-2 rounded-[7px] px-2.5 py-2 text-left text-[12px] text-[#3f3f3a] hover:bg-[#f3f3f0] disabled:cursor-not-allowed disabled:opacity-45 dark:text-foreground dark:hover:bg-muted" disabled={interactionDisabled || running || !contextCompactionAvailable} onClick={() => { setMenuOpen(false); showActionSubmenu(null); void onCompactContext(); }} onMouseEnter={() => showActionSubmenu(null)} type="button"><Archive className="h-4 w-4 shrink-0 text-[#62625d]" /><span>{t("compressContext")}</span></button> : null}
+          {onCompactContext ? <button className="flex w-full items-center gap-2 rounded-[7px] px-2.5 py-2 text-left text-[12px] text-[#3f3f3a] hover:bg-[#f3f3f0] disabled:cursor-not-allowed disabled:opacity-45 dark:text-foreground dark:hover:bg-muted" disabled={interactionDisabled || running || !contextCompactionAvailable} onClick={() => { setMenuOpen(false); showActionSubmenu(null); void onCompactContext(); }} onMouseEnter={() => showActionSubmenu(null)} type="button"><img alt="" className="h-4 w-4 shrink-0 object-contain dark:invert" draggable={false} src={compressContextIcon} /><span>{t("compressContext")}</span></button> : null}
           <button className={cn("flex w-full items-center gap-2 rounded-[7px] px-2.5 py-2 text-left text-[12px] text-[#3f3f3a] hover:bg-[#f3f3f0] dark:text-foreground dark:hover:bg-muted", skillsOpen && "bg-[#eeeeeb] dark:bg-muted")} onClick={() => showActionSubmenu("skills")} onFocus={() => showActionSubmenu("skills")} onMouseEnter={() => showActionSubmenu("skills")} type="button"><img alt="" className="h-4 w-4 shrink-0 object-contain dark:invert" src={skillsIcon} /><span>{t("skills")}</span><ChevronRight className="ml-auto h-3 w-3 text-[#898981]" /></button>
           <button className={cn("flex w-full items-center gap-2 rounded-[7px] px-2.5 py-2 text-left text-[12px] text-[#3f3f3a] hover:bg-[#f3f3f0] dark:text-foreground dark:hover:bg-muted", connectorsOpen && "bg-[#eeeeeb] dark:bg-muted")} onClick={() => showActionSubmenu("connectors")} onFocus={() => showActionSubmenu("connectors")} onMouseEnter={() => showActionSubmenu("connectors")} type="button"><img alt="" className="h-4 w-4 shrink-0 object-contain dark:invert" src={mcpIcon} /><span>{t("connectors")}</span><ChevronRight className="ml-auto h-3 w-3 text-[#898981]" /></button>
         </div>
@@ -518,18 +617,20 @@ export function Composer({
           {approvalError ? <p className="px-2.5 pb-1 text-[10px] text-[#a0522d] dark:text-[#e5a47d]" role="alert">{approvalError}</p> : null}
           {approvalModes.map((option) => <button aria-checked={toolApprovalMode === option.id} className={cn("flex w-full items-start gap-2 rounded-[7px] px-2.5 py-2 text-left hover:bg-[#f3f3f0] dark:hover:bg-muted", toolApprovalMode === option.id && (option.id === "bypass" ? "bg-[#f9e9e6] dark:bg-[#452824]" : "bg-[#edf2df] dark:bg-[#313d20]"))} disabled={approvalChanging} key={option.id} onClick={() => requestToolApprovalModeChange(option.id)} role="radio" type="button"><span className={cn("mt-0.5 grid h-3.5 w-3.5 shrink-0 place-items-center rounded-full border text-[9px]", toolApprovalMode === option.id ? option.id === "bypass" ? "border-[#bd5147] bg-[#bd5147] text-white" : "border-[#6d8438] bg-[#6d8438] text-white" : "border-[#bdbdb6] text-transparent dark:border-muted-foreground")}>✓</span><span className="min-w-0"><span className={cn("block text-[12px] font-medium dark:text-foreground", option.id === "bypass" ? "text-[#9f453d] dark:text-[#f09a90]" : "text-[#42423d]")}>{option.label}</span><span className="mt-0.5 block text-[10px] leading-4 text-[#85857e] dark:text-muted-foreground">{option.description}</span></span></button>)}
         </div> : null}
-        {skillsOpen ? <div className="w-[294px] rounded-[10px] border border-[#dfdfdb] bg-white p-2 shadow-[0_14px_34px_rgba(28,28,25,0.12)] dark:border-border dark:bg-card">
-          <input aria-label={t("searchSkills")} autoFocus className="h-8 w-full rounded-[6px] border border-[#e4e4df] bg-[#fafaf8] px-2 text-[12px] text-[#3f3f3a] outline-none placeholder:text-[#9b9b94] focus:border-[#9dad75] dark:border-border dark:bg-muted dark:text-foreground" onChange={(event) => setSkillQuery(event.target.value)} placeholder={t("searchSkills")} value={skillQuery} />
-          <div className="mt-1 max-h-[232px] overflow-y-auto">
-            {filteredSkills.map((skill) => {
-              const tokenCount = draft.skillTokenCounts[skill.id] ?? 0;
-              const pinned = pinnedSkillIds.includes(skill.id);
-              return <div className="group flex items-center gap-1 rounded-[7px] px-1 py-0.5 hover:bg-[#f3f3f0] dark:hover:bg-muted" key={skill.id}><button className="flex min-w-0 flex-1 items-start gap-2 rounded-[6px] px-1.5 py-1.5 text-left" onClick={() => insertSkill(skill)} type="button"><span className="mt-0.5 grid h-3.5 w-3.5 shrink-0 place-items-center rounded-[3px] border border-[#bdbdb6] text-[#66665f] dark:border-muted-foreground"><Plus className="h-2.5 w-2.5" /></span><span className="min-w-0"><Tooltip><TooltipTrigger asChild><span className="block truncate text-[12px] font-semibold text-[#3f3f3a] dark:text-foreground">{skill.name}</span></TooltipTrigger><TooltipContent className="max-w-[260px] text-[11px] leading-4">{skill.description}</TooltipContent></Tooltip><Tooltip><TooltipTrigger asChild><span className="mt-0.5 block truncate text-[10px] leading-4 text-[#86867e] dark:text-muted-foreground">{skill.description}</span></TooltipTrigger><TooltipContent className="max-w-[260px] text-[11px] leading-4">{skill.description}</TooltipContent></Tooltip></span></button>{tokenCount > 0 ? <span className="mr-0.5 min-w-4 rounded-[4px] bg-[#e9eee0] px-1 text-center font-mono text-[9px] leading-4 text-[#58633e] dark:bg-[#3b4728] dark:text-[#d5e3ad]">{tokenCount}</span> : null}<Tooltip><TooltipTrigger asChild><button aria-label={pinned ? t("unpinSkill") : t("pinSkill")} className={cn("mt-1 grid h-6 w-6 shrink-0 place-items-center rounded-[5px] text-[#92928b] hover:bg-white hover:text-[#42423e] dark:hover:bg-card dark:hover:text-foreground", pinned && "text-[#60773a] dark:text-[#c4eb58]")} onClick={() => setPinnedSkillIds((current) => pinned ? current.filter((id) => id !== skill.id) : [...current, skill.id])} type="button">{pinned ? <PinOff className="h-3.5 w-3.5" /> : <Pin className="h-3.5 w-3.5" />}</button></TooltipTrigger><TooltipContent>{pinned ? t("unpinSkill") : t("pinSkill")}</TooltipContent></Tooltip></div>;
-            })}
-            {filteredSkills.length === 0 ? <p className="px-2 py-3 text-[11px] text-[#8b8b84] dark:text-muted-foreground">{t("noSkillsAvailable")}</p> : null}
-          </div>
-          <div className="mt-1 space-y-0.5 border-t border-[#ecece8] pt-1 dark:border-border"><button className="w-full rounded-[6px] px-2 py-1.5 text-left text-[11px] text-[#565650] hover:bg-[#f3f3f0] dark:text-foreground dark:hover:bg-muted" onClick={() => { setSkillsOpen(false); setMenuOpen(false); void onImportSkill?.(); }} type="button">{t("importSkill")}</button><button className="w-full rounded-[6px] px-2 py-1.5 text-left text-[11px] text-[#565650] hover:bg-[#f3f3f0] dark:text-foreground dark:hover:bg-muted" onClick={() => { setSkillsOpen(false); setMenuOpen(false); onOpenSkills?.(); }} type="button">{t("manageSkills")}</button></div>
-        </div> : null}
+        {skillsOpen ? <SkillsSubmenu
+          availableSkills={availableSkills}
+          importLabel={t("importSkill")}
+          manageLabel={t("manageSkills")}
+          noSkillsLabel={t("noSkillsAvailable")}
+          onImportSkill={() => { setSkillsOpen(false); setMenuOpen(false); void onImportSkill?.(); }}
+          onInsertSkill={insertSkill}
+          onManageSkills={() => { setSkillsOpen(false); setMenuOpen(false); onOpenSkills?.(); }}
+          onTogglePinned={(skillId) => setPinnedSkillIds((current) => current.includes(skillId) ? current.filter((id) => id !== skillId) : [...current, skillId])}
+          pinLabel={(pinned) => pinned ? t("unpinSkill") : t("pinSkill")}
+          pinnedSkillIds={pinnedSkillIds}
+          searchLabel={t("searchSkills")}
+          skillTokenCounts={draft.skillTokenCounts}
+        /> : null}
         {connectorsOpen ? <div className="w-[248px] rounded-[10px] border border-[#dfdfdb] bg-white p-1.5 shadow-[0_14px_34px_rgba(28,28,25,0.12)] dark:border-border dark:bg-card">
           <div className="max-h-[248px] overflow-y-auto">
             {availableConnectors.map((connector) => {

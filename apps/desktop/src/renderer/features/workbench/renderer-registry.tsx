@@ -21,11 +21,24 @@ import {
 } from "lucide-react";
 import { useEffect, useState } from "react";
 import type { ConnectorSummary, MessageArtifactBlock, MessageToolBlock, WorkbenchId } from "@wordless/domain";
+import dataAnalysisIcon from "../../../icons/common-icons/数据分析.svg";
+import dataPublishIcon from "../../../icons/common-icons/data_publish.svg";
+import dataValidateIcon from "../../../icons/common-icons/data_validate.svg";
+import deepThinkingIcon from "../../../icons/common-icons/深度思考.svg";
 import editIcon from "../../../icons/common-icons/edit.svg";
 import findIcon from "../../../icons/common-icons/find.svg";
+import folderIcon from "../../../icons/common-icons/floder.svg";
 import grepIcon from "../../../icons/common-icons/grep.svg";
+import innovationIcon from "../../../icons/common-icons/innovation.svg";
 import listIcon from "../../../icons/common-icons/list.svg";
+import loadSkillIcon from "../../../icons/common-icons/load_skill.svg";
+import modelRequestIcon from "../../../icons/common-icons/模型请求.svg";
 import readIcon from "../../../icons/common-icons/read.svg";
+import readFileIcon from "../../../icons/common-icons/read_file.svg";
+import researchSnapshotIcon from "../../../icons/common-icons/research_snapshot.svg";
+import researchSubmitDimensionIcon from "../../../icons/common-icons/research_submit_dimension.svg";
+import researchValidateIcon from "../../../icons/common-icons/research_validate.svg";
+import planIcon from "../../../icons/common-icons/plan.svg";
 import writeIcon from "../../../icons/common-icons/Write.svg";
 import terminalBashIcon from "../../../icons/common-icons/terminal-bash.svg";
 import { ConnectorIcon } from "../../shared/ConnectorIcon";
@@ -36,18 +49,40 @@ import { ResearchDelegateToolActivity } from "./ResearchDelegateToolActivity";
 import { UserRequestToolActivity } from "./UserRequestToolActivity";
 import type { ResearchTaskSelection } from "./context-panel-types";
 
-const standardToolIconSources: Record<string, string> = {
-  bash: terminalBashIcon,
-  edit: editIcon,
-  find: findIcon,
-  grep: grepIcon,
-  ls: listIcon,
-  read: readIcon,
-  write: writeIcon,
+type StandardToolIconSource = {
+  path: string;
+  invertOnDark?: boolean;
+};
+
+const standardToolIconSources: Record<string, StandardToolIconSource> = {
+  ask_clarifying_question: { path: innovationIcon, invertOnDark: true },
+  bash: { path: terminalBashIcon, invertOnDark: true },
+  complete_clarification: { path: innovationIcon, invertOnDark: true },
+  data_catalog: { path: folderIcon, invertOnDark: true },
+  data_inspect: { path: readFileIcon, invertOnDark: true },
+  data_materialize: { path: dataAnalysisIcon },
+  data_publish: { path: dataPublishIcon },
+  data_validate: { path: dataValidateIcon, invertOnDark: true },
+  edit: { path: editIcon, invertOnDark: true },
+  find: { path: findIcon, invertOnDark: true },
+  grep: { path: grepIcon, invertOnDark: true },
+  load_skill: { path: loadSkillIcon, invertOnDark: true },
+  ls: { path: listIcon, invertOnDark: true },
+  read: { path: readIcon, invertOnDark: true },
+  research_prepare: { path: planIcon, invertOnDark: true },
+  research_review_dimension: { path: researchValidateIcon },
+  research_snapshot: { path: researchSnapshotIcon, invertOnDark: true },
+  research_start: { path: deepThinkingIcon },
+  research_submit_dimension: { path: researchSubmitDimensionIcon, invertOnDark: true },
+  research_validate: { path: researchValidateIcon },
+  request_user_input: { path: modelRequestIcon },
+  workspace_changes: { path: listIcon, invertOnDark: true },
+  write: { path: writeIcon, invertOnDark: true },
 };
 
 export type ToolActivityProps = {
   block: MessageToolBlock;
+  researchTaskCallIds?: Record<string, string>;
   onOpenResearchTask?: (selection: ResearchTaskSelection) => void;
   onEnableAutoApprove?: () => void | Promise<void>;
   onLoadToolOutput?: (callId: string) => Promise<void>;
@@ -119,7 +154,7 @@ function McpToolIcon({ block }: { block: MessageToolBlock }) {
 
 function standardToolIcon(toolName: string): ReactNode | undefined {
   const source = standardToolIconSources[toolName];
-  return source ? <img alt="" className="h-3.5 w-3.5 object-contain dark:invert" src={source} /> : undefined;
+  return source ? <img alt="" className={`h-3.5 w-3.5 object-contain ${source.invertOnDark ? "dark:invert" : ""}`} src={source.path} /> : undefined;
 }
 
 function AutoApproveIcon({ className }: { className?: string }) {

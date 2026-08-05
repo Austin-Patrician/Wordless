@@ -1,11 +1,46 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { SubagentRunner, SubagentTask } from "@wordless/agent-extension-sdk";
 import type { ResearchDelegationDetails } from "@wordless/domain";
 import type { AnalysisRunDescriptor, AnalysisSessionSnapshot, DataAnalysisCapabilitySnapshot } from "@wordless/protocol";
 import { createDataAnalysisTools, type DataAnalysisService } from "../src/index.ts";
 
 function run(): AnalysisRunDescriptor {
-  return { id: "analysis-1", sessionId: "session-1", title: "Test", status: "working", outputRoot: "analysis-output/session-1/analysis-1", reportPath: null, reportContent: null, datasets: [], charts: [], files: [], errors: [], warnings: [], createdAt: 1, updatedAt: 1 };
+  return {
+    id: "analysis-1",
+    sessionId: "session-1",
+    title: "Test",
+    status: "working",
+    outputRoot: "analysis-output/session-1/analysis-1",
+    reportPath: null,
+    reportContent: null,
+    datasets: [],
+    charts: [],
+    files: [],
+    errors: [],
+    warnings: [],
+    research: {
+      researchId: "research-1",
+      status: "researching",
+      mode: "normal",
+      objective: "Explain the market",
+      questions: ["What changed?"],
+      dimensions: [
+        { id: "drivers", name: "Drivers", question: "What changed?", status: "ready", claimCount: 1, sourceCount: 1 },
+        { id: "outlook", name: "Outlook", question: "What happens next?", status: "ready", claimCount: 1, sourceCount: 1 },
+      ],
+      sources: [{ id: "source-1", url: "https://example.com/", title: "Example", publisher: null, publishedAt: null, accessedAt: 1, snapshotPath: "research/source-cache/one.md", contentHash: "one", sourceType: "web" }],
+      claims: [
+        { id: "drivers-1", dimensionId: "drivers", statement: "Driver claim", kind: "external", evidenceRefs: ["source-1"], confidence: "medium", caveats: [] },
+        { id: "outlook-1", dimensionId: "outlook", statement: "Outlook claim", kind: "external", evidenceRefs: ["source-1"], confidence: "medium", caveats: [] },
+      ],
+      conflicts: [],
+      sourceCount: 1,
+      completedDimensions: 2,
+      updatedAt: 1,
+    },
+    createdAt: 1,
+    updatedAt: 1,
+  };
 }
 
 class FauxDataService implements DataAnalysisService {
@@ -37,6 +72,15 @@ class FauxSubagentRunner implements SubagentRunner {
     options?.onUpdate?.({ taskId: task.id, status: "running", tool: { callId: `${task.id}:search`, name: "mcp_web_search", input: { query: "market drivers" }, output: "Found sources", state: "complete" } });
     options?.onUpdate?.({ taskId: task.id, status: "running", tool: { callId: `${task.id}:snapshot`, name: "research_snapshot", input: { url: "https://example.com" }, output: "Captured source", state: "complete" } });
     return { taskId: task.id, status: "completed" as const, text: "Research complete" };
+  }
+  async cancel(): Promise<void> {}
+}
+
+class BlockingSubagentRunner implements SubagentRunner {
+  async run(task: SubagentTask, options?: Parameters<SubagentRunner["run"]>[1]) {
+    return await new Promise<Awaited<ReturnType<SubagentRunner["run"]>>>((resolve) => {
+      options?.signal?.addEventListener("abort", () => resolve({ taskId: task.id, status: "cancelled", text: "" }), { once: true });
+    });
   }
   async cancel(): Promise<void> {}
 }
@@ -102,5 +146,48 @@ describe("data analysis tools", () => {
     ]);
     expect(details.tasks[0]?.events[0]?.toolCallId).toContain(":search");
     expect(updates.some((update) => update.tasks.some((task) => task.status === "running"))).toBe(true);
+  });
+
+  it("marks a completed researcher as failed when no structured evidence was submitted", async () => {
+    const service = new FauxDataService();
+    service.snapshot = async () => {
+      const value = run();
+      value.research = { ...value.research!, dimensions: value.research!.dimensions.map((dimension) => ({ ...dimension, status: "planned", claimCount: 0, sourceCount: 0 })), sources: [], claims: [], sourceCount: 0, completedDimensions: 0 };
+      return { sessionId: "session-1", capabilities: await service.capabilities(), runs: [value] };
+    };
+    const tools = createDataAnalysisTools(service, { sessionId: "session-1", workspaceRoot: "workspace", subagentRunner: new FauxSubagentRunner() });
+    const delegate = tools.find((tool) => tool.name === "research_delegate")!;
+
+    const result = await delegate.execute("call-delegate", {
+      analysisId: "analysis-1",
+      mode: "parallel",
+      tasks: [{ agent: "researcher", dimensionId: "drivers", task: "Research market drivers" }],
+    });
+    const details = result.details as ResearchDelegationDetails;
+
+    expect((result as { isError?: boolean }).isError).toBe(true);
+    expect(details.tasks[0]?.status).toBe("failed");
+    expect(details.tasks[0]?.error).toContain("without submitting complete source-grounded claims");
+  });
+
+  it("times out a stuck research dimension without waiting indefinitely", async () => {
+    vi.useFakeTimers();
+    try {
+      const service = new FauxDataService();
+      const tools = createDataAnalysisTools(service, { sessionId: "session-1", workspaceRoot: "workspace", subagentRunner: new BlockingSubagentRunner() });
+      const delegate = tools.find((tool) => tool.name === "research_delegate")!;
+      const pending = delegate.execute("call-timeout", {
+        analysisId: "analysis-1",
+        mode: "parallel",
+        tasks: [{ agent: "researcher", dimensionId: "drivers", task: "Research market drivers" }],
+      });
+      await vi.advanceTimersByTimeAsync(10 * 60 * 1_000);
+      const result = await pending;
+      const details = result.details as ResearchDelegationDetails;
+      expect(details.tasks[0]?.status).toBe("failed");
+      expect(details.tasks[0]?.error).toContain("timed out after 10 minutes");
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

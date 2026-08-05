@@ -79,7 +79,7 @@ export const workbenchContextPanelRegistry = new WorkbenchContextPanelRegistry([
     component: AnalysisContextPanel,
     tabs: [
       { id: "report", label: "Report", icon: ReportIcon },
-      { id: "research", label: "Research / Sources", icon: BookOpenCheck },
+      { id: "research", label: "Deep Research", icon: BookOpenCheck },
       { id: "data", label: "Data", icon: DataIcon },
       { id: "charts", label: "Charts", icon: ChartsIcon },
       { id: "files", label: "Files", icon: FilesIcon },

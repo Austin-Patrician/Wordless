@@ -9,6 +9,7 @@ import { useRuntime, useRuntimeClient } from "../../shared/runtime";
 import { ModelPicker } from "../workbench/ModelPicker";
 import type { ResearchTaskSelection } from "../workbench/context-panel-types";
 import { workbenchRendererRegistry } from "../workbench/renderer-registry";
+import { groupResearchDelegationBlocks } from "../workbench/research-delegation";
 import { Composer } from "./Composer";
 import type { InlineWorkspaceReferenceToken } from "./InlineSkillComposer";
 import { ConversationDensityRail } from "./ConversationDensityRail";
@@ -18,7 +19,9 @@ import { advanceAssistantRunPresentation, assistantRunActivityAt, assistantRunPr
 import { TurnTokenUsageRow } from "./TurnTokenUsageRow";
 import { ThreadContentFrame } from "./ThreadContentFrame";
 import { MessageMarkdown } from "./MessageMarkdown";
+import { RESPONSE_ERROR_COLLAPSED_HEIGHT, shouldCollapseResponseError } from "./response-error-collapse";
 import wordlessIcon from "../../../icons/common-icons/wordless.png";
+import thinkingIcon from "../../../icons/common-icons/深度思考.svg";
 
 type ThreadViewProps = {
   artifactSelection?: ArtifactSelection | null;
@@ -256,11 +259,18 @@ function applyEvent(snapshot: SessionSnapshot, event: RuntimeEventEnvelope): Ses
 }
 
 function ThinkingBlock({ text }: { text: string }) {
+  const [expanded, setExpanded] = useState(false);
   return (
-    <details className="mt-4 border-l-2 border-[#d9dfca] pl-3.5 dark:border-[#4c5939]" data-thread-search-exclude>
-      <summary className="group flex w-fit cursor-pointer list-none items-center gap-1 select-none text-[13px] font-semibold text-[#5a6250] outline-none focus-visible:ring-2 focus-visible:ring-ring [&::-webkit-details-marker]:hidden dark:text-[#c3cbb4]"><span>深度思考</span><ChevronDown aria-hidden className="h-3.5 w-3.5 text-[#89957a] transition-transform duration-150 group-open:rotate-180" /></summary>
-      <div className="message-markdown-reasoning mt-2 text-[#74746d] dark:text-muted-foreground"><MessageMarkdown text={text} /></div>
-    </details>
+    <section className="mt-4 border-b border-[#e4e4df] pb-3 dark:border-border" data-thread-search-exclude>
+      <div>
+        <button aria-expanded={expanded} aria-label="深度思考" className="group flex min-h-8 w-full cursor-pointer items-center gap-2 text-left select-none outline-none focus-visible:ring-2 focus-visible:ring-ring" onClick={() => setExpanded((value) => !value)} title="深度思考" type="button">
+          <img alt="" className="h-4 w-4 shrink-0 object-contain" draggable={false} src={thinkingIcon} />
+          <span className="text-[12px] font-semibold text-[#5a6250] dark:text-[#c3cbb4]">深度思考</span>
+          <ChevronDown aria-hidden className={`h-3.5 w-3.5 text-[#89957a] transition-transform duration-150 ${expanded ? "rotate-180" : ""}`} />
+        </button>
+        {expanded ? <div className="message-markdown-reasoning mt-2 text-[12px] leading-5 text-[#74746d] dark:text-muted-foreground"><MessageMarkdown text={text} /></div> : null}
+      </div>
+    </section>
   );
 }
 
@@ -339,10 +349,22 @@ function AssistantMessageBlocks({ clarificationHandoffAvailable, message, onEnab
       index -= 1;
       rendered.push(
         <div className="mt-4 divide-y divide-[#e7e7e2] border-y border-[#e7e7e2] dark:divide-border dark:border-border" data-thread-search-exclude key={`tools-${tools[0]?.callId}`}>
-          {tools.map((tool) => {
-            const ToolActivity = workbenchRendererRegistry.resolveTool(workbenchId, tool.name);
-            return <ToolActivity block={tool} canPlan={canPlan} clarificationHandoffAvailable={clarificationHandoffAvailable} key={tool.callId} onEnableAutoApprove={onEnableAutoApprove} onHandoffClarification={onHandoffClarification} onLoadToolOutput={onLoadToolOutput} onOpenResearchTask={onOpenResearchTask} onResolveApproval={onResolveApproval} onResolveClarificationQuestion={onResolveClarificationQuestion} onResolveUserRequest={onResolveUserRequest} />;
-          })}
+          {(() => {
+            const researchGroups = groupResearchDelegationBlocks(tools.filter((tool) => tool.name === "research_delegate"));
+            const groupByAnalysisId = new Map(researchGroups.map((group) => [group.details.analysisId, group]));
+            const renderedResearch = new Set<string>();
+            return tools.flatMap((tool) => {
+              if (tool.name !== "research_delegate") {
+                const ToolActivity = workbenchRendererRegistry.resolveTool(workbenchId, tool.name);
+                return [<ToolActivity block={tool} canPlan={canPlan} clarificationHandoffAvailable={clarificationHandoffAvailable} key={tool.callId} onEnableAutoApprove={onEnableAutoApprove} onHandoffClarification={onHandoffClarification} onLoadToolOutput={onLoadToolOutput} onOpenResearchTask={onOpenResearchTask} onResolveApproval={onResolveApproval} onResolveClarificationQuestion={onResolveClarificationQuestion} onResolveUserRequest={onResolveUserRequest} />];
+              }
+              const group = groupByAnalysisId.get(groupResearchDelegationBlocks([tool])[0]?.details.analysisId ?? "");
+              if (!group || renderedResearch.has(group.details.analysisId)) return [];
+              renderedResearch.add(group.details.analysisId);
+              const ToolActivity = workbenchRendererRegistry.resolveTool(workbenchId, tool.name);
+              return [<ToolActivity block={{ ...group.block, details: group.details }} canPlan={canPlan} clarificationHandoffAvailable={clarificationHandoffAvailable} key={`research-${group.details.analysisId}`} onEnableAutoApprove={onEnableAutoApprove} onHandoffClarification={onHandoffClarification} onLoadToolOutput={onLoadToolOutput} onOpenResearchTask={onOpenResearchTask} onResolveApproval={onResolveApproval} onResolveClarificationQuestion={onResolveClarificationQuestion} onResolveUserRequest={onResolveUserRequest} researchTaskCallIds={group.taskCallIds} />];
+            });
+          })()}
         </div>,
       );
       continue;
@@ -360,13 +382,38 @@ function AssistantResponseError({ message }: { message: ConversationMessage }) {
   return (
     <div className="mt-4 flex items-start gap-2.5 border-y border-[#ead5cf] bg-[#fdf8f6] px-3 py-2.5 text-[#8d5448] dark:border-[#5c3d36] dark:bg-[#2b201d] dark:text-[#efb0a3]" data-thread-search-exclude role="alert">
       <CircleAlert className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-      <div className="min-w-0">
+      <div className="min-w-0 flex-1">
         <p className="text-[12px] font-semibold">{t("assistantResponseFailed")}</p>
         <p className="mt-0.5 text-[10px] text-[#9e675b] dark:text-[#dca095]">{t("assistantResponseFailedHelp")}</p>
-        <p className="mt-2 whitespace-pre-wrap break-words font-mono text-[10px] leading-5 text-[#8d5448] dark:text-[#efb0a3]">{message.errorMessage}</p>
+        <CollapsibleResponseError contentKey={message.id} text={message.errorMessage} />
       </div>
     </div>
   );
+}
+
+function CollapsibleResponseError({ contentKey, text }: { contentKey: string; text: string }) {
+  const { locale } = usePreferences();
+  const contentRef = useRef<HTMLParagraphElement>(null);
+  const [expanded, setExpanded] = useState(false);
+  const [truncated, setTruncated] = useState(false);
+  const measure = useCallback(() => {
+    const element = contentRef.current;
+    if (!element) return;
+    setTruncated(shouldCollapseResponseError(element.scrollHeight));
+  }, []);
+
+  useLayoutEffect(() => {
+    setExpanded(false);
+    measure();
+    const element = contentRef.current;
+    if (!element) return;
+    const observer = new ResizeObserver(measure);
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [contentKey, measure, text]);
+
+  const label = expanded ? locale === "zh-CN" ? "收起错误" : "Collapse error" : locale === "zh-CN" ? "展开错误详情" : "Show error details";
+  return <div className="mt-2"><p className={`whitespace-pre-wrap break-words font-mono text-[10px] leading-5 text-[#8d5448] dark:text-[#efb0a3] ${!expanded && truncated ? "overflow-hidden" : ""}`} ref={contentRef} style={!expanded && truncated ? { maxHeight: RESPONSE_ERROR_COLLAPSED_HEIGHT } : undefined}>{text}</p>{truncated ? <div className="mt-1 flex justify-center"><Tooltip><TooltipTrigger asChild><button aria-expanded={expanded} aria-label={label} className="grid h-5 w-5 place-items-center rounded-[4px] text-[#9e675b] hover:bg-[#f4e2dd] hover:text-[#743f35] dark:text-[#dca095] dark:hover:bg-[#4a2a25] dark:hover:text-[#ffd0c6]" onClick={() => setExpanded((value) => !value)} type="button">{expanded ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}</button></TooltipTrigger><TooltipContent>{label}</TooltipContent></Tooltip></div> : null}</div>;
 }
 
 function AssistantIdentityHeader() {

@@ -67,6 +67,8 @@ describe("General Work tools", () => {
       connectorToolPolicies: [],
       security: { fileRules: [], commandRules: [] },
       resolveModel: () => model,
+      executionKind: "subagent",
+      allowUserRequests: false,
     };
     const driverSession = await createGenericAgentDriver({
       createTools: (driverContext) => createHeadlessCodingTools(driverContext.env),
@@ -76,6 +78,7 @@ describe("General Work tools", () => {
     await driverSession.execute({ type: "prompt", text: "Inspect the workspace." });
 
     expect(advertisedTools[0]).toEqual(expect.arrayContaining(["read", "grep", "find", "ls", "write", "edit", "bash"]));
+    expect(advertisedTools[0]).not.toContain("request_user_input");
     expect(reasoningLevels).toEqual(["high"]);
     driverSession.dispose();
   });

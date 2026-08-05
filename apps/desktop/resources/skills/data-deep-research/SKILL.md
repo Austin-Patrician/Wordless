@@ -12,6 +12,7 @@ Turn verified data findings into a traceable answer to: what happened, why it ha
 - Finish and publish the local data analysis before external research. The data report remains a valid fallback if research is declined or blocked.
 - Never use model memory as external evidence. Every external or synthesis claim must cite source ids returned by `research_snapshot`.
 - Do not start network research without one user confirmation covering the recommended mode, research objective, questions, dimensions, expected source types, and report form.
+- Researcher and research-reviewer subagents must not request user input. Delegated tasks must be self-contained; return a concise blocker to the parent agent when required information is missing.
 - Use only a ready Web Search Connector for discovery. If `research_start` returns `blocked`, explain how to configure the connector and stop the research branch without weakening the data result.
 - Distinguish observed data facts, external explanations, and synthesis. Do not turn association into causation.
 - Prefer primary, official, regulatory, filing, academic, or directly accountable sources. Use news and commentary to triangulate, not as the sole support for high-confidence claims.

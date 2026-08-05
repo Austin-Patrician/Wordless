@@ -176,6 +176,9 @@ export function WorkbenchShell() {
         setRightFullscreen(false);
         setRightOpen(false);
       }}
+      contentClassName={selectedWorkbenchId === "analysis" ? "overflow-hidden" : undefined}
+      showFooter={selectedWorkbenchId !== "analysis"}
+      showMenu={selectedWorkbenchId !== "analysis"}
       tabs={contextPanelDefinition.tabs}
       renderContent={(view) => activeSession
         ? <ContextPanelContent onArtifactSelection={(selection) => { setPendingArtifactSelection(selection); setRightOpen(true); }} onAttachFile={addWorkspaceReference} onClearResearchSelection={() => setResearchTaskSelection(null)} onViewChange={setContextView} researchSelection={researchTaskSelection} sessionId={activeSession.id} view={view} />

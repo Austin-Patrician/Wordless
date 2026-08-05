@@ -3,10 +3,11 @@ import { BookOpenCheck, Check, CircleAlert, Clock3, PanelRightOpen, X } from "lu
 import { useEffect, useMemo, useState } from "react";
 import { usePreferences } from "../../shared/preferences";
 import type { ResearchTaskSelection } from "./context-panel-types";
-import { researchClaimsSubmitted, researchDelegationDetails, researchEvidenceCount } from "./research-delegation";
+import { researchClaimsSubmitted, researchDelegationDetails, researchDelegationPhase, researchEvidenceCount } from "./research-delegation";
 
 type Props = {
   block: MessageToolBlock;
+  researchTaskCallIds?: Record<string, string>;
   onOpenResearchTask?: (selection: ResearchTaskSelection) => void;
   onResolveApproval?: (approvalId: string, approved: boolean, feedback?: string) => void | Promise<void>;
 };
@@ -43,7 +44,7 @@ function taskPhase(task: ResearchDelegationTask, chinese: boolean): string {
   return chinese ? "正在研究" : "Researching";
 }
 
-export function ResearchDelegateToolActivity({ block, onOpenResearchTask, onResolveApproval }: Props) {
+export function ResearchDelegateToolActivity({ block, researchTaskCallIds, onOpenResearchTask, onResolveApproval }: Props) {
   const { locale } = usePreferences();
   const chinese = locale === "zh-CN";
   const details = useMemo(() => researchDelegationDetails(block.details), [block.details]);
@@ -71,6 +72,7 @@ export function ResearchDelegateToolActivity({ block, onOpenResearchTask, onReso
         <div className="min-w-0 flex-1">
           <div className="flex min-w-0 items-center gap-2">
             <h3 className="truncate text-[12px] font-semibold text-[#343530] dark:text-foreground">{chinese ? "深度研究" : "Deep research"}</h3>
+            <span className="shrink-0 text-[9px] font-medium text-[#6d8240] dark:text-[#b9d972]">{researchDelegationPhase(details, chinese)}</span>
             <span className="rounded-[4px] bg-[#eeefea] px-1.5 py-0.5 font-mono text-[8px] uppercase text-[#777871] dark:bg-muted dark:text-muted-foreground">{details.mode}</span>
             <span className="ml-auto flex shrink-0 items-center gap-1 font-mono text-[9px] tabular-nums text-[#92938c] dark:text-muted-foreground"><Clock3 className="h-3 w-3" />{elapsed}s</span>
           </div>
@@ -93,13 +95,13 @@ export function ResearchDelegateToolActivity({ block, onOpenResearchTask, onReso
             <button
               aria-label={`${chinese ? "查看研究维度" : "Open research dimension"} ${task.dimensionName}`}
               className="group flex min-h-12 w-full items-center gap-2.5 px-1.5 py-2 text-left transition-colors duration-150 hover:bg-[#f5f6f1] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring dark:hover:bg-muted/45"
-              onClick={() => onOpenResearchTask?.({ analysisId: details.analysisId, callId: block.callId, taskId: task.taskId, dimensionId: task.dimensionId, details })}
+              onClick={() => onOpenResearchTask?.({ analysisId: details.analysisId, callId: researchTaskCallIds?.[task.taskId] ?? block.callId, taskId: task.taskId, dimensionId: task.dimensionId, details })}
               type="button"
             >
               <span className="w-5 shrink-0 font-mono text-[9px] tabular-nums text-[#a0a199]">{String(index + 1).padStart(2, "0")}</span>
               <span className={`grid h-5 w-5 shrink-0 place-items-center rounded-full text-[#70716a] dark:text-muted-foreground ${actionable ? "text-[#a57425] dark:text-[#e4bd6f]" : task.status === "failed" ? "text-destructive" : ""}`}><StatusIcon task={task} /></span>
               <span className="min-w-0 flex-1">
-                <span className="flex min-w-0 items-center gap-2"><span className="truncate text-[11px] font-medium text-[#484943] dark:text-foreground">{task.dimensionName}</span><span className={`shrink-0 text-[9px] ${actionable ? "font-medium text-[#a57425] dark:text-[#e4bd6f]" : "text-[#888981] dark:text-muted-foreground"}`}>{taskPhase(task, chinese)}</span></span>
+                <span className="flex min-w-0 items-center gap-2"><span className="truncate text-[11px] font-medium text-[#484943] dark:text-foreground">{task.dimensionName}</span><span className="shrink-0 text-[9px] text-[#888981] dark:text-muted-foreground">{task.agent === "research-reviewer" ? chinese ? "证据审查" : "Review" : chinese ? "研究" : "Research"}</span><span className={`shrink-0 text-[9px] ${actionable ? "font-medium text-[#a57425] dark:text-[#e4bd6f]" : "text-[#888981] dark:text-muted-foreground"}`}>{taskPhase(task, chinese)}</span></span>
                 <span className="mt-0.5 block truncate font-mono text-[8px] text-[#a0a199] dark:text-muted-foreground">{evidenceCount ? `${evidenceCount} ${chinese ? "条证据" : "evidence"}` : task.activeTool?.name ?? task.agent}{claimsSubmitted ? ` · ${chinese ? "已提交结论" : "claims submitted"}` : ""}</span>
               </span>
               <PanelRightOpen className="h-3.5 w-3.5 shrink-0 text-[#a2a39c] opacity-0 transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100" />

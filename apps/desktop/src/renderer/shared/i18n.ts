@@ -691,7 +691,7 @@ const messages = {
     planModeDescription: "Structure an implementation plan before changing files.",
     contextCompaction: "Context compaction",
     contextCompactionDescription: "Automatically summarize older session context before the model window is exhausted.",
-    compressContext: "Compress context",
+    compressContext: "Compact",
     compressContextDescription: "Summarize earlier conversation while preserving recent context.",
     compactingContext: "Organizing earlier conversation…",
     compactingContextOverflow: "Context limit reached. Organizing and continuing…",

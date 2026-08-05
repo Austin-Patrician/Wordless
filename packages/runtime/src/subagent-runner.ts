@@ -161,6 +161,8 @@ export class SessionSubagentRunner implements SubagentRunner, SubagentTaskExecut
       security: this.options.security,
       resolveModel: this.options.resolveModel,
       executionKind: "subagent",
+      resourceOwnerSessionId: this.options.parent.id,
+      allowUserRequests: task.role !== "researcher" && task.role !== "research-reviewer",
       toolApprovalMode: this.options.toolApprovalMode,
     };
     const session = await this.options.driver.createSession(childContext);

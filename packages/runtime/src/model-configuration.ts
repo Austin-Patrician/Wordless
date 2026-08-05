@@ -215,6 +215,9 @@ function applyChatConfiguration(model: Model<Api>, configuration: ProviderConfig
     input: override?.input ?? model.input,
     contextWindow: override?.contextWindow ?? model.contextWindow,
     maxTokens: override?.maxTokens ?? model.maxTokens,
+    thinkingLevelMap: override?.thinkingLevelMap
+      ? { ...(model.thinkingLevelMap ?? {}), ...override.thinkingLevelMap }
+      : model.thinkingLevelMap,
     compat: { ...(model.compat ?? {}), ...(configuration.compat ?? {}), ...(override?.compat ?? {}) },
   };
 }
@@ -234,6 +237,7 @@ function customChatModel(providerId: string, configuration: ProviderConfiguratio
     cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
     contextWindow: definition.contextWindow ?? 128_000,
     maxTokens: definition.maxTokens ?? 16_384,
+    thinkingLevelMap: definition.thinkingLevelMap,
     compat: definition.compat,
   };
 }

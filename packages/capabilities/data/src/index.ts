@@ -1,7 +1,9 @@
 import { randomUUID } from "node:crypto";
 import type { AgentTool, AgentToolResult } from "@wordless/agent";
-import type { SubagentRunner, SubagentTaskProgress } from "@wordless/agent-extension-sdk";
+import type { SubagentResult, SubagentRunner, SubagentTaskProgress } from "@wordless/agent-extension-sdk";
 import type { ResearchDelegationDetails, ResearchDelegationEvent, ResearchDelegationTask } from "@wordless/domain";
+
+const RESEARCH_DIMENSION_TIMEOUT_MS = 10 * 60 * 1_000;
 import type { AnalysisResearchSource, AnalysisRunDescriptor, AnalysisSessionSnapshot, DataAnalysisCapabilitySnapshot } from "@wordless/protocol";
 import { Type, type TSchema } from "typebox";
 
@@ -236,6 +238,9 @@ export function createDataAnalysisTools(service: DataAnalysisService, context: {
     async execute(_id, input, signal, onUpdate) {
       if (!context.subagentRunner) throw new Error("Research subagent execution is unavailable");
       const analysis = (await service.snapshot(context.sessionId, context.workspaceRoot)).runs.find((run) => run.id === input.analysisId);
+      if (!analysis?.research || !["researching", "reviewing", "failed"].includes(analysis.research.status)) {
+        throw new Error("Deep research must be confirmed and started before delegating research tasks");
+      }
       const dimensions = new Map((analysis?.research?.dimensions ?? []).map((dimension) => [dimension.id, dimension]));
       const startedAt = Date.now();
       const taskEntries = input.tasks.map((task) => {
@@ -260,16 +265,53 @@ export function createDataAnalysisTools(service: DataAnalysisService, context: {
       const runTask = async (entry: typeof taskEntries[number], previous?: string) => {
         const { detail, input: task } = entry;
         const prompt = `Analysis id: ${input.analysisId}\nResearch dimension: ${task.dimensionId}\n${task.task}${previous ? `\n\nPrevious research result:\n${previous.slice(0, 30000)}` : ""}`;
-        const resultValue = await context.subagentRunner!.run({ id: detail.taskId, role: task.agent, prompt, cwd: context.workspaceRoot }, { signal, onUpdate: (next) => {
-          updateResearchTask(detail, next);
-          details.updatedAt = Date.now();
-          emitUpdate();
-        } });
-        updateResearchTask(detail, { taskId: detail.taskId, status: resultValue.status, output: resultValue.text, usage: resultValue.usage });
-        if (resultValue.error) detail.error = resultValue.error;
+        const taskController = new AbortController();
+        let timedOut = false;
+        const abortTask = () => taskController.abort();
+        if (signal?.aborted) taskController.abort();
+        else signal?.addEventListener("abort", abortTask, { once: true });
+        const timeout = setTimeout(() => {
+          timedOut = true;
+          taskController.abort();
+        }, RESEARCH_DIMENSION_TIMEOUT_MS);
+        let resultValue: SubagentResult;
+        try {
+          resultValue = await context.subagentRunner!.run({ id: detail.taskId, role: task.agent, prompt, cwd: context.workspaceRoot }, { signal: taskController.signal, onUpdate: (next) => {
+            updateResearchTask(detail, next);
+            details.updatedAt = Date.now();
+            emitUpdate();
+          } });
+        } finally {
+          clearTimeout(timeout);
+          signal?.removeEventListener("abort", abortTask);
+        }
+        if (timedOut) {
+          resultValue = { ...resultValue, status: "failed", error: `Research dimension timed out after ${RESEARCH_DIMENSION_TIMEOUT_MS / 60_000} minutes` };
+        }
+        let verifiedResult = resultValue;
+        if (resultValue.status === "completed") {
+          const refreshed = (await service.snapshot(context.sessionId, context.workspaceRoot)).runs.find((run) => run.id === input.analysisId);
+          const dimension = refreshed?.research?.dimensions.find((candidate) => candidate.id === task.dimensionId);
+          const claims = refreshed?.research?.claims.filter((claim) => claim.dimensionId === task.dimensionId) ?? [];
+          const sourceIds = new Set(refreshed?.research?.sources.map((source) => source.id) ?? []);
+          const missingResult = task.agent === "researcher"
+            ? !dimension || dimension.status !== "ready" || claims.length === 0 || claims.some((claim) => claim.evidenceRefs.some((reference) => !sourceIds.has(reference)))
+            : !dimension?.review;
+          if (missingResult) {
+            verifiedResult = {
+              ...resultValue,
+              status: "failed",
+              error: task.agent === "researcher"
+                ? "Researcher finished without submitting complete source-grounded claims."
+                : "Research reviewer finished without recording a review verdict.",
+            };
+          }
+        }
+        updateResearchTask(detail, { taskId: detail.taskId, status: verifiedResult.status, output: verifiedResult.text, usage: verifiedResult.usage });
+        if (verifiedResult.error) detail.error = verifiedResult.error;
         details.updatedAt = Date.now();
         emitUpdate();
-        return resultValue;
+        return verifiedResult;
       };
       const results = input.mode === "parallel"
         ? await Promise.all(taskEntries.map((entry) => runTask(entry)))
