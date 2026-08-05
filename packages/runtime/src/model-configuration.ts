@@ -222,6 +222,20 @@ function applyChatConfiguration(model: Model<Api>, configuration: ProviderConfig
   };
 }
 
+function customThinkingLevelMap(definition: NonNullable<ProviderConfiguration["models"]>[number]): Model<Api>["thinkingLevelMap"] {
+  if (!definition.thinkingLevelMap) return undefined;
+  return {
+    off: null,
+    minimal: null,
+    low: null,
+    medium: null,
+    high: null,
+    xhigh: null,
+    max: null,
+    ...definition.thinkingLevelMap,
+  };
+}
+
 function customChatModel(providerId: string, configuration: ProviderConfiguration, definition: NonNullable<ProviderConfiguration["models"]>[number]): Model<Api> | undefined {
   const api = definition.api ?? configuration.api;
   const baseUrl = definition.baseUrl ?? configuration.baseUrl;
@@ -237,7 +251,7 @@ function customChatModel(providerId: string, configuration: ProviderConfiguratio
     cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
     contextWindow: definition.contextWindow ?? 128_000,
     maxTokens: definition.maxTokens ?? 16_384,
-    thinkingLevelMap: definition.thinkingLevelMap,
+    thinkingLevelMap: customThinkingLevelMap(definition),
     compat: definition.compat,
   };
 }

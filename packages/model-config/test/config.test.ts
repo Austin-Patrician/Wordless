@@ -64,7 +64,7 @@ test("rejects invalid thinking-level mappings", () => {
     imageProviders: {},
   });
 
-  assert.throws(() => parseModelsConfiguration(configuration({ turbo: "turbo" })), /thinkingLevelMap/);
+  assert.throws(() => parseModelsConfiguration(configuration({ turbo: "turbo" })), /thinkingLevelMap.*"turbo"/);
   assert.throws(() => parseModelsConfiguration(configuration({ high: 3 })), /thinkingLevelMap/);
 });
 

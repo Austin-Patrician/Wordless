@@ -111,6 +111,13 @@ export function modelReferenceKey(providerId: string, modelId: string): string {
 }
 
 function formatSchemaErrors(schema: typeof ModelsConfigurationSchema | typeof ModelSettingsSchema, value: unknown): string {
-  const errors = [...Value.Errors(schema, value)].map((error) => `${error.instancePath || "root"}: ${error.message}`);
+  const errors = [...Value.Errors(schema, value)].map((error) => {
+    const additionalProperties = (error.params as { additionalProperties?: unknown }).additionalProperties;
+    const propertyNames = Array.isArray(additionalProperties)
+      ? additionalProperties.filter((property): property is string => typeof property === "string")
+      : [];
+    const detail = propertyNames.length > 0 ? ` (${propertyNames.map((property) => JSON.stringify(property)).join(", ")})` : "";
+    return `${error.instancePath || "root"}: ${error.message}${detail}`;
+  });
   return `Invalid model configuration: ${errors.join("; ")}`;
 }

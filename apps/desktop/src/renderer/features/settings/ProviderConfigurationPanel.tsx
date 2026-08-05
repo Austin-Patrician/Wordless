@@ -84,7 +84,7 @@ export function ProviderConfigurationPanel({ error, models, onDelete, onLoginWit
             spellCheck={false}
             style={{ minHeight: `${editorHeight}px` }}
             value={raw}
-          /><p className="mt-2 text-[12px] text-muted-foreground">baseUrl, headers, compat, models and modelOverrides are written to models.json. In thinkingLevelMap, null disables a level and strings are sent to the provider.</p></> : null}
+          /><p className="mt-2 text-[12px] text-muted-foreground">baseUrl, headers, compat, models and modelOverrides are written to models.json. thinkingLevelMap keys are off, minimal, low, medium, high, xhigh and max. Custom models only expose listed levels; strings are sent to the provider. Use null in modelOverrides to disable an inherited level.</p></> : null}
         </section>
         <section>
           <div className="mb-3 flex items-center justify-between"><h2 className="text-[14px] font-medium">Enabled models</h2><span className="font-mono text-[11px] text-muted-foreground">{enabledModels}/{models.length}</span></div>
@@ -121,7 +121,7 @@ function configurationExample(kind: ConfiguredModelKind, customProvider: boolean
     return JSON.stringify({ name: "My image provider", baseUrl: "https://api.example.com/v1", api: "openrouter-images", models: [{ id: "image-model-id", name: "Image model" }] }, null, 2);
   }
   if (customProvider) {
-    return JSON.stringify({ name: "My provider", baseUrl: "https://api.example.com/v1", api: "openai-completions", headers: { "X-Client": "Wordless" }, models: [{ id: "model-id", name: "Model name", reasoning: true, input: ["text"], contextWindow: 128000, maxTokens: 16384, thinkingLevelMap: { off: "none", minimal: null, low: "low", medium: "medium", high: "high" } }] }, null, 2);
+    return JSON.stringify({ name: "My provider", baseUrl: "https://api.example.com/v1", api: "openai-completions", headers: { "X-Client": "Wordless" }, models: [{ id: "model-id", name: "Model name", reasoning: true, input: ["text"], contextWindow: 128000, maxTokens: 16384, thinkingLevelMap: { off: "none", low: "low", medium: "medium", high: "high" } }] }, null, 2);
   }
   return JSON.stringify({ baseUrl: "https://api.example.com/v1", headers: { "X-Client": "Wordless" }, modelOverrides: { "model-id": { reasoning: true, contextWindow: 128000, thinkingLevelMap: { off: null, minimal: null, low: "low", medium: null, high: "high" } } } }, null, 2);
 }

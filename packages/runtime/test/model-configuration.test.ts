@@ -38,7 +38,6 @@ test("exposes configured thinking levels for custom reasoning models", async () 
           reasoning: true,
           thinkingLevelMap: {
             off: null,
-            minimal: null,
             low: "low",
             medium: null,
             high: "high",
