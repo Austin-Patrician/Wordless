@@ -97,6 +97,7 @@ jobs:
           npm run build:renderer
           npm run build:electron
           npx electron-builder --config electron-builder.yml --mac --publish never
+          npm run verify:packaged-fff -- release/mac-arm64 release/mac
       - uses: actions/upload-artifact@v4
         with:
           name: wordless-macos
@@ -161,6 +162,9 @@ jobs:
           WORDLESS_GOOGLE_CLIENT_ID: ${{ vars.GOOGLE_OAUTH_CLIENT_ID }}
           WORDLESS_GOOGLE_CLIENT_SECRET: ${{ secrets.GOOGLE_OAUTH_CLIENT_SECRET }}
         run: npm run dist:win --workspace=@wordless/desktop
+      - name: Verify packaged FFF native search
+        working-directory: apps/desktop
+        run: npm run verify:packaged-fff -- release/win-unpacked
       - uses: actions/upload-artifact@v4
         with:
           name: wordless-windows-x64

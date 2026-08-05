@@ -3,6 +3,7 @@ import { SubagentTaskPool, type SubagentTaskExecutor } from "@wordless/agent-ext
 import type { SubagentResult, SubagentRoleDefinition, SubagentRunner, SubagentTask, SubagentTaskProgress } from "@wordless/agent-extension-sdk";
 import type { AgentDriver, AgentDriverEvent, AgentDriverSession, AgentDriverSessionContext, AgentProfileDefinition, AgentRuntimeSkill, ConnectorToolPolicy } from "@wordless/agent-driver-sdk";
 import type { AgentTool, ExecutionEnv } from "@wordless/agent";
+import type { WorkspaceSearchProvider } from "@wordless/workspace-search";
 import { clampThinkingLevel, type Api, type Model, type Models } from "@wordless/ai";
 import { mergeConversationUsage, type ModelCapabilities, type ModelReference, type SecurityPolicySnapshot, type SessionRecord, type ToolApprovalMode } from "@wordless/domain";
 import { createWordlessSession, openWordlessSession } from "@wordless/persistence";
@@ -21,6 +22,7 @@ export interface SessionSubagentRunnerOptions {
   driver: AgentDriver;
   models: Models;
   env: ExecutionEnv;
+  workspaceSearch: WorkspaceSearchProvider;
   skills: AgentRuntimeSkill[];
   connectorTools: AgentTool[];
   connectorToolPolicies: ConnectorToolPolicy[];
@@ -155,6 +157,7 @@ export class SessionSubagentRunner implements SubagentRunner, SubagentTaskExecut
       models: this.options.models,
       session: journal,
       env: this.options.env,
+      workspaceSearch: this.options.workspaceSearch,
       skills: this.options.skills,
       connectorTools: task.role === "worker" || task.role === "researcher" ? this.options.connectorTools : [],
       connectorToolPolicies: task.role === "worker" || task.role === "researcher" ? this.options.connectorToolPolicies : [],

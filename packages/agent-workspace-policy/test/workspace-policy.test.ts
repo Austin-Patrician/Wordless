@@ -131,13 +131,33 @@ describe("workspace operation policy", () => {
     }
   });
 
-  it("blocks writes outside the workspace with default access", async () => {
+  it("requires one-time elevated approval for writes outside the workspace with default access", async () => {
     const decision = await preflightWorkspaceOperation(createContext("default"), {
       toolName: "write",
       input: { path: resolve(rootPath, "..", "outside.txt"), content: "Blocked" },
     });
 
-    expect(decision).toEqual({ type: "block", reason: "Default access only permits files inside the workspace" });
+    expect(decision.type).toBe("approval");
+    if (decision.type === "approval") {
+      expect(decision.approval.risk).toBe("workspace-access");
+      expect(decision.approval.severity).toBe("high");
+      expect(decision.approval.requiresElevation).toBe(true);
+      expect(decision.approval.preview).toMatchObject({ type: "external-access", operation: "write" });
+    }
+  });
+
+  it("requires one-time elevated approval for nested external source paths", async () => {
+    const externalPath = resolve(rootPath, "..", "source.csv");
+    const decision = await preflightWorkspaceOperation(createContext("default"), {
+      toolName: "data_import",
+      input: { options: { sourcePath: externalPath } },
+    });
+
+    expect(decision.type).toBe("approval");
+    if (decision.type === "approval" && decision.approval.preview.type === "external-access") {
+      expect(decision.approval.preview.paths).toEqual([externalPath]);
+      expect(decision.approval.requiresElevation).toBe(true);
+    }
   });
 
   it("requires high-risk approval for protected files with full access", async () => {

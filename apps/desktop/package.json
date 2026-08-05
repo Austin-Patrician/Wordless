@@ -15,6 +15,7 @@
     "electron:install": "node ../../node_modules/electron/install.js",
     "build:electron": "node scripts/build-electron.mjs",
     "build:renderer": "vite build --config vite.renderer.config.ts && node scripts/verify-renderer-build.mjs",
+    "verify:packaged-fff": "node scripts/verify-packaged-fff.mjs",
     "prepare:officecli": "node scripts/prepare-officecli-assets.mjs",
     "update:officecli": "node scripts/update-officecli-lock.mjs",
     "build:desktop": "npm run prepare:officecli && npm run build:renderer && npm run build:electron",
@@ -25,11 +26,13 @@
     "dist:win": "npm run build:desktop && electron-builder --config electron-builder.yml --win --x64 --publish never"
   },
   "dependencies": {
+    "@ff-labs/fff-node": "0.10.1",
     "ajv": "^8.20.0",
     "ajv-formats": "^3.0.1",
     "pdf-parse": "^2.4.5"
   },
   "devDependencies": {
+    "@wordless/agent": "0.80.6-wordless.0",
     "@lexical/react": "0.48.0",
     "@radix-ui/react-popover": "1.1.21",
     "@tailwindcss/vite": "4.3.2",
@@ -65,6 +68,7 @@
     "@wordless/runtime": "0.0.0",
     "@wordless/skill-registry": "0.0.0",
     "@wordless/ui-kit": "0.0.0",
+    "@wordless/workspace-search": "0.0.0",
     "@xyflow/react": "12.11.2",
     "electron": "43.1.0",
     "electron-builder": "^26.15.3",

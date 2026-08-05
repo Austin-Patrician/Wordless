@@ -9,7 +9,7 @@ export function createCodingAgentDriver(options: { createExtensionHost?: AgentEx
     id: "coding",
     features: ["steer", "follow-up", "thinking", "compact", "branch", "commands", "artifacts", "approval", "user-request"],
     createTools(context) {
-      return createHeadlessCodingTools(context.env);
+      return createHeadlessCodingTools(context.env, context.workspaceSearch);
     },
     preflightOperation: preflightWorkspaceOperation,
     createExtensionHost: options.createExtensionHost,

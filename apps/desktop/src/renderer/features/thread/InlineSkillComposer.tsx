@@ -32,10 +32,11 @@ import {
   type SerializedLexicalNode,
   type Spread,
 } from "lexical";
-import { Command, X } from "lucide-react";
+import { X } from "lucide-react";
 import { forwardRef, useEffect, useImperativeHandle, useRef, useState, type JSX, type KeyboardEvent as ReactKeyboardEvent, type MutableRefObject } from "react";
 import type { SkillSource, UserPromptPart } from "@wordless/domain";
 import { FileTypeIcon } from "../../shared/FileTypeIcon";
+import { skillIconText } from "../../shared/skill-icon";
 import { countSkillTokenOccurrences, normalizeUserPromptParts, uniqueSkillIdsInDocumentOrder } from "./inline-skill-composer-model";
 
 export type InlineSkillToken = {
@@ -55,6 +56,7 @@ export type InlineSkillComposerValue = {
   skillIds: string[];
   skillTokenCounts: Record<string, number>;
   text: string;
+  skillQuery: string | null;
   workspaceReferenceCount: number;
   workspaceQuery: string | null;
 };
@@ -81,7 +83,7 @@ type InlineSkillComposerProps = {
   readOnly?: boolean;
   stopEnabled?: boolean;
   submitDisabled?: boolean;
-  onWorkspaceReferenceKeyDown?(event: ReactKeyboardEvent<HTMLDivElement>): boolean;
+  onReferencePickerKeyDown?(event: ReactKeyboardEvent<HTMLDivElement>): boolean;
 };
 
 type SerializedSkillTokenNode = Spread<
@@ -212,21 +214,43 @@ function $isWorkspaceReferenceNode(node: LexicalNode | null | undefined): node i
   return node instanceof WorkspaceReferenceNode;
 }
 
+function $removeTokenAndSelect(node: LexicalNode): void {
+  const parent = node.getParent();
+  if (!parent || !$isElementNode(parent)) {
+    node.remove();
+    $getRoot().selectEnd();
+    return;
+  }
+  const offset = node.getIndexWithinParent();
+  node.remove();
+  parent.select(offset, offset);
+}
+
+function removeToken(editor: LexicalEditor, nodeKey: NodeKey): void {
+  editor.update(() => {
+    const node = $getNodeByKey(nodeKey);
+    if (node) $removeTokenAndSelect(node);
+  });
+  editor.focus();
+}
+
 function SkillToken({ nodeKey, skillName }: { nodeKey: NodeKey; skillName: string }) {
   const [editor] = useLexicalComposerContext();
   return (
-    <span className="group ml-1 mr-1.5 my-0.5 inline-flex h-6 max-w-[220px] select-none items-center gap-1 rounded-[5px] border border-[#d7d8d2] bg-[#f5f5f2] px-1.5 align-middle font-sans text-[12px] font-medium leading-none text-[#454640] shadow-[inset_0_1px_0_rgba(255,255,255,0.8)] transition-colors duration-150 hover:border-[#c6c8bd] hover:bg-[#eeeeea] dark:border-[#4b4c45] dark:bg-[#2b2c27] dark:text-[#deded8] dark:hover:border-[#5b5c54] dark:hover:bg-[#31322d]" contentEditable={false} title={skillName}>
-      <Command aria-hidden className="h-3 w-3 shrink-0 text-[#73746c] dark:text-[#b7b8ae]" />
-      <span className="min-w-0 truncate">{skillName}</span>
-      <button
-        aria-label={`Remove ${skillName}`}
-        className="grid h-4 w-4 shrink-0 place-items-center rounded-[3px] text-[#7b7c74] opacity-0 pointer-events-none transition-opacity duration-150 group-focus-within:pointer-events-auto group-focus-within:opacity-100 group-hover:pointer-events-auto group-hover:opacity-100 hover:bg-[#dedfd9] hover:text-[#292a26] focus-visible:pointer-events-auto focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[#9da890] dark:hover:bg-[#464740] dark:hover:text-white"
-        onClick={() => editor.update(() => $getNodeByKey(nodeKey)?.remove())}
-        onMouseDown={(event) => event.preventDefault()}
-        type="button"
-      >
-        <X className="h-3 w-3" />
-      </button>
+    <span className="inline-flex h-7 select-none items-center pl-1 pr-1.5 align-bottom" contentEditable={false}>
+      <span className="group inline-flex h-6 max-w-[220px] items-center gap-1 rounded-[5px] border border-[#d7d8d2] bg-[#f5f5f2] px-1.5 font-sans text-[12px] font-medium leading-4 text-[#454640] shadow-[inset_0_1px_0_rgba(255,255,255,0.8)] transition-colors duration-150 hover:border-[#c6c8bd] hover:bg-[#eeeeea] dark:border-[#4b4c45] dark:bg-[#2b2c27] dark:text-[#deded8] dark:hover:border-[#5b5c54] dark:hover:bg-[#31322d]" title={skillName}>
+        <button
+          aria-label={`Remove ${skillName}`}
+          className="relative grid h-4 w-4 shrink-0 place-items-center rounded-[4px] text-[#73746c] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[#9da890] dark:text-[#c6c7bf]"
+          onClick={() => removeToken(editor, nodeKey)}
+          onMouseDown={(event) => event.preventDefault()}
+          type="button"
+        >
+          <span aria-hidden className="grid h-4 w-4 place-items-center rounded-[4px] bg-[#e6e7e1] text-[9px] font-semibold text-[#5b5c55] transition-opacity duration-100 group-hover:opacity-0 group-focus-within:opacity-0 dark:bg-[#41423b] dark:text-[#d0d1c9]">{skillIconText(skillName)}</span>
+          <X aria-hidden className="absolute h-3 w-3 opacity-0 transition-opacity duration-100 group-hover:opacity-100 group-focus-within:opacity-100" />
+        </button>
+        <span className="min-w-0 truncate">{skillName}</span>
+      </span>
     </span>
   );
 }
@@ -234,10 +258,20 @@ function SkillToken({ nodeKey, skillName }: { nodeKey: NodeKey; skillName: strin
 function WorkspaceReferenceToken({ nodeKey, name, path, kind }: { nodeKey: NodeKey; name: string; path: string; kind: "file" | "directory" }) {
   const [editor] = useLexicalComposerContext();
   return (
-    <span className="group ml-1 mr-1.5 my-0.5 inline-flex h-6 max-w-[250px] select-none items-center gap-1 rounded-[5px] border border-[#c2d9d1] bg-[#f0f8f5] px-1.5 align-middle font-sans text-[12px] font-medium leading-none text-[#34574d] shadow-[inset_0_1px_0_rgba(255,255,255,0.8)] transition-colors duration-150 hover:border-[#a9cbbf] hover:bg-[#e7f4ef] dark:border-[#3b675c] dark:bg-[#20332d] dark:text-[#c5e3d9] dark:hover:border-[#4a786c] dark:hover:bg-[#274036]" contentEditable={false} title={path}>
-      <FileTypeIcon className="h-3 w-3 [&_svg]:h-3 [&_svg]:w-3" kind={kind} name={name} />
-      <span className="min-w-0 truncate">{name}</span>
-      <button aria-label={`Remove ${name}`} className="grid h-4 w-4 shrink-0 place-items-center rounded-[3px] text-[#5e8278] opacity-0 pointer-events-none transition-opacity duration-150 group-focus-within:pointer-events-auto group-focus-within:opacity-100 group-hover:pointer-events-auto group-hover:opacity-100 hover:bg-[#cfe9e1] hover:text-[#23483d] focus-visible:pointer-events-auto focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[#6eaa99] dark:hover:bg-[#36554a] dark:hover:text-white" onClick={() => editor.update(() => $getNodeByKey(nodeKey)?.remove())} onMouseDown={(event) => event.preventDefault()} type="button"><X className="h-3 w-3" /></button>
+    <span className="inline-flex h-7 select-none items-center pl-1 pr-1.5 align-bottom" contentEditable={false}>
+      <span className="group inline-flex h-6 max-w-[250px] items-center gap-1 rounded-[5px] border border-[#c2d9d1] bg-[#f0f8f5] px-1.5 font-sans text-[12px] font-medium leading-4 text-[#34574d] shadow-[inset_0_1px_0_rgba(255,255,255,0.8)] transition-colors duration-150 hover:border-[#a9cbbf] hover:bg-[#e7f4ef] dark:border-[#3b675c] dark:bg-[#20332d] dark:text-[#c5e3d9] dark:hover:border-[#4a786c] dark:hover:bg-[#274036]" title={path}>
+        <button
+          aria-label={`Remove ${name}`}
+          className="relative grid h-4 w-4 shrink-0 place-items-center rounded-[4px] text-[#5e8278] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[#6eaa99] dark:text-[#b9d8ce]"
+          onClick={() => removeToken(editor, nodeKey)}
+          onMouseDown={(event) => event.preventDefault()}
+          type="button"
+        >
+          <span aria-hidden className="grid h-4 w-4 place-items-center transition-opacity duration-100 group-hover:opacity-0 group-focus-within:opacity-0"><FileTypeIcon className="h-3 w-3 [&_svg]:h-3 [&_svg]:w-3" kind={kind} name={name} /></span>
+          <X aria-hidden className="absolute h-3 w-3 opacity-0 transition-opacity duration-100 group-hover:opacity-100 group-focus-within:opacity-100" />
+        </button>
+        <span className="min-w-0 truncate">{name}</span>
+      </span>
     </span>
   );
 }
@@ -272,11 +306,13 @@ function editorValue(editorState: EditorState): InlineSkillComposerValue {
     });
     const normalizedParts = normalizeUserPromptParts(parts);
     const text = normalizedParts.flatMap((part) => part.type === "text" ? [part.text] : []).join("");
-    const atMatch = /(?:^|\s)@([^\s@]*)$/.exec(text);
+    const atMatch = /(?:^|\s)@([^\s@$]*)$/.exec(text);
+    const skillMatch = /(?:^|\s)\$([^\s@$]*)$/.exec(text);
     return {
       parts: normalizedParts,
       skillIds: uniqueSkillIdsInDocumentOrder(tokenIds),
       skillTokenCounts: countSkillTokenOccurrences(tokenIds),
+      skillQuery: skillMatch ? skillMatch[1] ?? "" : null,
       text,
       workspaceReferenceCount: normalizedParts.filter((part) => part.type === "workspace-reference").length,
       workspaceQuery: atMatch ? atMatch[1] ?? "" : null,
@@ -323,12 +359,8 @@ function EditorCommandsPlugin({ onStop, onSubmit, readOnly, selectionRef, stopEn
         adjacent = node.getChildAtIndex(direction === "backward" ? point.offset - 1 : point.offset);
       }
       if (!$isSkillTokenNode(adjacent) && !$isWorkspaceReferenceNode(adjacent)) return false;
-      adjacent.remove();
-      let nextSelection = $getSelection();
-      if (!$isRangeSelection(nextSelection)) {
-        $getRoot().selectEnd();
-        nextSelection = $getSelection();
-      }
+      $removeTokenAndSelect(adjacent);
+      const nextSelection = $getSelection();
       if ($isRangeSelection(nextSelection)) selectionRef.current = nextSelection.clone();
       return true;
     };
@@ -385,7 +417,7 @@ const initialConfig = {
 };
 
 export const InlineSkillComposer = forwardRef<InlineSkillComposerHandle, InlineSkillComposerProps>(function InlineSkillComposer(
-  { ariaLabel, className, disabled = false, onChange, onStop, onSubmit, placeholder, readOnly = false, stopEnabled = false, submitDisabled = false, onWorkspaceReferenceKeyDown },
+  { ariaLabel, className, disabled = false, onChange, onStop, onSubmit, placeholder, readOnly = false, stopEnabled = false, submitDisabled = false, onReferencePickerKeyDown },
   ref,
 ) {
   const editorRef = useRef<LexicalEditor | null>(null);
@@ -430,7 +462,7 @@ export const InlineSkillComposer = forwardRef<InlineSkillComposerHandle, InlineS
     },
     getValue() {
       const editor = editorRef.current;
-      return editor ? editorValue(editor.getEditorState()) : { parts: [], skillIds: [], skillTokenCounts: {}, text: "", workspaceReferenceCount: 0, workspaceQuery: null };
+      return editor ? editorValue(editor.getEditorState()) : { parts: [], skillIds: [], skillTokenCounts: {}, skillQuery: null, text: "", workspaceReferenceCount: 0, workspaceQuery: null };
     },
     insertSkill(skill) {
       const editor = editorRef.current;
@@ -443,11 +475,21 @@ export const InlineSkillComposer = forwardRef<InlineSkillComposerHandle, InlineS
           $getRoot().selectEnd();
         }
         const token = $createSkillTokenNode(skill.id, skill.name, skill.source);
-        const spacer = $createTextNode(" ");
         const selection = $getSelection();
         if ($isRangeSelection(selection)) {
-          selection.insertNodes([token, spacer]);
-          spacer.selectEnd();
+          const node = selection.anchor.getNode();
+          if (selection.isCollapsed() && $isTextNode(node)) {
+            const value = node.getTextContent();
+            const prefix = value.slice(0, selection.anchor.offset);
+            const match = /(?:^|\s)\$[^\s@$]*$/.exec(prefix);
+            if (match) {
+              const start = prefix.length - match[0].length + (match[0].startsWith(" ") ? 1 : 0);
+              node.setTextContent(`${value.slice(0, start)}${value.slice(selection.anchor.offset)}`);
+              selection.setTextNodeRange(node, start, node, start);
+            }
+          }
+          selection.insertNodes([token]);
+          token.selectNext();
           return;
         }
         const root = $getRoot();
@@ -479,9 +521,8 @@ export const InlineSkillComposer = forwardRef<InlineSkillComposerHandle, InlineS
             }
           }
           const token = $createWorkspaceReferenceNode(reference.path, reference.name, reference.kind);
-          const spacer = $createTextNode(" ");
-          selection.insertNodes([token, spacer]);
-          spacer.selectEnd();
+          selection.insertNodes([token]);
+          token.selectNext();
         }
       });
       editor.focus();
@@ -526,8 +567,10 @@ export const InlineSkillComposer = forwardRef<InlineSkillComposerHandle, InlineS
               aria-label={ariaLabel}
               className={className}
               onKeyDownCapture={(event) => {
-                if (onWorkspaceReferenceKeyDown?.(event)) {
+                if (onReferencePickerKeyDown?.(event)) {
                   event.preventDefault();
+                  event.stopPropagation();
+                  event.nativeEvent.stopImmediatePropagation();
                   return;
                 }
                 if (event.key === "Escape" && stopEnabled) {

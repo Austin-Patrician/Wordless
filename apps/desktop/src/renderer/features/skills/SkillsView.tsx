@@ -4,6 +4,7 @@ import { useMemo, useState } from "react";
 import type { SkillSource, SkillSummary } from "@wordless/domain";
 import { usePreferences } from "../../shared/preferences";
 import { useRuntime, useRuntimeClient } from "../../shared/runtime";
+import { skillIconText } from "../../shared/skill-icon";
 import { ConnectorsView } from "./ConnectorsView";
 
 const sourceNames: Record<SkillSource, string> = {
@@ -18,20 +19,6 @@ const sourceNames: Record<SkillSource, string> = {
   "workspace-codex": "Workspace / Codex",
 };
 
-function skillIcon(skill: SkillSummary): string {
-  // 取技能名称的首字母（支持中英文）
-  const firstChar = skill.name.trim()[0];
-  if (!firstChar) return "?";
-
-  // 如果是中文字符，直接返回
-  if (/[一-龥]/.test(firstChar)) {
-    return firstChar;
-  }
-
-  // 英文字符转大写
-  return firstChar.toUpperCase();
-}
-
 type SkillSectionProps = {
   label: string;
   meta: string;
@@ -44,7 +31,7 @@ function SkillSection({ label, meta, onSelect, skills }: SkillSectionProps) {
     <div className="flex items-baseline gap-2"><h2 className="text-[13px] font-semibold text-[#3d3d38] dark:text-foreground">{label}</h2><span className="font-mono text-[10px] text-[#96968f] dark:text-muted-foreground">{meta}</span></div>
     <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
       {skills.map((skill) => {
-        const iconText = skillIcon(skill);
+        const iconText = skillIconText(skill.name);
         return <button className="group min-w-0 rounded-[8px] border border-[#e3e3de] bg-white p-3.5 text-left transition-colors hover:border-[#cfcfc8] hover:bg-[#fdfdfc] dark:border-border dark:bg-card dark:hover:bg-muted" key={skill.id} onClick={() => onSelect(skill)} type="button"><div className="flex items-start gap-3"><span className="grid h-9 w-9 shrink-0 place-items-center rounded-[6px] bg-[#f2f2ef] text-[#55554f] dark:bg-muted dark:text-muted-foreground"><span className="text-[15px] font-semibold">{iconText}</span></span><span className="min-w-0 flex-1"><span className="flex items-center justify-between gap-2"><span className="truncate text-[13px] font-semibold text-[#3b3b37] dark:text-foreground">{skill.name}</span><span className={cn("h-1.5 w-1.5 shrink-0 rounded-full", skill.state === "active" ? "bg-[#7a8f52]" : "bg-[#b2b2ab]")} /></span><span className="mt-1 block h-9 overflow-hidden text-[11px] leading-[18px] text-[#7d7d76] dark:text-muted-foreground">{skill.description || skill.diagnostic || "No description available."}</span></span></div></button>;
       })}
     </div>

@@ -748,6 +748,12 @@ export interface ResearchDelegationDetails extends Record<string, unknown> {
 
 export type ToolOperationApprovalPreview =
   | {
+      type: "external-access";
+      paths: string[];
+      workspaceRoot: string;
+      operation: "read" | "write" | "list" | "execute";
+    }
+  | {
       type: "diff";
       path: string;
       before: string;
@@ -785,11 +791,12 @@ export type ToolOperationApprovalPreview =
 export interface ToolOperationApproval {
   approvalId: string;
   status: "required" | "approved" | "rejected";
-  risk: "file-write" | "command" | "connector";
+  risk: "file-write" | "command" | "connector" | "workspace-access";
   severity: "normal" | "high";
   summary: string;
   preview: ToolOperationApprovalPreview;
   matchedRules: ToolSecurityRuleMatch[];
+  requiresElevation?: boolean;
   feedback?: string;
 }
 

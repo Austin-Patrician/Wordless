@@ -180,7 +180,7 @@ export function mergeCompletedAssistantMessage(previous: ConversationMessage, co
 export function isNewerRunEvent(event: RuntimeEventEnvelope, previous: RunEventCursor | undefined): boolean {
   if (previous === undefined) return true;
   if (event.runId === previous.runId) return event.sequence > previous.sequence;
-  return event.event.type === "run.started";
+  return event.event.type === "run.started" || event.event.type === "context.compaction.started";
 }
 
 export function runEventCursor(event: RuntimeEventEnvelope): RunEventCursor {

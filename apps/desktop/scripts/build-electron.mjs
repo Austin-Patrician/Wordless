@@ -14,6 +14,10 @@ function isNodeBuiltin(id) {
   return nodeBuiltins.has(id) || id.startsWith("node:");
 }
 
+function isNativeRuntimeDependency(id) {
+  return id === "@ff-labs/fff-node" || id.startsWith("@ff-labs/fff-node/") || id === "ffi-rs" || id.startsWith("ffi-rs/") || id.startsWith("@ff-labs/fff-bin-") || id.startsWith("@yuuang/ffi-rs-");
+}
+
 async function buildEntry(entry, name, emptyOutDir) {
   await build({
     configFile: false,
@@ -32,7 +36,7 @@ async function buildEntry(entry, name, emptyOutDir) {
       sourcemap: true,
       target: "node22",
       rollupOptions: {
-        external: (id) => id === "electron" || isNodeBuiltin(id),
+        external: (id) => id === "electron" || isNodeBuiltin(id) || isNativeRuntimeDependency(id),
       },
     },
   });

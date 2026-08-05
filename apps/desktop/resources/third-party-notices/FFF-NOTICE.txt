@@ -1,0 +1,8 @@
+fff / @ff-labs/fff-node
+Copyright (c) Dmitry Kovalenko and contributors
+
+Licensed under the MIT License.
+Source: https://github.com/dmtrKovalenko/fff
+
+Wordless bundles the platform-specific libfff native library and ffi-rs runtime
+required by @ff-labs/fff-node.

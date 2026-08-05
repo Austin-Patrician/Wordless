@@ -11,6 +11,7 @@
   },
   "dependencies": {
     "@wordless/agent": "0.80.6-wordless.0",
+    "@wordless/workspace-search": "0.0.0",
     "typebox": "1.1.38"
   },
   "devDependencies": {

@@ -1042,6 +1042,7 @@ export type RuntimeEvent =
         summary: string;
         preview: ToolOperationApproval["preview"];
         matchedRules: ToolOperationApproval["matchedRules"];
+        requiresElevation?: boolean;
       };
     }
   | { type: "approval.resolved"; messageId: string; resolution: { approvalId: string; approved: boolean; feedback?: string } }

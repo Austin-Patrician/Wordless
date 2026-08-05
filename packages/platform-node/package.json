@@ -10,9 +10,11 @@
     "check": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
+    "@ff-labs/fff-node": "0.10.1",
     "@wordless/agent": "0.80.6-wordless.0",
     "@wordless/domain": "0.0.0",
-    "ignore": "7.0.5"
+    "@wordless/workspace-search": "0.0.0",
+    "minimatch": "10.2.5"
   },
   "devDependencies": {
     "@types/node": "24.12.4",

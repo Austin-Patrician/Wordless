@@ -100,6 +100,21 @@ test("ignores stale events and refreshes only after session idle", () => {
   assert.equal(shouldRefreshSnapshotAfterEvent(event(5, "run-1", { type: "session.idle" })), true);
 });
 
+test("accepts a standalone context compaction as a new run", () => {
+  const previousRun = event(8, "run-1", { type: "run.completed", runId: "run-1" });
+  const compactionStarted = event(1, "run-2", { type: "context.compaction.started", trigger: "manual" });
+  assert.equal(isNewerRunEvent(compactionStarted, runEventCursor(previousRun)), true);
+
+  const compactionCursor = runEventCursor(compactionStarted);
+  const compactionCompleted = event(2, "run-2", {
+    type: "context.compaction.completed",
+    compaction: { id: "compaction-1", model: { connectionId: "test", modelId: "test" }, summary: "summary", timestamp: 1_700_000_000_000, tokensAfter: 20, tokensBefore: 100, trigger: "manual" },
+  });
+  assert.equal(isNewerRunEvent(compactionCompleted, compactionCursor), true);
+  assert.equal(isNewerRunEvent(event(3, "run-2", { type: "session.idle" }), runEventCursor(compactionCompleted)), true);
+  assert.equal(isNewerRunEvent(event(2, "run-3", { type: "session.idle" }), compactionCursor), false);
+});
+
 test("completion keeps local tool details without replacing terminal state", () => {
   const previous = assistant("assistant-1", [{
     type: "tool",

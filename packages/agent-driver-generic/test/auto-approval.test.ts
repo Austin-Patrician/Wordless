@@ -27,6 +27,7 @@ async function createApprovalScenario(options: {
   decision?: "approval" | "block";
   mode: ToolApprovalMode;
   severity: OperationApprovalRequest["severity"];
+  requiresElevation?: boolean;
 }) {
   const models = createModels();
   const faux = fauxProvider({ provider: `approval-mode-${crypto.randomUUID()}` });
@@ -39,16 +40,34 @@ async function createApprovalScenario(options: {
   const session = new Session(new InMemorySessionStorage());
   const recordValue = createRecord(model, "Approval mode");
   let executions = 0;
+  let activeToolCallId: string | undefined;
+  const elevatedToolCalls = new Set<string>();
   const tool: AgentTool = {
     name: "write_value",
     label: "Write value",
     description: "Write a value",
     parameters: Type.Object({ value: Type.String() }),
-    async execute() {
+    async execute(toolCallId) {
+      if (options.requiresElevation && (!activeToolCallId || !elevatedToolCalls.has(activeToolCallId))) {
+        throw new Error("Missing one-time access grant");
+      }
       executions += 1;
       return { content: [{ type: "text", text: "updated" }], details: {} };
     },
   };
+  const env = Object.assign(new NodeExecutionEnv({ cwd: process.cwd() }), {
+    async runWithToolCall<T>(toolCallId: string, operation: () => Promise<T>): Promise<T> {
+      activeToolCallId = toolCallId;
+      try {
+        return await operation();
+      } finally {
+        activeToolCallId = undefined;
+      }
+    },
+    grantOutsideWorkspaceAccess(toolCallId: string) { elevatedToolCalls.add(toolCallId); },
+    revokeOutsideWorkspaceAccess(toolCallId: string) { elevatedToolCalls.delete(toolCallId); },
+    clearOutsideWorkspaceAccess() { elevatedToolCalls.clear(); },
+  });
   const context: AgentDriverSessionContext = {
     record: recordValue,
     profile: {
@@ -57,14 +76,14 @@ async function createApprovalScenario(options: {
     },
     model,
     modelCapabilities: { supportsText: true, supportsVision: false, supportsToolUse: true, supportsReasoning: false, supportedThinkingLevels: ["off"], contextWindow: model.contextWindow, maxOutputTokens: model.maxTokens },
-    models, session, env: new NodeExecutionEnv({ cwd: process.cwd() }), skills: [], connectorTools: [], connectorToolPolicies: [], security: { fileRules: [], commandRules: [] }, resolveModel: () => model,
+    models, session, env, skills: [], connectorTools: [], connectorToolPolicies: [], security: { fileRules: [], commandRules: [] }, resolveModel: () => model,
     toolApprovalMode: options.mode,
   };
   const preflightOperation = async (): Promise<OperationPreflightDecision> => options.decision === "block"
     ? { type: "block", reason: "Blocked by workspace policy" }
     : {
         type: "approval",
-        approval: { risk: "file-write", severity: options.severity, matchedRules: [], summary: "Write value", preview: { type: "diff", path: "value.txt", before: "old", after: "updated", truncated: false } },
+        approval: { risk: options.requiresElevation ? "workspace-access" : "file-write", severity: options.severity, matchedRules: [], summary: "Write value", preview: options.requiresElevation ? { type: "external-access", paths: ["/outside/value.txt"], workspaceRoot: process.cwd(), operation: "write" } : { type: "diff", path: "value.txt", before: "old", after: "updated", truncated: false }, requiresElevation: options.requiresElevation },
       };
   const driverSession = await createGenericAgentDriver({ createTools: () => [tool], preflightOperation }).createSession(context);
   const events: AgentDriverEvent[] = [];
@@ -74,7 +93,7 @@ async function createApprovalScenario(options: {
     events.push(event);
     if (event.type === "approval.requested") resolveRequested?.(event.approval);
   });
-  return { approvalRequested, driverSession, events, executions: () => executions, session };
+  return { approvalRequested, driverSession, events, executions: () => executions, activeGrantCount: () => elevatedToolCalls.size, session };
 }
 
 describe("automatic operation approval", () => {
@@ -149,6 +168,20 @@ describe("automatic operation approval", () => {
 
     expect(scenario.executions()).toBe(0);
     expect(await approvalEntries(scenario.session)).toHaveLength(0);
+    scenario.driverSession.dispose();
+  });
+
+  it("keeps one-time elevation pending in bypass mode and revokes it after execution", async () => {
+    const scenario = await createApprovalScenario({ mode: "bypass", severity: "high", requiresElevation: true });
+    const prompt = scenario.driverSession.execute({ type: "prompt", text: "Update the value" });
+    const approval = await scenario.approvalRequested;
+
+    expect(scenario.executions()).toBe(0);
+    await scenario.driverSession.execute({ type: "resolve-approval", resolution: { approvalId: approval.approvalId, approved: true } });
+    await prompt;
+
+    expect(scenario.executions()).toBe(1);
+    expect(scenario.activeGrantCount()).toBe(0);
     scenario.driverSession.dispose();
   });
 

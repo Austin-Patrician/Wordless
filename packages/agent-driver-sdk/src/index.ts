@@ -1,5 +1,6 @@
 import type { AgentTool, ExecutionEnv, Session, SessionMetadata, ThinkingLevel } from "@wordless/agent";
 import type { Api, Model, Models } from "@wordless/ai";
+import type { WorkspaceSearchProvider } from "@wordless/workspace-search";
 import type {
   AgentExtensionEvent,
   AgentExtensionInteraction,
@@ -51,6 +52,7 @@ export interface OperationApprovalRequest {
   summary: string;
   preview: ToolOperationApproval["preview"];
   matchedRules: ToolOperationApproval["matchedRules"];
+  requiresElevation?: boolean;
 }
 
 export interface SessionFileBaseline {
@@ -59,7 +61,7 @@ export interface SessionFileBaseline {
   content: string | null;
 }
 
-export interface OperationApprovalDefinition extends Pick<OperationApprovalRequest, "risk" | "severity" | "summary" | "preview" | "matchedRules"> {
+export interface OperationApprovalDefinition extends Pick<OperationApprovalRequest, "risk" | "severity" | "summary" | "preview" | "matchedRules" | "requiresElevation"> {
   sessionFileBaseline?: SessionFileBaseline;
 }
 
@@ -463,6 +465,7 @@ export interface AgentDriverSessionContext {
   models: Models;
   session: Session<SessionMetadata>;
   env: ExecutionEnv;
+  workspaceSearch?: WorkspaceSearchProvider;
   skills: AgentRuntimeSkill[];
   connectorTools: AgentTool[];
   connectorToolPolicies: ConnectorToolPolicy[];

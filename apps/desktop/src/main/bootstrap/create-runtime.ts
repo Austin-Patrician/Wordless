@@ -1,4 +1,5 @@
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 import { app } from "electron";
 import { AgentExtensionManager } from "@wordless/agent-extension-runtime";
 import { contextCompactionExtension } from "@wordless/agent-extension-context-compaction";
@@ -19,6 +20,7 @@ import { excelProfile } from "@wordless/profile-excel";
 import { dataProfile } from "@wordless/profile-data";
 import { createProfileRegistry } from "@wordless/profile-sdk";
 import { WordlessRuntime } from "@wordless/runtime";
+import { WorkspaceSearchService } from "@wordless/platform-node";
 import { ElectronCredentialVault } from "../adapters/electron-credential-vault";
 import { OfficeCliService } from "../office/office-cli-service";
 import { DesktopDataAnalysisService } from "../data-analysis/data-analysis-service";
@@ -28,6 +30,11 @@ export function createDesktopRuntime(userData: string, office: OfficeCliService,
   const extensions = new AgentExtensionManager({
     path: path.join(userData, "agent-extensions.json"),
     definitions: [planModeExtension, subagentExtension, contextCompactionExtension],
+  });
+  const workspaceSearch = new WorkspaceSearchService({
+    ...(app.isPackaged ? {
+      fffModuleUrl: pathToFileURL(path.join(process.resourcesPath, "app.asar.unpacked", "node_modules", "@ff-labs", "fff-node", "dist", "src", "index.js")).href,
+    } : {}),
   });
   return new WordlessRuntime({
     paths: {
@@ -46,10 +53,11 @@ export function createDesktopRuntime(userData: string, office: OfficeCliService,
     defaultWorkspaceRoot: path.join(app.getPath("documents"), "Wordless"),
     profiles: createProfileRegistry([generalProfile, codingProfile, pptProfile, excelProfile, dataProfile]),
     extensions,
+    workspaceSearch,
     drivers: createAgentDriverRegistry([
       createGenericAgentDriver({
         createTools: (context) => [
-          ...createHeadlessCodingTools(context.env),
+          ...createHeadlessCodingTools(context.env, context.workspaceSearch),
           ...(context.profile.reference.id === "data" ? createDataAnalysisTools(dataAnalysis, {
             sessionId: context.resourceOwnerSessionId ?? context.record.id,
             workspaceRoot: context.record.runtimeRootPath,
@@ -61,11 +69,11 @@ export function createDesktopRuntime(userData: string, office: OfficeCliService,
       }),
       createCodingAgentDriver({ createExtensionHost: extensions }),
       createPresentationAgentDriver(office, {
-        createWorkspaceTools: (context) => createHeadlessCodingTools(context.env),
+        createWorkspaceTools: (context) => createHeadlessCodingTools(context.env, context.workspaceSearch),
         preflightWorkspaceOperation,
       }),
       createSpreadsheetAgentDriver(office, {
-        createWorkspaceTools: (context) => createHeadlessCodingTools(context.env),
+        createWorkspaceTools: (context) => createHeadlessCodingTools(context.env, context.workspaceSearch),
         preflightWorkspaceOperation,
       }),
     ]),

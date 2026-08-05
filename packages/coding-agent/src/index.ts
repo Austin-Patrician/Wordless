@@ -1,4 +1,5 @@
 import type { AgentTool, AgentToolResult, ExecutionEnv } from "@wordless/agent";
+import type { WorkspaceSearchProvider } from "@wordless/workspace-search";
 import { Type, type TSchema } from "typebox";
 
 type ToolDetails = Record<string, unknown>;
@@ -59,26 +60,7 @@ function countOccurrences(value: string, search: string): number {
   return count;
 }
 
-async function collectFiles(env: ExecutionEnv, path: string, maxDepth: number, limit: number): Promise<string[]> {
-  const files: string[] = [];
-  const visit = async (directory: string, depth: number): Promise<void> => {
-    if (depth > maxDepth || files.length >= limit) return;
-    const entries = await env.listDir(directory);
-    if (!entries.ok) return;
-    for (const entry of entries.value) {
-      if (files.length >= limit) return;
-      if (entry.kind === "directory") {
-        if (entry.name !== ".git" && entry.name !== "node_modules") await visit(entry.path, depth + 1);
-      } else if (entry.kind === "file") {
-        files.push(entry.path);
-      }
-    }
-  };
-  await visit(path, 0);
-  return files;
-}
-
-export function createHeadlessCodingTools(env: ExecutionEnv) {
+export function createHeadlessCodingTools(env: ExecutionEnv, search?: WorkspaceSearchProvider) {
   const read = defineTool({
     name: "read",
     label: "Read file",
@@ -201,41 +183,53 @@ export function createHeadlessCodingTools(env: ExecutionEnv) {
   const find = defineTool({
     name: "find",
     label: "Find files",
-    description: "Find workspace files whose paths contain the requested query.",
-    parameters: Type.Object({ query: Type.String(), path: Type.Optional(Type.String()), maxDepth: Type.Optional(Type.Integer({ minimum: 0, maximum: 12 })) }),
+    description: "Fuzzy-find files in the indexed workspace. Use cursor to continue a previous result page.",
+    parameters: Type.Object({
+      pattern: Type.String(),
+      path: Type.Optional(Type.String()),
+      exclude: Type.Optional(Type.Union([Type.String(), Type.Array(Type.String())])),
+      limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 200 })),
+      cursor: Type.Optional(Type.String()),
+    }),
     async execute(_id, input) {
-      const root = relativePath(input.path);
-      const files = await collectFiles(env, root, input.maxDepth ?? 6, 200);
-      const matches = files.filter((file) => file.toLowerCase().includes(input.query.toLowerCase()));
-      return textResult(matches.join("\n"), { path: root, count: matches.length, files: matches });
+      if (!search) throw new Error("Indexed workspace search is unavailable");
+      if (input.path) requireSuccess(await env.listDir(input.path));
+      const page = await search.find(input);
+      const files = page.items.map((item) => item.path);
+      return textResult(files.join("\n"), { path: relativePath(input.path), count: files.length, total: page.total, files, nextCursor: page.nextCursor });
     },
   });
   const grep = defineTool({
     name: "grep",
     label: "Search file contents",
-    description: "Search UTF-8 workspace files for a text query.",
-    parameters: Type.Object({ query: Type.String(), path: Type.Optional(Type.String()) }),
-    async execute(_id, input, signal) {
-      const root = relativePath(input.path);
-      const files = await collectFiles(env, root, 6, 250);
-      const matches: string[] = [];
-      for (const file of files) {
-        if (matches.length >= 100) break;
-        const info = await env.fileInfo(file, signal);
-        if (!info.ok || info.value.size > 1_000_000) continue;
-        const content = await env.readTextLines(file, { maxLines: 10_000, abortSignal: signal });
-        if (!content.ok) continue;
-        content.value.forEach((line, index) => {
-          if (matches.length < 100 && line.toLowerCase().includes(input.query.toLowerCase())) matches.push(`${file}:${index + 1}: ${line}`);
-        });
-      }
-      return textResult(matches.join("\n"), { path: root, count: matches.length, query: input.query });
+    description: "Search indexed workspace file contents. Literal matching is the default; set literal to false for regular expressions.",
+    parameters: Type.Object({
+      pattern: Type.String(),
+      path: Type.Optional(Type.String()),
+      exclude: Type.Optional(Type.Union([Type.String(), Type.Array(Type.String())])),
+      ignoreCase: Type.Optional(Type.Boolean()),
+      literal: Type.Optional(Type.Boolean()),
+      context: Type.Optional(Type.Integer({ minimum: 0, maximum: 20 })),
+      limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 200 })),
+      cursor: Type.Optional(Type.String()),
+    }),
+    async execute(_id, input) {
+      if (!search) throw new Error("Indexed workspace search is unavailable");
+      if (input.path) requireSuccess(await env.listDir(input.path));
+      const page = await search.grep(input);
+      const matches = page.items.map((item) => {
+        const before = item.contextBefore.map((line, index) => `${item.path}:${item.line - item.contextBefore.length + index}- ${line}`);
+        const match = `${item.path}:${item.line}:${item.column}: ${item.text}`;
+        const after = item.contextAfter.map((line, index) => `${item.path}:${item.line + index + 1}+ ${line}`);
+        return [...before, match, ...after].join("\n");
+      });
+      return textResult(matches.join("\n--\n"), { path: relativePath(input.path), count: page.items.length, total: page.total, pattern: input.pattern, matches: page.items, nextCursor: page.nextCursor });
     },
   });
   return [read, bash, edit, write, grep, find, ls, workspaceChanges];
 }
 
-export function createHeadlessReadOnlyTools(env: ExecutionEnv) {
+export function createHeadlessReadOnlyTools(env: ExecutionEnv, search?: WorkspaceSearchProvider) {
   const allowed = new Set(["read", "grep", "find", "ls", "workspace_changes"]);
-  return createHeadlessCodingTools(env).filter((tool) => allowed.has(tool.name));
+  return createHeadlessCodingTools(env, search).filter((tool) => allowed.has(tool.name));
 }

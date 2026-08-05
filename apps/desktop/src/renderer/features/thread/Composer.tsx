@@ -16,6 +16,7 @@ import { ContextUsageIndicator } from "./ContextUsageIndicator";
 import { InlineSkillComposer, type InlineSkillComposerHandle, type InlineSkillComposerValue, type InlineWorkspaceReferenceToken } from "./InlineSkillComposer";
 import { ProviderIcon } from "../settings/provider-icons";
 import type { ArtifactSelection, WorkspaceFileEntry } from "@wordless/protocol";
+import { skillIconText } from "../../shared/skill-icon";
 
 type ComposerProps = {
   accessLevel?: SessionAccessLevel;
@@ -62,14 +63,7 @@ type ComposerProps = {
   userMessageHistory?: Array<{ id: string; parts: UserPromptPart[] }>;
 };
 
-const EMPTY_INLINE_SKILL_COMPOSER_VALUE: InlineSkillComposerValue = { parts: [], skillIds: [], skillTokenCounts: {}, text: "", workspaceReferenceCount: 0, workspaceQuery: null };
-
-function skillIconText(skill: SkillSummary): string {
-  const firstChar = skill.name.trim()[0];
-  if (!firstChar) return "?";
-  if (/[一-龥]/.test(firstChar)) return firstChar;
-  return firstChar.toUpperCase();
-}
+const EMPTY_INLINE_SKILL_COMPOSER_VALUE: InlineSkillComposerValue = { parts: [], skillIds: [], skillTokenCounts: {}, skillQuery: null, text: "", workspaceReferenceCount: 0, workspaceQuery: null };
 
 type SkillsSubmenuProps = {
   availableSkills: SkillSummary[];
@@ -123,7 +117,7 @@ function SkillsSubmenu({
               <Tooltip>
                 <TooltipTrigger asChild>
                   <button className="flex min-w-0 flex-1 items-start gap-2 rounded-[6px] px-1.5 py-1.5 text-left" onClick={() => onInsertSkill(skill)} type="button">
-                    <span className="mt-0.5 grid h-5 w-5 shrink-0 place-items-center rounded-[5px] bg-[#f2f2ef] text-[#55554f] dark:bg-muted dark:text-muted-foreground"><span className="text-[10px] font-semibold">{skillIconText(skill)}</span></span>
+                    <span className="mt-0.5 grid h-5 w-5 shrink-0 place-items-center rounded-[5px] bg-[#f2f2ef] text-[#55554f] dark:bg-muted dark:text-muted-foreground"><span className="text-[10px] font-semibold">{skillIconText(skill.name)}</span></span>
                     <span className="min-w-0">
                       <span className="block truncate text-[12px] font-semibold text-[#3f3f3a] dark:text-foreground">{skill.name}</span>
                       <span className="mt-0.5 block truncate text-[10px] leading-4 text-[#86867e] dark:text-muted-foreground">{skill.description}</span>
@@ -212,6 +206,8 @@ export function Composer({
   const [workspaceMatches, setWorkspaceMatches] = useState<WorkspaceFileEntry[]>([]);
   const [workspacePickerIndex, setWorkspacePickerIndex] = useState(0);
   const [workspacePickerOpen, setWorkspacePickerOpen] = useState(false);
+  const [skillPickerIndex, setSkillPickerIndex] = useState(0);
+  const [skillPickerOpen, setSkillPickerOpen] = useState(false);
   const [workspacePickerPosition, setWorkspacePickerPosition] = useState({ left: 12, bottom: 52 });
   const [pinnedSkillIds, setPinnedSkillIds] = useState<string[]>(() => {
     try {
@@ -229,6 +225,7 @@ export function Composer({
   const menuRef = useRef<HTMLDivElement>(null);
   const menuTriggerRef = useRef<HTMLSpanElement>(null);
   const connectorDockRef = useRef<HTMLDivElement>(null);
+  const workspacePickerListRef = useRef<HTMLDivElement>(null);
   const resizeStart = useRef<{ height: number; y: number } | null>(null);
   const draftRef = useRef<InlineSkillComposerValue>(EMPTY_INLINE_SKILL_COMPOSER_VALUE);
   const draftFrameRef = useRef<number | undefined>(undefined);
@@ -242,6 +239,22 @@ export function Composer({
   const hasActionMenu = Boolean(onInteractionModeChange || onTogglePlanMode || onCompactContext || onImportSkill || onOpenSkills || onToolApprovalModeChange || skills.length > 0 || connectors.length > 0);
   const interactionDisabled = disabled || compacting;
   const effectiveInteractionMode = interactionMode ?? (planMode === "off" ? "default" : "plan");
+  const availableSkills = useMemo(
+    () => skills
+      .filter((skill) => skill.state === "active")
+      .sort((left, right) => {
+        const leftPinned = pinnedSkillIds.includes(left.id);
+        const rightPinned = pinnedSkillIds.includes(right.id);
+        if (leftPinned !== rightPinned) return leftPinned ? -1 : 1;
+        return left.name.localeCompare(right.name);
+      }),
+    [pinnedSkillIds, skills],
+  );
+  const skillMatches = useMemo(() => {
+    if (draft.skillQuery === null) return [];
+    const query = draft.skillQuery.trim().toLocaleLowerCase();
+    return availableSkills.filter((skill) => `${skill.name} ${skill.description}`.toLocaleLowerCase().includes(query));
+  }, [availableSkills, draft.skillQuery]);
   const interactionModes: Array<{ id: "clarify" | "plan"; description: string; label: string }> = [
     ...(onInteractionModeChange ? [{ id: "clarify" as const, label: locale === "zh-CN" ? "澄清" : "Clarify", description: locale === "zh-CN" ? "提问并理清思路，不执行" : "Question and sharpen thinking without execution" }] : []),
     ...(canPlan || (!onInteractionModeChange && onTogglePlanMode) ? [{ id: "plan" as const, label: locale === "zh-CN" ? "计划" : "Plan", description: locale === "zh-CN" ? "先规划，再决定是否执行" : "Plan before execution" }] : []),
@@ -331,7 +344,7 @@ export function Composer({
 
   useEffect(() => {
     const query = draft.workspaceQuery;
-    if (query === null || !searchWorkspaceReferences || disabled || running) {
+    if (query === null || !searchWorkspaceReferences || disabled) {
       setWorkspacePickerOpen(false);
       setWorkspaceMatches([]);
       return;
@@ -348,13 +361,26 @@ export function Composer({
       });
     }, 120);
     return () => { active = false; window.clearTimeout(timer); };
-  }, [disabled, draft.workspaceQuery, running, workspaceSearchScope]);
+  }, [disabled, draft.workspaceQuery, workspaceSearchScope]);
 
   useEffect(() => {
-    if (pendingWorkspaceReferences.length === 0 || disabled || running) return;
+    setSkillPickerIndex(0);
+    setSkillPickerOpen(draft.skillQuery !== null && !disabled);
+  }, [disabled, draft.skillQuery]);
+
+  useEffect(() => {
+    if (pendingWorkspaceReferences.length === 0 || disabled) return;
     for (const reference of pendingWorkspaceReferences) inputRef.current?.insertWorkspaceReference(reference);
     onPendingWorkspaceReferencesConsumed?.();
-  }, [disabled, onPendingWorkspaceReferencesConsumed, pendingWorkspaceReferences, running]);
+  }, [disabled, onPendingWorkspaceReferencesConsumed, pendingWorkspaceReferences]);
+
+  useEffect(() => {
+    if (!workspacePickerOpen && !skillPickerOpen) return;
+    const selectedOption = workspacePickerListRef.current?.querySelector<HTMLElement>(
+      `[data-reference-picker-index="${skillPickerOpen ? skillPickerIndex : workspacePickerIndex}"]`,
+    );
+    selectedOption?.scrollIntoView({ block: "nearest" });
+  }, [skillPickerIndex, skillPickerOpen, workspacePickerIndex, workspacePickerOpen]);
 
   const updateDraft = useCallback((nextDraft: InlineSkillComposerValue) => {
     if (applyingHistoryRef.current) applyingHistoryRef.current = false;
@@ -420,17 +446,6 @@ export function Composer({
     }
   };
 
-  const availableSkills = useMemo(
-    () => skills
-      .filter((skill) => skill.state === "active")
-      .sort((left, right) => {
-        const leftPinned = pinnedSkillIds.includes(left.id);
-        const rightPinned = pinnedSkillIds.includes(right.id);
-        if (leftPinned !== rightPinned) return leftPinned ? -1 : 1;
-        return left.name.localeCompare(right.name);
-      }),
-    [pinnedSkillIds, skills],
-  );
   const selectedSkills = draft.skillIds.flatMap((id) => {
     const skill = availableSkills.find((candidate) => candidate.id === id);
     return skill ? [skill] : [];
@@ -504,17 +519,48 @@ export function Composer({
     window.setTimeout(() => inputRef.current?.focus(), 0);
   };
 
-  const workspacePickerKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>): boolean => {
+  const insertSkillReference = (skill: SkillSummary) => {
+    inputRef.current?.insertSkill(skill);
+    setSkillPickerOpen(false);
+    window.setTimeout(() => inputRef.current?.focus(), 0);
+  };
+
+  const referencePickerKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>): boolean => {
+    if (skillPickerOpen) {
+      if (event.key === "ArrowDown") {
+        if (skillMatches.length > 0) setSkillPickerIndex((index) => (index + 1) % skillMatches.length);
+        return true;
+      }
+      if (event.key === "ArrowUp") {
+        if (skillMatches.length > 0) setSkillPickerIndex((index) => (index - 1 + skillMatches.length) % skillMatches.length);
+        return true;
+      }
+      if ((event.key === "Enter" || event.key === "Tab") && skillMatches[skillPickerIndex]) {
+        insertSkillReference(skillMatches[skillPickerIndex]!);
+        return true;
+      }
+      if (event.key === "Escape") {
+        setSkillPickerOpen(false);
+        return true;
+      }
+      return false;
+    }
     if (!workspacePickerOpen) return false;
-    if (event.key === "ArrowDown") { setWorkspacePickerIndex((index) => Math.min(index + 1, Math.max(0, workspaceMatches.length - 1))); return true; }
-    if (event.key === "ArrowUp") { setWorkspacePickerIndex((index) => Math.max(0, index - 1)); return true; }
+    if (event.key === "ArrowDown") {
+      if (workspaceMatches.length > 0) setWorkspacePickerIndex((index) => (index + 1) % workspaceMatches.length);
+      return true;
+    }
+    if (event.key === "ArrowUp") {
+      if (workspaceMatches.length > 0) setWorkspacePickerIndex((index) => (index - 1 + workspaceMatches.length) % workspaceMatches.length);
+      return true;
+    }
     if ((event.key === "Enter" || event.key === "Tab") && workspaceMatches[workspacePickerIndex]) { insertWorkspaceReference(workspaceMatches[workspacePickerIndex]!); return true; }
     if (event.key === "Escape") { setWorkspacePickerOpen(false); return true; }
     return false;
   };
 
   const composerKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>): boolean => {
-    if (workspacePickerKeyDown(event)) return true;
+    if (referencePickerKeyDown(event)) return true;
     if (event.nativeEvent.isComposing || event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return false;
     if (event.key !== "ArrowUp" && event.key !== "ArrowDown") return false;
 
@@ -577,7 +623,7 @@ export function Composer({
           className="min-h-[40px] w-full min-w-0 flex-1 resize-none overflow-y-auto bg-transparent px-0.5 text-[16px] font-medium leading-7 text-[#353532] caret-[#252624] outline-none placeholder:font-normal placeholder:text-[#a2a29b] selection:bg-[#dff09b] disabled:cursor-not-allowed read-only:cursor-default dark:text-foreground dark:caret-foreground dark:placeholder:text-muted-foreground dark:selection:bg-[#4a5a26]"
           disabled={interactionDisabled}
           onChange={updateDraft}
-          onWorkspaceReferenceKeyDown={composerKeyDown}
+          onReferencePickerKeyDown={composerKeyDown}
           onStop={() => void onStop?.()}
           onSubmit={() => void send()}
           placeholder={effectiveInteractionMode === "plan" ? t("planPromptPlaceholder") : effectiveInteractionMode === "clarify" ? locale === "zh-CN" ? "输入想要理清的问题..." : "Describe what you want to clarify..." : compact ? t("compactPromptPlaceholder") : t("promptPlaceholder")}
@@ -585,9 +631,9 @@ export function Composer({
           stopEnabled={running}
           submitDisabled={running}
         />
-        {workspacePickerOpen ? <div className="absolute z-40 w-[min(520px,calc(100vw-3rem))] overflow-hidden rounded-[8px] border border-[#cadbd5] bg-white p-1 shadow-[0_14px_34px_rgba(27,46,40,0.16)] dark:border-[#3c655a] dark:bg-card" style={{ left: workspacePickerPosition.left, bottom: workspacePickerPosition.bottom }}>
-          <div className="px-2 py-1.5 font-mono text-[9px] uppercase tracking-[0.08em] text-[#688278] dark:text-[#9bbfb2]">Workspace files</div>
-          <div className="max-h-52 overflow-y-auto">{workspaceMatches.length > 0 ? workspaceMatches.map((entry, index) => { const Icon = entry.kind === "directory" ? Folder : FileText; return <button className={cn("flex w-full min-w-0 items-center gap-2 rounded-[5px] px-2 py-1.5 text-left", index === workspacePickerIndex ? "bg-[#eaf5f1] dark:bg-[#28443b]" : "hover:bg-[#f2f6f4] dark:hover:bg-muted")} key={entry.path} onMouseDown={(event) => event.preventDefault()} onMouseEnter={() => setWorkspacePickerIndex(index)} onClick={() => insertWorkspaceReference(entry)} title={entry.path} type="button"><Icon className="h-3.5 w-3.5 shrink-0 text-[#5b9280]" /><span className="w-32 shrink-0 truncate text-[12px] font-medium text-[#3a4d47] dark:text-foreground">{entry.name}</span><span className="min-w-0 flex-1 truncate font-mono text-[10px] text-[#788982] dark:text-muted-foreground">{entry.path}</span><span className="w-9 shrink-0 text-right font-mono text-[10px] uppercase text-[#6f897f] dark:text-[#9bbfb2]">{entry.kind === "directory" ? "Dir" : "File"}</span></button>; }) : <p className="px-2 py-3 text-[11px] text-muted-foreground">No workspace matches</p>}</div>
+        {skillPickerOpen || workspacePickerOpen ? <div className="absolute z-40 w-[min(520px,calc(100vw-3rem))] overflow-hidden rounded-[8px] border border-[#cadbd5] bg-white p-1 shadow-[0_14px_34px_rgba(27,46,40,0.16)] dark:border-[#3c655a] dark:bg-card" style={{ left: workspacePickerPosition.left, bottom: workspacePickerPosition.bottom }}>
+          <div className="px-2 py-1.5 font-mono text-[9px] uppercase tracking-[0.08em] text-[#688278] dark:text-[#9bbfb2]">{skillPickerOpen ? "Skills" : "Workspace files"}</div>
+          <div className="max-h-52 overflow-y-auto" ref={workspacePickerListRef} role="listbox">{skillPickerOpen ? (skillMatches.length > 0 ? skillMatches.map((skill, index) => <button aria-selected={index === skillPickerIndex} className={cn("flex w-full min-w-0 items-center gap-2 rounded-[5px] px-2 py-1.5 text-left", index === skillPickerIndex ? "bg-[#eaf5f1] dark:bg-[#28443b]" : "hover:bg-[#f2f6f4] dark:hover:bg-muted")} data-reference-picker-index={index} key={skill.id} onMouseDown={(event) => event.preventDefault()} onMouseEnter={() => setSkillPickerIndex(index)} onClick={() => insertSkillReference(skill)} role="option" title={skill.description} type="button"><span className="grid h-5 w-5 shrink-0 place-items-center rounded-[5px] bg-[#edf1e8] text-[10px] font-semibold text-[#536349] dark:bg-[#35402d] dark:text-[#d7e4cb]">{skillIconText(skill.name)}</span><span className="w-32 shrink-0 truncate text-[12px] font-medium text-[#3a4d47] dark:text-foreground">{skill.name}</span><span className="min-w-0 flex-1 truncate text-[10px] text-[#788982] dark:text-muted-foreground">{skill.description}</span><span className="w-9 shrink-0 text-right font-mono text-[10px] uppercase text-[#6f897f] dark:text-[#9bbfb2]">Skill</span></button>) : <p className="px-2 py-3 text-[11px] text-muted-foreground">No skill matches</p>) : (workspaceMatches.length > 0 ? workspaceMatches.map((entry, index) => { const Icon = entry.kind === "directory" ? Folder : FileText; return <button aria-selected={index === workspacePickerIndex} className={cn("flex w-full min-w-0 items-center gap-2 rounded-[5px] px-2 py-1.5 text-left", index === workspacePickerIndex ? "bg-[#eaf5f1] dark:bg-[#28443b]" : "hover:bg-[#f2f6f4] dark:hover:bg-muted")} data-reference-picker-index={index} key={entry.path} onMouseDown={(event) => event.preventDefault()} onMouseEnter={() => setWorkspacePickerIndex(index)} onClick={() => insertWorkspaceReference(entry)} role="option" title={entry.path} type="button"><Icon className="h-3.5 w-3.5 shrink-0 text-[#5b9280]" /><span className="w-32 shrink-0 truncate text-[12px] font-medium text-[#3a4d47] dark:text-foreground">{entry.name}</span><span className="min-w-0 flex-1 truncate font-mono text-[10px] text-[#788982] dark:text-muted-foreground">{entry.path}</span><span className="w-9 shrink-0 text-right font-mono text-[10px] uppercase text-[#6f897f] dark:text-[#9bbfb2]">{entry.kind === "directory" ? "Dir" : "File"}</span></button>; }) : <p className="px-2 py-3 text-[11px] text-muted-foreground">No workspace matches</p>)}</div>
         </div> : null}
       </div>
       {skillWarning ? <p className="mt-1 shrink-0 text-[10px] text-[#9b6c2d] dark:text-[#d7b47d]">{t("skillContextWarning")}</p> : null}

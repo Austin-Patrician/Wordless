@@ -38,6 +38,58 @@ function isWithinWorkspace(rootPath: string, candidatePath: string): boolean {
   return path === "" || (!path.startsWith("..") && !isAbsolute(path));
 }
 
+const PATH_INPUT_KEYS = new Set(["path", "paths", "sourcePath", "outputPath", "filePath", "directoryPath", "cwd"]);
+
+function externalPaths(context: AgentDriverSessionContext, input: Record<string, unknown>): string[] {
+  const paths = new Set<string>();
+  const visit = (value: unknown, key?: string): void => {
+    if (typeof value === "string" && key && PATH_INPUT_KEYS.has(key) && value.trim()) {
+      const absolute = isAbsolute(value) ? resolve(value) : resolve(context.record.runtimeRootPath, value);
+      if (!isWithinWorkspace(context.record.runtimeRootPath, absolute)) paths.add(absolute);
+      return;
+    }
+    if (Array.isArray(value)) {
+      if (key === "paths") value.forEach((entry) => visit(entry, "path"));
+      else value.forEach((entry) => visit(entry));
+      return;
+    }
+    if (!value || typeof value !== "object") return;
+    for (const [childKey, child] of Object.entries(value as Record<string, unknown>)) visit(child, childKey);
+  };
+  visit(input);
+  return [...paths];
+}
+
+function externalOperation(toolName: string): "read" | "write" | "list" | "execute" {
+  if (toolName === "write" || toolName === "edit" || /(?:create|write|edit|apply|publish|materialize)/i.test(toolName)) return "write";
+  if (toolName === "ls" || toolName === "find" || toolName === "grep" || /(?:list|search|scan)/i.test(toolName)) return "list";
+  if (toolName === "bash") return "execute";
+  return "read";
+}
+
+function externalAccessApproval(
+  context: AgentDriverSessionContext,
+  request: { toolName: string; input: Record<string, unknown> },
+  paths: string[],
+): OperationPreflightDecision {
+  return {
+    type: "approval",
+    approval: {
+      risk: "workspace-access",
+      severity: "high",
+      matchedRules: [],
+      requiresElevation: true,
+      summary: "This operation needs one-time access to files outside the current workspace.",
+      preview: {
+        type: "external-access",
+        paths,
+        workspaceRoot: context.record.runtimeRootPath,
+        operation: externalOperation(request.toolName),
+      },
+    },
+  };
+}
+
 function commandApproval(
   context: AgentDriverSessionContext,
   request: { toolName: string; input: Record<string, unknown> },
@@ -120,6 +172,10 @@ export async function preflightWorkspaceOperation(
   request: { toolName: string; input: Record<string, unknown> },
 ): Promise<OperationPreflightDecision> {
   if (request.toolName === "bash") return commandApproval(context, request);
+  if (context.record.accessLevel === "default") {
+    const paths = externalPaths(context, request.input);
+    if (paths.length > 0) return externalAccessApproval(context, request, paths);
+  }
   if (request.toolName === "data_materialize" || request.toolName === "data_publish") {
     if (context.record.accessLevel === "full") return { type: "allow" };
     const analysisId = stringInput(request.input, "analysisId") ?? "unknown";

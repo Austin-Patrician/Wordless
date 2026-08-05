@@ -26,6 +26,7 @@
     "@wordless/protocol": "0.0.0",
     "@wordless/persistence": "0.0.0",
     "@wordless/platform-node": "0.0.0",
+    "@wordless/workspace-search": "0.0.0",
     "diff": "8.0.4"
   },
   "devDependencies": {

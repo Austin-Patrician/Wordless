@@ -1,9 +1,13 @@
+import { AsyncLocalStorage } from "node:async_hooks";
+import { randomUUID } from "node:crypto";
 import { lstat, mkdir, readFile, readdir, realpath, stat } from "node:fs/promises";
-import type { Dirent } from "node:fs";
+import { realpathSync } from "node:fs";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { NodeExecutionEnv } from "@wordless/agent/node";
+import type { FileFinder as FffFileFinder, GrepCursor } from "@ff-labs/fff-node";
 import type { SessionAccessLevel } from "@wordless/domain";
-import ignore from "ignore";
+import type { WorkspaceFindRequest, WorkspaceGrepRequest, WorkspaceSearchProvider, WorkspaceSearchService as WorkspaceSearchServiceContract } from "@wordless/workspace-search";
+import { minimatch } from "minimatch";
 
 export interface WorkspaceDirectoryEntry {
   path: string;
@@ -17,15 +21,239 @@ function toPortablePath(value: string): string {
   return value.replace(/\\/g, "/");
 }
 
-class WorkspaceExecutionEnv {
+function canonicalExistingPath(path: string): string {
+  const resolved = resolve(path);
+  try {
+    return realpathSync(resolved);
+  } catch {
+    return resolved;
+  }
+}
+
+function normalizedRelativePath(path: string): string {
+  return toPortablePath(path).replace(/^\.\//, "").replace(/\/$/, "");
+}
+
+function excludesPath(path: string, exclude: string | string[] | undefined): boolean {
+  const patterns = (Array.isArray(exclude) ? exclude : exclude ? [exclude] : []).map(normalizedRelativePath).filter(Boolean);
+  const candidate = normalizedRelativePath(path);
+  return patterns.some((pattern) => minimatch(candidate, pattern, { dot: true, matchBase: !pattern.includes("/") }) || minimatch(candidate, `${pattern.replace(/\/$/, "")}/**`, { dot: true }));
+}
+
+function escapeRegex(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+type FinderEntry = { finder?: FffFileFinder; loading?: Promise<FffFileFinder>; touchedAt: number };
+type CursorEntry = { root: string; operation: "find" | "grep"; signature: string; pageIndex?: number; grepCursor?: GrepCursor; touchedAt: number };
+type SearchScope = { indexRoot: string; constraint?: string; absoluteResults: boolean; temporary: boolean };
+
+export class WorkspaceSearchService implements WorkspaceSearchServiceContract {
+  private readonly finders = new Map<string, FinderEntry>();
+  private readonly cursors = new Map<string, CursorEntry>();
+  private readonly maximumFinders: number;
+  private readonly fffModuleUrl?: string;
+  private disposed = false;
+
+  constructor(options?: { maximumFinders?: number; fffModuleUrl?: string }) {
+    this.maximumFinders = Math.max(1, options?.maximumFinders ?? 6);
+    this.fffModuleUrl = options?.fffModuleUrl;
+  }
+
+  forRoot(rootPath: string): WorkspaceSearchProvider {
+    const root = canonicalExistingPath(rootPath);
+    return {
+      find: async (request) => await this.find(root, request),
+      grep: async (request) => await this.grep(root, request),
+      searchReferences: async (query, limit) => await this.searchReferences(root, query, limit),
+    };
+  }
+
+  dispose(): void {
+    this.disposed = true;
+    for (const entry of this.finders.values()) entry.finder?.destroy();
+    this.finders.clear();
+    this.cursors.clear();
+  }
+
+  private async getFinder(root: string): Promise<FffFileFinder> {
+    if (this.disposed) throw new Error("Workspace search service has been disposed");
+    const key = canonicalExistingPath(root);
+    const existing = this.finders.get(key);
+    if (existing?.finder && !existing.finder.isDestroyed) {
+      existing.touchedAt = Date.now();
+      return existing.finder;
+    }
+    if (existing?.loading) return await existing.loading;
+    const entry: FinderEntry = { touchedAt: Date.now() };
+    const loading = (async () => {
+      const finder = await this.createFinder(key);
+      if (this.disposed) {
+        finder.destroy();
+        throw new Error("Workspace search service has been disposed");
+      }
+      entry.finder = finder;
+      entry.loading = undefined;
+      entry.touchedAt = Date.now();
+      this.evictFinders(key);
+      return finder;
+    })();
+    entry.loading = loading;
+    this.finders.set(key, entry);
+    try {
+      return await loading;
+    } catch (error) {
+      if (this.finders.get(key) === entry) this.finders.delete(key);
+      throw error;
+    }
+  }
+
+  private async find(root: string, request: WorkspaceFindRequest) {
+    const limit = Math.min(200, Math.max(1, request.limit ?? 30));
+    const signature = JSON.stringify({ pattern: request.pattern, path: request.path ?? "", exclude: request.exclude ?? [], limit });
+    const cursor = request.cursor ? this.consumeCursor(request.cursor, root, "find", signature) : undefined;
+    const pageIndex = cursor?.pageIndex ?? 0;
+    const scope = this.resolveScope(root, request.path);
+    return await this.withScopeFinder(scope, async (finder) => {
+      const query = [scope.constraint, request.pattern.trim()].filter(Boolean).join(" ");
+      const result = finder.fileSearch(query, { pageIndex, pageSize: limit });
+      if (!result.ok) throw new Error(`FFF file search failed: ${result.error}`);
+      const items = result.value.items
+        .filter((item) => !excludesPath(item.relativePath, request.exclude))
+        .slice(0, limit)
+        .map((item) => ({ path: this.resultPath(scope, item.relativePath), name: item.fileName, size: item.size, modifiedAt: item.modified * 1_000 }));
+      const hasMore = (pageIndex + 1) * limit < result.value.totalMatched;
+      return { items, total: result.value.totalMatched, ...(hasMore ? { nextCursor: this.putCursor({ root, operation: "find", signature, pageIndex: pageIndex + 1, touchedAt: Date.now() }) } : {}) };
+    });
+  }
+
+  private async grep(root: string, request: WorkspaceGrepRequest) {
+    const limit = Math.min(200, Math.max(1, request.limit ?? 20));
+    const context = Math.min(20, Math.max(0, request.context ?? 0));
+    const signature = JSON.stringify({ pattern: request.pattern, path: request.path ?? "", exclude: request.exclude ?? [], ignoreCase: request.ignoreCase, literal: request.literal !== false, context, limit });
+    const cursor = request.cursor ? this.consumeCursor(request.cursor, root, "grep", signature) : undefined;
+    const scope = this.resolveScope(root, request.path);
+    return await this.withScopeFinder(scope, async (finder) => {
+      const forceCaseSensitive = request.ignoreCase === false;
+      const searchedPattern = request.ignoreCase === true
+        ? request.pattern.toLocaleLowerCase()
+        : forceCaseSensitive
+          ? `(?-i:${request.literal === false ? request.pattern : escapeRegex(request.pattern)})`
+          : request.pattern;
+      const query = [scope.constraint, searchedPattern].filter(Boolean).join(" ");
+      const result = finder.grep(query, {
+        mode: request.literal === false || forceCaseSensitive ? "regex" : "plain",
+        smartCase: true,
+        beforeContext: context,
+        afterContext: context,
+        pageSize: limit,
+        cursor: cursor?.grepCursor ?? null,
+      });
+      if (!result.ok) throw new Error(`FFF grep failed: ${result.error}`);
+      const items = result.value.items
+        .filter((item) => !excludesPath(item.relativePath, request.exclude))
+        .slice(0, limit)
+        .map((item) => ({ path: this.resultPath(scope, item.relativePath), line: item.lineNumber, column: item.col + 1, text: item.lineContent, contextBefore: item.contextBefore ?? [], contextAfter: item.contextAfter ?? [] }));
+      return {
+        items,
+        total: result.value.totalMatched,
+        ...(result.value.nextCursor ? { nextCursor: this.putCursor({ root, operation: "grep", signature, grepCursor: result.value.nextCursor, touchedAt: Date.now() }) } : {}),
+      };
+    });
+  }
+
+  private async searchReferences(root: string, query: string, requestedLimit = 50) {
+    const limit = Math.min(100, Math.max(1, requestedLimit));
+    const finder = await this.getFinder(root);
+    const result = finder.mixedSearch(query.trim(), { pageSize: limit });
+    if (!result.ok) throw new Error(`FFF workspace search failed: ${result.error}`);
+    return result.value.items.map((entry) => entry.type === "file"
+      ? { path: normalizedRelativePath(entry.item.relativePath), name: entry.item.fileName, kind: "file" as const, size: entry.item.size, modifiedAt: entry.item.modified * 1_000 }
+      : { path: normalizedRelativePath(entry.item.relativePath), name: entry.item.dirName.replace(/\/$/, ""), kind: "directory" as const, size: 0, modifiedAt: 0 });
+  }
+
+  private putCursor(entry: CursorEntry): string {
+    const token = randomUUID();
+    this.cursors.set(token, entry);
+    while (this.cursors.size > 200) this.cursors.delete(this.cursors.keys().next().value!);
+    return token;
+  }
+
+  private async createFinder(root: string): Promise<FffFileFinder> {
+    const { FileFinder } = this.fffModuleUrl
+      ? await import(this.fffModuleUrl) as typeof import("@ff-labs/fff-node")
+      : await import("@ff-labs/fff-node");
+    const created = FileFinder.create({ basePath: root, aiMode: true, enableFsRootScanning: false, enableHomeDirScanning: false, followSymlinks: false });
+    if (!created.ok) throw new Error(`FFF could not index ${root}: ${created.error}`);
+    const scanned = await created.value.waitForScan(15_000);
+    if (!scanned.ok || !scanned.value) {
+      created.value.destroy();
+      throw new Error(!scanned.ok ? `FFF scan failed: ${scanned.error}` : `FFF scan timed out for ${root}`);
+    }
+    return created.value;
+  }
+
+  private resolveScope(root: string, requestedPath: string | undefined): SearchScope {
+    if (!requestedPath || requestedPath === ".") return { indexRoot: root, absoluteResults: false, temporary: false };
+    const requested = canonicalExistingPath(isAbsolute(requestedPath) ? requestedPath : resolve(root, requestedPath));
+    const within = relative(root, requested);
+    if (within === "" || (!within.startsWith("..") && !isAbsolute(within))) {
+      const constraint = normalizedRelativePath(within);
+      return { indexRoot: root, ...(constraint ? { constraint: `${constraint}/` } : {}), absoluteResults: false, temporary: false };
+    }
+    return { indexRoot: requested, absoluteResults: true, temporary: true };
+  }
+
+  private async withScopeFinder<T>(scope: SearchScope, operation: (finder: FffFileFinder) => Promise<T>): Promise<T> {
+    const finder = scope.temporary ? await this.createFinder(scope.indexRoot) : await this.getFinder(scope.indexRoot);
+    try {
+      return await operation(finder);
+    } finally {
+      if (scope.temporary) finder.destroy();
+    }
+  }
+
+  private resultPath(scope: SearchScope, relativePath: string): string {
+    const normalized = normalizedRelativePath(relativePath);
+    return scope.absoluteResults ? toPortablePath(resolve(scope.indexRoot, normalized)) : normalized;
+  }
+
+  private consumeCursor(token: string, root: string, operation: CursorEntry["operation"], signature: string): CursorEntry {
+    const entry = this.cursors.get(token);
+    this.cursors.delete(token);
+    if (!entry || entry.root !== root || entry.operation !== operation || entry.signature !== signature) throw new Error("Search cursor is invalid or expired");
+    return entry;
+  }
+
+  private evictFinders(activeRoot: string): void {
+    const candidates = [...this.finders.entries()].filter(([root, entry]) => root !== activeRoot && entry.finder && !entry.loading).sort((left, right) => left[1].touchedAt - right[1].touchedAt);
+    while (this.finders.size > this.maximumFinders && candidates.length) {
+      const [root, entry] = candidates.shift()!;
+      entry.finder?.destroy();
+      this.finders.delete(root);
+      for (const [token, cursor] of this.cursors) if (cursor.root === root) this.cursors.delete(token);
+    }
+  }
+}
+
+export interface ToolCallAccessController {
+  runWithToolCall<T>(toolCallId: string, operation: () => Promise<T>): Promise<T>;
+  grantOutsideWorkspaceAccess(toolCallId: string): void;
+  revokeOutsideWorkspaceAccess(toolCallId: string): void;
+  clearOutsideWorkspaceAccess(): void;
+}
+
+class WorkspaceExecutionEnv implements ToolCallAccessController {
   readonly cwd: string;
   private readonly base: NodeExecutionEnv;
   private readonly readOnlyRoots: string[];
+  private readonly toolCallContext = new AsyncLocalStorage<string>();
+  private readonly elevatedToolCalls = new Set<string>();
 
   constructor(rootPath: string, readOnlyRoots: string[] = []) {
-    this.cwd = resolve(rootPath);
+    this.cwd = canonicalExistingPath(rootPath);
     this.base = new NodeExecutionEnv({ cwd: this.cwd });
-    this.readOnlyRoots = readOnlyRoots.map((path) => resolve(path));
+    this.readOnlyRoots = readOnlyRoots.map(canonicalExistingPath);
   }
 
   async readTextFile(path: string, abortSignal?: AbortSignal) {
@@ -57,6 +285,22 @@ class WorkspaceExecutionEnv {
     return await this.base.exec(command, options);
   }
 
+  async runWithToolCall<T>(toolCallId: string, operation: () => Promise<T>): Promise<T> {
+    return await this.toolCallContext.run(toolCallId, operation);
+  }
+
+  grantOutsideWorkspaceAccess(toolCallId: string): void {
+    this.elevatedToolCalls.add(toolCallId);
+  }
+
+  revokeOutsideWorkspaceAccess(toolCallId: string): void {
+    this.elevatedToolCalls.delete(toolCallId);
+  }
+
+  clearOutsideWorkspaceAccess(): void {
+    this.elevatedToolCalls.clear();
+  }
+
   private async guardWorkspacePath(path: string, abortSignal?: AbortSignal): Promise<{ ok: true; value: string } | { ok: false; error: Error }> {
     const addressed = isAbsolute(path) ? resolve(path) : resolve(this.cwd, path);
     return await this.guardAddressedPath(addressed, abortSignal, (candidate) => this.isWithinRoot(candidate));
@@ -73,20 +317,27 @@ class WorkspaceExecutionEnv {
     allowed: (candidate: string) => boolean,
   ): Promise<{ ok: true; value: string } | { ok: false; error: Error }> {
     if (abortSignal?.aborted) return this.aborted(path);
-    if (!allowed(path)) return this.denied(path);
-    const canonicalAncestor = await this.findCanonicalAncestor(path, allowed);
-    if (!canonicalAncestor || !allowed(canonicalAncestor)) return this.denied(path);
-    return { ok: true, value: path };
+    if (this.isCurrentToolCallElevated()) return { ok: true, value: path };
+    const canonicalPath = await this.canonicalizeAddressedPath(path);
+    if (!canonicalPath || !allowed(canonicalPath)) return this.denied(path);
+    return { ok: true, value: canonicalPath };
   }
 
-  private async findCanonicalAncestor(path: string, allowed: (candidate: string) => boolean): Promise<string | undefined> {
+  private isCurrentToolCallElevated(): boolean {
+    const toolCallId = this.toolCallContext.getStore();
+    return toolCallId !== undefined && this.elevatedToolCalls.has(toolCallId);
+  }
+
+  private async canonicalizeAddressedPath(path: string): Promise<string | undefined> {
     let current = path;
+    const missingSegments: string[] = [];
     while (true) {
       try {
-        return await realpath(current);
+        return resolve(await realpath(current), ...missingSegments.reverse());
       } catch {
         const parent = dirname(current);
-        if (parent === current || !allowed(parent)) return undefined;
+        if (parent === current) return undefined;
+        missingSegments.push(basename(current));
         current = parent;
       }
     }
@@ -114,7 +365,6 @@ class WorkspaceExecutionEnv {
 }
 
 export class WorkspacePathService {
-  private static readonly ignoredDirectoryNames = new Set([".git", "node_modules", "dist", "build", "out", "coverage", ".next", ".turbo", ".cache"]);
   async createManagedWorkspace(root: string, name: string): Promise<{ rootPath: string; canonicalRootPath: string }> {
     const rootPath = resolve(root, name);
     await mkdir(rootPath, { recursive: false });
@@ -181,79 +431,6 @@ export class WorkspacePathService {
 
   async resolveWorkspaceEntry(rootPath: string, relativePath: string): Promise<string> {
     return await this.resolveExistingPath(rootPath, relativePath, false);
-  }
-
-  async searchWorkspace(rootPath: string, query: string, maximumResults = 50): Promise<WorkspaceDirectoryEntry[]> {
-    const root = await realpath(rootPath);
-    const normalizedQuery = query.trim().toLocaleLowerCase();
-    const matches: WorkspaceDirectoryEntry[] = [];
-    const gitignoreRules: Array<{ basePath: string; matcher: ReturnType<typeof ignore> }> = [];
-    let scanned = 0;
-
-    const loadGitignore = async (directory: string): Promise<void> => {
-      try {
-        const contents = await readFile(join(directory, ".gitignore"), "utf8");
-        if (contents.trim()) gitignoreRules.push({ basePath: directory, matcher: ignore().add(contents) });
-      } catch {
-        // A workspace does not need to be a Git repository.
-      }
-    };
-
-    const isGitignored = (candidate: string, kind: WorkspaceDirectoryEntry["kind"]): boolean => {
-      let ignored = false;
-      for (const ruleSet of gitignoreRules) {
-        const path = toPortablePath(relative(ruleSet.basePath, candidate));
-        if (!path || path === ".." || path.startsWith("../")) continue;
-        const result = ruleSet.matcher.test(kind === "directory" ? `${path}/` : path);
-        if (result.ignored) ignored = true;
-        if (result.unignored) ignored = false;
-      }
-      return ignored;
-    };
-
-    const visit = async (directory: string, depth: number): Promise<void> => {
-      if (matches.length >= maximumResults || scanned >= 20_000 || depth > 32) return;
-      await loadGitignore(directory);
-      let entries: Dirent<string>[];
-      try {
-        entries = await readdir(directory, { withFileTypes: true, encoding: "utf8" });
-      } catch {
-        return;
-      }
-      for (const entry of entries) {
-        if (matches.length >= maximumResults || scanned >= 20_000) return;
-        if (entry.isDirectory() && WorkspacePathService.ignoredDirectoryNames.has(entry.name)) continue;
-        const candidate = resolve(directory, entry.name);
-        let details;
-        try {
-          details = await lstat(candidate);
-        } catch {
-          continue;
-        }
-        if (details.isSymbolicLink() || (!details.isFile() && !details.isDirectory())) continue;
-        let canonical: string;
-        try {
-          canonical = await realpath(candidate);
-        } catch {
-          continue;
-        }
-        if (!this.isWithinRoot(root, canonical)) continue;
-        scanned += 1;
-        const path = toPortablePath(relative(root, canonical));
-        const kind = details.isDirectory() ? "directory" : "file";
-        if (isGitignored(canonical, kind)) continue;
-        if (!normalizedQuery || `${entry.name} ${path}`.toLocaleLowerCase().includes(normalizedQuery)) {
-          matches.push({ path, name: entry.name, kind, size: details.size, mtimeMs: details.mtimeMs });
-        }
-        if (details.isDirectory()) await visit(canonical, depth + 1);
-      }
-    };
-
-    await visit(root, 0);
-    return matches.sort((left, right) => {
-      if (left.kind !== right.kind) return left.kind === "directory" ? -1 : 1;
-      return left.path.localeCompare(right.path, undefined, { numeric: true, sensitivity: "base" });
-    });
   }
 
   async readWorkspaceTextFile(rootPath: string, relativePath: string, maximumBytes: number): Promise<{ path: string; name: string; content: string }> {

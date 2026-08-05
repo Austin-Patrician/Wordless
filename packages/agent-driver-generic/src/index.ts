@@ -5,6 +5,7 @@ import {
   type AgentHarnessEvent,
   type AgentMessage,
   type AgentTool,
+  type ExecutionEnv,
   type ThinkingLevel,
   type Skill,
 } from "@wordless/agent";
@@ -91,6 +92,31 @@ type ToolManagingHarness = {
 type CustomEntrySession = {
   appendCustomEntry(customType: string, data?: unknown): Promise<string>;
 };
+
+type ToolCallAccessController = {
+  runWithToolCall<T>(toolCallId: string, operation: () => Promise<T>): Promise<T>;
+  grantOutsideWorkspaceAccess(toolCallId: string): void;
+  revokeOutsideWorkspaceAccess(toolCallId: string): void;
+};
+
+function toolCallAccessController(env: ExecutionEnv): ToolCallAccessController | undefined {
+  const candidate = env as ExecutionEnv & Partial<ToolCallAccessController>;
+  return typeof candidate.runWithToolCall === "function"
+    && typeof candidate.grantOutsideWorkspaceAccess === "function"
+    && typeof candidate.revokeOutsideWorkspaceAccess === "function"
+    ? candidate as ToolCallAccessController
+    : undefined;
+}
+
+function withToolCallAccessScope(tool: AgentTool, controller: ToolCallAccessController | undefined, scopeId: string): AgentTool {
+  if (!controller) return tool;
+  return {
+    ...tool,
+    async execute(toolCallId, params, signal, onUpdate) {
+      return await controller.runWithToolCall(`${scopeId}:${toolCallId}`, () => tool.execute(toolCallId, params, signal, onUpdate));
+    },
+  };
+}
 
 const UserRequestOptionSchema = Type.Object({
   value: Type.String({ minLength: 1, maxLength: 256 }),
@@ -582,6 +608,8 @@ function toConversationMessage(message: AgentMessage, model: ConversationMessage
 class AgentHarnessDriverSession implements AgentDriverSession {
   private readonly harness: AgentHarness;
   private readonly context: AgentDriverSessionContext;
+  private readonly accessController: ToolCallAccessController | undefined;
+  private readonly accessScopeId = randomUUID();
   private toolApprovalMode: ToolApprovalMode;
   private readonly clarificationMode: boolean;
   private readonly listeners = new Set<(event: AgentDriverEvent) => void>();
@@ -596,6 +624,7 @@ class AgentHarnessDriverSession implements AgentDriverSession {
     }
   >();
   private readonly approvalResults = new Map<string, PersistedOperationApproval>();
+  private readonly elevatedToolCallIds = new Set<string>();
   private readonly pendingUserRequests = new Map<
     string,
     {
@@ -625,6 +654,7 @@ class AgentHarnessDriverSession implements AgentDriverSession {
     systemPromptContribution: string,
   ) {
     this.context = context;
+    this.accessController = toolCallAccessController(context.env);
     this.toolApprovalMode = context.toolApprovalMode ?? "manual";
     this.features = features;
     this.persistedFileBaselinePaths = persistedFileBaselinePaths;
@@ -646,9 +676,11 @@ class AgentHarnessDriverSession implements AgentDriverSession {
     const skillTools = context.skills.length > 0 ? [createLoadSkillTool(context.skills)] : [];
     const clarificationTools = clarificationMode && supportsToolUse ? [createClarificationQuestionTool(), createClarificationBriefTool()] : [];
     const userRequestTools = canRequestUserInput ? [createUserRequestTool((callId, params, signal) => this.requestUserInput(callId, params, signal))] : [];
-    const tools = supportsToolUse
+    const accessController = this.accessController;
+    const tools = (supportsToolUse
       ? [...baseTools, ...context.connectorTools, ...skillTools, ...userRequestTools, ...clarificationTools]
-      : [...baseTools, ...context.connectorTools];
+      : [...baseTools, ...context.connectorTools])
+      .map((tool) => withToolCallAccessScope(tool, accessController, this.accessScopeId));
     const clarificationToolNames = new Set(["read", "grep", "find", "ls", "workspace_changes", "load_skill", "ask_clarifying_question", "complete_clarification"]);
     const activeToolNames = clarificationMode
       ? tools.filter((tool) => clarificationToolNames.has(tool.name)).map((tool) => tool.name)
@@ -711,7 +743,8 @@ class AgentHarnessDriverSession implements AgentDriverSession {
           toolName: event.toolName,
           input: event.input,
         };
-        const automaticallyApproved = this.toolApprovalMode === "bypass" || (this.toolApprovalMode === "auto" && request.severity === "normal");
+        const automaticallyApproved = request.requiresElevation !== true
+          && (this.toolApprovalMode === "bypass" || (this.toolApprovalMode === "auto" && request.severity === "normal"));
         let resolution: OperationApprovalResolution;
         if (automaticallyApproved) {
           await (this.context.session as unknown as CustomEntrySession).appendCustomEntry(
@@ -745,6 +778,11 @@ class AgentHarnessDriverSession implements AgentDriverSession {
         await (this.context.session as unknown as CustomEntrySession).appendCustomEntry(OPERATION_APPROVAL_JOURNAL_TYPE, persisted);
         if (!resolution.approved) {
           return { block: true, reason: resolution.feedback ? `Operation rejected by the user: ${resolution.feedback}` : "Operation rejected by the user" };
+        }
+        if (request.requiresElevation && accessController) {
+          const accessKey = this.toolCallAccessKey(event.toolCallId);
+          accessController.grantOutsideWorkspaceAccess(accessKey);
+          this.elevatedToolCallIds.add(accessKey);
         }
         if (sessionFileBaseline && !this.persistedFileBaselinePaths.has(sessionFileBaseline.path)) {
           this.persistedFileBaselinePaths.add(sessionFileBaseline.path);
@@ -788,7 +826,9 @@ class AgentHarnessDriverSession implements AgentDriverSession {
         const managedHarness = this.harness as unknown as ToolManagingHarness;
         const existing = managedHarness.getTools();
         const existingNames = new Set(existing.map((tool) => tool.name));
-        const additions = tools.filter((tool) => !existingNames.has(tool.name));
+        const additions = tools
+          .filter((tool) => !existingNames.has(tool.name))
+          .map((tool) => withToolCallAccessScope(tool, this.accessController, this.accessScopeId));
         if (additions.length === 0) return;
         const active = isClarificationMode(this.context)
           ? managedHarness.getActiveTools().map((tool) => tool.name)
@@ -942,6 +982,8 @@ class AgentHarnessDriverSession implements AgentDriverSession {
   }
 
   dispose(): void {
+    for (const toolCallId of this.elevatedToolCallIds) this.accessController?.revokeOutsideWorkspaceAccess(toolCallId);
+    this.elevatedToolCallIds.clear();
     this.resolvePendingApprovals(false, "Operation cancelled because the session was closed");
     this.resolvePendingUserRequests("The request was cancelled because the session was closed");
     this.unsubscribe();
@@ -950,6 +992,10 @@ class AgentHarnessDriverSession implements AgentDriverSession {
 
   private emit(event: AgentDriverEvent): void {
     for (const listener of this.listeners) listener(event);
+  }
+
+  private toolCallAccessKey(toolCallId: string): string {
+    return `${this.accessScopeId}:${toolCallId}`;
   }
 
   private async shouldAutomaticallyCompact(): Promise<boolean> {
@@ -1096,7 +1142,7 @@ class AgentHarnessDriverSession implements AgentDriverSession {
 
   private resolvePendingNormalApprovals(): void {
     for (const [approvalId, pending] of this.pendingApprovals) {
-      if (pending.request.severity !== "normal") continue;
+      if (pending.request.severity !== "normal" || pending.request.requiresElevation) continue;
       this.resolvePendingApproval(approvalId, true, "Automatically approved for this session");
     }
   }
@@ -1129,6 +1175,11 @@ class AgentHarnessDriverSession implements AgentDriverSession {
   }
 
   private async handleHarnessEvent(event: AgentHarnessEvent): Promise<void> {
+    if (isToolExecutionEnd(event)) {
+      const accessKey = this.toolCallAccessKey(event.toolCallId);
+      this.accessController?.revokeOutsideWorkspaceAccess(accessKey);
+      this.elevatedToolCallIds.delete(accessKey);
+    }
     if (event.type === "message_start" && (event.message.role === "assistant" || event.message.role === "user")) {
       if (event.message.role === "user" && !this.activeUserSubmission) return;
       const id = this.messageId(event.message, event.message.role === "user" ? this.activeUserSubmission?.messageId : undefined);

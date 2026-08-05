@@ -101,6 +101,7 @@ import {
 } from "@wordless/protocol";
 import { WordlessDatabase, createWordlessSession, openWordlessSession, type WordlessSessionMetadata } from "@wordless/persistence";
 import { WorkspacePathService } from "@wordless/platform-node";
+import type { WorkspaceSearchService } from "@wordless/workspace-search";
 import { ConnectorRegistry, type ConnectorAuthorizationCallbacks, type ConnectorConfiguration } from "@wordless/connector-registry";
 import { SkillRegistry } from "@wordless/skill-registry";
 import { RuntimeModelConfiguration, type ModelConfigurationPaths } from "./model-configuration.ts";
@@ -224,6 +225,7 @@ export interface RuntimeOptions {
   profiles: ProfileRegistry;
   drivers: AgentDriverRegistry;
   extensions: AgentExtensionManager;
+  workspaceSearch: WorkspaceSearchService;
 }
 
 export const BUILTIN_ENTRIES: WorkbenchEntryDefinition[] = [
@@ -677,12 +679,6 @@ type CachedSessionHistory = {
   snapshot: SessionSnapshot;
 };
 
-type WorkspaceSearchCache = {
-  entries?: WorkspaceFileEntry[];
-  expiresAt: number;
-  loading?: Promise<WorkspaceFileEntry[]>;
-};
-
 export class WordlessRuntime {
   private readonly database: WordlessDatabase;
   private readonly modelConfiguration: RuntimeModelConfiguration;
@@ -696,7 +692,6 @@ export class WordlessRuntime {
   private readonly usageReport: UsageReportService;
   private readonly listeners = new Set<(event: RuntimeEventEnvelope) => void>();
   private readonly historyCache = new Map<string, CachedSessionHistory>();
-  private readonly workspaceSearchCache = new Map<string, WorkspaceSearchCache>();
   private readonly runs = new Map<string, ActiveRun>();
   private readonly mediaOperations = new Map<string, AbortController>();
   private readonly runtimeInstanceId = randomUUID();
@@ -767,7 +762,7 @@ export class WordlessRuntime {
     this.runs.clear();
     for (const controller of this.mediaOperations.values()) controller.abort();
     this.mediaOperations.clear();
-    this.workspaceSearchCache.clear();
+    this.options.workspaceSearch.dispose();
     this.skillRegistry.dispose();
     this.modelConfiguration.dispose();
     this.database.close();
@@ -1177,9 +1172,7 @@ export class WordlessRuntime {
   }
 
   invalidateSessionWorkspaceSearch(sessionId: string): void {
-    const record = this.requireSession(sessionId);
-    if (!record.workspaceId) return;
-    this.workspaceSearchCache.delete(record.runtimeRootPath);
+    this.requireSession(sessionId);
   }
 
   async resolveSessionWorkspaceFile(sessionId: string, path: string): Promise<string> {
@@ -2006,6 +1999,7 @@ export class WordlessRuntime {
       driver,
       models: this.models,
       env,
+      workspaceSearch: this.options.workspaceSearch.forRoot(record.runtimeRootPath),
       skills,
       connectorTools,
       connectorToolPolicies,
@@ -2024,6 +2018,7 @@ export class WordlessRuntime {
       models: this.models,
       session: journal,
       env,
+      workspaceSearch: this.options.workspaceSearch.forRoot(record.runtimeRootPath),
       skills,
       connectorTools,
       connectorToolPolicies,
@@ -2069,28 +2064,13 @@ export class WordlessRuntime {
   }
 
   private async searchWorkspaceRoot(rootPath: string, query: string): Promise<WorkspaceFileEntry[]> {
-    const now = Date.now();
-    let cache = this.workspaceSearchCache.get(rootPath);
-    if (!cache || cache.expiresAt <= now) {
-      if (!cache?.loading) {
-        const loading = this.pathService.searchWorkspace(rootPath, "", 20_000);
-        cache = { expiresAt: 0, loading };
-        this.workspaceSearchCache.set(rootPath, cache);
-        void loading.then((entries) => {
-          const current = this.workspaceSearchCache.get(rootPath);
-          if (current?.loading !== loading) return;
-          this.workspaceSearchCache.set(rootPath, { entries, expiresAt: Date.now() + 30_000 });
-        }).catch(() => {
-          if (this.workspaceSearchCache.get(rootPath)?.loading === loading) this.workspaceSearchCache.delete(rootPath);
-        });
-      }
-    }
-    const entries = cache.entries ?? await cache.loading;
-    if (!entries) return [];
-    const normalizedQuery = query.trim().toLocaleLowerCase();
-    return entries
-      .filter((entry) => !normalizedQuery || `${entry.name} ${entry.path}`.toLocaleLowerCase().includes(normalizedQuery))
-      .slice(0, 50);
+    return (await this.options.workspaceSearch.forRoot(rootPath).searchReferences(query, 50)).map((entry) => ({
+      path: entry.path,
+      name: entry.name,
+      kind: entry.kind,
+      size: entry.size,
+      mtimeMs: entry.modifiedAt,
+    }));
   }
 
   private handleDriverEvent(sessionId: string, active: ActiveRun, event: AgentDriverEvent): void {
