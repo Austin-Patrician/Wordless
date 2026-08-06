@@ -270,7 +270,7 @@ export const ImportSkillFileSchema = Type.Object({
 export const ConnectorConfigurationSchema = Type.Object({
   id: Type.Optional(Type.String({ minLength: 1 })),
   name: Type.String({ minLength: 1, maxLength: 120 }),
-  templateId: Type.Union([Type.Literal("feishu"), Type.Literal("dingtalk"), Type.Literal("wecom"), Type.Literal("postgresql"), Type.Literal("web-search"), Type.Null()]),
+  templateId: Type.Union([Type.Literal("feishu"), Type.Literal("dingtalk"), Type.Literal("wecom"), Type.Literal("postgresql"), Type.Literal("web-search"), Type.Literal("firecrawl"), Type.Null()]),
   transport: Type.Union([Type.Literal("stdio"), Type.Literal("streamable-http")]),
   enabled: Type.Boolean(),
   trustedAt: Type.Union([Type.Number(), Type.Null()]),
@@ -1020,7 +1020,7 @@ export type RuntimeEvent =
   | { type: "run.failed"; runId: string; message: string }
   | { type: "run.cancelled"; runId: string }
   | { type: "context.compaction.started"; trigger: ContextCompactionRecord["trigger"] }
-  | { type: "context.compaction.completed"; compaction: ContextCompactionRecord }
+  | { type: "context.compaction.completed"; compaction: ContextCompactionRecord; recoveredFailureMessageId?: string }
   | { type: "context.compaction.failed"; trigger: ContextCompactionRecord["trigger"]; message: string }
   | { type: "message.started"; message: ConversationMessage }
   | { type: "message.text.delta"; messageId: string; delta: string }

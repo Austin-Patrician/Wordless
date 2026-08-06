@@ -13,13 +13,14 @@ import {
 import {
   Cable,
   CheckCircle2,
+  CircleAlert,
   KeyRound,
   LoaderCircle,
   Plus,
   Trash2,
   X,
 } from "lucide-react";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import {
   CONNECTOR_OAUTH_REDIRECT_URI,
   type ConnectorConfiguration,
@@ -28,8 +29,16 @@ import {
 } from "@wordless/domain";
 import connectionIcon from "../../../icons/common-icons/connection.svg";
 import { ConnectorIcon } from "../../shared/ConnectorIcon";
+import type { MessageKey } from "../../shared/i18n";
 import { usePreferences } from "../../shared/preferences";
 import { useRuntime } from "../../shared/runtime";
+import {
+  connectorErrorDetail,
+  connectorErrorKind,
+  hasActiveConnectorAuthorization,
+  type ConnectorErrorKind,
+  type ConnectorOperation,
+} from "./connector-ui-state";
 
 type ConnectorDraft = Omit<
   ConnectorConfiguration,
@@ -72,7 +81,20 @@ const templates: Array<{
     detail: "外部研究与搜索服务",
     transport: "streamable-http",
   },
+  {
+    id: "firecrawl",
+    label: "Firecrawl",
+    detail: "网页搜索、抓取与解析服务",
+    transport: "streamable-http",
+  },
 ];
+
+const templateDefaults: Partial<Record<Exclude<ConnectorTemplateId, null>, Pick<ConnectorDraft, "url" | "oauth">>> = {
+  firecrawl: {
+    url: "https://mcp.firecrawl.dev/v2/mcp-oauth",
+    oauth: null,
+  },
+};
 
 function newDraft(): ConnectorDraft {
   return {
@@ -156,6 +178,18 @@ type ConnectorsViewProps = {
   query: string;
 };
 
+type ConnectorUiError = { detail: string; kind: ConnectorErrorKind };
+
+const connectorErrorMessages: Record<ConnectorErrorKind, MessageKey> = {
+  "authorization-busy": "connectorAuthorizationBusy",
+  "authorization-denied": "connectorAuthorizationDenied",
+  "authorization-expired": "connectorAuthorizationExpired",
+  "authorization-failed": "connectorAuthorizationFailed",
+  "authorization-timeout": "connectorAuthorizationTimeout",
+  "operation-failed": "connectorOperationFailed",
+  "test-failed": "connectorTestFailed",
+};
+
 export function ConnectorsView({
   dialogOpen,
   onDialogOpenChange,
@@ -164,8 +198,13 @@ export function ConnectorsView({
   const { client, refresh, snapshot } = useRuntime();
   const { t } = usePreferences();
   const [draft, setDraft] = useState<ConnectorDraft>(newDraft);
-  const [busy, setBusy] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const operationLocks = useRef(new Map<string, ConnectorOperation>());
+  const [operations, setOperations] = useState<Record<string, ConnectorOperation>>({});
+  const [connectorErrors, setConnectorErrors] = useState<Record<string, ConnectorUiError>>({});
+  const [dialogError, setDialogError] = useState<ConnectorUiError | null>(null);
+  const [templateError, setTemplateError] = useState<ConnectorUiError | null>(null);
+  const [startingTemplateId, setStartingTemplateId] = useState<Exclude<ConnectorTemplateId, null> | null>(null);
+  const [saving, setSaving] = useState(false);
   const connectors = snapshot?.connectors.connectors ?? [];
   const filteredConnectors = connectors.filter((connector) =>
     `${connector.name} ${connector.transport} ${connector.status}`
@@ -183,60 +222,104 @@ export function ConnectorsView({
         .includes(query.trim().toLowerCase()),
     );
 
-  const run = async (key: string, operation: () => Promise<void>) => {
+  const runConnector = async (connectorId: string, action: ConnectorOperation, operation: () => Promise<void>) => {
     if (!client) return;
-    setBusy(key);
-    setError(null);
+    if (operationLocks.current.has(connectorId)) return;
+    if (action === "authorize" && [...operationLocks.current.values()].includes("authorize")) return;
+    operationLocks.current.set(connectorId, action);
+    setOperations(Object.fromEntries(operationLocks.current));
+    setConnectorErrors((current) => {
+      const next = { ...current };
+      delete next[connectorId];
+      return next;
+    });
     try {
       await operation();
       await refresh();
     } catch (cause) {
-      await refresh();
-      setError(cause instanceof Error ? cause.message : String(cause));
+      await refresh().catch(() => {});
+      const detail = connectorErrorDetail(cause);
+      setConnectorErrors((current) => ({ ...current, [connectorId]: { detail, kind: connectorErrorKind(detail, action) } }));
     } finally {
-      setBusy(null);
+      operationLocks.current.delete(connectorId);
+      setOperations(Object.fromEntries(operationLocks.current));
     }
   };
 
-  const startTemplate = (template: (typeof templates)[number]) => {
-    setDraft({
+  const startTemplate = async (template: (typeof templates)[number]) => {
+    if (!client || startingTemplateId !== null) return;
+    const defaults = templateDefaults[template.id];
+    if (template.id !== "firecrawl") {
+      setDraft({
+        ...newDraft(),
+        templateId: template.id,
+        name: template.label,
+        transport: template.transport,
+      });
+      onDialogOpenChange(true);
+      return;
+    }
+    if (authorizationActive) return;
+    setStartingTemplateId(template.id);
+    setTemplateError(null);
+    try {
+      const saved = await client.saveConnector({
       ...newDraft(),
       templateId: template.id,
       name: template.label,
       transport: template.transport,
-    });
-    onDialogOpenChange(true);
+        ...defaults,
+      });
+      await runConnector(saved.id, "authorize", async () => {
+        await client.authorizeConnector(saved.id);
+        await client.testConnector(saved.id);
+      });
+    } catch (cause) {
+      const detail = connectorErrorDetail(cause);
+      setTemplateError({ detail, kind: connectorErrorKind(detail, "authorize") });
+    } finally {
+      setStartingTemplateId(null);
+    }
   };
 
   const save = async () => {
     if (!client) return;
-    setBusy("save");
-    setError(null);
+    setSaving(true);
+    setDialogError(null);
     try {
       await client.saveConnector(draft);
       await refresh();
       onDialogOpenChange(false);
       setDraft(newDraft());
     } catch (cause) {
-      await refresh();
-      setError(cause instanceof Error ? cause.message : String(cause));
+      await refresh().catch(() => {});
+      const detail = connectorErrorDetail(cause);
+      setDialogError({ detail, kind: "operation-failed" });
     } finally {
-      setBusy(null);
+      setSaving(false);
     }
   };
 
+  const authorizationActive = hasActiveConnectorAuthorization(operations);
+
   return (
     <section className="min-h-0 flex-1 overflow-y-auto pt-8">
-      {error ? (
-        <p className="mb-4 border border-[#e6cbc4] bg-[#fdf5f2] px-3 py-2 text-[11px] text-[#a45748] dark:border-[#613f37] dark:bg-[#2b201d] dark:text-[#efb0a3]">
-          {error}
-        </p>
-      ) : null}
       <div className="grid grid-cols-1 gap-3 pb-8 sm:grid-cols-2 lg:grid-cols-3">
         {filteredConnectors.map((connector) => {
           const connected = connector.enabled && connector.status === "ready";
+          const operation = operations[connector.id];
+          const connectorBusy = operation !== undefined;
+          const persistedErrorDetail = connector.lastError ? connectorErrorDetail(connector.lastError) : undefined;
+          const persistedError = persistedErrorDetail
+            ? {
+                detail: persistedErrorDetail,
+                kind: connectorErrorKind(persistedErrorDetail, connector.status === "needs-auth" ? "authorize" : "test"),
+              }
+            : undefined;
+          const cardError = connectorBusy ? undefined : connectorErrors[connector.id] ?? persistedError;
           return (
             <article
+              aria-busy={connectorBusy}
               className={cn(
                 "group flex min-w-0 flex-col rounded-[8px] border bg-white p-3.5 transition-colors dark:bg-card",
                 connected
@@ -281,17 +364,21 @@ export function ConnectorsView({
                 </div>
               </div>
               <div className="mt-3 flex items-center justify-between gap-2">
-                <span className="font-mono text-[10px] text-[#8d8d86] dark:text-muted-foreground">
-                  {statusLabel(connector.status)}
+                <span className="min-w-0 truncate font-mono text-[10px] text-[#8d8d86] dark:text-muted-foreground">
+                  {operation === "authorize"
+                    ? t("connectorWaitingAuthorization")
+                    : operation === "test" || operation === "trust"
+                      ? t("connectorTesting")
+                      : statusLabel(connector.status)}
                 </span>
                 <div className="flex items-center gap-1">
                   {connector.transport === "stdio" &&
                   connector.trustedAt === null ? (
                     <Button
                       className="h-7 px-2 text-[10px]"
-                      disabled={busy !== null}
+                      disabled={connectorBusy}
                       onClick={() =>
-                        void run(`trust:${connector.id}`, async () => {
+                        void runConnector(connector.id, "trust", async () => {
                           await client?.trustConnector(connector.id);
                           await client?.testConnector(connector.id);
                         })
@@ -304,10 +391,11 @@ export function ConnectorsView({
                   ) : connector.transport === "streamable-http" &&
                     connector.status === "needs-auth" ? (
                     <Button
-                      className="h-7 gap-1 px-2 text-[10px]"
-                      disabled={busy !== null}
+                      aria-label={operation === "authorize" ? t("connectorWaitingAuthorization") : "连接"}
+                      className="h-7 min-w-14 gap-1 px-2 text-[10px]"
+                      disabled={connectorBusy || authorizationActive}
                       onClick={() =>
-                        void run(`authorize:${connector.id}`, async () => {
+                        void runConnector(connector.id, "authorize", async () => {
                           await client?.authorizeConnector(connector.id);
                           await client?.testConnector(connector.id);
                         })
@@ -315,18 +403,18 @@ export function ConnectorsView({
                       type="button"
                       variant="outline"
                     >
-                      <KeyRound className="h-3 w-3" />
-                      连接
+                      {operation === "authorize" ? <LoaderCircle className="h-3 w-3 animate-spin" /> : <><KeyRound className="h-3 w-3" /><span>连接</span></>}
                     </Button>
                   ) : (
                     <Tooltip>
                       <TooltipTrigger asChild>
                         <Button
                           aria-label="测试连接"
-                          disabled={busy !== null}
+                          disabled={connectorBusy}
                           onClick={() =>
-                            void run(
-                              `test:${connector.id}`,
+                            void runConnector(
+                              connector.id,
+                              "test",
                               async () =>
                                 await client?.testConnector(connector.id),
                             )
@@ -339,7 +427,7 @@ export function ConnectorsView({
                             alt=""
                             className={cn(
                               "h-4 w-4 object-contain dark:invert",
-                              busy === `test:${connector.id}` &&
+                              operation === "test" &&
                                 "animate-pulse",
                             )}
                             src={connectionIcon}
@@ -351,10 +439,11 @@ export function ConnectorsView({
                   )}
                   <Switch
                     checked={connector.enabled}
-                    disabled={busy !== null}
+                    disabled={connectorBusy}
                     onCheckedChange={(enabled) =>
-                      void run(
-                        `enabled:${connector.id}`,
+                      void runConnector(
+                        connector.id,
+                        "enabled",
                         async () =>
                           await client?.setConnectorEnabled(
                             connector.id,
@@ -366,10 +455,11 @@ export function ConnectorsView({
                   <Button
                     aria-label="Remove connector"
                     className="text-[#8d6252]"
-                    disabled={busy !== null}
+                    disabled={connectorBusy}
                     onClick={() =>
-                      void run(
-                        `remove:${connector.id}`,
+                      void runConnector(
+                        connector.id,
+                        "remove",
                         async () => await client?.removeConnector(connector.id),
                       )
                     }
@@ -381,6 +471,12 @@ export function ConnectorsView({
                   </Button>
                 </div>
               </div>
+              {cardError ? (
+                <div className="mt-3 flex items-start gap-2 border-t border-[#eee4df] pt-2.5 text-[10px] leading-4 text-[#9a5749] dark:border-[#513a34] dark:text-[#efb0a3]">
+                  <CircleAlert className="mt-px h-3.5 w-3.5 shrink-0" />
+                  <span>{t(connectorErrorMessages[cardError.kind])}</span>
+                </div>
+              ) : null}
             </article>
           );
         })}
@@ -388,7 +484,9 @@ export function ConnectorsView({
           <button
             className="group flex min-w-0 flex-col rounded-[8px] border border-[#e3e3de] bg-white p-3.5 text-left transition-colors hover:border-[#cfcfc8] hover:bg-[#fdfdfc] dark:border-border dark:bg-card dark:hover:bg-muted"
             key={template.id}
-            onClick={() => startTemplate(template)}
+            aria-busy={startingTemplateId === template.id || (template.id === "firecrawl" && authorizationActive)}
+            disabled={startingTemplateId !== null || (template.id === "firecrawl" && authorizationActive)}
+            onClick={() => void startTemplate(template)}
             type="button"
           >
             <span className="flex min-w-0 items-start gap-3">
@@ -409,12 +507,21 @@ export function ConnectorsView({
             </span>
             <span className="mt-3 flex items-center justify-between">
               <span className="font-mono text-[10px] text-[#8d8d86] dark:text-muted-foreground">
-                AVAILABLE
+                {startingTemplateId === template.id ? null : "AVAILABLE"}
               </span>
-              <span className="grid h-7 w-7 place-items-center rounded-full border border-[#d8d8d3] text-[#92928b] transition-colors group-hover:bg-[#f3f3f0] group-hover:text-[#5c5c56] dark:border-border dark:group-hover:bg-muted">
-                <Plus className="h-3.5 w-3.5" />
+              <span
+                aria-label={startingTemplateId === template.id ? t("connectorWaitingAuthorization") : undefined}
+                className="grid h-7 w-7 place-items-center rounded-full border border-[#d8d8d3] text-[#92928b] transition-colors group-hover:bg-[#f3f3f0] group-hover:text-[#5c5c56] dark:border-border dark:group-hover:bg-muted"
+              >
+                {startingTemplateId === template.id ? <LoaderCircle className="h-3.5 w-3.5 animate-spin" /> : <Plus className="h-3.5 w-3.5" />}
               </span>
             </span>
+            {template.id === "firecrawl" && templateError ? (
+              <span className="mt-2 flex items-start gap-1.5 border-t border-[#eee4df] pt-2 text-[10px] leading-4 text-[#9a5749] dark:border-[#513a34] dark:text-[#efb0a3]">
+                <CircleAlert className="mt-px h-3.5 w-3.5 shrink-0" />
+                <span>{t(connectorErrorMessages[templateError.kind])}</span>
+              </span>
+            ) : null}
           </button>
         ))}
       </div>
@@ -432,7 +539,10 @@ export function ConnectorsView({
       <Dialog
         onOpenChange={(open) => {
           onDialogOpenChange(open);
-          if (!open) setDraft(newDraft());
+          if (!open) {
+            setDraft(newDraft());
+            setDialogError(null);
+          }
         }}
         open={dialogOpen}
       >
@@ -454,6 +564,12 @@ export function ConnectorsView({
               </button>
             </DialogClose>
           </div>
+          {dialogError ? (
+            <div className="mt-4 flex items-start gap-2 border border-[#e6cbc4] bg-[#fdf5f2] px-3 py-2 text-[11px] text-[#a45748] dark:border-[#613f37] dark:bg-[#2b201d] dark:text-[#efb0a3]">
+              <CircleAlert className="mt-px h-3.5 w-3.5 shrink-0" />
+              <span>{t(connectorErrorMessages[dialogError.kind])}</span>
+            </div>
+          ) : null}
           <label className="mt-5 block">
             <span className="mb-1.5 block text-[11px] font-medium text-[#55554f] dark:text-foreground">
               {t("connectorName")}
@@ -703,11 +819,11 @@ export function ConnectorsView({
               {t("connectorSaveHelp")}
             </span>
             <Button
-              disabled={busy === "save"}
+              disabled={saving}
               onClick={() => void save()}
               type="button"
             >
-              {busy === "save" ? (
+              {saving ? (
                 <LoaderCircle className="h-3.5 w-3.5 animate-spin" />
               ) : (
                 <CheckCircle2 className="h-3.5 w-3.5" />

@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import type { ContextCompactionRecord } from "@wordless/domain";
 import type { ConversationMessage, SessionHistoryPage } from "@wordless/protocol";
+import { completeContextCompaction } from "../src/renderer/features/thread/context-compaction-state.ts";
 import { createThreadTimeline, dataIndexFromReportedIndex, firstItemIndexAfterPrepend, threadTimelineItemCount } from "../src/renderer/features/thread/thread-virtual-list.ts";
 import { createAssistantRunPresentation } from "../src/renderer/features/thread/thread-run-state.ts";
 
@@ -42,6 +43,24 @@ test("places the pending assistant after automatic compaction for the active tur
 
   assert.deepEqual(timeline.map((item) => item.type), ["messages", "compaction", "assistant-run"]);
   assert.equal(timeline[2]?.timestamp, 3);
+});
+
+test("places an overflow compaction before the recovered response", () => {
+  const user = { ...message("user", "user"), timestamp: 1 };
+  const failed = { ...message("overflow-attempt", "assistant"), timestamp: 2 };
+  const recovered = { ...message("recovered-response", "assistant"), timestamp: 4 };
+  const overflowCompaction = { ...compaction(3), trigger: "overflow" as const };
+  const completed = completeContextCompaction(
+    [user, failed, recovered],
+    [],
+    overflowCompaction,
+    failed.id,
+  );
+
+  const timeline = createThreadTimeline(completed.messages, completed.contextCompactions);
+
+  assert.deepEqual(timeline.map((item) => item.type), ["messages", "compaction", "messages"]);
+  assert.deepEqual(completed.messages.map((item) => item.id), ["user", "recovered-response"]);
 });
 
 test("counts rendered timeline items for a history page", () => {

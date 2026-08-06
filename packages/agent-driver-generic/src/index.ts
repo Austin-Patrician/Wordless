@@ -1043,7 +1043,8 @@ class AgentHarnessDriverSession implements AgentDriverSession {
       return;
     }
 
-    const compacted = await this.compactForOverflow(recoveredFailureEntryId);
+    const recoveredFailureMessageId = this.suppressedOverflowMessage?.message.id;
+    const compacted = await this.compactForOverflow(recoveredFailureEntryId, recoveredFailureMessageId);
     if (!compacted) {
       this.completeSuppressedOverflowMessage();
       return;
@@ -1054,12 +1055,16 @@ class AgentHarnessDriverSession implements AgentDriverSession {
     await this.recoverContextOverflow(retryResponse);
   }
 
-  private async compactForOverflow(recoveredFailureEntryId?: string): Promise<boolean> {
+  private async compactForOverflow(recoveredFailureEntryId?: string, recoveredFailureMessageId?: string): Promise<boolean> {
     this.emit({ type: "context.compaction.started", trigger: "overflow" });
     try {
       await this.harness.compact();
       const compaction = await this.persistCompaction("overflow", recoveredFailureEntryId);
-      this.emit({ type: "context.compaction.completed", compaction });
+      this.emit({
+        type: "context.compaction.completed",
+        compaction,
+        ...(recoveredFailureMessageId ? { recoveredFailureMessageId } : {}),
+      });
       return true;
     } catch (cause) {
       this.emit({

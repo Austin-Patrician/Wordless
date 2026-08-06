@@ -92,7 +92,12 @@ describe("context overflow recovery", () => {
 
     expect(faux.state.callCount).toBe(4);
     expect(events.filter((event) => event.type === "context.compaction.started" && event.trigger === "overflow")).toHaveLength(1);
-    expect(events.filter((event) => event.type === "context.compaction.completed" && event.compaction.trigger === "overflow")).toHaveLength(1);
+    const assistantStarts = events.filter((event) => event.type === "message.started" && event.message.role === "assistant");
+    const compactionCompleted = events.find((event) => event.type === "context.compaction.completed" && event.compaction.trigger === "overflow");
+    expect(assistantStarts).toHaveLength(2);
+    expect(compactionCompleted).toBeDefined();
+    expect(compactionCompleted?.recoveredFailureMessageId).toBe(assistantStarts[0]?.message.id);
+    expect(compactionCompleted?.recoveredFailureMessageId).not.toBe(assistantStarts.at(-1)?.message.id);
     expect(events.filter((event) => event.type === "message.completed" && event.message.status === "error")).toHaveLength(0);
     expect(events.some((event) => event.type === "message.completed" && event.message.blocks.some((block) => block.type === "text" && block.text === "recovered response"))).toBe(true);
     expect((await session.buildContext()).messages.some((message) => message.role === "assistant" && message.stopReason === "error")).toBe(false);

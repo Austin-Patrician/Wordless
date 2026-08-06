@@ -46,6 +46,7 @@ export const CONNECTOR_TEMPLATES: ConnectorTemplate[] = [
   { id: "wecom", name: "企业微信", description: "为企业微信开放平台 MCP 服务配置连接。", transport: "streamable-http" },
   { id: "postgresql", name: "PostgreSQL", description: "通过本地或远程 MCP 服务访问 PostgreSQL。", transport: "stdio" },
   { id: "web-search", name: "Web Search", description: "为搜索服务 MCP Server 配置连接。", transport: "streamable-http" },
+  { id: "firecrawl", name: "Firecrawl", description: "通过 Firecrawl MCP 进行网页搜索、抓取和解析。", transport: "streamable-http" },
 ];
 
 type PersistedConnector = {
@@ -63,6 +64,7 @@ type PersistedStore = {
 
 export type ConnectorRegistryOptions = {
   configPath: string;
+  oauthAuthorizationTimeoutMs?: number;
 };
 
 export type ConnectorAuthorizationCallbacks = {
@@ -79,6 +81,22 @@ type OAuthCallbackServer = {
   waitForResult: Promise<{ code?: string; error?: string }>;
   close(): Promise<void>;
 };
+
+const OAUTH_CALLBACK_TIMEOUT_MS = 5 * 60 * 1_000;
+
+async function withTimeout<T>(operation: Promise<T>, timeoutMs: number, message: string): Promise<T> {
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      operation,
+      new Promise<never>((_, reject) => {
+        timeout = setTimeout(() => reject(new Error(message)), timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timeout) clearTimeout(timeout);
+  }
+}
 
 function emptyCatalog(): ConnectorCatalogSnapshot {
   return { connectors: [], updatedAt: 0 };
@@ -111,7 +129,7 @@ function readConfiguration(value: unknown): ConnectorConfiguration | undefined {
   const record = asRecord(value);
   if (!record || typeof record.id !== "string" || typeof record.name !== "string") return undefined;
   if (record.transport !== "stdio" && record.transport !== "streamable-http") return undefined;
-  const templateId = record.templateId === "feishu" || record.templateId === "dingtalk" || record.templateId === "wecom" || record.templateId === "postgresql" || record.templateId === "web-search" ? record.templateId : null;
+  const templateId = record.templateId === "feishu" || record.templateId === "dingtalk" || record.templateId === "wecom" || record.templateId === "postgresql" || record.templateId === "web-search" || record.templateId === "firecrawl" ? record.templateId : null;
   const environment = asRecord(record.environment) ?? {};
   const oauth = asRecord(record.oauth);
   return {
@@ -213,12 +231,15 @@ function textFromToolResult(value: unknown): string {
 
 export class ConnectorRegistry {
   private readonly configPath: string;
+  private readonly oauthAuthorizationTimeoutMs: number;
   private entries: PersistedConnector[] = [];
   private snapshotValue = emptyCatalog();
   private readonly listeners = new Set<() => void>();
+  private writeQueue: Promise<void> = Promise.resolve();
 
   constructor(options: ConnectorRegistryOptions) {
     this.configPath = options.configPath;
+    this.oauthAuthorizationTimeoutMs = Math.max(1, options.oauthAuthorizationTimeoutMs ?? OAUTH_CALLBACK_TIMEOUT_MS);
   }
 
   async initialize(): Promise<void> {
@@ -321,13 +342,15 @@ export class ConnectorRegistry {
     const callbackServer = await this.createOAuthCallbackServer(state);
     try {
       const provider = this.createOAuthProvider(entry, callbackServer.redirectUrl, state, callbacks);
-      const result = await auth(provider, { serverUrl: entry.configuration.url });
-      if (result === "REDIRECT") {
-        const callback = await callbackServer.waitForResult;
-        if (callback.error) throw new Error(`OAuth authorization failed: ${callback.error}`);
-        if (!callback.code) throw new Error("OAuth authorization did not return a code");
-        await auth(provider, { serverUrl: entry.configuration.url, authorizationCode: callback.code });
-      }
+      await withTimeout((async () => {
+        const result = await auth(provider, { serverUrl: entry.configuration.url! });
+        if (result === "REDIRECT") {
+          const callback = await callbackServer.waitForResult;
+          if (callback.error) throw new Error(`OAuth authorization failed: ${callback.error}`);
+          if (!callback.code) throw new Error("OAuth authorization did not return a code");
+          await auth(provider, { serverUrl: entry.configuration.url!, authorizationCode: callback.code });
+        }
+      })(), this.oauthAuthorizationTimeoutMs, "OAuth authorization timed out");
       entry.status = "ready";
       entry.lastError = undefined;
       entry.configuration = { ...entry.configuration, updatedAt: Date.now() };
@@ -474,23 +497,27 @@ export class ConnectorRegistry {
   }
 
   private createOAuthProvider(entry: PersistedConnector, redirectUrl: string, state: string, callbacks: ConnectorAuthorizationCallbacks): OAuthClientProvider {
-    const configuration = entry.configuration;
-    const oauth = configuration.oauth;
     let codeVerifier: string | undefined;
     const provider: OAuthClientProvider = {
       redirectUrl,
       state: () => state,
-      clientMetadata: {
-        redirect_uris: [redirectUrl],
-        client_name: "Wordless",
-        grant_types: ["authorization_code", "refresh_token"],
-        response_types: ["code"],
-        token_endpoint_auth_method: oauth?.clientSecret ? "client_secret_post" : "none",
-        ...(oauth?.scope ? { scope: oauth.scope } : {}),
-      } satisfies OAuthClientMetadata,
-      clientInformation: (): OAuthClientInformationMixed | undefined => oauth?.clientId
-        ? { client_id: oauth.clientId, ...(oauth.clientSecret ? { client_secret: oauth.clientSecret } : {}) }
-        : undefined,
+      get clientMetadata() {
+        const current = entry.configuration.oauth;
+        return {
+          redirect_uris: [redirectUrl],
+          client_name: "Wordless",
+          grant_types: ["authorization_code", "refresh_token"],
+          response_types: ["code"],
+          token_endpoint_auth_method: current?.clientSecret ? "client_secret_post" : "none",
+          ...(current?.scope ? { scope: current.scope } : {}),
+        } satisfies OAuthClientMetadata;
+      },
+      clientInformation: (): OAuthClientInformationMixed | undefined => {
+        const current = entry.configuration.oauth;
+        return current?.clientId
+          ? { client_id: current.clientId, ...(current.clientSecret ? { client_secret: current.clientSecret } : {}) }
+          : undefined;
+      },
       saveClientInformation: async (information) => {
         entry.configuration = {
           ...entry.configuration,
@@ -527,7 +554,17 @@ export class ConnectorRegistry {
 
   private async createOAuthCallbackServer(expectedState: string): Promise<OAuthCallbackServer> {
     let resolveResult: (result: { code?: string; error?: string }) => void = () => {};
-    const waitForResult = new Promise<{ code?: string; error?: string }>((resolve) => { resolveResult = resolve; });
+    let callbackTimeout: ReturnType<typeof setTimeout> | undefined;
+    const waitForResult = new Promise<{ code?: string; error?: string }>((resolve) => {
+      let settled = false;
+      resolveResult = (result) => {
+        if (settled) return;
+        settled = true;
+        if (callbackTimeout) clearTimeout(callbackTimeout);
+        resolve(result);
+      };
+    });
+    callbackTimeout = setTimeout(() => resolveResult({ error: "OAuth authorization timed out" }), this.oauthAuthorizationTimeoutMs);
     const server = createServer((request, response) => {
       const url = new URL(request.url ?? "/", "http://127.0.0.1");
       if (url.pathname !== "/oauth/callback") {
@@ -544,22 +581,32 @@ export class ConnectorRegistry {
         resolveResult({ error: "OAuth state did not match" });
         return;
       }
-      response.end("<html><body><p>Wordless authorization received. You can return to the app.</p></body></html>");
+      response.end("<html><body><p>Authorization received. Wordless is finishing the connection in the desktop app.</p></body></html>");
       resolveResult({ code, error });
     });
-    await new Promise<void>((resolve, reject) => {
-      server.once("error", reject);
-      server.listen(18191, "127.0.0.1", () => resolve());
-    });
+    try {
+      await new Promise<void>((resolve, reject) => {
+        server.once("error", reject);
+        server.listen(18191, "127.0.0.1", () => resolve());
+      });
+    } catch (cause) {
+      if (callbackTimeout) clearTimeout(callbackTimeout);
+      throw cause;
+    }
     const address = server.address();
     if (!address || typeof address === "string") {
+      if (callbackTimeout) clearTimeout(callbackTimeout);
       await new Promise<void>((resolve) => server.close(() => resolve()));
       throw new Error("Unable to start the OAuth callback server");
     }
     return {
       redirectUrl: CONNECTOR_OAUTH_REDIRECT_URI,
       waitForResult,
-      close: async () => await new Promise<void>((resolve) => server.close(() => resolve())),
+      close: async () => {
+        resolveResult({ error: "OAuth authorization timed out" });
+        if (callbackTimeout) clearTimeout(callbackTimeout);
+        await new Promise<void>((resolve) => server.close(() => resolve()));
+      },
     };
   }
 
@@ -606,9 +653,13 @@ export class ConnectorRegistry {
   }
 
   private async writeStore(): Promise<void> {
-    await mkdir(dirname(this.configPath), { recursive: true });
-    const store: PersistedStore = { connectors: this.entries };
-    await writeFile(this.configPath, `${JSON.stringify(store, null, 2)}\n`, "utf8");
+    const write = this.writeQueue.then(async () => {
+      await mkdir(dirname(this.configPath), { recursive: true });
+      const store: PersistedStore = { connectors: this.entries };
+      await writeFile(this.configPath, `${JSON.stringify(store, null, 2)}\n`, "utf8");
+    });
+    this.writeQueue = write.catch(() => {});
+    await write;
   }
 
   private publish(): void {

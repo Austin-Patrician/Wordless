@@ -5,6 +5,7 @@ import feishuIcon from "../../icons/mcp/飞书.svg";
 import postgresqlIcon from "../../icons/mcp/PostgreSQL.svg";
 import webSearchIcon from "../../icons/mcp/websearch.svg";
 import wecomIcon from "../../icons/mcp/企业微信.svg";
+import firecrawlIcon from "../../icons/mcp/firecrawl-color.svg";
 
 const templateIcons: Partial<Record<NonNullable<ConnectorSummary["templateId"]>, string>> = {
   feishu: feishuIcon,
@@ -12,6 +13,7 @@ const templateIcons: Partial<Record<NonNullable<ConnectorSummary["templateId"]>,
   wecom: wecomIcon,
   postgresql: postgresqlIcon,
   "web-search": webSearchIcon,
+  firecrawl: firecrawlIcon,
 };
 
 type ConnectorIconProps = Pick<ConnectorSummary, "templateId" | "transport"> & {

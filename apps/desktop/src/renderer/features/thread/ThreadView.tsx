@@ -11,6 +11,7 @@ import type { ResearchTaskSelection } from "../workbench/context-panel-types";
 import { workbenchRendererRegistry } from "../workbench/renderer-registry";
 import { groupResearchDelegationBlocks } from "../workbench/research-delegation";
 import { Composer } from "./Composer";
+import { completeContextCompaction } from "./context-compaction-state";
 import type { InlineWorkspaceReferenceToken } from "./InlineSkillComposer";
 import { ConversationDensityRail } from "./ConversationDensityRail";
 import { createPendingThreadTurn, createUserMessageSubmission, type PendingThreadTurn } from "./pending-thread-turn";
@@ -119,9 +120,13 @@ function applyEvent(snapshot: SessionSnapshot, event: RuntimeEventEnvelope): Ses
     };
   }
   if (payload.type === "context.compaction.completed") {
-    const contextCompactions = [...snapshot.contextCompactions.filter((item) => item.id !== payload.compaction.id), payload.compaction]
-      .sort((left, right) => left.timestamp - right.timestamp);
-    return { ...snapshot, contextCompactions, isCompacting: false, compactionTrigger: undefined, compactionError: undefined };
+    const completed = completeContextCompaction(
+      messages,
+      snapshot.contextCompactions,
+      payload.compaction,
+      payload.recoveredFailureMessageId,
+    );
+    return { ...snapshot, ...completed, isCompacting: false, compactionTrigger: undefined, compactionError: undefined };
   }
   if (payload.type === "context.compaction.failed") {
     return { ...snapshot, isCompacting: false, compactionTrigger: payload.trigger, compactionError: payload.message };

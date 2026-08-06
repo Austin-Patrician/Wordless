@@ -450,7 +450,7 @@ export type AgentDriverEventBase =
   | { type: "user-request.resolved"; messageId: string; resolution: UserRequestResolution }
   | { type: "model.changed"; model: ModelReference }
   | { type: "context.compaction.started"; trigger: ContextCompactionTrigger }
-  | { type: "context.compaction.completed"; compaction: ContextCompactionRecord }
+  | { type: "context.compaction.completed"; compaction: ContextCompactionRecord; recoveredFailureMessageId?: string }
   | { type: "context.compaction.failed"; trigger: ContextCompactionTrigger; message: string };
 
 export type AgentDriverEvent =

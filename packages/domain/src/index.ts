@@ -31,7 +31,7 @@ export type ConnectorTransport = "stdio" | "streamable-http";
 
 export type ConnectorStatus = "disconnected" | "ready" | "needs-auth" | "error";
 
-export type ConnectorTemplateId = "feishu" | "dingtalk" | "wecom" | "postgresql" | "web-search" | null;
+export type ConnectorTemplateId = "feishu" | "dingtalk" | "wecom" | "postgresql" | "web-search" | "firecrawl" | null;
 
 export const CONNECTOR_OAUTH_REDIRECT_URI = "http://127.0.0.1:18191/oauth/callback";
 
