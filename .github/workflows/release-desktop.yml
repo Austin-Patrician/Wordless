@@ -73,7 +73,15 @@ jobs:
 
   build-macos:
     needs: [prepare, verify]
-    runs-on: macos-14
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-14
+            arch: arm64
+          - os: macos-13
+            arch: x64
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -92,15 +100,15 @@ jobs:
           WORDLESS_GOOGLE_CLIENT_ID: ${{ vars.GOOGLE_OAUTH_CLIENT_ID }}
           WORDLESS_GOOGLE_CLIENT_SECRET: ${{ secrets.GOOGLE_OAUTH_CLIENT_SECRET }}
         run: |
-          node scripts/prepare-officecli-assets.mjs --platform darwin --arch arm64
-          node scripts/prepare-officecli-assets.mjs --platform darwin --arch x64
+          node scripts/prepare-officecli-assets.mjs --platform darwin --arch ${{ matrix.arch }}
           npm run build:renderer
           npm run build:electron
-          npx electron-builder --config electron-builder.yml --mac --publish never
-          npm run verify:packaged-fff -- release/mac-arm64 release/mac
+          npx electron-builder --config electron-builder.yml --mac --${{ matrix.arch }} --publish never
+          npm run verify:packaged-fff -- release/mac${{ matrix.arch == 'arm64' && '-arm64' || '' }}
       - uses: actions/upload-artifact@v4
         with:
-          name: wordless-macos
+          name: wordless-macos-${{ matrix.arch }}
+          retention-days: 3
           path: |
             apps/desktop/release/*.dmg
             apps/desktop/release/*.zip
