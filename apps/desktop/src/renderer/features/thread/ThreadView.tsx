@@ -375,7 +375,10 @@ function AssistantMessageBlocks({ clarificationHandoffAvailable, message, onEnab
       );
       continue;
     }
-    if (block.type === "text") rendered.push(<MessageMarkdown key={`text-${index}`} text={block.text} />);
+    if (block.type === "text") {
+      const followsReasoning = message.blocks[index - 1]?.type === "reasoning";
+      rendered.push(<div className={followsReasoning ? "pt-3" : undefined} key={`text-${index}`}><MessageMarkdown text={block.text} /></div>);
+    }
     if (block.type === "reasoning") rendered.push(<ThinkingBlock key={`reasoning-${index}`} text={block.text} />);
     if (block.type === "artifact") rendered.push(<p className="mt-4 text-[13px] font-semibold text-[#59732d]" key={`artifact-${block.artifactId}`}>{block.name}</p>);
   }
