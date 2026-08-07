@@ -37,6 +37,14 @@ describe("provider retry classification", () => {
 		).toBe(true);
 	});
 
+	it("matches DNS resolution failures", () => {
+		for (const errorMessage of ["getaddrinfo ENOTFOUND api.example.com", "EAI_AGAIN api.example.com"]) {
+			expect(
+				isRetryableAssistantError(fauxAssistantMessage("", { stopReason: "error", errorMessage })),
+			).toBe(true);
+		}
+	});
+
 	it("keeps provider limit errors non-retryable", () => {
 		expect(
 			isRetryableAssistantError(

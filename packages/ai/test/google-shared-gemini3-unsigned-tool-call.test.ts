@@ -71,6 +71,8 @@ describe("google-shared convertMessages — Gemini 3 unsigned tool calls", () =>
 
 		const functionCallParts = modelTurn?.parts?.filter((p) => p.functionCall !== undefined) ?? [];
 		expect(functionCallParts).toHaveLength(2);
+		expect(functionCallParts[0]?.functionCall?.id).toBe("call_1");
+		expect(functionCallParts[1]?.functionCall?.id).toBe("call_2");
 		expect(functionCallParts[0]?.thoughtSignature).toBeUndefined();
 		expect(functionCallParts[1]?.thoughtSignature).toBeUndefined();
 		expect(JSON.stringify(modelTurn)).not.toContain("skip_thought_signature_validator");
@@ -111,6 +113,7 @@ describe("google-shared convertMessages — Gemini 3 unsigned tool calls", () =>
 		const fcPart = modelTurn?.parts?.find((p) => p.functionCall !== undefined);
 
 		expect(fcPart).toBeTruthy();
+		expect(fcPart?.functionCall?.id).toBeUndefined();
 		expect(fcPart?.thoughtSignature).toBeUndefined();
 	});
 });

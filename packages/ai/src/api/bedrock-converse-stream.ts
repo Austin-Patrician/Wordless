@@ -130,8 +130,10 @@ export const stream: StreamFunction<"bedrock-converse-stream", BedrockOptions> =
 
 		const blocks = output.content as Block[];
 
+		// An explicitly scoped profile must take precedence over ambient AWS keys.
+		const optionsProfile = options.profile || options.env?.AWS_PROFILE;
 		const config: BedrockRuntimeClientConfig = {
-			profile: options.profile || getProviderEnvValue("AWS_PROFILE", options.env),
+			profile: optionsProfile || getProviderEnvValue("AWS_PROFILE", options.env),
 		};
 		const configuredRegion = getConfiguredBedrockRegion(options);
 		const hasAmbientConfiguredProfile = Boolean(getProviderEnvValue("AWS_PROFILE"));
@@ -183,7 +185,7 @@ export const stream: StreamFunction<"bedrock-converse-stream", BedrockOptions> =
 			}
 
 			const credentials = getConfiguredBedrockCredentials(options.env);
-			if (!skipAuth && credentials) {
+			if (!skipAuth && credentials && !optionsProfile) {
 				config.credentials = credentials;
 			}
 

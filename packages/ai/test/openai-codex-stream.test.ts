@@ -594,12 +594,16 @@ describe("openai-codex streaming", () => {
 		const token = mockToken();
 		const sessionId = "x".repeat(67);
 		let capturedPayload: { prompt_cache_key?: string } | undefined;
+		let capturedHeaders: Headers | undefined;
 		const encoder = new TextEncoder();
 		vi.stubGlobal(
 			"fetch",
 			vi.fn(
-				async () =>
-					new Response(
+				async (input: string | URL, init?: RequestInit) => {
+					if (String(input).includes("chatgpt.com/backend-api/codex/responses")) {
+						capturedHeaders = init?.headers instanceof Headers ? init.headers : undefined;
+					}
+					return new Response(
 						new ReadableStream<Uint8Array>({
 							start(controller) {
 								controller.enqueue(encoder.encode(buildSSEPayload({ status: "completed" })));
@@ -607,7 +611,8 @@ describe("openai-codex streaming", () => {
 							},
 						}),
 						{ status: 200, headers: { "content-type": "text/event-stream" } },
-					),
+					);
+				},
 			),
 		);
 
@@ -638,6 +643,8 @@ describe("openai-codex streaming", () => {
 		}).result();
 
 		expect(capturedPayload?.prompt_cache_key).toBe("x".repeat(64));
+		expect(capturedHeaders?.get("session-id")).toBe("x".repeat(64));
+		expect(capturedHeaders?.get("x-client-request-id")).toBe("x".repeat(64));
 	});
 
 	it("preserves gpt-5.5 xhigh reasoning effort from simple options", async () => {

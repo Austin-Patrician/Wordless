@@ -29,7 +29,8 @@
     "@ff-labs/fff-node": "0.10.1",
     "ajv": "^8.20.0",
     "ajv-formats": "^3.0.1",
-    "pdf-parse": "^2.4.5"
+    "pdf-parse": "^2.4.5",
+    "undici": "^7.28.0"
   },
   "devDependencies": {
     "@wordless/agent": "0.80.6-wordless.0",

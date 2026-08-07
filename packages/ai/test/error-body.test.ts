@@ -50,6 +50,21 @@ describe("normalizeProviderError", () => {
 		expect(norm.message).toBe(JSON.stringify(body));
 	});
 
+	it("ignores class-instance SDK response bodies", () => {
+		class SdkHttpResponseBody {
+			locked = false;
+			state = { storedError: undefined };
+		}
+		const error = Object.assign(new Error("Input is too long for requested model."), {
+			$metadata: { httpStatusCode: 400 },
+			$response: { statusCode: 400, body: new SdkHttpResponseBody() },
+		});
+		const norm = normalizeProviderError(error);
+		expect(norm.status).toBe(400);
+		expect(norm.body).toBeUndefined();
+		expect(norm.message).toContain("Input is too long");
+	});
+
 	it("extracts status and body from a Bedrock-shaped ServiceException", () => {
 		const error = Object.assign(new Error("UnknownError"), {
 			name: "UnknownError",

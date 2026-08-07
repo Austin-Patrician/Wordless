@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+### Wordless Compatibility Backports
+
+- Backported selected provider and transport fixes from upstream pi through `v0.84.1`: DNS retry classification, Codex request-ID limits, OpenRouter tool-result caching, clearer model-load errors, scoped Bedrock profile precedence, SDK error-body handling, Anthropic/Gemini streaming preservation, Gemini 3 tool-call IDs, and union validation behavior.
+- Upstream auth/session APIs, model-generation changes, and coding-agent/session migrations are intentionally not included; the existing Wordless `@wordless/ai` and `/compat` contracts remain unchanged.
+
 ### Breaking Changes
 
 - Removed the `OpenAIResponsesCompat.sendSessionIdHeader` flag. Session-affinity behavior is now controlled by `compat.sessionAffinityFormat` (`"openai"`, `"openai-nosession"`, or `"openrouter"`). Replace `sendSessionIdHeader: false` with `sessionAffinityFormat: "openai-nosession"` ([#6366](https://github.com/earendil-works/pi/issues/6366)).

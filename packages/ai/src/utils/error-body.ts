@@ -83,15 +83,18 @@ function extractBody(error: SdkErrorShape): string | undefined {
 
 function pickBodyText(error: SdkErrorShape): string | undefined {
 	if (typeof error.body === "string") return error.body;
-	if (isNonEmptyObject(error.error)) return safeJsonStringify(error.error);
+	if (isPlainNonEmptyObject(error.error)) return safeJsonStringify(error.error);
 	const responseBody = error.$response?.body;
 	if (typeof responseBody === "string") return responseBody;
-	if (isNonEmptyObject(responseBody)) return safeJsonStringify(responseBody);
+	if (isPlainNonEmptyObject(responseBody)) return safeJsonStringify(responseBody);
 	return undefined;
 }
 
-function isNonEmptyObject(value: unknown): boolean {
-	return typeof value === "object" && value !== null && Object.keys(value).length > 0;
+function isPlainNonEmptyObject(value: unknown): boolean {
+	if (typeof value !== "object" || value === null) return false;
+	const proto = Object.getPrototypeOf(value);
+	if (proto !== Object.prototype && proto !== null) return false;
+	return Object.keys(value).length > 0;
 }
 
 /**

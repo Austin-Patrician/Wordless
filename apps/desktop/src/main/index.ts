@@ -20,6 +20,7 @@ import { GoogleAccountService } from "./account/google-account-service";
 import { CloudSyncService } from "./cloud-sync/cloud-sync-service";
 import { GoogleDriveAppData } from "./cloud-sync/google-drive-app-data";
 import { DesktopDataAnalysisService } from "./data-analysis/data-analysis-service";
+import { configureHttpDispatcher } from "./network/http-dispatcher";
 
 declare const __WORDLESS_GOOGLE_CLIENT_ID__: string;
 declare const __WORDLESS_GOOGLE_CLIENT_SECRET__: string;
@@ -74,6 +75,7 @@ app.whenReady().then(async () => {
   await accountNetworkSession.setProxy(accountProxy
     ? { mode: "fixed_servers", proxyRules: accountProxy }
     : { mode: "system" });
+  await configureHttpDispatcher(accountNetworkSession);
   const sendHostEvent = (event: import("@wordless/protocol").DesktopHostEvent) => {
     for (const window of BrowserWindow.getAllWindows()) window.webContents.send("wordless:host-event", event);
   };

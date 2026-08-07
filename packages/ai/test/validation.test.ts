@@ -97,6 +97,16 @@ describe("validateToolArguments", () => {
 		}
 	});
 
+	it("preserves values already matching a nullable union arm", () => {
+		const tool: Tool = {
+			name: "echo",
+			description: "Echo tool",
+			parameters: Type.Object({ value: Type.Union([Type.Number(), Type.Null()]) }),
+		};
+		const toolCall: ToolCall = { type: "toolCall", id: "tool-1", name: "echo", arguments: { value: null } };
+		expect(validateToolArguments(tool, toolCall)).toEqual({ value: null });
+	});
+
 	it("rejects invalid coercions for serialized plain JSON schemas", () => {
 		const failingCases: Array<{
 			schema: Tool["parameters"];

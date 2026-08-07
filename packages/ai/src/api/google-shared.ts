@@ -68,7 +68,12 @@ function resolveThoughtSignature(isSameProviderAndModel: boolean, signature: str
  * Models via Google APIs that require explicit tool call IDs in function calls/responses.
  */
 export function requiresToolCallId(modelId: string): boolean {
-	return modelId.startsWith("claude-") || modelId.startsWith("gpt-oss-");
+	const geminiMajorVersion = getGeminiMajorVersion(modelId);
+	return (
+		modelId.startsWith("claude-") ||
+		modelId.startsWith("gpt-oss-") ||
+		(geminiMajorVersion !== undefined && geminiMajorVersion >= 3)
+	);
 }
 
 function getGeminiMajorVersion(modelId: string): number | undefined {
@@ -130,26 +135,25 @@ export function convertMessages<T extends GoogleApiType>(model: Model<T>, contex
 
 			for (const block of msg.content) {
 				if (block.type === "text") {
-					// Skip empty text blocks
-					if (!block.text || block.text.trim() === "") continue;
 					const thoughtSignature = resolveThoughtSignature(isSameProviderAndModel, block.textSignature);
+					if ((!block.text || block.text.trim() === "") && !thoughtSignature) continue;
 					parts.push({
 						text: sanitizeSurrogates(block.text),
 						...(thoughtSignature && { thoughtSignature }),
 					});
 				} else if (block.type === "thinking") {
-					// Skip empty thinking blocks
-					if (!block.thinking || block.thinking.trim() === "") continue;
 					// Only keep as thinking block if same provider AND same model
 					// Otherwise convert to plain text (no tags to avoid model mimicking them)
 					if (isSameProviderAndModel) {
 						const thoughtSignature = resolveThoughtSignature(isSameProviderAndModel, block.thinkingSignature);
+						if ((!block.thinking || block.thinking.trim() === "") && !thoughtSignature) continue;
 						parts.push({
 							thought: true,
 							text: sanitizeSurrogates(block.thinking),
 							...(thoughtSignature && { thoughtSignature }),
 						});
 					} else {
+						if (!block.thinking || block.thinking.trim() === "") continue;
 						parts.push({
 							text: sanitizeSurrogates(block.thinking),
 						});
