@@ -162,9 +162,11 @@ test("requests Drive app-data permission only when cloud sync is authorized", as
   try {
     await service.login();
     assert.equal(scopes[0], "openid email profile");
+    assert.equal(await service.needsDriveAppDataAuthorization(), true);
     await service.authorizeDriveAppData();
     assert.match(scopes[1] ?? "", /drive\.appdata/);
     assert.match(vault.values.get("wordless.account.google") ?? "", /drive\.appdata/);
+    assert.equal(await service.needsDriveAppDataAuthorization(), false);
   } finally {
     service.dispose();
     await rm(root, { recursive: true, force: true });

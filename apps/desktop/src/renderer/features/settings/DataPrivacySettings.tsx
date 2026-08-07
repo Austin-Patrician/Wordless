@@ -1,5 +1,5 @@
 import { Button } from "@wordless/ui-kit";
-import { AlertTriangle, ArrowRight, Check, Database, ExternalLink, KeyRound, LoaderCircle, Network, ShieldCheck, Wifi } from "lucide-react";
+import { AlertTriangle, Check, Database, ExternalLink, KeyRound, LoaderCircle, Network, ShieldCheck, Wifi } from "lucide-react";
 import { useEffect, useState } from "react";
 import type { CloudSyncInitialStrategy, CloudSyncSnapshot } from "@wordless/protocol";
 import { Switch } from "@wordless/ui-kit";
@@ -45,13 +45,10 @@ type FlowStepProps = {
 
 function FlowStep({ detail, icon: Icon, label }: FlowStepProps) {
   return (
-    <div className="flex min-w-0 flex-1 items-center gap-2 sm:block" role="listitem">
-      <div className="flex min-w-0 flex-1 items-center gap-2 rounded-[7px] border border-border bg-muted/30 px-3 py-2.5 sm:block sm:min-h-[112px]">
-        <span className="grid h-7 w-7 shrink-0 place-items-center rounded-[7px] border border-[#cfd9b8] bg-[#f5f8eb] text-[#60753a] dark:border-[#53663a] dark:bg-[#303b1d] dark:text-[#c8df89]">{typeof Icon === "string" ? <img alt="" aria-hidden="true" className="h-4 w-4 object-contain" src={Icon} /> : <Icon aria-hidden="true" className="h-3.5 w-3.5" />}</span>
-        <div className="min-w-0 sm:mt-3"><p className="text-[11px] font-semibold text-foreground">{label}</p><p className="mt-0.5 text-[10px] leading-4 text-muted-foreground">{detail}</p></div>
-      </div>
-      <ArrowRight aria-hidden="true" className="h-3.5 w-3.5 shrink-0 rotate-90 text-muted-foreground/60 sm:mx-auto sm:mt-3 sm:block sm:rotate-0" />
-    </div>
+    <li className="relative grid grid-cols-[30px_minmax(0,1fr)] gap-3 py-3 first:pt-0 last:pb-0 last:[&>div]:border-b-0 sm:block sm:py-0">
+      <span className="relative z-10 grid h-[30px] w-[30px] place-items-center rounded-[7px] border border-[#cfd9b8] bg-[#f5f8eb] text-[#60753a] dark:border-[#53663a] dark:bg-[#303b1d] dark:text-[#c8df89]">{typeof Icon === "string" ? <img alt="" aria-hidden="true" className="h-4 w-4 object-contain dark:invert" src={Icon} /> : <Icon aria-hidden="true" className="h-3.5 w-3.5" />}</span>
+      <div className="min-w-0 border-b border-border/70 pb-3 sm:border-b-0 sm:pb-0 sm:pt-3"><p className="text-[11px] font-semibold text-foreground">{label}</p><p className="mt-0.5 text-[10px] leading-4 text-muted-foreground">{detail}</p></div>
+    </li>
   );
 }
 
@@ -117,12 +114,12 @@ export function DataPrivacySettings() {
 
         <section className="border-b border-border py-6">
           <div className="flex items-end justify-between gap-4"><div><h2 className="text-[13px] font-semibold">{t("dataPrivacyFlowTitle")}</h2><p className="mt-1 max-w-[620px] text-[11px] leading-5 text-muted-foreground">{t("dataPrivacyFlowBody")}</p></div><span className="hidden rounded-full border border-border bg-muted/30 px-2 py-1 font-mono text-[9px] uppercase tracking-[0.12em] text-muted-foreground sm:inline-flex">local-first</span></div>
-          <div className="mt-4 flex flex-col gap-2 sm:flex-row sm:items-start sm:gap-0" aria-label={t("dataPrivacyFlowTitle")} role="list">
+          <ol className="relative mt-5 after:absolute after:bottom-[15px] after:left-[15px] after:top-[15px] after:w-px after:bg-border/70 sm:grid sm:grid-cols-4 sm:gap-5 sm:before:absolute sm:before:left-[15px] sm:before:right-[15px] sm:before:top-[15px] sm:before:h-px sm:before:bg-border/70 sm:after:hidden" aria-label={t("dataPrivacyFlowTitle")}>
             <FlowStep detail={t("dataPrivacyFlowLocalDetail")} icon={Database} label={t("dataPrivacyFlowLocal")} />
             <FlowStep detail={t("dataPrivacyFlowAgentDetail")} icon={ShieldCheck} label={t("dataPrivacyFlowAgent")} />
             <FlowStep detail={t("dataPrivacyFlowProviderDetail")} icon={modelRequestIcon} label={t("dataPrivacyFlowProvider")} />
-            <div className="flex min-w-0 flex-1 items-center gap-2 sm:block" role="listitem"><div className="flex min-w-0 flex-1 items-center gap-2 rounded-[7px] border border-border bg-muted/30 px-3 py-2.5 sm:block sm:min-h-[112px]"><span className="grid h-7 w-7 shrink-0 place-items-center rounded-[7px] border border-[#d4d8e4] bg-[#f5f6fa] text-[#66728c] dark:border-[#4b5268] dark:bg-[#2d3140] dark:text-[#bbc5e1]"><img alt="" aria-hidden="true" className="h-3.5 w-3.5 object-contain dark:invert" src={githubIcon} /></span><div className="min-w-0 sm:mt-3"><p className="text-[11px] font-semibold text-foreground">{t("dataPrivacyFlowGithub")}</p><p className="mt-0.5 text-[10px] leading-4 text-muted-foreground">{t("dataPrivacyFlowGithubDetail")}</p></div></div></div>
-          </div>
+            <FlowStep detail={t("dataPrivacyFlowGithubDetail")} icon={githubIcon} label={t("dataPrivacyFlowGithub")} />
+          </ol>
         </section>
 
         <section className="flex flex-col gap-3 border-b border-border py-5 sm:flex-row sm:items-center sm:justify-between">

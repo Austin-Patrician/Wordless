@@ -1,6 +1,6 @@
 import { Button } from "@wordless/ui-kit";
 import { AlertTriangle, ChevronLeft, LoaderCircle, Search, Settings, Workflow } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type CSSProperties } from "react";
 import { SessionContextPanel } from "../artifacts/SessionContextPanel";
 import { SettingsDialog, type SettingsPage } from "../settings/SettingsDialog";
 import { ConversationSearchDialog } from "../thread/ConversationSearchDialog";
@@ -195,7 +195,7 @@ export function WorkbenchShell() {
       <div className="flex h-[calc(100dvh-var(--wordless-chrome-height))] overflow-hidden">
         {showSessionTools && rightFullscreen ? contextPanel : <>
         <Sidebar collapsed={!leftOpen} mediaActive={mainView === "media"} onNewThread={newThread} onOpenMedia={openMedia} onOpenSession={(sessionId) => { const session = snapshot.sessions.find((candidate) => candidate.id === sessionId); setPendingWorkspaceReferences([]); setPendingArtifactSelection(null); setSelectedSessionId(sessionId); setMainView(session?.workbenchId === "media-canvas" ? "media" : "thread"); setRightFullscreen(false); }} onOpenSettings={(page) => openSettings(page)} onOpenSkills={openSkills} onSessionDeleted={(sessionId) => { if (selectedSessionId === sessionId) newThread(); }} onToggle={() => setLeftOpen((value) => !value)} selectedSessionId={selectedSessionId} skillsActive={mainView === "skills"} />
-        <section className="relative flex min-w-0 flex-1 flex-col overflow-hidden bg-[var(--wordless-shell-workspace)] lg:min-w-[640px]">
+        <section className="relative flex min-w-0 flex-1 flex-col overflow-hidden bg-[var(--wordless-shell-workspace)] lg:min-w-[640px]" style={{ "--thread-content-max-width": rightOpen ? "820px" : "clamp(820px, 78%, 1180px)" } as CSSProperties}>
           {showSessionTools ? <header className="flex h-[62px] shrink-0 items-center justify-between px-4 sm:px-5">
             <div className="flex min-w-0 items-center gap-2">
               <div className="flex items-center gap-2 lg:hidden"><img alt="" className="h-7 w-7 shrink-0 rounded-[8px] object-cover" draggable={false} src={wordlessIcon} /><span className="text-sm font-bold tracking-[-0.04em]">wordless</span></div>

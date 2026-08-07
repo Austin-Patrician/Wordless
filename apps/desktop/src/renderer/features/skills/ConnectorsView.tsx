@@ -14,6 +14,7 @@ import {
   Cable,
   CheckCircle2,
   CircleAlert,
+  CircleOff,
   KeyRound,
   LoaderCircle,
   Plus,
@@ -113,16 +114,6 @@ function newDraft(): ConnectorDraft {
   };
 }
 
-function statusClass(status: ConnectorSummary["status"]) {
-  return status === "ready"
-    ? "bg-[#5e7b3a]"
-    : status === "needs-auth"
-      ? "bg-[#bf813d]"
-      : status === "error"
-        ? "bg-[#b86050]"
-        : "bg-[#a2a29c]";
-}
-
 function statusLabel(status: ConnectorSummary["status"]) {
   return status === "ready"
     ? "已就绪"
@@ -131,6 +122,14 @@ function statusLabel(status: ConnectorSummary["status"]) {
       : status === "error"
         ? "连接失败"
         : "未连接";
+}
+
+function ConnectorEnabledBadge({ enabled }: { enabled: boolean }) {
+  const state = enabled
+    ? { Icon: CheckCircle2, label: "Enabled", className: "text-[#718747] dark:text-[#c4df77]" }
+    : { Icon: CircleOff, label: "Disabled", className: "text-[#9a9a92] dark:text-muted-foreground" };
+  const Icon = state.Icon;
+  return <span aria-label={state.label} className="shrink-0" title={state.label}><Icon aria-hidden className={cn("h-4 w-4", state.className)} /></span>;
 }
 
 function headerLines(headers: ConnectorDraft["headers"]): string {
@@ -306,7 +305,6 @@ export function ConnectorsView({
     <section className="min-h-0 flex-1 overflow-y-auto pt-8">
       <div className="grid grid-cols-1 gap-3 pb-8 sm:grid-cols-2 lg:grid-cols-3">
         {filteredConnectors.map((connector) => {
-          const connected = connector.enabled && connector.status === "ready";
           const operation = operations[connector.id];
           const connectorBusy = operation !== undefined;
           const persistedErrorDetail = connector.lastError ? connectorErrorDetail(connector.lastError) : undefined;
@@ -322,9 +320,7 @@ export function ConnectorsView({
               aria-busy={connectorBusy}
               className={cn(
                 "group flex min-w-0 flex-col rounded-[8px] border bg-white p-3.5 transition-colors dark:bg-card",
-                connected
-                  ? "border-[#aeb58e] hover:border-[#9cae75] dark:border-[#617843]"
-                  : "border-[#e3e3de] hover:border-[#cfcfc8] dark:border-border",
+                "border-[#e3e3de] hover:border-[#cfcfc8] dark:border-border",
               )}
               key={connector.id}
             >
@@ -332,9 +328,7 @@ export function ConnectorsView({
                 <span
                   className={cn(
                     "grid h-9 w-9 shrink-0 place-items-center rounded-[6px]",
-                    connected
-                      ? "bg-[#f2f6e3] text-[#7a8f52] dark:bg-[#303c22] dark:text-[#c4df77]"
-                      : "bg-[#f2f2ef] text-[#55554f] dark:bg-muted dark:text-muted-foreground",
+                    "bg-[#edf1e8] text-[#536349] dark:bg-[#35402d] dark:text-[#d7e4cb]",
                   )}
                 >
                   <ConnectorIcon
@@ -343,16 +337,11 @@ export function ConnectorsView({
                   />
                 </span>
                 <div className="min-w-0 flex-1">
-                  <div className="flex items-center gap-2">
+                  <div className="flex items-center justify-between gap-2">
                     <p className="truncate text-[13px] font-semibold text-[#3b3b37] dark:text-foreground">
                       {connector.name}
                     </p>
-                    <span
-                      className={cn(
-                        "h-1.5 w-1.5 shrink-0 rounded-full",
-                        statusClass(connector.status),
-                      )}
-                    />
+                    <ConnectorEnabledBadge enabled={connector.enabled} />
                   </div>
                   <p className="mt-1 h-9 overflow-hidden text-[11px] leading-[18px] text-[#7d7d76] dark:text-muted-foreground">
                     {connector.transport === "stdio"
@@ -369,7 +358,7 @@ export function ConnectorsView({
                     ? t("connectorWaitingAuthorization")
                     : operation === "test" || operation === "trust"
                       ? t("connectorTesting")
-                      : statusLabel(connector.status)}
+                      : connector.enabled ? statusLabel(connector.status) : "已停用"}
                 </span>
                 <div className="flex items-center gap-1">
                   {connector.transport === "stdio" &&
@@ -438,6 +427,7 @@ export function ConnectorsView({
                     </Tooltip>
                   )}
                   <Switch
+                    aria-label={connector.enabled ? "Disable connector" : "Enable connector"}
                     checked={connector.enabled}
                     disabled={connectorBusy}
                     onCheckedChange={(enabled) =>

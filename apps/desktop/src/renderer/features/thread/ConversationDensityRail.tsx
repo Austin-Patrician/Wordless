@@ -23,7 +23,7 @@ export function ConversationDensityRail({ activeTurnId, fallbackExcerpt, navigat
   return (
     <HoverCard closeDelay={140} onOpenChange={setOpen} open={open} openDelay={120}>
       <HoverCardTrigger asChild>
-        <button aria-label={navigationLabel} className="absolute left-2 top-1/2 z-20 grid h-[clamp(96px,16vh,132px)] w-9 -translate-y-1/2 place-items-center outline-none focus-visible:ring-2 focus-visible:ring-ring" onClick={() => setOpen((current) => !current)} onFocus={() => setOpen(true)} type="button">
+        <button aria-label={navigationLabel} className="absolute left-2 top-1/2 z-20 grid h-[clamp(96px,22vh,200px)] w-9 -translate-y-1/2 place-items-center outline-none focus-visible:ring-2 focus-visible:ring-ring" onClick={() => setOpen((current) => !current)} onFocus={() => setOpen(true)} type="button">
           <span aria-hidden className="relative h-full w-6">
             {summaries.map((item, index) => {
               const active = item.turnId === activeTurnId;

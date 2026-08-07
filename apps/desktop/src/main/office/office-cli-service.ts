@@ -785,11 +785,12 @@ export class OfficeCliService implements PresentationOfficeService, SpreadsheetO
   }
 
   async focusSpreadsheetLocator(sessionId: string, workspaceRoot: string, artifactId: string, locator: string): Promise<void> {
-    const source = await this.spreadsheetSourcePath(sessionId, workspaceRoot, artifactId);
-    await this.ensureWatch(sessionId, artifactId, source);
-    await this.run(["watch", source, "unmark", source, "--all"], { cwd: dirnameFor(source), allowFailure: true, timeoutMs: 5_000 });
-    await this.run(["watch", source, "mark", source, locator], { cwd: dirnameFor(source), allowFailure: true, timeoutMs: 5_000 });
-    await this.run(["watch", source, "goto", source, locator], { cwd: dirnameFor(source), allowFailure: true, timeoutMs: 5_000 });
+    // OfficeCLI watch does not expose spreadsheet cell or sheet scrolling.
+    // Keep this IPC method for compatibility with older renderer builds.
+    void sessionId;
+    void workspaceRoot;
+    void artifactId;
+    void locator;
   }
 
   async clearSpreadsheetMarks(sessionId: string, workspaceRoot: string, artifactId: string): Promise<void> {

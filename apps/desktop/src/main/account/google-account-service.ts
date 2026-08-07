@@ -183,6 +183,13 @@ export class GoogleAccountService {
     this.activeServer = null;
   }
 
+  async needsDriveAppDataAuthorization(): Promise<boolean> {
+    if (this.snapshot.status !== "signed-in") return false;
+    if (this.accessToken?.scopes.has(GOOGLE_DRIVE_APPDATA_SCOPE)) return false;
+    const credential = await this.readStoredCredential();
+    return !credential?.scopes?.includes(GOOGLE_DRIVE_APPDATA_SCOPE);
+  }
+
   async authorizeDriveAppData(): Promise<void> {
     if (this.snapshot.status !== "signed-in") throw new Error("Sign in with Google before enabling cloud sync.");
     const clientId = this.options.clientId.trim();

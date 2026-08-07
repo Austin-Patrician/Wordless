@@ -157,7 +157,10 @@ export function registerRuntimeIpc(runtime: WordlessRuntime, appearanceAssets: A
   ipcMain.handle("wordless:cloud-sync:snapshot", () => options.cloudSync.getSnapshot());
   ipcMain.handle("wordless:cloud-sync:enable", (_event, strategy: unknown) => options.cloudSync.enable(strategy === "local" || strategy === "remote" ? strategy : "merge"));
   ipcMain.handle("wordless:cloud-sync:disable", () => options.cloudSync.disable());
-  ipcMain.handle("wordless:cloud-sync:sync-now", () => options.cloudSync.syncNow());
+  ipcMain.handle("wordless:cloud-sync:sync-now", async () => {
+    if (await options.account.needsDriveAppDataAuthorization()) await options.account.authorizeDriveAppData();
+    return await options.cloudSync.syncNow();
+  });
   ipcMain.handle("wordless:cloud-sync:resolve-conflict", (_event, resolution: unknown) => options.cloudSync.resolveConflicts(resolution === "remote" ? "remote" : "local"));
   ipcMain.handle("wordless:cloud-sync:delete-remote", () => options.cloudSync.deleteRemote());
   ipcMain.handle("wordless:external:open", async (_event, payload: unknown) => {

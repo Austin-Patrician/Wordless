@@ -8,7 +8,6 @@ import {
   Code2,
   FileOutput,
   Image,
-  ListTree,
   LoaderCircle,
   Presentation,
   ScanSearch,
@@ -169,10 +168,10 @@ function AutoApproveIcon({ className }: { className?: string }) {
   );
 }
 
-function activityIcon(block: MessageToolBlock) {
+function activityIcon(block: MessageToolBlock, completedWarning = false) {
   if (block.state === "running" || block.state === "pending") return <LoaderCircle className="h-3.5 w-3.5 animate-spin" />;
   if (block.state === "awaiting-approval" || block.state === "awaiting-user-input") return <CircleAlert className="h-3.5 w-3.5" />;
-  if (block.state === "error") return <CircleAlert className="h-3.5 w-3.5" />;
+  if (block.state === "error" || completedWarning) return <CircleAlert className="h-3.5 w-3.5" />;
   return <CheckCircle2 className="h-3.5 w-3.5" />;
 }
 
@@ -185,14 +184,15 @@ function activityState(block: MessageToolBlock): string | undefined {
   return undefined;
 }
 
-function activityStatusClass(block: MessageToolBlock): string {
+function activityStatusClass(block: MessageToolBlock, completedWarning = false): string {
   if (block.state === "error") return "text-[#b34b42] dark:text-[#f29a8f]";
+  if (completedWarning) return "text-[#9a6b24] dark:text-[#e2bd72]";
   if (block.state === "complete") return "text-[#6c8542] dark:text-[#c3df75]";
   if (block.state === "awaiting-approval" || block.state === "awaiting-user-input") return "text-[#9a6b24] dark:text-[#e2bd72]";
   return "text-muted-foreground";
 }
 
-function ToolActivityRow({ block, detail, icon, runningLabel, summary }: { block: MessageToolBlock; detail?: string; icon: ReactNode; runningLabel?: string; summary?: string }) {
+function ToolActivityRow({ block, completedWarning = false, detail, icon, runningLabel, summary }: { block: MessageToolBlock; completedWarning?: boolean; detail?: ReactNode; icon: ReactNode; runningLabel?: string; summary?: string }) {
   const [now, setNow] = useState(Date.now());
   useEffect(() => {
     if (block.state !== "running" || block.startedAt === undefined) return;
@@ -204,7 +204,7 @@ function ToolActivityRow({ block, detail, icon, runningLabel, summary }: { block
     ? `${Math.max(0, Math.floor((now - block.startedAt) / 1_000))}s${block.timeoutSeconds !== undefined ? ` / ${block.timeoutSeconds}s` : ""}`
     : undefined;
   const stateLabel = block.state === "complete"
-    ? summary ?? "Completed"
+    ? summary
     : block.state === "error"
       ? "Failed"
       : block.state === "running" && runningLabel
@@ -212,16 +212,54 @@ function ToolActivityRow({ block, detail, icon, runningLabel, summary }: { block
         : block.state === "running" && runningTime
           ? `Running · ${runningTime}`
         : activityState(block);
-  const statusClass = activityStatusClass(block);
+  const accessibleStateLabel = stateLabel ?? (block.state === "complete" ? "Completed" : "Tool status");
+  const statusClass = activityStatusClass(block, completedWarning);
 
   return (
     <div className="flex min-h-5 items-center gap-3 text-[13px]">
       <span className={block.state === "error" ? "text-destructive" : "text-[#70842f] dark:text-[#c2df6b]"}>{icon}</span>
       <span className="shrink-0 font-mono text-[12px] text-[#2d2d2a] dark:text-foreground">{block.name}</span>
-      <span className="min-w-0 flex-1 truncate font-mono text-[11px] text-[#777770] dark:text-muted-foreground">{detail ?? ""}</span>
+      <div className={`min-w-0 flex-1 font-mono text-[11px] text-[#777770] dark:text-muted-foreground ${typeof detail === "string" ? "truncate" : ""}`}>{detail ?? ""}</div>
       {stateLabel ? <span className={`hidden shrink-0 text-[12px] sm:block ${block.state === "error" ? statusClass : "text-[#8a8a83] dark:text-muted-foreground"}`}>{stateLabel}</span> : null}
-      <span aria-label={stateLabel ?? "Tool status"} className={`shrink-0 ${statusClass}`} role="img">{activityIcon(block)}</span>
+      <span aria-label={accessibleStateLabel} className={`shrink-0 ${statusClass}`} role="img">{activityIcon(block, completedWarning)}</span>
     </div>
+  );
+}
+
+function GrepToolOutput({ block, onLoadToolOutput, path, pattern }: Pick<ToolActivityProps, "block" | "onLoadToolOutput"> & { path: string; pattern: string }) {
+  const [loading, setLoading] = useState(false);
+  const details = readRecord(block.details);
+  const count = typeof details?.count === "number" ? details.count : undefined;
+  const hasMore = textValue(details?.nextCursor) !== undefined;
+  const ignoreCase = block.input?.ignoreCase;
+  const caseLabel = ignoreCase === true ? "Insensitive" : ignoreCase === false ? "Sensitive" : "Smart case";
+  const limit = typeof block.input?.limit === "number" ? block.input.limit : 20;
+  const canExpand = block.output !== undefined || count !== undefined;
+  const load = () => {
+    if (!block.outputTruncated || !onLoadToolOutput || loading) return;
+    setLoading(true);
+    void onLoadToolOutput(block.callId).catch(() => {}).finally(() => setLoading(false));
+  };
+  if (!canExpand) return null;
+  const resultLabel = count === undefined
+    ? "Results"
+    : hasMore
+      ? `${count} shown · more available`
+      : `${count} ${count === 1 ? "match" : "matches"}`;
+  return (
+    <details className="group mt-2" onToggle={(event) => { if (event.currentTarget.open) load(); }}>
+      <summary className="flex w-fit cursor-pointer list-none items-center gap-1 font-mono text-[11px] text-[#777770] outline-none focus-visible:ring-2 focus-visible:ring-ring [&::-webkit-details-marker]:hidden">{loading ? "Loading results" : "View search"}<ChevronDown aria-hidden className="h-3.5 w-3.5 text-[#999991] transition-transform duration-150 group-open:rotate-180" /></summary>
+      <div className="mt-2 border-y border-[#e1e1dc] bg-[#fafaf9] font-mono text-[11px] text-[#4d4d47] dark:border-border dark:bg-muted dark:text-muted-foreground">
+        <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-4 gap-y-1 px-3 py-2.5">
+          <dt className="text-[#96968e]">Query</dt><dd className="min-w-0 break-all text-[#3f3f3a] dark:text-foreground">&quot;{pattern}&quot;</dd>
+          <dt className="text-[#96968e]">Scope</dt><dd className="min-w-0 break-all">{path}</dd>
+          <dt className="text-[#96968e]">Case</dt><dd>{caseLabel}</dd>
+          <dt className="text-[#96968e]">Limit</dt><dd>{limit}</dd>
+        </dl>
+        <div className="border-t border-[#e7e7e2] px-3 py-1.5 text-[10px] text-[#888880] dark:border-border">{resultLabel}</div>
+        {block.output ? <pre className="m-0 max-h-52 overflow-auto border-t border-[#e7e7e2] px-3 py-2 whitespace-pre-wrap text-[11px] leading-5 dark:border-border">{block.output}</pre> : count === 0 ? <p className="border-t border-[#e7e7e2] px-3 py-3 text-[#888880] dark:border-border">No matches</p> : null}
+      </div>
+    </details>
   );
 }
 
@@ -341,30 +379,43 @@ function SubagentToolActivity({ block, onEnableAutoApprove, onLoadToolOutput, on
 
 function CodeToolActivity({ block, onEnableAutoApprove, onLoadToolOutput, onResolveApproval }: ToolActivityProps) {
   const inputPath = textValue(block.input?.path);
+  const inputPattern = textValue(block.input?.pattern);
   const command = textValue(block.input?.command);
   const details = readRecord(block.details);
   const detailPath = textValue(details?.path);
+  const detailPattern = textValue(details?.pattern);
   const path = inputPath ?? detailPath;
+  const pattern = inputPattern ?? detailPattern;
   const changed = readRecord(details?.diff);
   const oldText = textValue(changed?.oldText);
   const newText = textValue(changed?.newText);
   const exitCode = typeof details?.exitCode === "number" ? details.exitCode : undefined;
+  const nonZeroExit = exitCode !== undefined && exitCode !== 0;
+  const hideEmptySuccessfulBashOutput = block.name === "bash"
+    && exitCode === 0
+    && !textValue(details?.stdout)
+    && !textValue(details?.stderr);
   const icon = standardToolIcon(block.name) ?? <Code2 className="h-3.5 w-3.5" />;
   if (block.state === "awaiting-approval" && block.approval) return <ToolApprovalCard block={block} onEnableAutoApprove={onEnableAutoApprove} onResolveApproval={onResolveApproval} />;
-  const summary = block.name === "read" && typeof details?.lineCount === "number"
+  const grepHasMore = block.name === "grep" && textValue(details?.nextCursor) !== undefined;
+  const summary = nonZeroExit
+    ? `Exit ${exitCode}`
+    : block.name === "read" && typeof details?.lineCount === "number"
     ? `${details.lineCount} lines read`
     : block.name === "grep" && typeof details?.count === "number"
-      ? `${details.count} matches`
+      ? `${details.count}${grepHasMore ? "+" : ""} ${details.count === 1 && !grepHasMore ? "match" : "matches"}`
       : block.name === "find" && typeof details?.count === "number"
         ? `${details.count} files found`
         : activityState(block);
+  const detail = block.name === "grep" && pattern
+    ? <><div className="flex min-w-0 items-baseline gap-2"><span className="min-w-0 flex-1 truncate text-[#4f4f49] dark:text-foreground" title={pattern}>&quot;{pattern}&quot;</span>{path ? <span className="hidden min-w-0 max-w-[45%] shrink truncate text-[#898981] dark:text-muted-foreground sm:inline" title={path}>in {path}</span> : null}</div>{path ? <span className="mt-0.5 block truncate text-[10px] text-[#92928a] dark:text-muted-foreground sm:hidden" title={path}>{path}</span> : null}</>
+    : command ?? path;
 
   return (
     <section className="py-3">
-      <ToolActivityRow block={block} detail={command ?? path} icon={icon} summary={summary} />
-      {oldText !== undefined && newText !== undefined ? <details className="mt-2"><summary className="cursor-pointer font-mono text-[11px] text-[#777770]">View change</summary><div className="mt-2 grid overflow-hidden border-y border-[#e1e1dc] font-mono text-[11px] leading-5 dark:border-border"><pre className="m-0 max-h-40 overflow-auto bg-[#fbefec] px-3 text-[#9a564b] dark:bg-[#3a211d] dark:text-[#ffb4a8]">- {oldText}</pre><pre className="m-0 max-h-40 overflow-auto bg-[#eff7e7] px-3 text-[#547c36] dark:bg-[#29351d] dark:text-[#d8f28a]">+ {newText}</pre></div></details> : null}
-      <ToolOutput block={block} onLoadToolOutput={onLoadToolOutput} />
-      {exitCode !== undefined ? <p className="mt-1 flex items-center gap-1.5 font-mono text-[11px] text-muted-foreground"><ListTree className="h-3 w-3" />Exit {exitCode}</p> : null}
+      <ToolActivityRow block={block} completedWarning={nonZeroExit} detail={detail} icon={icon} summary={summary} />
+      {oldText !== undefined && newText !== undefined ? <details className="mt-2"><summary className="cursor-pointer font-mono text-[11px] text-[#777770]">View change</summary><div className="mt-2 max-h-80 overflow-auto border-y border-[#e1e1dc] font-mono text-[11px] leading-5 dark:border-border"><pre className="m-0 min-w-max whitespace-pre bg-[#fbefec] px-3 text-[#9a564b] dark:bg-[#3a211d] dark:text-[#ffb4a8]">- {oldText}</pre><pre className="m-0 min-w-max whitespace-pre bg-[#eff7e7] px-3 text-[#547c36] dark:bg-[#29351d] dark:text-[#d8f28a]">+ {newText}</pre></div></details> : null}
+      {block.name === "grep" && pattern ? <GrepToolOutput block={block} onLoadToolOutput={onLoadToolOutput} path={path ?? "."} pattern={pattern} /> : hideEmptySuccessfulBashOutput ? null : <ToolOutput block={block} onLoadToolOutput={onLoadToolOutput} />}
     </section>
   );
 }
@@ -500,7 +551,7 @@ function ToolApprovalCard({ block, onEnableAutoApprove, onResolveApproval }: Too
   return (
     <section className="py-4">
       <div className="flex flex-wrap items-start justify-between gap-3"><div><p className="text-[13px] font-semibold">{elevated ? (locale === "zh-CN" ? "允许本次外部访问" : "Allow external access once") : "需要你的确认"}</p><p className="mt-1 font-mono text-[10px] text-[#6e6e68] dark:text-muted-foreground">{block.name} · {preview.type === "external-access" ? preview.paths[0] : preview.type === "diff" ? preview.path : preview.type === "command" ? preview.command : preview.type === "spreadsheet" ? preview.workbookName : `${preview.connectorName} / ${preview.toolName}`}</p></div><div className="flex items-center gap-2">{elevated ? <span className="inline-flex items-center gap-1 rounded bg-[#f9e9e6] px-1.5 py-0.5 text-[10px] font-semibold text-[#b34b42] dark:bg-[#3a241f] dark:text-[#f29a8f]"><ShieldCheck className="h-3 w-3" />{locale === "zh-CN" ? "工作区外" : "Outside workspace"}</span> : highRisk ? <span className="rounded bg-[#f9e9e6] px-1.5 py-0.5 text-[10px] font-semibold text-[#b34b42] dark:bg-[#3a241f] dark:text-[#f29a8f]">{t("highRisk")}</span> : null}<span className={highRisk ? "text-[10px] font-medium text-[#a34b40] dark:text-[#f29a8f]" : "text-[10px] font-medium text-[#8b604c]"}>{approval.risk === "workspace-access" ? (locale === "zh-CN" ? "需要临时提升文件访问权限" : "Temporary file access is required") : approval.risk === "command" ? "小心：将运行本地命令" : approval.risk === "connector" ? "小心：将调用外部连接器" : "小心：将修改本地文件"}</span></div></div>
-      {preview.type === "external-access" ? <div className="mt-3 border-y border-[#e5d8d3] bg-[#fdf9f7] px-3 py-2.5 text-[10px] leading-5 dark:border-[#543b35] dark:bg-[#2b211e]"><p className="font-medium text-[#7e4d43] dark:text-[#efb0a3]">{locale === "zh-CN" ? `操作：${preview.operation}` : `Operation: ${preview.operation}`}</p><div className="mt-1 max-h-24 overflow-auto font-mono text-[#5f5e59] dark:text-muted-foreground">{preview.paths.map((path) => <p className="break-all" key={path}>{path}</p>)}</div><p className="mt-2 text-[#81736e] dark:text-[#cbbab4]">{locale === "zh-CN" ? "仅当前工具调用可访问；完成后仍保持 Default Access。" : "Only this tool call is allowed. The session remains in Default Access."}</p></div> : preview.type === "diff" ? <div className="mt-3 max-h-48 overflow-auto border-y border-[#e1e1dc] bg-[#fafaf9] font-mono text-[10px] leading-5 dark:border-border dark:bg-muted"><div className="border-b border-[#e8e8e3] bg-[#f2f2ef] px-3 py-1.5 text-[#777770] dark:border-border dark:bg-secondary">@@ {preview.path}</div><pre className="m-0 whitespace-pre-wrap bg-[#fbefec] px-3 text-[#9a564b] dark:bg-[#3a211d] dark:text-[#ffb4a8]">- {preview.before}</pre><pre className="m-0 whitespace-pre-wrap bg-[#eff7e7] px-3 text-[#547c36] dark:bg-[#29351d] dark:text-[#d8f28a]">+ {preview.after}</pre></div> : preview.type === "command" ? <div className="mt-3 border-y border-[#e1e1dc] bg-[#fafaf9] px-3 py-2.5 font-mono text-[10px] leading-5 text-[#4d4d47] dark:border-border dark:bg-muted dark:text-muted-foreground"><p>{preview.command}</p><p className="mt-1 text-[#878780]">cwd: {preview.cwd}{preview.timeoutSeconds ? ` · timeout: ${preview.timeoutSeconds}s` : ""}</p></div> : preview.type === "spreadsheet" ? <div className="mt-3 max-h-56 overflow-auto border-y border-[#e1e1dc] bg-[#fafaf9] font-mono text-[10px] dark:border-border dark:bg-muted"><div className="border-b border-[#e8e8e3] bg-[#f2f2ef] px-3 py-1.5 text-[#777770] dark:border-border dark:bg-secondary">{preview.affectedSheets.join(", ") || "Workbook"}</div>{preview.changes.map((change, index) => <div className="border-b border-[#e8e8e3] px-3 py-2 last:border-b-0 dark:border-border" key={`${change.locator}:${index}`}><div className="flex items-center gap-2"><span className="text-[#61763f] dark:text-[#c7df7c]">{change.locator}</span><span className="truncate text-[#777770]">{change.summary}</span></div>{change.before ? <p className="mt-1 truncate text-[#9a564b] dark:text-[#ffb4a8]">- {change.before}</p> : null}{change.after ? <p className="truncate text-[#547c36] dark:text-[#d8f28a]">+ {change.after}</p> : null}</div>)}{preview.truncated ? <p className="px-3 py-2 text-[#8a6a2d]">Additional changes are summarized and not shown.</p> : null}</div> : <div className="mt-3 border-y border-[#e1e1dc] bg-[#fafaf9] px-3 py-2.5 font-mono text-[10px] leading-5 text-[#4d4d47] dark:border-border dark:bg-muted dark:text-muted-foreground"><p>{preview.connectorName} / {preview.toolName}</p><pre className="mt-2 max-h-32 overflow-auto whitespace-pre-wrap text-[#777770]">{JSON.stringify(preview.input, null, 2)}</pre></div>}
+      {preview.type === "external-access" ? <div className="mt-3 border-y border-[#e5d8d3] bg-[#fdf9f7] px-3 py-2.5 text-[10px] leading-5 dark:border-[#543b35] dark:bg-[#2b211e]"><p className="font-medium text-[#7e4d43] dark:text-[#efb0a3]">{locale === "zh-CN" ? `操作：${preview.operation}` : `Operation: ${preview.operation}`}</p><div className="mt-1 max-h-24 overflow-auto font-mono text-[#5f5e59] dark:text-muted-foreground">{preview.paths.map((path) => <p className="break-all" key={path}>{path}</p>)}</div><p className="mt-2 text-[#81736e] dark:text-[#cbbab4]">{locale === "zh-CN" ? "仅当前工具调用可访问；完成后仍保持 Default Access。" : "Only this tool call is allowed. The session remains in Default Access."}</p></div> : preview.type === "diff" ? <div className="mt-3 max-h-80 overflow-auto border-y border-[#e1e1dc] bg-[#fafaf9] font-mono text-[10px] leading-5 dark:border-border dark:bg-muted"><div className="border-b border-[#e8e8e3] bg-[#f2f2ef] px-3 py-1.5 text-[#777770] dark:border-border dark:bg-secondary">@@ {preview.path}</div><pre className="m-0 min-w-max whitespace-pre bg-[#fbefec] px-3 text-[#9a564b] dark:bg-[#3a211d] dark:text-[#ffb4a8]">- {preview.before}</pre><pre className="m-0 min-w-max whitespace-pre bg-[#eff7e7] px-3 text-[#547c36] dark:bg-[#29351d] dark:text-[#d8f28a]">+ {preview.after}</pre></div> : preview.type === "command" ? <div className="mt-3 border-y border-[#e1e1dc] bg-[#fafaf9] px-3 py-2.5 font-mono text-[10px] leading-5 text-[#4d4d47] dark:border-border dark:bg-muted dark:text-muted-foreground"><p>{preview.command}</p><p className="mt-1 text-[#878780]">cwd: {preview.cwd}{preview.timeoutSeconds ? ` · timeout: ${preview.timeoutSeconds}s` : ""}</p></div> : preview.type === "spreadsheet" ? <div className="mt-3 max-h-56 overflow-auto border-y border-[#e1e1dc] bg-[#fafaf9] font-mono text-[10px] dark:border-border dark:bg-muted"><div className="border-b border-[#e8e8e3] bg-[#f2f2ef] px-3 py-1.5 text-[#777770] dark:border-border dark:bg-secondary">{preview.affectedSheets.join(", ") || "Workbook"}</div>{preview.changes.map((change, index) => <div className="border-b border-[#e8e8e3] px-3 py-2 last:border-b-0 dark:border-border" key={`${change.locator}:${index}`}><div className="flex items-center gap-2"><span className="text-[#61763f] dark:text-[#c7df7c]">{change.locator}</span><span className="truncate text-[#777770]">{change.summary}</span></div>{change.before ? <p className="mt-1 truncate text-[#9a564b] dark:text-[#ffb4a8]">- {change.before}</p> : null}{change.after ? <p className="truncate text-[#547c36] dark:text-[#d8f28a]">+ {change.after}</p> : null}</div>)}{preview.truncated ? <p className="px-3 py-2 text-[#8a6a2d]">Additional changes are summarized and not shown.</p> : null}</div> : <div className="mt-3 border-y border-[#e1e1dc] bg-[#fafaf9] px-3 py-2.5 font-mono text-[10px] leading-5 text-[#4d4d47] dark:border-border dark:bg-muted dark:text-muted-foreground"><p>{preview.connectorName} / {preview.toolName}</p><pre className="mt-2 max-h-32 overflow-auto whitespace-pre-wrap text-[#777770]">{JSON.stringify(preview.input, null, 2)}</pre></div>}
       {approval.matchedRules.length > 0 ? <div className="mt-3 border-l-2 border-[#d98477] bg-[#fdf8f6] px-3 py-2 dark:border-[#9b554b] dark:bg-[#2b201d]"><p className="text-[10px] font-semibold text-[#8b5045] dark:text-[#efb0a3]">{t("matchedSecurityRules")}</p><ul className="mt-1 space-y-0.5 text-[10px] text-[#795f59] dark:text-[#d7b9b1]">{approval.matchedRules.map((rule) => <li key={rule.id}>{rule.label} · {rule.source === "builtin" ? t("builtinRule") : t("customRules")}</li>)}</ul></div> : null}
       <div className="mt-3 flex items-center gap-1.5"><button aria-label="Reject operation" className="grid h-7 w-7 place-items-center rounded-[6px] text-[#7b5d52] hover:bg-[#f8efeb] disabled:opacity-50" disabled={resolving !== null} onClick={() => void submit(false)} title="拒绝" type="button"><X className="h-4 w-4" /></button><button aria-label={elevated ? "Allow this operation once" : "Approve operation"} className="grid h-7 w-7 place-items-center rounded-[6px] bg-[#252624] text-white hover:bg-[#3a3b37] disabled:opacity-50" disabled={resolving !== null} onClick={() => void submit(true)} title={elevated ? (locale === "zh-CN" ? "仅允许本次操作" : "Allow once") : "批准并执行"} type="button">{resolving === "approve" ? <LoaderCircle className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-4 w-4" />}</button>{!elevated && !highRisk && onEnableAutoApprove ? <Tooltip><TooltipTrigger asChild><button aria-label={autoApproveLabel} className="grid h-7 w-7 place-items-center rounded-[6px] border border-[#b9c99a] bg-[#f7f9f1] text-[#61763f] transition-colors hover:border-[#9eb375] hover:bg-[#edf3df] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50 dark:border-[#59683e] dark:bg-[#252d1e] dark:text-[#c7df7c] dark:hover:bg-[#303b25]" disabled={resolving !== null} onClick={() => void enableAutoApprove()} type="button">{resolving === "auto" ? <LoaderCircle className="h-3.5 w-3.5 animate-spin" /> : <AutoApproveIcon className="h-4 w-4" />}</button></TooltipTrigger><TooltipContent>{autoApproveLabel}</TooltipContent></Tooltip> : null}</div>
       {error ? <p className="mt-2 text-[11px] text-destructive" role="alert">{error}</p> : null}
