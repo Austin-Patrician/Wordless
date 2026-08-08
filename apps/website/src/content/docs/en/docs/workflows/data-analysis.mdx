@@ -1,0 +1,46 @@
+---
+title: Data Analysis
+description: Turn a confirmed research plan into traceable analysis and conclusions.
+---
+import { Steps } from '@astrojs/starlight/components';
+import Prerequisites from '../../../../../components/docs/Prerequisites.astro';
+import PromptBlock from '../../../../../components/docs/PromptBlock.astro';
+import ExpectedResult from '../../../../../components/docs/ExpectedResult.astro';
+import ApprovalCheckpoint from '../../../../../components/docs/ApprovalCheckpoint.astro';
+import ScreenshotFrame from '../../../../../components/docs/ScreenshotFrame.astro';
+
+<Prerequisites>
+- A CSV, workbook, or research source
+- Defined question, time range, metrics, and output format
+- Network or file access required by the research
+</Prerequisites>
+
+<Steps>
+1. Select **Data Analysis**, reference the data, and define each important field.
+2. Ask for a research plan and review its dimensions and evidence requirements.
+3. Confirm the plan; `research_start` must receive the returned, current `confirmationToken`.
+4. Inspect each `research_delegate` dimension independently: queued, running, success, or failed.
+5. Require contradictions, missing evidence, and assumptions to be separated before synthesis.
+6. Export the report and spot-check source rows or links.
+</Steps>
+
+<PromptBlock label="Copyable prompt">Analyze @survey.xlsx user retention. Propose a plan covering data quality, segments, time trends, anomalies, business explanations, and actions. Wait for my confirmation before starting. Cite a field, row, or source for every conclusion and label assumptions.</PromptBlock>
+<ApprovalCheckpoint>Confirmation tokens expire. After changing a plan, prepare and confirm it again instead of retrying an old analysis ID.</ApprovalCheckpoint>
+<ExpectedResult>A report with method, evidence, limitations, conclusions, and next steps, plus independent researcher states.</ExpectedResult>
+
+<ScreenshotFrame src="/images/workflows/data-analysis-start.png" alt="Data Analysis mode, source file, and research task" caption="Select Data Analysis, reference a local dataset, and state both the local-analysis and deep-research goals before sending." />
+<ScreenshotFrame src="/images/workflows/data-analysis-deep-research-card.png" alt="Deep Research plan confirmation card" caption="After local analysis, explicitly confirm external research and choose normal, heavy, or quick depth." />
+<ScreenshotFrame src="/images/workflows/data-analysis-multi-step-parallel.png" alt="Research dimensions executing in parallel" caption="Each dimension has independent evidence counts and running or failed states while the right panel aggregates sources." />
+<ScreenshotFrame src="/images/workflows/data-analysis-dimension-activity.png" alt="Activity, Evidence, and Result for one research dimension" caption="Open one dimension to inspect activity, evidence, and the result separately instead of relying on aggregate progress." />
+<ScreenshotFrame src="/images/workflows/data-analysis-deepresearch-review.png" alt="Parallel evidence review for Deep Research" caption="The review stage validates claims and sources per dimension and preserves an independent review state." />
+<ScreenshotFrame src="/images/workflows/data-analysis-preview-charts.png" alt="Data Analysis chart preview" caption="Charts gathers expandable local-analysis visuals while keeping them in the same session as the research execution." />
+
+## What is different in Wordless
+
+Research is not an opaque tool card. Wordless separates the confirmation token, research dimensions, per-researcher sources, and final synthesis so a failed dimension can be rerun without repeating the entire analysis.
+
+| Scenario | Example dimensions | Verification |
+| --- | --- | --- |
+| Retention diagnosis | Quality, cohorts, trends, anomalies, explanations, actions | Claims cite fields, rows, or sources |
+| Market research | Size, competition, users, pricing, risks, evidence | Each researcher can be expanded |
+| Resume after failure | Rerun only failed dimensions | Successful dimensions are preserved |

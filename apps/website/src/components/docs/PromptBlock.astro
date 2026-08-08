@@ -1,0 +1,8 @@
+---
+interface Props { label?: string }
+const { label = (Astro.currentLocale === 'en' ? 'Copyable prompt' : '可复制提示词') } = Astro.props
+---
+<section class="doc-prompt">
+  <div class="doc-prompt__label"><span aria-hidden="true">›_</span>{label}</div>
+  <div class="doc-prompt__body"><slot /></div>
+</section>

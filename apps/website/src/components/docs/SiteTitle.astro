@@ -1,0 +1,26 @@
+---
+import type { StarlightRouteData } from '@astrojs/starlight/route-data'
+
+const { siteTitle } = (Astro.locals as { starlightRoute: StarlightRouteData }).starlightRoute
+---
+<a href="/" class="wordless-doc-title" aria-label={`${siteTitle} - Wordless home`}>
+  <img src="/images/wordless.webp" alt="" width="28" height="28" />
+  <span>{siteTitle}</span>
+</a>
+
+<style>
+  .wordless-doc-title {
+    display: flex;
+    min-width: 0;
+    align-items: center;
+    gap: .65rem;
+    color: var(--sl-color-text-accent);
+    font-size: var(--sl-text-h4);
+    font-weight: 720;
+    letter-spacing: 0;
+    text-decoration: none;
+    white-space: nowrap;
+  }
+  img { width: 1.75rem; height: 1.75rem; border-radius: 6px; object-fit: cover; }
+  span { overflow: hidden; text-overflow: ellipsis; }
+</style>

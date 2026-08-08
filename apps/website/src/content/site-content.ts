@@ -72,6 +72,7 @@ export const copy: Record<Locale, Copy> = {
       { label: 'System', href: '#system' },
       { label: 'Control', href: '#control' },
       { label: 'Download', href: '#download' },
+      { label: 'Docs', href: '/en/docs/' },
     ],
     utility: { language: '中文', github: 'GitHub' },
     hero: {
@@ -158,6 +159,7 @@ export const copy: Record<Locale, Copy> = {
       { label: '系统', href: '#system' },
       { label: '控制流', href: '#control' },
       { label: '下载', href: '#download' },
+      { label: '文档', href: '/docs/' },
     ],
     utility: { language: 'English', github: 'GitHub' },
     hero: {

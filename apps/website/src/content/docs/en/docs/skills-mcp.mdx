@@ -1,0 +1,35 @@
+---
+title: Skills & MCP
+description: Install Skills, configure custom MCP transports, and manage trust and credentials.
+---
+import { Steps, Tabs, TabItem } from '@astrojs/starlight/components';
+import Prerequisites from '../../../../components/docs/Prerequisites.astro';
+import ApprovalCheckpoint from '../../../../components/docs/ApprovalCheckpoint.astro';
+import ScreenshotFrame from '../../../../components/docs/ScreenshotFrame.astro';
+
+<Prerequisites>
+- A trusted Skill or MCP source
+- The service URL, OAuth configuration, or bearer token supplied by its owner
+- A plan for which tools and permissions the connection should expose
+</Prerequisites>
+
+<Steps>
+1. Open **Skills & MCP**, inspect the source, tools, and permission summary, then install or import the Skill.
+2. Enable it and type `$` in Composer. Use ↑/↓ and Enter to insert its token; sending remains separate.
+3. For custom MCP, choose a transport and enter only the required settings.
+4. Test the connection and inspect the tool list before using it in a task.
+5. Remove the local configuration when it is no longer trusted; revoke remote OAuth separately at the provider.
+</Steps>
+
+<ScreenshotFrame src="/images/skills-mcp/skills.png" alt="Skills list and enabled states" caption="The Skills page separates global and workspace Skills and exposes search, import, refresh, and enabled states." />
+<ScreenshotFrame src="/images/skills-mcp/skill-import.png" alt="Importing a Skill file or folder" caption="Verify that the archive or folder contains SKILL.md; auto-install should be limited to reviewed, non-high-risk Skills." />
+
+<Tabs>
+  <TabItem label="stdio">Enter the command and arguments. Verify the binary exists and pass secrets through environment variables only when required.</TabItem>
+  <TabItem label="Remote HTTP">Use HTTPS and prefer OAuth over long-lived bearer tokens. Never paste a token into a shared config or prompt.</TabItem>
+</Tabs>
+
+<ScreenshotFrame src="/images/skills-mcp/mcp.png" alt="MCP connector list, states, and management actions" caption="Connector cards expose availability, connection state, enablement, and removal while preserving explicit failures." />
+<ScreenshotFrame src="/images/skills-mcp/mcp-new.png" alt="Adding a Remote HTTP or Local command MCP connector" caption="Choose Remote HTTP or Local command and enter only the URL, OAuth, or request credentials required by the service." />
+
+<ApprovalCheckpoint>Review the service domain, process command, tool name, and arguments on first connect and on every risky tool call.</ApprovalCheckpoint>

@@ -1,0 +1,70 @@
+---
+title: Your first task
+description: Configure a model, choose a workspace, and complete a verifiable Wordless agent task.
+---
+import { Steps } from '@astrojs/starlight/components';
+import Prerequisites from '../../../../components/docs/Prerequisites.astro';
+import PromptBlock from '../../../../components/docs/PromptBlock.astro';
+import ExpectedResult from '../../../../components/docs/ExpectedResult.astro';
+import ApprovalCheckpoint from '../../../../components/docs/ApprovalCheckpoint.astro';
+import ScreenshotFrame from '../../../../components/docs/ScreenshotFrame.astro';
+
+<Prerequisites>
+- Wordless installed and opening normally by following [Install Wordless](/en/docs/installation/)
+- An API key or local configuration for a supported model provider
+- A non-sensitive example folder containing a `README.md`
+</Prerequisites>
+
+## 1. Start in General Work
+
+Launch Wordless and choose **General Work**. Select a workspace when the task uses local files; you can skip it for a question that does not require file access.
+
+<ScreenshotFrame src="/images/Wordless%20first%20launch.png" alt="Wordless first-launch workbench" caption="General Work is suitable for document understanding, research, drafting, and other general tasks." />
+
+## 2. Configure and select a model
+
+<Steps>
+1. Open **Settings → Models**.
+2. Choose a provider and enter its API key. A custom provider also requires the correct Base URL, Provider ID, and model configuration.
+3. Save the provider and enable the models that should appear in Composer.
+4. Return to Composer, open the model picker, and click the model you want to use.
+5. A supported model uses `medium` thinking depth until you explicitly choose another value.
+</Steps>
+
+Enter API keys only in Settings, never in prompts, project files, or screenshots. See [Model configuration](/en/docs/models/) for every custom-provider field and complete examples.
+
+<ScreenshotFrame src="/images/model%20setup.png" alt="Wordless model provider settings" caption="Save the provider credentials and enable only the models you want to use from Composer." />
+
+## 3. Create a workspace session
+
+<Steps>
+1. Create a new session and select **General Work**.
+2. Open the workspace picker and choose the example folder containing `README.md`.
+3. Confirm that `README.md` appears under Workspace Files. The workspace defines what Default Access can read and modify.
+4. If Wordless reports `The selected workspace is unavailable`, select an existing folder that your current account can read.
+</Steps>
+
+Use a small project without secrets, customer records, or personal information for this first task.
+
+## 4. Reference the file and send the task
+
+Type `@` in Composer, then type `README` to filter the list. Use ↑/↓ to select the file and press Enter. Enter inserts the reference token without sending the message, so add the instruction before you submit it.
+
+<PromptBlock label="Copyable prompt">
+Read @README.md and summarize this project's purpose, startup steps, and directory structure. Do not modify files. Cite the file path for each key claim and call out missing information.
+</PromptBlock>
+
+<ApprovalCheckpoint>Read-only work usually stays inside Default Access. Review the tool name, path, and arguments before approving any command, write, or out-of-workspace request.</ApprovalCheckpoint>
+
+## 5. Verify the result
+
+Do not accept an answer only because it looks plausible. Expand the tool card, confirm its status, open `README.md`, and check every claimed purpose, command, and directory against the source.
+
+<ExpectedResult>The thread contains a structured summary grounded in `README.md`; tool cards show running, success, or failed states, and no file was modified.</ExpectedResult>
+
+## Recovering from states
+
+- **Running:** the agent is generating or executing a tool; do not submit the same task again.
+- **Awaiting approval:** an approval card in the thread needs your decision.
+- **Failed:** expand the tool result, preserve the original error, and use [Troubleshooting](/en/docs/troubleshooting/).
+- **Organizing earlier conversation:** Wordless is compacting older context and will continue afterward.

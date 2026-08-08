@@ -1,0 +1,41 @@
+---
+title: Pi Agent kernel and Profiles
+description: Why Wordless chose Pi and how one agent loop becomes five portable work Profiles.
+---
+import { Aside } from '@astrojs/starlight/components';
+import ScreenshotFrame from '../../../../components/docs/ScreenshotFrame.astro';
+
+## Upstream foundation
+
+Wordless builds its model and agent foundation from the MIT-licensed [Pi Agent Harness](https://github.com/earendil-works/pi). Pi provides a unified multi-provider API and an agent runtime with tool calls, events, and state. The repository maintains adapted private packages named `@wordless/ai` and `@wordless/agent` while preserving upstream attribution and license metadata.
+
+## Why Pi
+
+| Product problem | Pi foundation | Wordless product layer |
+| --- | --- | --- |
+| Provider differences | Unified streaming and model capability data | Model settings, thinking depth, credential vault |
+| Multi-turn tools | Agent loop, argument validation, event stream | Approval cards, risk levels, visible tool states |
+| Long sessions | Continuable context and message state | Compaction records, search, persisted sessions |
+| Extensibility | Structured AgentTool contract | Skills, MCP, OfficeCLI, research, workspace search |
+| Embedding | Core separated from CLI/TUI | Electron, Runtime, Profile/Driver boundaries |
+
+Pi’s README explicitly states that it is not a filesystem, process, network, or credential permission system. Wordless therefore adds workspace policy, preflight decisions, approval journals, and one-time elevation outside the upstream loop.
+
+## Five Profiles
+
+| Profile | Driver | Specialization |
+| --- | --- | --- |
+| General | `agent-driver-generic` | Everyday work, Skills, MCP, optional workspace tools |
+| Coding | `agent-driver-coding` | Search, edit, shell, tests, diff, workspace policy |
+| Presentation | `agent-driver-presentation` | `presentation_*`, OfficeCLI guidance, PPTX preview |
+| Spreadsheet | `agent-driver-spreadsheet` | Selection, quality checks, formulas, charts, publish |
+| Data Analysis | Generic + data tools | Research plans, confirmation tokens, delegated researchers |
+
+<ScreenshotFrame src="/docs/architecture/profile-driver-registry.png" alt="How Wordless Profiles, Drivers, and the Pi Agent kernel compose" caption="Runtime resolves the Profile first, then composes its Driver, extensions, Pi-derived kernel, and preflight workspace policy through the Driver SDK." />
+<ScreenshotFrame src="/docs/architecture/profile-tool-comparison.png" alt="Tool and interactive workbench comparison across five Wordless Profiles" caption="The agent loop stays constant while each Profile changes its workbench, Driver, capabilities, tools, artifacts, and in-place verification surface." />
+
+## Portable by design
+
+`@wordless/ai` isolates provider protocols, `@wordless/agent` isolates the loop and events, and `agent-driver-sdk` is the contract between Runtime and a concrete kernel. Profiles do not depend on Electron, while sessions and domain messages remain Wordless-owned. Upgrading Pi, replacing a provider adapter, or adding another Driver changes adapters and event mapping rather than Composer, approvals, storage, and every business tool.
+
+<Aside type="caution" title="Upstream work remains upstream work">Pi’s runtime and provider abstraction are upstream contributions. Wordless adds the desktop experience, Profiles/Drivers, permission workflow, workspace integration, Office/Data tools, and persistence. Releases and documentation should keep the upstream repository and license visible.</Aside>

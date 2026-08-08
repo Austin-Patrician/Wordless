@@ -129,7 +129,7 @@ function App() {
         </div>
         <div className="mode-artifact page-grid">
           <Suspense fallback={<div className="model-placeholder" />}>
-            <SectionModel src="/glb/geometric%20sculpture%203d%20model.glb" label="CONTEXT LATTICE / MULTI-FORM CORE" variant="lattice" />
+            <SectionModel src="/glb/optimized/geometric-sculpture.glb" label="CONTEXT LATTICE / MULTI-FORM CORE" variant="lattice" />
           </Suspense>
           <p>ONE CONTEXT<br /><span>MULTIPLE FORMS</span></p>
         </div>

@@ -1,0 +1,79 @@
+---
+title: Custom model configuration
+description: Configure providers, OpenAI-compatible gateways, thinking depth, and credentials.
+---
+import { Steps } from '@astrojs/starlight/components';
+import Prerequisites from '../../../../components/docs/Prerequisites.astro';
+import ScreenshotFrame from '../../../../components/docs/ScreenshotFrame.astro';
+import ExpectedResult from '../../../../components/docs/ExpectedResult.astro';
+
+<Prerequisites>
+- An API key or a reachable local model service
+- The exact model ID, base URL, context limit, and thinking-depth support
+- For OpenAI-compatible APIs, confirmation that the gateway uses Chat Completions or Responses
+</Prerequisites>
+
+## Field reference
+
+| JSON field | Purpose | Guidance |
+| --- | --- | --- |
+| `name` | Provider display name | Use a recognizable name such as `Team gateway` |
+| `baseUrl` | API root | Usually ends in `/v1`; do not append `/chat/completions` twice |
+| `api` | Request protocol | Usually `openai-completions` or `openai-responses` |
+| `headers` | Extra HTTP headers | Include only gateway-required headers, not the API key |
+| `models[].id` | Server-side model ID | Copy it exactly from the provider |
+| `models[].name` | Composer label | Human-readable and not sent as the ID |
+| `reasoning` | Reasoning capability | Set only when the model really supports it |
+| `input` | Input modalities | `['text']` or `['text', 'image']` |
+| `contextWindow` | Context limit | Use the provider’s published value |
+| `maxTokens` | Maximum output | Keep within the model/API limit |
+| `thinkingLevelMap` | Wordless depth to provider value | Supports `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max` keys |
+
+## Configure an OpenAI-compatible gateway
+
+<ScreenshotFrame src="/images/model%20setup.png" alt="Provider and Enabled models in Settings" caption="Built-in provider settings keep the API key, custom configuration, and enabled-model list separate." />
+
+<Steps>
+1. Open **Settings → Models** and select **Chat**.
+2. Click **Add custom provider**, enter a unique Provider ID using letters, numbers, `.`, `_`, or `-`, choose an avatar, and create it.
+3. Enter the API key on the right. It is kept separate from the advanced JSON.
+4. Enable **Custom provider configuration** and adapt the example below.
+5. Click **Save**; schema errors appear below the API key section.
+6. Enable the new model under **Enabled models** or it will not appear in Composer.
+7. Select it in Composer. A thinking-depth submenu appears only when `thinkingLevelMap` is configured.
+</Steps>
+
+```json title="OpenAI-compatible Chat Completions example"
+{
+  "name": "Company AI",
+  "baseUrl": "https://model.example.com/v1",
+  "api": "openai-completions",
+  "headers": { "X-Client": "Wordless" },
+  "models": [
+    {
+      "id": "chat-model-prod",
+      "name": "Company Chat",
+      "reasoning": true,
+      "input": ["text", "image"],
+      "contextWindow": 128000,
+      "maxTokens": 16384,
+      "thinkingLevelMap": {
+        "off": "none",
+        "low": "low",
+        "medium": "medium",
+        "high": "high"
+      }
+    }
+  ]
+}
+```
+
+For a built-in provider, use `modelOverrides` in Custom provider configuration instead of recreating it. Assign `null` to an inherited thinking level to disable that level explicitly.
+
+<ScreenshotFrame alt="Custom Provider and JSON model configuration" caption="Screenshot filename: settings/models-custom-provider.png. Show Provider ID, avatar, API key status, JSON editor, and Enabled models." />
+<ScreenshotFrame src="/images/settings/model-thinking-depth.png" alt="Model picker with thinking-depth submenu" caption="Only the selected model exposes thinking depth; medium is used when no explicit depth has been chosen." />
+<ExpectedResult>A short message returns successfully and the selected model remains visible. There is currently no separate connection-test button, so this short request is the end-to-end verification. Thinking depth appears only when the selected model defines it; model access does not grant tool permissions.</ExpectedResult>
+
+## Troubleshooting configuration
+
+401/403 usually means an invalid key or missing model permission. A 404 usually means the base URL has the wrong `/v1` suffix or the Model ID is wrong. A timeout points to proxy, VPN, IPv6, or local routing. HTML means a console URL was entered instead of an API endpoint. An empty model list means `models` is empty, JSON validation failed, or the model is not enabled. If thinking depth is absent, `thinkingLevelMap` is not configured.

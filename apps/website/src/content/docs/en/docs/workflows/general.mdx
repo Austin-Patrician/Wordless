@@ -1,0 +1,42 @@
+---
+title: General Work
+description: Research, draft, plan, and review everyday work in one grounded thread.
+---
+import { Steps } from '@astrojs/starlight/components';
+import Prerequisites from '../../../../../components/docs/Prerequisites.astro';
+import PromptBlock from '../../../../../components/docs/PromptBlock.astro';
+import ExpectedResult from '../../../../../components/docs/ExpectedResult.astro';
+import ApprovalCheckpoint from '../../../../../components/docs/ApprovalCheckpoint.astro';
+import ScreenshotFrame from '../../../../../components/docs/ScreenshotFrame.astro';
+
+<Prerequisites>
+- A configured model with General Work selected
+- A workspace and source files are optional; without them the agent must ask for missing facts instead of inventing internal data
+- A defined audience, format, and acceptance criteria
+</Prerequisites>
+
+<Steps>
+1. State the outcome, format, audience, constraints, and acceptance criteria.
+2. If a workspace exists, reference sources with `@`; otherwise require explicit assumptions and an input checklist.
+3. Ask for a plan before execution; keep Manual approve for writes.
+4. Review each approval card’s tool, target, and parameters.
+5. Open the output and verify every claim against its cited source.
+</Steps>
+
+<PromptBlock label="Copyable prompt">I need a one-page product review brief. First list facts to verify, conflicts, and missing information, then provide three options, a recommendation, risks, and next steps. No workspace or source files are selected yet: do not invent internal data. Label assumptions as public context and turn missing inputs into a checklist. Use Markdown headings and tables.</PromptBlock>
+<ScreenshotFrame src="/images/workflows/general-empty-context-plan.png" alt="General Work empty context and planning" caption="Without a workspace, the agent first confirms scope, output format, and required source material." />
+<ScreenshotFrame src="/images/workflows/general-research-draft.png" alt="General Work research and draft result" caption="The same thread separates facts, assumptions, and sources before producing an editable draft." />
+<ApprovalCheckpoint>Approval is the final human check for writes, deletes, commands, and out-of-workspace access.</ApprovalCheckpoint>
+<ExpectedResult>A source-grounded brief with explicit unknowns and a reviewable output.</ExpectedResult>
+
+## What is different in Wordless
+
+Instead of returning an opaque chat answer, Wordless keeps references, approvals, file writes, and success/failure states in one thread. Start with no context, then add `@` files, `$` Skills, and explicit approval constraints only when the task needs them.
+
+## Practical scenarios
+
+| Scenario | Input | Verifiable result |
+| --- | --- | --- |
+| No-context planning | A written goal without a workspace | Assumptions and missing inputs remain separate |
+| Multi-file decision brief | `@` brief and notes folder | Every key conclusion cites a source path |
+| Plan written to disk | Goal plus output path | A reviewed write with visible completion state |

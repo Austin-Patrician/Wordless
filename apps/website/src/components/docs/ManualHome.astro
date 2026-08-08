@@ -1,0 +1,134 @@
+---
+import {
+  ArrowUpRight,
+  Blocks,
+  BookOpenCheck,
+  ChartNoAxesCombined,
+  Code2,
+  Download,
+  FileSliders,
+  MonitorCheck,
+  Presentation,
+  ShieldCheck,
+  TableProperties,
+  Wrench,
+} from 'lucide-react';
+
+interface Props { locale?: 'zh-CN' | 'en' }
+const { locale = 'zh-CN' } = Astro.props;
+const english = locale === 'en';
+const prefix = english ? '/en/docs' : '/docs';
+
+const copy = english ? {
+  startLabel: 'START / 01',
+  startTitle: 'Get to a verified first result',
+  startDescription: 'Install the correct build, connect a model, and complete one workspace-backed task before adding more capabilities.',
+  installTitle: 'Install Wordless',
+  installDescription: 'Choose the right GitHub Release for your Mac chip or Windows architecture.',
+  installMeta: '5–10 min · No account required',
+  firstTitle: 'Complete your first task',
+  firstDescription: 'Configure a model, select a workspace, reference a file, and verify the result.',
+  firstMeta: '10 min · Model API required',
+  workflowsLabel: 'WORKFLOWS / 02',
+  workflowsTitle: 'Choose the work surface that matches the deliverable',
+  workflowsDescription: 'Every guide includes prerequisites, an exact prompt, approval checkpoints, in-place verification, and recovery paths.',
+  referenceLabel: 'REFERENCE / 03',
+  referenceTitle: 'Configure and operate with confidence',
+  note: 'The manual documents currently implemented desktop behavior. UI details may evolve; permission and verification principles remain stable.',
+} : {
+  startLabel: '开始 / 01',
+  startTitle: '先完成一个可以验收的结果',
+  startDescription: '选择正确安装包、连接模型，并先完成一次基于工作区的任务，再逐步启用更多能力。',
+  installTitle: '安装 Wordless',
+  installDescription: '根据 Mac 芯片或 Windows 架构选择正确的 GitHub Release。',
+  installMeta: '5–10 分钟 · 无需登录',
+  firstTitle: '完成首次任务',
+  firstDescription: '配置模型、选择工作区、引用文件，并核对 Agent 的实际产出。',
+  firstMeta: '约 10 分钟 · 需要模型 API',
+  workflowsLabel: '工作流 / 02',
+  workflowsTitle: '根据交付物选择工作台',
+  workflowsDescription: '每份指南都包含前置条件、完整提示词、审批检查点、就地验收和失败恢复路径。',
+  referenceLabel: '参考 / 03',
+  referenceTitle: '完成配置，并理解运行边界',
+  note: '手册只描述当前桌面端已实现的行为。界面细节可能演进，权限与验收原则会保持稳定。',
+};
+
+const workflows = english ? [
+  { title: 'General work', description: 'Research, structure, write, and verify everyday deliverables.', href: `${prefix}/workflows/general/`, icon: BookOpenCheck, code: 'GENERAL' },
+  { title: 'Presentations', description: 'Create and edit a PPTX while inspecting every revision in place.', href: `${prefix}/workflows/presentation/`, icon: Presentation, code: 'PPTX' },
+  { title: 'Spreadsheets', description: 'Select exact ranges, apply formulas or charts, and review changes.', href: `${prefix}/workflows/spreadsheet/`, icon: TableProperties, code: 'XLSX' },
+  { title: 'Data analysis', description: 'Validate local data, delegate research, and trace claims to evidence.', href: `${prefix}/workflows/data-analysis/`, icon: ChartNoAxesCombined, code: 'DATA' },
+  { title: 'Coding', description: 'Inspect a repository, apply a focused patch, and verify with tests.', href: `${prefix}/workflows/code/`, icon: Code2, code: 'CODE' },
+  { title: 'Skills & MCP', description: 'Add reusable instructions and explicitly enabled external tools.', href: `${prefix}/skills-mcp/`, icon: Blocks, code: 'EXTEND' },
+] : [
+  { title: 'General Work', description: '研究、整理、写作并验证日常工作交付物。', href: `${prefix}/workflows/general/`, icon: BookOpenCheck, code: 'GENERAL' },
+  { title: '演示文稿', description: '生成和编辑 PPTX，并在右侧工作区就地检查每次修改。', href: `${prefix}/workflows/presentation/`, icon: Presentation, code: 'PPTX' },
+  { title: '电子表格', description: '选择精确范围，应用公式或图表，并核对实际变更。', href: `${prefix}/workflows/spreadsheet/`, icon: TableProperties, code: 'XLSX' },
+  { title: '数据分析', description: '验证本地数据、委派深度研究，并将结论追溯到证据。', href: `${prefix}/workflows/data-analysis/`, icon: ChartNoAxesCombined, code: 'DATA' },
+  { title: '代码工作流', description: '检查仓库、实施聚焦修改，并通过测试验证结果。', href: `${prefix}/workflows/code/`, icon: Code2, code: 'CODE' },
+  { title: 'Skills & MCP', description: '添加可复用指令与显式启用的外部工具。', href: `${prefix}/skills-mcp/`, icon: Blocks, code: 'EXTEND' },
+];
+
+const references = english ? [
+  { title: 'Models', description: 'Providers, credentials, model IDs, and thinking depth', href: `${prefix}/models/`, icon: FileSliders },
+  { title: 'Core concepts', description: 'References, approvals, access, and artifact workspaces', href: `${prefix}/core-concepts/`, icon: ShieldCheck },
+  { title: 'Troubleshooting', description: 'Diagnose installation, model, tool, and Office failures', href: `${prefix}/troubleshooting/`, icon: Wrench },
+] : [
+  { title: '模型配置', description: 'Provider、凭据、模型 ID 与思考深度', href: `${prefix}/models/`, icon: FileSliders },
+  { title: '核心概念', description: '引用、审批、访问级别与 Artifact 工作区', href: `${prefix}/core-concepts/`, icon: ShieldCheck },
+  { title: '故障排查', description: '定位安装、模型、工具与 Office 执行问题', href: `${prefix}/troubleshooting/`, icon: Wrench },
+];
+---
+
+<div class="manual-home">
+  <section class="manual-section manual-start" aria-labelledby="manual-start-title">
+    <header class="manual-section__header">
+      <span class="manual-section__index">{copy.startLabel}</span>
+      <div><h2 id="manual-start-title">{copy.startTitle}</h2><p>{copy.startDescription}</p></div>
+    </header>
+    <div class="manual-start__grid">
+      <a class="manual-start-card manual-start-card--primary" href={`${prefix}/installation/`}>
+        <span class="manual-icon"><Download aria-hidden="true" size={19} strokeWidth={1.7} /></span>
+        <span class="manual-start-card__body"><strong>{copy.installTitle}</strong><span>{copy.installDescription}</span><small>{copy.installMeta}</small></span>
+        <ArrowUpRight aria-hidden="true" className="manual-arrow" size={17} strokeWidth={1.7} />
+      </a>
+      <a class="manual-start-card" href={`${prefix}/getting-started/`}>
+        <span class="manual-icon"><MonitorCheck aria-hidden="true" size={19} strokeWidth={1.7} /></span>
+        <span class="manual-start-card__body"><strong>{copy.firstTitle}</strong><span>{copy.firstDescription}</span><small>{copy.firstMeta}</small></span>
+        <ArrowUpRight aria-hidden="true" className="manual-arrow" size={17} strokeWidth={1.7} />
+      </a>
+    </div>
+  </section>
+
+  <section class="manual-section" aria-labelledby="manual-workflows-title">
+    <header class="manual-section__header">
+      <span class="manual-section__index">{copy.workflowsLabel}</span>
+      <div><h2 id="manual-workflows-title">{copy.workflowsTitle}</h2><p>{copy.workflowsDescription}</p></div>
+    </header>
+    <nav class="manual-workflows" aria-label={copy.workflowsTitle}>
+      {workflows.map(({ icon: Icon, ...item }, index) => (
+        <a class="manual-workflow" href={item.href}>
+          <span class="manual-workflow__number">{String(index + 1).padStart(2, '0')}</span>
+          <span class="manual-icon manual-icon--quiet"><Icon aria-hidden="true" size={18} strokeWidth={1.65} /></span>
+          <span class="manual-workflow__body"><strong>{item.title}</strong><span>{item.description}</span></span>
+          <span class="manual-workflow__code">{item.code}</span>
+          <ArrowUpRight aria-hidden="true" className="manual-arrow" size={16} strokeWidth={1.7} />
+        </a>
+      ))}
+    </nav>
+  </section>
+
+  <section class="manual-section" aria-labelledby="manual-reference-title">
+    <header class="manual-section__header manual-section__header--compact">
+      <span class="manual-section__index">{copy.referenceLabel}</span>
+      <div><h2 id="manual-reference-title">{copy.referenceTitle}</h2></div>
+    </header>
+    <div class="manual-reference">
+      {references.map(({ icon: Icon, ...item }) => (
+        <a href={item.href}><Icon aria-hidden="true" size={17} strokeWidth={1.65} /><span><strong>{item.title}</strong><small>{item.description}</small></span><ArrowUpRight aria-hidden="true" size={15} strokeWidth={1.7} /></a>
+      ))}
+    </div>
+  </section>
+
+  <p class="manual-note">{copy.note}</p>
+</div>

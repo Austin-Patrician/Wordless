@@ -1,0 +1,55 @@
+---
+title: Pi Agent 内核与 Profile 设计
+description: 为什么 Wordless 选择 Pi，如何把通用 Agent loop 组合成五种可迁移的工作 Profile。
+---
+import { Aside } from '@astrojs/starlight/components';
+import ScreenshotFrame from '../../../components/docs/ScreenshotFrame.astro';
+
+## 上游来源
+
+Wordless 的模型和 Agent 基础来自开源项目 [Pi Agent Harness](https://github.com/earendil-works/pi)，上游以 MIT License 发布。Pi 提供 `pi-ai` 的多提供商统一接口，以及 `pi-agent-core` 的工具调用、事件和状态管理。Wordless 在仓库中维护适配后的私有包 `@wordless/ai` 与 `@wordless/agent`，并保留上游仓库、作者和许可证信息。
+
+## 为什么选择 Pi
+
+| 需要解决的问题 | Pi 提供的基础 | Wordless 增加的产品层 |
+| --- | --- | --- |
+| 多模型差异 | 统一 provider stream 与模型能力数据 | 可视化模型配置、思考深度、凭据存储 |
+| 多轮工具循环 | agent loop、tool call 校验和事件流 | 审批卡、风险分级、工具状态 UI |
+| 长会话 | 可继续的上下文与消息状态 | 上下文压缩记录、搜索定位、会话持久化 |
+| 工具扩展 | 结构化 AgentTool 接口 | Skills、MCP、OfficeCLI、研究和工作区搜索 |
+| 可嵌入 | Core 与 TUI/CLI 分离 | Electron Renderer、Runtime 和 Profile/Driver 分层 |
+
+Pi 上游 README 明确说明：Pi 本身不内置文件、进程、网络和凭据权限系统，默认继承启动进程的权限。因此 Wordless 没有把上游 Agent loop 当作安全边界，而是在 `agent-workspace-policy`、preflight operation、审批日志和一次性提权中实现桌面产品所需的控制。
+
+## 五种 Profile 如何建立
+
+| Profile | Driver | 工具与行为差异 |
+| --- | --- | --- |
+| General | `agent-driver-generic` | 日常任务、Skills、MCP、可选工作区工具 |
+| Coding | `agent-driver-coding` | 文件搜索、编辑、shell、测试、diff 与代码工作区策略 |
+| Presentation | `agent-driver-presentation` | `presentation_*` 工具、OfficeCLI 指导、右侧 PPTX 预览 |
+| Spreadsheet | `agent-driver-spreadsheet` | 工作簿选择、质量检查、公式、图表和发布流程 |
+| Data Analysis | Generic + data tools | research plan、确认令牌、委派研究员和可验证结论 |
+
+<ScreenshotFrame src="/docs/architecture/profile-driver-registry.png" alt="Wordless Profile、Driver 与 Pi Agent 内核的组合关系" caption="Runtime 先解析 Profile，再通过 Driver SDK 组合对应 Driver、扩展、Pi 派生内核与执行前权限策略。" />
+<ScreenshotFrame src="/docs/architecture/profile-tool-comparison.png" alt="五种 Wordless Profile 的工具与交互工作台对比" caption="Agent loop 保持一致；每种 Profile 改变工作台、Driver、能力、工具、Artifact 与就地验证方式。" />
+
+## 事件和审批如何插入循环
+
+Pi 派生内核产生 `agent_start`、`turn_start`、message、tool call、tool result 和 `agent_end` 等事件。Generic Driver 将这些事件映射为 Wordless 会话块；工具执行前调用 preflight policy。如果策略要求审批，循环暂停并等待用户决策；执行后把结果继续交给模型。用户在运行中追加的消息通过 steering/follow-up 进入下一轮，而不是丢失当前工具状态。
+
+## 为什么可迁移
+
+迁移不等于“删除 Pi 后无需工作”，而是依赖被限制在明确适配层：
+
+- `@wordless/ai` 隔离 provider 协议和模型能力。
+- `@wordless/agent` 隔离 Agent loop 与事件类型。
+- `agent-driver-sdk` 是 Runtime 与具体内核之间的合同。
+- Profile 只声明模式、Driver 和展示能力，不直接依赖 Electron。
+- 会话 journal 和领域消息位于 Wordless 包中，不把 UI 数据结构写死在 Pi 类型里。
+
+因此未来可以升级上游 Pi、替换单个 provider adapter，或实现另一套 Agent Driver；需要迁移的是适配器和事件映射，而不是 Composer、审批 UI、工作区存储和全部业务工具。
+
+<Aside type="caution" title="不是对上游能力的重新署名">
+Pi 的 Agent runtime 与多提供商抽象属于上游贡献；Wordless 的工作集中在桌面体验、Profile/Driver、权限审批、工作区、Office/Data 工具和持久化集成。文档与发行物应持续保留上游链接和许可证。
+</Aside>

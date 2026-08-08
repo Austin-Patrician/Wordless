@@ -4,22 +4,26 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
-    "dev": "vite --host 127.0.0.1",
-    "build": "tsc -p tsconfig.json --noEmit && vite build",
-    "preview": "vite preview --host 127.0.0.1"
+    "dev": "astro dev --host 127.0.0.1",
+    "check": "astro check",
+    "build": "astro check && astro build",
+    "preview": "astro preview --host 127.0.0.1"
   },
   "dependencies": {
+    "@astrojs/react": "^6.0.2",
+    "@astrojs/starlight": "^0.41.7",
+    "astro": "^7.2.0",
+    "cookie": "^2.0.1",
     "lucide-react": "1.24.0",
     "react": "19.2.7",
     "react-dom": "19.2.7",
     "three": "0.185.1"
   },
   "devDependencies": {
+    "@astrojs/check": "^0.9.10",
     "@types/react": "19.2.17",
     "@types/react-dom": "19.2.3",
     "@types/three": "0.185.1",
-    "@vitejs/plugin-react": "6.0.3",
-    "typescript": "5.9.3",
-    "vite": "8.1.4"
+    "typescript": "5.9.3"
   }
 }

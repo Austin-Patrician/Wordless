@@ -1,0 +1,38 @@
+---
+title: Core concepts
+description: Workspaces, Composer references, approvals, access levels, sessions, and thinking depth.
+---
+import { Tabs, TabItem } from '@astrojs/starlight/components';
+import ApprovalCheckpoint from '../../../../components/docs/ApprovalCheckpoint.astro';
+
+## Workspace and local-first behavior
+
+Each session is bound to a workspace. File references, Workspace Files, and Default Access use that directory as their boundary. Wordless sends the task and necessary context to the model provider you selected; local files are not uploaded to Wordless automatically.
+
+## Composer references
+
+<Tabs>
+  <TabItem label="@ files and folders">Type `@` to search workspace files, filtered by `.gitignore` when present. Use ↑/↓ and Enter to insert a token; Esc closes the list.</TabItem>
+  <TabItem label="$ Skills">Type `$` to search enabled Skills. Enter inserts the Skill token; sending remains a separate action. The `+` menu offers the same selection.</TabItem>
+</Tabs>
+
+Tokens are structured context, not plain path text. Focusing a token replaces its leading icon with the remove action.
+
+## Approvals and access
+
+- **Manual approve** is the default: each tool requiring approval is explicitly allowed.
+- **Auto-approve for this session** applies only to ordinary-risk actions in the current session. A high-risk card disables it and requires a manual decision.
+- **Default Access** limits file operations to the workspace.
+- **Full Access** expands the boundary and should be used only when the impact is understood.
+- **One-time elevation** permits one named operation while keeping Default Access afterward.
+
+<ApprovalCheckpoint risk="high" title="High-risk actions always require a fresh decision">Session auto-approval is not permanent authorization. Deletion, sensitive paths, and dangerous commands must be shown with an explicit target.</ApprovalCheckpoint>
+
+## Sessions, search, and compaction
+
+Wordless stores user messages, model messages, and tool states locally. Long contexts may be compacted; that does not create a new user task. Message search highlights the matching keyword and scrolls the virtual list to the exact message. With an empty Composer, ↑ and ↓ move through user-message history.
+
+## Models and thinking depth
+
+Clicking a model selects it immediately. Only the selected model exposes its supported thinking-depth submenu. If you do not choose a value, `medium` is used; unsupported models do not show the control.
+

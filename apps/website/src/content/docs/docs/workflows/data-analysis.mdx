@@ -1,0 +1,59 @@
+---
+title: Data Analysis（数据分析）
+description: 从研究计划到可复核的数据分析结果，处理确认令牌与工具状态。
+---
+import { Steps } from '@astrojs/starlight/components';
+import Prerequisites from '../../../../components/docs/Prerequisites.astro';
+import PromptBlock from '../../../../components/docs/PromptBlock.astro';
+import ExpectedResult from '../../../../components/docs/ExpectedResult.astro';
+import ApprovalCheckpoint from '../../../../components/docs/ApprovalCheckpoint.astro';
+import ScreenshotFrame from '../../../../components/docs/ScreenshotFrame.astro';
+
+## 目标
+
+让研究计划、分维度委派、数据处理和结论验证都出现在会话中，而不是只返回一段无法追溯的结论。
+
+<Prerequisites>
+- 已准备 CSV、Excel 或可访问的研究来源
+- 明确问题、时间范围、指标定义和输出格式
+- 研究所需的网络或文件权限已配置
+</Prerequisites>
+
+## 推荐流程
+
+<Steps>
+1. 选择 **Data Analysis**，引用数据文件并说明字段含义。
+2. 要求 Agent 先生成 research plan，检查研究维度和预期证据。
+3. 在研究确认卡点击确认，随后让 Agent 使用同一计划返回的 `confirmationToken` 调用 `research_start`。
+4. 观察 `research_delegate` 的每个维度：queued、running、success 或 failed。展开单个研究员查看来源和摘要。
+5. 合并结果前要求 Agent 标记矛盾、缺失和无法验证的结论。
+6. 导出表格或报告，抽查原始数据行和来源链接。
+</Steps>
+
+<PromptBlock>
+分析 @survey.xlsx 中的用户留存。先提出研究计划，覆盖数据质量、分群、时间趋势、异常点、业务解释和行动建议六个维度。等待我确认计划后再开始研究。每个结论都附字段、行号或来源；不确定时明确写出假设。
+</PromptBlock>
+
+<ApprovalCheckpoint>研究确认令牌会过期，计划更新后必须重新确认并使用新令牌。若 `research_start` 缺少 `confirmationToken`，不要手动重试旧的 analysisId，应重新准备计划。</ApprovalCheckpoint>
+<ExpectedResult>研究员分组显示独立状态，最终报告包含方法、证据、限制、结论和下一步，而非只有无来源的数字。</ExpectedResult>
+
+<ScreenshotFrame src="/images/workflows/data-analysis-start.png" alt="Data Analysis 模式、数据文件和研究任务" caption="选择 Data Analysis，引用本地数据文件，并在发送前明确本地分析与深度研究目标。" />
+<ScreenshotFrame src="/images/workflows/data-analysis-deep-research-card.png" alt="深度研究计划确认卡" caption="本地分析完成后，确认是否启动外部研究，并选择 normal、heavy 或 quick 研究深度。" />
+<ScreenshotFrame src="/images/workflows/data-analysis-multi-step-parallel.png" alt="多个研究维度并行执行" caption="每个维度独立显示 evidence 数量和 running、failed 等状态；右侧同步汇总来源。" />
+<ScreenshotFrame src="/images/workflows/data-analysis-dimension-activity.png" alt="单个研究维度的 Activity、Evidence 与 Result" caption="进入单个维度可分别核对执行活动、证据来源和最终结论，而不是只看整体进度。" />
+<ScreenshotFrame src="/images/workflows/data-analysis-deepresearch-review.png" alt="深度研究并行证据审查" caption="研究完成后进入 review 阶段，按维度重新核对 claims 和 sources，并保留独立审查状态。" />
+<ScreenshotFrame src="/images/workflows/data-analysis-preview-charts.png" alt="Data Analysis 图表结果预览" caption="Charts 视图集中展示本地数据分析生成的可展开图表，并与研究执行保留在同一会话。" />
+
+## Wordless 的差异
+
+研究不是一个不可展开的工具卡：Wordless 将计划确认令牌、研究维度、单个研究员来源和最终合并分开呈现。这样可以只重跑失败维度，而不是重复整个分析。
+
+| 场景 | 研究维度示例 | 验收方式 |
+| --- | --- | --- |
+| 用户留存诊断 | 数据质量、分群、趋势、异常、解释、行动 | 结论附字段、行号或来源 |
+| 市场研究 | 规模、竞争、用户、定价、风险、证据 | 每个研究员可独立展开 |
+| 失败后继续 | 仅重跑 failed 维度 | 已成功维度不重复消耗 |
+
+## 失败恢复
+
+确认过期：重新生成计划并点击确认；工具仍失败：展开失败的研究员查看原始错误，缩小范围或修正字段名后重新开始。网络研究失败不应阻塞本地数据质量扫描。

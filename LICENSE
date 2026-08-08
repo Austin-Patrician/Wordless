@@ -1,0 +1,98 @@
+Wordless Source-Available License 1.0
+
+Copyright (c) 2026 Austin Patrician and Wordless contributors
+All rights reserved except as expressly granted below.
+
+1. Definitions
+
+"Software" means the original Wordless-owned source code, documentation,
+visual assets, and other materials distributed with this license, including
+modifications and derivative works of those materials.
+
+"Commercial Use" means use of the Software, directly or indirectly, for
+commercial advantage or monetary compensation. Commercial Use includes, but
+is not limited to:
+
+  a. selling, licensing, sublicensing, or renting the Software;
+  b. offering the Software or its functionality as a paid product, hosted
+     service, software-as-a-service offering, or managed service;
+  c. distributing or bundling the Software with a paid product or service;
+  d. using the Software to provide services to customers for compensation; or
+  e. other use whose principal purpose is to generate revenue or support a
+     revenue-generating product or service.
+
+2. Non-Commercial License Grant
+
+Subject to the terms of this license, the copyright holders grant you a
+worldwide, non-exclusive, non-transferable, non-sublicensable, royalty-free license to
+use, reproduce, study, and modify the Software solely for:
+
+  a. personal use;
+  b. education or academic research;
+  c. evaluation and testing; and
+  d. internal use that is not Commercial Use.
+
+3. Non-Commercial Redistribution
+
+You may redistribute copies of the Software, with or without modifications,
+only for non-commercial purposes, provided that you:
+
+  a. include this license and all copyright and attribution notices;
+  b. clearly state significant modifications you made;
+  c. do not state or imply endorsement by Wordless or its contributors; and
+  d. do not impose terms that conflict with this license.
+
+4. Commercial Use Requires Authorization
+
+No license is granted for Commercial Use. Any Commercial Use requires a
+separate prior written agreement from the copyright holders. To request
+commercial authorization, contact the maintainers through the official
+Wordless repository at:
+
+https://github.com/Austin-Patrician/Wordless/issues
+
+Opening a request does not itself grant authorization. Authorization is valid
+only when provided in a separate written agreement by an authorized copyright
+holder.
+
+5. Third-Party Components
+
+This license applies only to materials owned by the Wordless copyright
+holders. Third-party and upstream components, including components identified
+in UPSTREAM.md, third_party directories, package metadata, source headers, or
+other notice files, remain governed by their respective licenses. Nothing in
+this license restricts rights granted under those third-party licenses.
+
+6. Trademarks
+
+This license grants no rights to use the names, logos, trademarks, or service
+marks of Wordless or its contributors, except as reasonably necessary to
+describe the origin of an unmodified copy of the Software.
+
+7. Compliance and Termination
+
+Your rights under this license terminate automatically if you breach any of
+its terms. Upon termination, you must stop using and distributing the Software
+and destroy copies in your possession or control, except where retention is
+required by law. Rights may be reinstated only through express written
+permission from the copyright holders.
+
+8. Disclaimer of Warranty
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE, TITLE, AND NON-INFRINGEMENT. YOU BEAR ALL
+RISK ARISING FROM USE OF THE SOFTWARE.
+
+9. Limitation of Liability
+
+TO THE MAXIMUM EXTENT PERMITTED BY LAW, IN NO EVENT SHALL THE COPYRIGHT
+HOLDERS OR CONTRIBUTORS BE LIABLE FOR ANY CLAIM, DAMAGES, OR OTHER LIABILITY,
+WHETHER IN AN ACTION OF CONTRACT, TORT, OR OTHERWISE, ARISING FROM, OUT OF, OR
+IN CONNECTION WITH THE SOFTWARE OR THE USE OF OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+10. No Open-Source Representation
+
+This is a source-available license with a commercial-use restriction. It is
+not an open-source license as defined by the Open Source Initiative.

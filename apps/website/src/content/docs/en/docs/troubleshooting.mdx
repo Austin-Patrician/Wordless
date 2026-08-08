@@ -1,0 +1,25 @@
+---
+title: Troubleshooting
+description: Diagnose provider, permission, OfficeCLI, research, update, MCP, and rendering errors.
+---
+import TroubleshootingTable from '../../../../components/docs/TroubleshootingTable.astro';
+
+Copy the complete error text first. Then verify the selected workspace, model, and referenced paths. No recovery step below requires deleting local sessions.
+
+<TroubleshootingTable>
+| Error or symptom | Likely cause | Recovery |
+| --- | --- | --- |
+| `The selected workspace is unavailable` | Missing or unmounted path | Re-select a real folder and check permissions. |
+| `Default access only permits files inside the workspace` | Target is outside the workspace | Move it into the workspace or use one-time elevation. |
+| `officecli ENOENT` | Missing or wrong-architecture engine | Reinstall OfficeCLI and verify the executable. |
+| `presentation_apply` rejects `/slides/1` | Invalid OfficeCLI path | Use `/slide[1]`; `add` needs `type` or `from`. |
+| `Research confirmation is missing or expired` | Expired plan token | Prepare and confirm a fresh plan, then pass its token. |
+| Google `access_denied` | OAuth app is in testing | Add the account as a test user or complete verification. |
+| `Secure credential storage is unavailable` | OS credential service unavailable | Repair the keychain/credential manager; do not hard-code keys. |
+| macOS signature validation failure | Unsigned or unnotarized build | Install the GitHub Release DMG manually. |
+| Stale spreadsheet formula preview | Formula cache not recalculated | Recalculate and save in Excel/WPS, then verify again. |
+| MCP timeout | URL, process, OAuth, or network issue | Test the connection and inspect the service logs. |
+</TroubleshootingTable>
+
+When reporting an issue include version, OS/architecture, workspace type, redacted tool arguments, full error, and reproduction steps. Never attach API keys or OAuth tokens.
+

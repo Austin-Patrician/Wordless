@@ -1,0 +1,91 @@
+---
+title: 自定义模型配置
+description: 完整配置模型提供商、OpenAI 兼容接口、思考深度和凭据。
+---
+import { Steps } from '@astrojs/starlight/components';
+import Prerequisites from '../../../components/docs/Prerequisites.astro';
+import ScreenshotFrame from '../../../components/docs/ScreenshotFrame.astro';
+import ExpectedResult from '../../../components/docs/ExpectedResult.astro';
+
+<Prerequisites>
+- 一个提供商的 API Key，或局域网/本机可访问的模型服务
+- 模型的准确 ID、Base URL、上下文限制和是否支持思考深度的信息
+- 如果使用 OpenAI-compatible 接口，确认服务接受 Chat Completions 或 Responses 协议
+</Prerequisites>
+
+## 配置字段怎么填
+
+| JSON 字段 | 作用 | 示例与注意 |
+| --- | --- | --- |
+| `name` | Provider 显示名称 | 使用 `团队 API`、`本地模型` 等可读名称 |
+| `baseUrl` | API 根地址 | 通常填到 `/v1`，不要重复添加 `/chat/completions` |
+| `api` | 请求协议 | 常用 `openai-completions` 或 `openai-responses` |
+| `headers` | 附加 HTTP Header | 只填网关要求的 Header，不要把密钥写在这里 |
+| `models[].id` | 服务端实际模型 ID | 必须与提供商控制台返回值一致 |
+| `models[].name` | Composer 显示名称 | 可读名称，不影响服务端请求 |
+| `reasoning` | 是否展示推理能力 | 只有模型确实支持时设为 `true` |
+| `input` | 输入模态 | `['text']` 或 `['text', 'image']` |
+| `contextWindow` | 模型上下文窗口 | 使用提供商公布值，不要凭空调大 |
+| `maxTokens` | 单次最大输出 | 必须小于模型/接口允许值 |
+| `thinkingLevelMap` | Wordless 深度到服务商参数的映射 | 允许 `off`、`minimal`、`low`、`medium`、`high`、`xhigh`、`max`；不支持的级别不写 |
+
+## 创建一个 OpenAI-compatible 配置
+
+<ScreenshotFrame src="/images/model%20setup.png" alt="Models 设置中的 Provider 与 Enabled models" caption="内置 Provider 页面：API Key、Custom provider configuration 与 Enabled models 分开管理。" />
+
+<Steps>
+1. 打开 **Settings → Models**，先选择 **Chat** 类型。
+2. 点击 **Add custom provider**，填写唯一的 Provider ID（只用字母、数字、`.`、`_`、`-`），选择头像并创建。
+3. 在右侧填写 API key。它不会回显到高级 JSON 中。
+4. 打开 **Custom provider configuration**，把下方示例改成服务商给出的 URL 与模型 ID。
+5. 点击 **Save**。JSON 校验错误会直接显示在 API Key 区域下方。
+6. 在 **Enabled models** 中启用刚添加的模型；未启用的模型不会出现在 Composer。
+7. 回到 Composer，点击模型名称直接选中；如果模型配置了 `thinkingLevelMap`，再从二级菜单选择思考深度。
+</Steps>
+
+```json title="OpenAI-compatible Chat Completions 示例"
+{
+  "name": "Company AI",
+  "baseUrl": "https://model.example.com/v1",
+  "api": "openai-completions",
+  "headers": {
+    "X-Client": "Wordless"
+  },
+  "models": [
+    {
+      "id": "chat-model-prod",
+      "name": "Company Chat",
+      "reasoning": true,
+      "input": ["text", "image"],
+      "contextWindow": 128000,
+      "maxTokens": 16384,
+      "thinkingLevelMap": {
+        "off": "none",
+        "low": "low",
+        "medium": "medium",
+        "high": "high"
+      }
+    }
+  ]
+}
+```
+
+内置 Provider 需要调整 endpoint 或单个模型能力时，不要重建 Provider；打开 Custom provider configuration，使用 `modelOverrides` 覆盖已有模型。将某个思考级别设为 `null` 可以显式禁用继承级别。
+
+<ScreenshotFrame alt="Models 页面自定义 Provider 与 JSON 配置" caption="截图文件名：settings/models-custom-provider.png。请展示 Provider ID、头像、API Key 状态、JSON 编辑器和 Enabled models，并脱敏 URL。" />
+<ScreenshotFrame src="/images/settings/model-thinking-depth.png" alt="Composer 模型与思考深度二级选项" caption="只有当前选中的模型展开思考深度选项；未手动指定时默认使用 medium。" />
+
+## 如何判断配置正确
+
+<ExpectedResult>
+发送一条短消息后，模型选择器显示已选模型且会话能返回内容；模型配置了有效 `thinkingLevelMap` 时才会出现对应子菜单。当前页面没有单独的连接测试按钮，实际短消息就是端到端验证。工具审批与模型请求是两条不同链路，模型可用不代表工具权限已开放。
+</ExpectedResult>
+
+## 常见配置问题
+
+- **401/403：** API key 无效、过期或没有该模型权限。
+- **404：** Base URL 多写或少写 `/v1`，或 Model ID 不存在。
+- **连接超时：** 检查代理、VPN、IPv6 路由和局域网服务监听地址。
+- **返回 HTML：** 你填的是控制台地址，不是 API 地址。
+- **保存后模型列表为空：** `models` 数组为空、模型 JSON 校验失败，或尚未在 Enabled models 中启用。
+- **思考深度没有显示：** 当前模型没有声明支持该能力；切换模型后会重新读取能力。

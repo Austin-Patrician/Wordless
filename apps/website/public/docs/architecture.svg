@@ -1,0 +1,83 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="1160" viewBox="0 0 1600 1160" role="img" aria-labelledby="title desc">
+  <title id="title">Wordless Desktop architecture</title>
+  <desc id="desc">A complete architecture diagram of the Wordless Electron desktop application, from renderer and typed IPC through runtime, agent execution, tools, integrations, and local data.</desc>
+  <defs>
+    <marker id="arrow-green" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0 0 8 4 0 8Z" fill="#237a4b"/></marker>
+    <marker id="arrow-gray" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0 0 8 4 0 8Z" fill="#778079"/></marker>
+    <style>
+      text{font-family:Inter,-apple-system,BlinkMacSystemFont,"Segoe UI",Arial,sans-serif;letter-spacing:0}
+      .title{font-size:34px;font-weight:700;fill:#15221a}.subtitle{font-size:17px;fill:#5e6962}
+      .band-label{font-size:13px;font-weight:700;fill:#237a4b}.band-title{font-size:22px;font-weight:700;fill:#15221a}
+      .card-title{font-size:17px;font-weight:700;fill:#1f2b23}.body{font-size:14px;fill:#606b64}.mono{font-family:"SFMono-Regular",Consolas,monospace;font-size:12px;fill:#536059}
+      .boundary{fill:#fbfcfb;stroke:#c9d1cc;stroke-width:2}.band{fill:#f5f8f6;stroke:#d9dfdb;stroke-width:1.5}.bridge{fill:#edf7f1;stroke:#82b697;stroke-width:1.5}
+      .card{fill:#fff;stroke:#ccd4cf;stroke-width:1.5}.core{fill:#f0f8f3;stroke:#2b8051;stroke-width:2}.external{fill:#fff;stroke:#b6c0ba;stroke-width:1.5;stroke-dasharray:5 4}
+      .line{fill:none;stroke:#237a4b;stroke-width:2;marker-end:url(#arrow-green)}.line-gray{fill:none;stroke:#778079;stroke-width:1.6;marker-end:url(#arrow-gray)}
+      .bus{fill:none;stroke:#9aa49e;stroke-width:1.5}.dot{fill:#237a4b}.tag{fill:#e3f1e8;stroke:#a8cbb6;stroke-width:1}.tag-text{font-size:12px;font-weight:700;fill:#286c46}
+    </style>
+  </defs>
+
+  <rect width="1600" height="1160" fill="#fff"/>
+  <text x="60" y="65" class="title">Wordless Desktop architecture</text>
+  <text x="60" y="96" class="subtitle">Electron application boundary, runtime orchestration, profile-driven agents, controlled tools, and local-first data.</text>
+  <rect x="60" y="126" width="1480" height="942" rx="8" class="boundary"/>
+  <rect x="78" y="142" width="188" height="26" rx="4" class="tag"/><text x="92" y="160" class="tag-text">WORDLESS DESKTOP APP</text>
+
+  <!-- Renderer process -->
+  <rect x="90" y="188" width="1420" height="190" rx="8" class="band"/>
+  <text x="116" y="219" class="band-label">01 / RENDERER PROCESS</text><text x="116" y="249" class="band-title">React workbench and interaction surfaces</text>
+  <g>
+    <rect x="116" y="275" width="246" height="78" rx="6" class="card"/><text x="133" y="302" class="card-title">Workbench shell</text><text x="133" y="326" class="body">Sidebar, sessions, workspace</text><text x="133" y="345" class="mono">WelcomeView / WorkbenchShell</text>
+    <rect x="378" y="275" width="246" height="78" rx="6" class="card"/><text x="395" y="302" class="card-title">Composer and context</text><text x="395" y="326" class="body">@ files, $ Skills, model, access</text><text x="395" y="345" class="mono">Composer / ModelPicker</text>
+    <rect x="640" y="275" width="246" height="78" rx="6" class="card"/><text x="657" y="302" class="card-title">Thread and activity</text><text x="657" y="326" class="body">Messages, search, tool states</text><text x="657" y="345" class="mono">ThreadView / Virtuoso</text>
+    <rect x="902" y="275" width="246" height="78" rx="6" class="card"/><text x="919" y="302" class="card-title">Artifact workspaces</text><text x="919" y="326" class="body">Slides, sheets, analysis, code</text><text x="919" y="345" class="mono">ContextPanel registry</text>
+    <rect x="1164" y="275" width="320" height="78" rx="6" class="card"/><text x="1181" y="302" class="card-title">Configuration surfaces</text><text x="1181" y="326" class="body">Models, privacy, updates, Skills and MCP</text><text x="1181" y="345" class="mono">SettingsDialog / SkillsView</text>
+  </g>
+
+  <!-- Typed boundary -->
+  <rect x="210" y="400" width="1180" height="64" rx="8" class="bridge"/>
+  <text x="238" y="426" class="card-title">Typed desktop boundary</text><text x="238" y="448" class="body">DesktopBridge types</text>
+  <path d="M430 432H590" class="line"/><text x="461" y="420" class="mono">contextBridge</text>
+  <text x="610" y="426" class="card-title">Preload</text><text x="610" y="448" class="body">allowlisted methods only</text>
+  <path d="M790 432H950" class="line"/><text x="824" y="420" class="mono">invoke / events</text>
+  <text x="970" y="426" class="card-title">IPC protocol</text><text x="970" y="448" class="body">wordless:* channels + event envelopes</text>
+  <path d="M800 378V400" class="line"/><path d="M800 464V492" class="line"/>
+
+  <!-- Main process -->
+  <rect x="90" y="492" width="1420" height="276" rx="8" class="band"/>
+  <text x="116" y="523" class="band-label">02 / ELECTRON MAIN PROCESS</text><text x="116" y="553" class="band-title">Trusted host, runtime orchestration, and capability services</text>
+  <rect x="116" y="580" width="310" height="158" rx="7" class="card"/>
+  <text x="136" y="608" class="card-title">Desktop host services</text>
+  <text x="136" y="635" class="body">Window, menus, notifications</text><text x="136" y="658" class="body">Updater and release service</text><text x="136" y="681" class="body">Google account and optional sync</text><text x="136" y="704" class="body">Credential vault and URL protocols</text><text x="136" y="726" class="mono">apps/desktop/src/main</text>
+
+  <rect x="450" y="568" width="700" height="178" rx="7" class="core"/>
+  <text x="474" y="599" class="band-label">ORCHESTRATION CORE</text><text x="474" y="630" class="band-title">WordlessRuntime</text>
+  <text x="474" y="660" class="body">Session and context lifecycle</text><text x="474" y="684" class="body">Profile / Driver selection</text><text x="474" y="708" class="body">Tool events, approvals, journals</text>
+  <text x="760" y="660" class="body">Model configuration and usage</text><text x="760" y="684" class="body">Skill / Connector registries</text><text x="760" y="708" class="body">Workspace and artifact state</text>
+  <text x="1002" y="728" class="mono">@wordless/runtime</text>
+
+  <rect x="1174" y="580" width="310" height="158" rx="7" class="card"/>
+  <text x="1194" y="608" class="card-title">Capability services</text>
+  <text x="1194" y="635" class="body">OfficeCLI presentation / spreadsheet</text><text x="1194" y="658" class="body">Data analysis and deep research</text><text x="1194" y="681" class="body">Workspace search and file protocols</text><text x="1194" y="704" class="body">Media and artifact preview services</text><text x="1194" y="726" class="mono">main services + platform-node</text>
+  <path d="M426 656H450" class="line"/><path d="M1150 656H1174" class="line"/>
+
+  <!-- Agent execution -->
+  <rect x="90" y="790" width="1420" height="214" rx="8" class="band"/>
+  <text x="116" y="821" class="band-label">03 / AGENT EXECUTION</text><text x="116" y="851" class="band-title">Profile-driven loop with policy before side effects</text>
+  <rect x="116" y="876" width="280" height="96" rx="6" class="card"/><text x="134" y="903" class="card-title">Profiles</text><text x="134" y="927" class="body">General, Coding, Presentation</text><text x="134" y="949" class="body">Spreadsheet, Data Analysis</text><text x="134" y="968" class="mono">@wordless/profile-*</text>
+  <rect x="420" y="876" width="246" height="96" rx="6" class="card"/><text x="438" y="903" class="card-title">Agent Drivers</text><text x="438" y="927" class="body">Create sessions and tools</text><text x="438" y="949" class="body">Translate runtime events</text><text x="438" y="968" class="mono">@wordless/agent-driver-*</text>
+  <rect x="690" y="864" width="260" height="120" rx="7" class="core"/><text x="710" y="894" class="band-label">PI-DERIVED KERNEL</text><text x="710" y="922" class="card-title">Agent loop + AI stream</text><text x="710" y="948" class="body">Reason, emit text, call tools</text><text x="710" y="971" class="mono">@wordless/agent / ai</text>
+  <rect x="974" y="876" width="250" height="96" rx="6" class="card"/><text x="992" y="903" class="card-title">Extensions</text><text x="992" y="927" class="body">Plan, subagent, compaction</text><text x="992" y="949" class="body">Session-scoped state</text><text x="992" y="968" class="mono">agent-extension-*</text>
+  <rect x="1248" y="876" width="236" height="96" rx="6" class="card"/><text x="1266" y="903" class="card-title">Workspace policy</text><text x="1266" y="927" class="body">Preflight + risk decision</text><text x="1266" y="949" class="body">Manual / session approval</text><text x="1266" y="968" class="mono">workspace-policy</text>
+  <path d="M396 924H420M666 924H690M950 924H974M1224 924H1248" class="line"/>
+  <path d="M800 768V790" class="line"/>
+
+  <!-- External and data -->
+  <text x="60" y="1107" class="band-label">04 / CONTROLLED BOUNDARIES</text>
+  <rect x="280" y="1080" width="230" height="58" rx="6" class="external"/><text x="298" y="1104" class="card-title">Model providers</text><text x="298" y="1126" class="body">Configured remote or local APIs</text>
+  <rect x="530" y="1080" width="230" height="58" rx="6" class="external"/><text x="548" y="1104" class="card-title">MCP and OfficeCLI</text><text x="548" y="1126" class="body">Explicitly enabled tool services</text>
+  <rect x="780" y="1080" width="230" height="58" rx="6" class="external"/><text x="798" y="1104" class="card-title">Workspace and artifacts</text><text x="798" y="1126" class="body">User-selected filesystem roots</text>
+  <rect x="1030" y="1080" width="230" height="58" rx="6" class="external"/><text x="1048" y="1104" class="card-title">Local app data</text><text x="1048" y="1126" class="body">SQLite, JSON, journals, vault</text>
+  <rect x="1280" y="1080" width="230" height="58" rx="6" class="external"/><text x="1298" y="1104" class="card-title">Google Drive appData</text><text x="1298" y="1126" class="body">Opt-in safe settings sync only</text>
+  <path d="M820 984V1036H395V1080M820 1036H645V1080M820 1036V1080M820 1036H1145V1080M820 1036H1395V1080" class="bus"/>
+  <circle cx="820" cy="1036" r="4" class="dot"/><circle cx="395" cy="1036" r="3" class="dot"/><circle cx="645" cy="1036" r="3" class="dot"/><circle cx="1145" cy="1036" r="3" class="dot"/><circle cx="1395" cy="1036" r="3" class="dot"/>
+</svg>

@@ -11,5 +11,5 @@ export function ThreadContentFrame({ children, className = "", densityRail = fal
     ? "pl-[58px] pr-5 sm:pl-[70px] sm:pr-8"
     : "px-5 sm:px-8";
 
-  return <div className={`mx-auto w-full ${gutters} ${className}`} style={{ maxWidth: "var(--thread-content-max-width, 820px)" }}>{children}</div>;
+  return <div className={`mx-auto w-full min-w-0 max-w-full ${gutters} ${className}`} style={{ maxWidth: "var(--thread-content-max-width, 820px)" }}>{children}</div>;
 }

@@ -1,0 +1,16 @@
+---
+interface Props { src?: string; alt: string; caption?: string }
+const { src, alt, caption } = Astro.props
+const openLabel = Astro.currentLocale === 'en' ? `Open full-size image: ${alt}` : `打开完整尺寸图片：${alt}`
+---
+<figure class="doc-shot">
+  {src ? <a class="doc-shot__image-link" href={src} target="_blank" rel="noreferrer" aria-label={openLabel}><img src={src} alt={alt} loading="lazy" /></a> : (
+    <div class="doc-shot__placeholder" role="img" aria-label={alt}>
+      <span class="doc-shot__chrome"><i></i><i></i><i></i></span>
+      <span class="doc-shot__mark">WORDLESS / SCREENSHOT</span>
+      <strong>{alt}</strong>
+      <small>1440 × 900 · PNG</small>
+    </div>
+  )}
+  {caption && <figcaption>{caption}</figcaption>}
+</figure>

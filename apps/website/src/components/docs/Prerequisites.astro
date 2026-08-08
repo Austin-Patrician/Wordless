@@ -1,0 +1,5 @@
+---
+interface Props { title?: string }
+const { title = (Astro.currentLocale === 'en' ? 'Before you begin' : '开始之前') } = Astro.props
+---
+<aside class="doc-prereqs"><p>{title}</p><slot /></aside>

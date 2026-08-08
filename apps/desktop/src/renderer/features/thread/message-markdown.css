@@ -78,6 +78,24 @@
   margin-bottom: 0;
 }
 
+.context-compaction-summary .message-markdown {
+  max-width: 100%;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+}
+
+.context-compaction-summary .message-markdown :is(p, li, blockquote, h1, h2, h3, h4, h5, h6, a, code) {
+  min-width: 0;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.context-compaction-summary :is(.message-code-block, .message-code-scroll, .message-markdown-table, .katex-display) {
+  min-width: 0;
+  max-width: 100%;
+}
+
 .message-code-block .hljs-comment,
 .message-code-block .hljs-quote {
   color: #8a9182;

@@ -17,6 +17,7 @@ import { ConversationDensityRail } from "./ConversationDensityRail";
 import { createPendingThreadTurn, createUserMessageSubmission, type PendingThreadTurn } from "./pending-thread-turn";
 import { createThreadTimeline, dataIndexFromReportedIndex, firstItemIndexAfterPrepend, threadTimelineItemCount, type ThreadTimelineItem } from "./thread-virtual-list";
 import { advanceAssistantRunPresentation, assistantRunActivityAt, assistantRunPresentationFromMessages, createAssistantRunPresentation, isNewerRunEvent, mergeCompletedAssistantMessage, nextAssistantRunActivityUpdateAt, runEventCursor, type AssistantRunActivity, type AssistantRunPresentation, type RunEventCursor } from "./thread-run-state";
+import { assistantToolSequenceContinuations } from "./tool-sequence-layout";
 import { TurnTokenUsageRow } from "./TurnTokenUsageRow";
 import { ThreadContentFrame } from "./ThreadContentFrame";
 import { MessageMarkdown } from "./MessageMarkdown";
@@ -311,15 +312,15 @@ function ContextCompactionActivity({ compaction }: { compaction: ContextCompacti
     ? `${formatTokenCount(compaction.tokensBefore)} -> ${formatTokenCount(compaction.tokensAfter)} tokens`
     : t("contextTokens").replace("{tokens}", formatTokenCount(compaction.tokensBefore));
   return (
-    <details className="group border-y border-[#d7e5c4] bg-[#f5f9ed] text-[#586b3d] dark:border-[#4b6036] dark:bg-[#26301f] dark:text-[#c9dfa3]">
-      <summary className="flex min-h-10 cursor-pointer list-none items-center gap-2.5 px-3 py-2.5 outline-none transition-colors hover:bg-[#eef5e2] focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring dark:hover:bg-[#303d27]">
+    <details className="group w-full min-w-0 max-w-full overflow-hidden border-y border-[#d7e5c4] bg-[#f5f9ed] text-[#586b3d] dark:border-[#4b6036] dark:bg-[#26301f] dark:text-[#c9dfa3]">
+      <summary className="flex min-h-10 min-w-0 max-w-full cursor-pointer list-none items-center gap-2.5 overflow-hidden px-3 py-2.5 outline-none transition-colors hover:bg-[#eef5e2] focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring dark:hover:bg-[#303d27]">
         <Archive className="h-3.5 w-3.5 shrink-0 text-[#718b46] dark:text-[#b9d77d]" />
         <span className="min-w-0 truncate text-[11px] font-semibold">{title}</span>
         <span className="min-w-0 truncate font-mono text-[9px] text-[#82906e] dark:text-[#9eaf8b]">{tokenSummary}</span>
         <span className="ml-auto shrink-0 font-mono text-[9px] text-[#99a28c] dark:text-[#8f9d82]">{new Date(compaction.timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</span>
         <ChevronDown aria-hidden="true" className="h-3.5 w-3.5 shrink-0 text-[#849272] transition-transform duration-150 group-open:rotate-180 dark:text-[#9aaa8d]" />
       </summary>
-      <div className="border-t border-[#dce8cc] px-3 pb-3 pt-2.5 dark:border-[#46583a]"><p className="mb-2 font-mono text-[9px] text-[#7f8d6c] dark:text-[#9cab8f]">{compaction.model.modelId}</p><div className="text-[12px] leading-5 text-[#5d694d] dark:text-[#c1cfb2]"><MessageMarkdown text={compaction.summary} /></div></div>
+      <div className="min-w-0 max-w-full overflow-hidden border-t border-[#dce8cc] px-3 pb-3 pt-2.5 dark:border-[#46583a]"><p className="mb-2 min-w-0 truncate font-mono text-[9px] text-[#7f8d6c] dark:text-[#9cab8f]" title={compaction.model.modelId}>{compaction.model.modelId}</p><div className="context-compaction-summary min-w-0 max-w-full overflow-hidden text-[12px] leading-5 text-[#5d694d] dark:text-[#c1cfb2]"><MessageMarkdown text={compaction.summary} /></div></div>
     </details>
   );
 }
@@ -342,8 +343,9 @@ function compactionFailureMessage(cause: unknown): string {
     .trim();
 }
 
-function AssistantMessageBlocks({ clarificationHandoffAvailable, message, onEnableAutoApprove, onHandoffClarification, onLoadToolOutput, onOpenResearchTask, onResolveApproval, onResolveClarificationQuestion, onResolveUserRequest, canPlan, workbenchId }: { clarificationHandoffAvailable: boolean; message: ConversationMessage; onEnableAutoApprove?: () => Promise<void>; onHandoffClarification: (interactionMode: "default" | "clarify" | "plan") => Promise<void>; onLoadToolOutput: (callId: string) => Promise<void>; onOpenResearchTask?: (selection: ResearchTaskSelection) => void; onResolveApproval: (approvalId: string, approved: boolean, feedback?: string) => void; onResolveClarificationQuestion: (callId: string, value: string | boolean) => Promise<void>; onResolveUserRequest: (requestId: string, resolution: { status: "submitted" | "cancelled"; answers?: Record<string, UserRequestAnswer>; feedback?: string }) => void; canPlan: boolean; workbenchId: WorkbenchId }) {
+function AssistantMessageBlocks({ clarificationHandoffAvailable, continuesPreviousToolSequence = false, message, onEnableAutoApprove, onHandoffClarification, onLoadToolOutput, onOpenResearchTask, onResolveApproval, onResolveClarificationQuestion, onResolveUserRequest, canPlan, workbenchId }: { clarificationHandoffAvailable: boolean; continuesPreviousToolSequence?: boolean; message: ConversationMessage; onEnableAutoApprove?: () => Promise<void>; onHandoffClarification: (interactionMode: "default" | "clarify" | "plan") => Promise<void>; onLoadToolOutput: (callId: string) => Promise<void>; onOpenResearchTask?: (selection: ResearchTaskSelection) => void; onResolveApproval: (approvalId: string, approved: boolean, feedback?: string) => void; onResolveClarificationQuestion: (callId: string, value: string | boolean) => Promise<void>; onResolveUserRequest: (requestId: string, resolution: { status: "submitted" | "cancelled"; answers?: Record<string, UserRequestAnswer>; feedback?: string }) => void; canPlan: boolean; workbenchId: WorkbenchId }) {
   const rendered: ReactNode[] = [];
+  let firstToolGroup = true;
   for (let index = 0; index < message.blocks.length; index += 1) {
     const block = message.blocks[index]!;
     if (block.type === "tool") {
@@ -353,8 +355,19 @@ function AssistantMessageBlocks({ clarificationHandoffAvailable, message, onEnab
         index += 1;
       }
       index -= 1;
+      const joinsPreviousToolGroup = firstToolGroup && continuesPreviousToolSequence;
+      firstToolGroup = false;
+      let dividerAbove = joinsPreviousToolGroup;
+      for (let i = index - tools.length; i >= 0; i -= 1) {
+        const type = message.blocks[i]?.type;
+        if (type === "tool" || type === "reasoning") {
+          dividerAbove = true;
+          break;
+        }
+        if (type !== "text") break;
+      }
       rendered.push(
-        <div className="mt-4 divide-y divide-[#e7e7e2] border-y border-[#e7e7e2] dark:divide-border dark:border-border" data-thread-search-exclude key={`tools-${tools[0]?.callId}`}>
+        <div className={`${joinsPreviousToolGroup ? "mt-0" : "mt-4"} divide-y divide-[#e7e7e2] border-[#e7e7e2] dark:divide-border dark:border-border ${dividerAbove ? "border-b" : "border-y"}`} data-thread-search-exclude key={`tools-${tools[0]?.callId}`}>
           {(() => {
             const researchGroups = groupResearchDelegationBlocks(tools.filter((tool) => tool.name === "research_delegate"));
             const groupByAnalysisId = new Map(researchGroups.map((group) => [group.details.analysisId, group]));
@@ -491,7 +504,8 @@ function PlanResultActions({ onResolve }: { onResolve: (action: "implement" | "s
 
 function AssistantMessageBody({ messages, onEnableAutoApprove, onHandoffClarification, onLoadToolOutput, onOpenResearchTask, onResolveApproval, onResolveClarificationQuestion, onResolveUserRequest, onResolvePlanResult, canPlan, planMode, runPresentation, showFooter, workbenchId }: { messages: ConversationMessage[]; onEnableAutoApprove?: () => Promise<void>; onHandoffClarification: (interactionMode: "default" | "clarify" | "plan") => Promise<void>; onLoadToolOutput: (callId: string) => Promise<void>; onOpenResearchTask?: (selection: ResearchTaskSelection) => void; onResolveApproval: (approvalId: string, approved: boolean, feedback?: string) => void; onResolveClarificationQuestion: (callId: string, value: string | boolean) => Promise<void>; onResolveUserRequest: (requestId: string, resolution: { status: "submitted" | "cancelled"; answers?: Record<string, UserRequestAnswer>; feedback?: string }) => void; onResolvePlanResult: (action: "implement" | "stay") => Promise<void>; canPlan: boolean; planMode: "off" | "planning" | "executing"; runPresentation: AssistantRunPresentation | null; showFooter: boolean; workbenchId: WorkbenchId }) {
   const message = messages.at(-1)!;
-  const blocks = messages.flatMap((candidate) => candidate.blocks);
+  const blocks = useMemo(() => messages.flatMap((candidate) => candidate.blocks), [messages]);
+  const toolSequenceContinuations = useMemo(() => assistantToolSequenceContinuations(messages), [messages]);
   const hasPendingInteraction = blocks.some((block) => block.type === "tool" && (block.state === "awaiting-approval" || block.state === "awaiting-user-input"));
   const isStreaming = messages.some((candidate) => candidate.status === "streaming");
   const presentedAssistantMessageId = runPresentation?.assistantMessageId ?? null;
@@ -500,7 +514,7 @@ function AssistantMessageBody({ messages, onEnableAutoApprove, onHandoffClarific
     <article>
       <AssistantIdentityHeader />
       <div className="mt-2 min-w-0">
-        {messages.map((candidate, index) => <section className={`min-h-px outline-none focus-visible:ring-2 focus-visible:ring-ring ${index > 0 ? "mt-5" : ""}`} data-thread-message-id={candidate.id} key={candidate.id} tabIndex={-1}><AssistantMessageBlocks canPlan={canPlan} clarificationHandoffAvailable={showFooter && !isStreaming && !hasPendingInteraction && candidate.id === message.id} message={candidate} onEnableAutoApprove={onEnableAutoApprove} onHandoffClarification={onHandoffClarification} onLoadToolOutput={onLoadToolOutput} onOpenResearchTask={onOpenResearchTask} onResolveApproval={onResolveApproval} onResolveClarificationQuestion={onResolveClarificationQuestion} onResolveUserRequest={onResolveUserRequest} workbenchId={workbenchId} /><AssistantResponseError message={candidate} /></section>)}
+        {messages.map((candidate, index) => <section className={`min-h-px outline-none focus-visible:ring-2 focus-visible:ring-ring ${index > 0 && !toolSequenceContinuations[index] ? "mt-5" : ""}`} data-thread-message-id={candidate.id} key={candidate.id} tabIndex={-1}><AssistantMessageBlocks canPlan={canPlan} clarificationHandoffAvailable={showFooter && !isStreaming && !hasPendingInteraction && candidate.id === message.id} continuesPreviousToolSequence={toolSequenceContinuations[index]} message={candidate} onEnableAutoApprove={onEnableAutoApprove} onHandoffClarification={onHandoffClarification} onLoadToolOutput={onLoadToolOutput} onOpenResearchTask={onOpenResearchTask} onResolveApproval={onResolveApproval} onResolveClarificationQuestion={onResolveClarificationQuestion} onResolveUserRequest={onResolveUserRequest} workbenchId={workbenchId} /><AssistantResponseError message={candidate} /></section>)}
         {showRunStatus && runPresentation ? <AssistantRunStatus activity={runPresentation.activity} /> : null}
         {showFooter && !isStreaming && !hasPendingInteraction && planMode === "planning" ? <PlanResultActions onResolve={onResolvePlanResult} /> : null}
         {showFooter && !isStreaming && !hasPendingInteraction ? <div className="mt-4 flex items-center gap-2 text-[#898981]">

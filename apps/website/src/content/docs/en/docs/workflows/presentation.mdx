@@ -1,0 +1,76 @@
+---
+title: Presentation
+description: Select slide elements, request targeted edits, and preview an editable PPTX immediately inside Wordless.
+---
+import { Steps } from '@astrojs/starlight/components';
+import Prerequisites from '../../../../../components/docs/Prerequisites.astro';
+import PromptBlock from '../../../../../components/docs/PromptBlock.astro';
+import ExpectedResult from '../../../../../components/docs/ExpectedResult.astro';
+import ApprovalCheckpoint from '../../../../../components/docs/ApprovalCheckpoint.astro';
+import ScreenshotFrame from '../../../../../components/docs/ScreenshotFrame.astro';
+
+## Goal
+
+Create an editable, previewable, and visually verified `.pptx`. More importantly, avoid the download-open-upload loop: keep the deck in the right workspace, select a specific element, and ask the agent to change it in place.
+
+## Complete the design loop in one workspace
+
+The Presentation panel is an active work surface, not a static final screenshot. Browse slides, adjust zoom, refresh the preview, select a slide element, and send that selection to Composer as structured context. After the agent applies a change, the same preview refreshes so you can immediately continue the next iteration.
+
+<Steps>
+1. Select **Presentation**, then choose a template and starting point in Guided or Quick mode.
+2. Confirm the language, visual direction, audience, and slide count before generating the first revision.
+3. Browse slides in the right preview and use zoom or refresh to inspect details.
+4. Enter selection mode, click the title, text box, or other element to edit, and confirm the selection.
+5. Choose **Use selection**. Composer receives structured information about the selected object, not merely text such as “the title on slide 3.”
+6. Describe the targeted change and state what must remain untouched.
+7. Wait for the tool to succeed. The preview refreshes in place without downloading or reopening the PPTX.
+8. Select the next element and continue; finish with **Check presentation** for overflow, occlusion, and contrast issues.
+</Steps>
+
+<PromptBlock label="Copyable interaction prompt">Change only the title I just selected to “A Portable Agent Kernel.” Keep its current position and left alignment, and reduce the font size just enough to prevent wrapping. Do not change any other element. Re-render this slide immediately and check text overflow and contrast.</PromptBlock>
+
+<ScreenshotFrame src="/images/workflows/presentation-template-structure.png" alt="Presentation template and starting-structure selection" caption="Choose Guided or Quick mode, a template, and the starting structure." />
+<ScreenshotFrame src="/images/workflows/presentation-confirm-template.png" alt="Presentation language and visual-direction confirmation" caption="Confirm language, visual direction, and key constraints before generation to reduce broad rework." />
+<ScreenshotFrame src="/images/workflows/presentation-preview-slides.png" alt="Slide preview in the Wordless right workspace" caption="Browse the first revision directly in the right workspace without exporting it first." />
+<ScreenshotFrame src="/images/workflows/presentation-preview-tools.png" alt="Presentation preview, tool states, and quality actions" caption="Tool execution, the current preview, and quality checks stay together in the same session." />
+
+<ExpectedResult>The selected object becomes traceable Composer context, the right preview updates immediately after the edit, and the final PPTX remains editable in PowerPoint or Keynote.</ExpectedResult>
+
+## End-to-end production flow
+
+<Prerequisites>
+- OfficeCLI installed for the current platform and architecture
+- An outline, audience, brand direction, target slide count, and optionally a `.pptx` template
+- A writable output folder in the workspace
+</Prerequisites>
+
+<Steps>
+1. Reference the outline, data, and template with `@`; specify the 16:9 ratio, typography, and output path.
+2. Ask the agent to create slide structure and one conclusion per slide before applying elements in batches.
+3. On Tool Approval, verify that `parent` and `path` use `/slide[N]` such as `/slide[1]`, not `/slides/1`.
+4. After each batch, wait for `presentation_render` and inspect direction, overflow, occlusion, and contrast in the right preview.
+5. Use element selection for targeted repairs, then run **Check presentation**.
+6. Export and open the deck in PowerPoint or Keynote to verify font substitution, animation, and editability.
+</Steps>
+
+<PromptBlock label="Copyable generation prompt">Use @outline.md to create an 8-slide, 16:9 product review deck. Create the structure and one conclusion per slide first, then add shapes, text, and charts in batches. Use dark ink with Wordless green accents and readable body sizes. Render after each batch; stop and fix overflow or rotation before adding more. Write to /deliverables/review.pptx.</PromptBlock>
+
+<ApprovalCheckpoint risk="high">Review output paths, overwrite behavior, and every `type`, `from`, and `parent` field before allowing OfficeCLI tools.</ApprovalCheckpoint>
+
+## What is different in Wordless
+
+Most “generate a deck” flows end at the download button. Wordless turns the preview into context for the next instruction. Structure, batched apply, element selection, immediate render, and human verification stay in one thread, so edits target a real slide object rather than asking the model to blindly revise the entire deck. Office engine source: [iOfficeAI/OfficeCLI](https://github.com/iOfficeAI/OfficeCLI).
+
+| Scenario | Action in Wordless | Verification |
+| --- | --- | --- |
+| Deck from an outline | Build structure, then inspect every slide in place | One conclusion per slide |
+| Adjust one title or shape | Select the object and send a scoped instruction | Other elements remain unchanged |
+| Repair an existing PPTX | Select, modify, and immediately render the issue | Verify each change in the same workspace |
+
+## Common recovery paths
+
+- `add command requires type or from`: provide a top-level `type` or copy source `from`, not only `props.type`.
+- `Path must start with /slide[N]`: replace `/slides/1` with `/slide[1]`.
+- Vertical preview text: inspect text-box dimensions, rotation, font, and wrapping before changing the layout.
+- `Office engine unavailable`: reinstall OfficeCLI for the current architecture and verify that its executable can run.

@@ -1,0 +1,30 @@
+---
+title: Troubleshooting（故障排查）
+description: 按错误文本定位提供商、权限、OfficeCLI、研究、更新和渲染问题。
+---
+import TroubleshootingTable from '../../../components/docs/TroubleshootingTable.astro';
+
+先复制完整错误文本，再确认当前工作区、模型和相关文件路径。下面的处理顺序不会要求删除本地会话。
+
+<TroubleshootingTable>
+| 错误或现象 | 原因方向 | 处理 |
+| --- | --- | --- |
+| `The selected workspace is unavailable` | 工作区路径不存在或未选择 | 重新打开工作区选择器，确认磁盘挂载和权限。 |
+| `Default access only permits files inside the workspace` | 目标在工作区外 | 把文件移入工作区，或只对这一次操作使用提权。 |
+| `officecli ENOENT` | 引擎未随平台安装或路径错误 | 重装匹配架构的 OfficeCLI，确认二进制存在且可执行。 |
+| `presentation_apply` 的 `/slides/1` 路径错误 | OfficeCLI 使用规范化路径 | 使用 `/slide[1]`，`add` 同时提供 `type` 或 `from`。 |
+| `Research confirmation is missing or expired` | 研究确认令牌过期 | 重新生成计划、重新点击确认，并传入新 `confirmationToken`。 |
+| `Google access_denied` | OAuth 应用仍处于测试状态 | 将账号加入 Google Cloud OAuth 的测试用户，或完成验证流程。 |
+| `client_secret is missing` | 把桌面 OAuth 当作 Web OAuth 交换 | 使用桌面客户端配置和 PKCE；不要在客户端硬编码 secret。 |
+| `Secure credential storage is unavailable` | 系统钥匙串/凭据服务不可用 | 修复系统凭据服务，或仅在本机使用临时环境变量。 |
+| macOS 更新代码签名验证失败 | 未使用 Developer ID 签名/公证 | 使用 Release DMG 手动安装，自动更新只能在签名满足系统要求时工作。 |
+| 公式预览显示旧值 | 工作簿公式缓存未重算 | 用 Excel/WPS 打开、重新计算并保存后再验证。 |
+| 预览文字竖排或被遮挡 | 文本框尺寸/旋转/父路径错误 | 检查渲染结果，修正文本框属性后重新 render。 |
+| MCP 连接超时 | URL、OAuth、进程或网络问题 | 测试连接，检查服务日志与凭据，必要时降低工具范围。 |
+| 页面 WebGL 空白 | GPU/驱动不支持或资源加载失败 | 更新驱动，检查控制台资源错误；营销首页会回退到静态视觉。 |
+</TroubleshootingTable>
+
+## 报告问题时附带
+
+版本号、操作系统与架构、当前工作区类型、脱敏后的工具参数、完整错误文本和是否能在新会话复现。不要附 API Key、OAuth token 或私人文件内容。
+

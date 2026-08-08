@@ -4,6 +4,7 @@ apps/desktop/release/
 out/
 coverage/
 .vite/
+.astro/
 .electron-vite/
 .DS_Store
 *.log

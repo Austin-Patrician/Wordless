@@ -1,0 +1,79 @@
+---
+title: 安装 Wordless
+description: 从 GitHub Releases 选择与你的 Mac 或 Windows 设备匹配的安装包，并完成首次启动。
+---
+import { Steps, Tabs, TabItem } from '@astrojs/starlight/components';
+import Prerequisites from '../../../components/docs/Prerequisites.astro';
+import ExpectedResult from '../../../components/docs/ExpectedResult.astro';
+import ScreenshotFrame from '../../../components/docs/ScreenshotFrame.astro';
+
+## 下载地址
+
+Wordless 桌面端安装包发布在项目的 GitHub Releases 页面：
+
+- **最新稳定版本：** [打开 Wordless Latest Release](https://github.com/Austin-Patrician/Wordless/releases/latest)
+- **全部历史版本：** [查看所有 Releases](https://github.com/Austin-Patrician/Wordless/releases)
+
+进入版本页面后，向下找到 **Assets**。如果 Assets 被折叠，点击标题展开。版本号会随发布变化，例如 `Wordless-0.1.1-mac-arm64.dmg`；选择时主要看文件名末尾的平台和架构。
+
+<ScreenshotFrame src="/images/settings/github-release-assets.png" alt="GitHub Release 展开的 Assets 下载区域" caption="在 Release 的 Assets 区域，按设备架构选择对应的 DMG 或 Windows 安装程序；不要下载 .blockmap、.yml 或 Source code 文件。" />
+
+## 先确认应该下载哪个文件
+
+| 你的设备 | 在哪里确认 | 应下载的文件 |
+| --- | --- | --- |
+| Apple Silicon Mac（M1、M2、M3、M4 等） |  → **关于本机**，芯片显示 Apple M 系列 | `Wordless-<版本>-mac-arm64.dmg` |
+| Intel Mac |  → **关于本机**，处理器显示 Intel | `Wordless-<版本>-mac-x64.dmg` |
+| 常见 Windows 10/11 电脑 | **设置 → 系统 → 系统信息**，系统类型显示 x64 | `Wordless-<版本>-win-x64.exe` |
+| Windows ARM 设备 | 系统类型显示 ARM64 | 当前没有原生安装包，请勿安装 x64 版本 |
+
+macOS 当前要求 **macOS 13 或更高版本**。Windows 当前只提供 **x64** 安装包。
+
+不要下载以下文件作为安装包：
+
+- `Source code (zip)` 或 `Source code (tar.gz)`：这是源代码，不是桌面客户端。
+- `.blockmap`、`latest.yml`、`latest-mac.yml`：这是更新程序使用的元数据。
+- macOS 的 `.zip`：主要供应用更新流程使用，普通安装优先选择 `.dmg`。
+
+## 安装步骤
+
+<Tabs>
+  <TabItem label="macOS">
+    <Steps>
+    1. 根据上表下载 `mac-arm64.dmg` 或 `mac-x64.dmg`。
+    2. 双击下载的 DMG，等待安装窗口打开。
+    3. 将 **Wordless** 图标拖入 **Applications（应用程序）** 文件夹。
+    4. 等待复制完成，弹出 DMG，然后从“应用程序”打开 Wordless。不要一直从 DMG 窗口运行应用。
+    5. 内测包未经过 Apple Developer ID 公证时，macOS 可能提示无法验证开发者。回到 Finder，在“应用程序”中按住 Control 点击 Wordless，选择 **打开**；或进入 **系统设置 → 隐私与安全性**，确认刚刚被阻止的 Wordless 后选择 **仍要打开**。
+    6. 仅当安装包来自上面的 Wordless 官方 GitHub 仓库时确认打开。不要关闭 Gatekeeper，也不要全局降低 macOS 安全设置。
+    </Steps>
+  </TabItem>
+  <TabItem label="Windows">
+    <Steps>
+    1. 下载 `Wordless-<版本>-win-x64.exe`。
+    2. 双击安装程序，按向导选择安装位置并完成安装。
+    3. 如果 SmartScreen 显示“Windows 已保护你的电脑”，先确认文件来自 Wordless 官方 GitHub Release，再选择 **更多信息 → 仍要运行**。
+    4. 从开始菜单或桌面快捷方式启动 Wordless。
+    </Steps>
+  </TabItem>
+</Tabs>
+
+<Prerequisites title="下载前的安全检查">
+- 浏览器地址栏中的仓库必须是 `github.com/Austin-Patrician/Wordless`
+- Release 应有明确版本号和发布说明，不要使用聊天或网盘转发的安装包
+- 升级已有版本前先退出 Wordless；你的工作区文件不会被安装程序删除
+</Prerequisites>
+
+## 验证安装
+
+启动成功后应看到 Wordless 工作台，而不是持续空白窗口。打开 **Settings → About & Updates**，确认应用名称和版本号与下载的 Release 一致。
+
+<ExpectedResult>Wordless 已复制到 macOS 的“应用程序”或安装到 Windows，能够正常打开并显示工作台。下一步进入[完成首次任务](/docs/getting-started/)配置模型。</ExpectedResult>
+
+## 安装问题
+
+- **macOS 提示无法验证开发者：** 使用上面的 Control 点击“打开”或“隐私与安全性 → 仍要打开”，这是当前未公证内测包的预期行为。
+- **macOS 提示应用已损坏：** 删除当前应用和 DMG，从官方 Release 重新下载与芯片匹配的文件；不要直接绕过校验。
+- **打开后是白屏：** 先确认下载的是最新 Release；若仍存在，记录系统版本、芯片、Wordless 版本并在 [GitHub Issues](https://github.com/Austin-Patrician/Wordless/issues) 提交问题。
+- **Windows 安装程序无法运行：** 确认系统类型为 x64，并重新下载 `.exe`；`.blockmap` 和 `.yml` 不能执行。
+- **需要升级：** 按应用内提示打开最新 Release，退出当前版本后安装新包。未签名的 macOS 内测版可能需要手动替换 Applications 中的旧版本。

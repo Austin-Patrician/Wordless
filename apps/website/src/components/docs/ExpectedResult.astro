@@ -1,0 +1,5 @@
+---
+interface Props { title?: string }
+const { title = (Astro.currentLocale === 'en' ? 'Expected result' : '预期结果') } = Astro.props
+---
+<aside class="doc-result"><div class="doc-result__icon" aria-hidden="true">✓</div><div><strong>{title}</strong><slot /></div></aside>

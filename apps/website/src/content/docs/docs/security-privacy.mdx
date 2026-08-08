@@ -1,0 +1,32 @@
+---
+title: Security & Privacy（安全与隐私）
+description: 了解权限边界、模型请求、凭据存储和可选 Google 云同步的数据流向。
+---
+import { Steps } from '@astrojs/starlight/components';
+import ApprovalCheckpoint from '../../../components/docs/ApprovalCheckpoint.astro';
+import ScreenshotFrame from '../../../components/docs/ScreenshotFrame.astro';
+
+## 默认数据流向
+
+1. 你在本地选择工作区和文件引用。
+2. Wordless 组装任务、必要上下文与模型配置，向你选择的模型提供商发起请求。
+3. 工具在本地主进程或明确配置的 MCP 服务中执行。
+4. 会话与设置保存在本地；Google 云同步默认关闭。
+
+## 权限选择
+
+日常使用保持 **Default Access + Manual approve**。需要访问工作区外单个文件时使用一次性提权；只有在你能接受影响范围时才切换 Full Access。
+
+<ApprovalCheckpoint risk="high">审批卡不是装饰：检查操作、目标、参数和是否覆盖文件。拒绝后可在消息中改写约束，不要盲目重复批准。</ApprovalCheckpoint>
+
+## Google 登录与云同步
+
+Google 登录仅用于识别账号；登录不代表自动上传数据。进入 **Settings → Data & Privacy → Google Cloud Sync**，明确打开同步后才会同步模型配置、用户偏好等允许的数据。会话记录属于高敏感数据，默认不纳入同步。
+
+启用同步时先进行本地与云端合并；冲突按字段和更新时间展示，用户确认后写入。网络失败只显示同步失败，不阻断本地会话和模型调用。可在设置中查看同步时间、数据类型、立即同步和删除云端数据。
+
+<ScreenshotFrame src="/images/settings/security-privacy.png" alt="Data & Privacy 数据流向和 Google Cloud Sync" caption="页面明确区分会同步的偏好与模型元数据，以及始终保留在本地的 API Key、会话、工作区和产物。" />
+
+## 凭据与删除
+
+API Key、OAuth token 优先进入操作系统安全存储；出现 `Secure credential storage is unavailable` 时不要把密钥写入源码，改用系统钥匙串/凭据管理器或临时环境变量。删除云端数据不会删除本地数据。

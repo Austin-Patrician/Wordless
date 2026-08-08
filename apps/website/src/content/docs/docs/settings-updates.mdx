@@ -1,0 +1,26 @@
+---
+title: Settings & Updates（设置与更新）
+description: 配置模型、思考深度、外观、隐私、账号和 GitHub Release 更新。
+---
+import { Steps } from '@astrojs/starlight/components';
+import ScreenshotFrame from '../../../components/docs/ScreenshotFrame.astro';
+
+## 常用设置
+
+- **Models：** 提供商、Base URL、模型、思考深度。思考深度只显示在当前选中的支持模型下，默认 `medium`。
+- **Appearance：** 主题、语言与界面密度。
+- **Data & Privacy：** 权限、请求数据、Google 登录与可选云同步。
+- **About & Updates：** 项目版本、GitHub 地址、更新说明和手动检查。
+
+## 更新流程
+
+<Steps>
+1. 打开 **Settings → About & Updates**，点击检查更新。
+2. 阅读当前版本与 GitHub Release 的功能变化，选择稍后提醒或下载。
+3. 下载完成后点击 **Restart & Install**；应用会退出并由 updater 安装。
+4. macOS 未签名版本可能无法通过系统代码签名验证，此时按提示手动下载 DMG、拖入 Applications 并重新启动。
+</Steps>
+
+<ScreenshotFrame src="/images/settings/settings-update.png" alt="About & Updates 版本、GitHub 地址和 Release 历史" caption="About & Updates 展示当前版本与设备架构、手动检查入口、GitHub 地址和可展开的 Release 历史。" />
+
+更新失败不会删除当前版本。优先检查网络、Release 资产完整性、磁盘空间和 macOS 签名限制；保留现有安装，改用 GitHub Release 手动安装。

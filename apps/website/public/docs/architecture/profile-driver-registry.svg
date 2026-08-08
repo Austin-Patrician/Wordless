@@ -1,0 +1,58 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="1160" viewBox="0 0 1600 1160" role="img" aria-labelledby="title desc">
+  <title id="title">Pi Agent kernel and Wordless Profile composition</title>
+  <desc id="desc">How Wordless Runtime selects a Profile and Driver, then composes the Pi-derived agent kernel with extensions and workspace policy.</desc>
+  <defs>
+    <marker id="arrow-green" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0 0 8 4 0 8Z" fill="#237a4b"/></marker>
+    <style>
+      text{font-family:Inter,-apple-system,BlinkMacSystemFont,"Segoe UI",Arial,sans-serif;letter-spacing:0}.title{font-size:34px;font-weight:700;fill:#15221a}.subtitle{font-size:17px;fill:#5e6962}.eyebrow{font-size:13px;font-weight:700;fill:#237a4b}.section-title{font-size:22px;font-weight:700;fill:#15221a}.card-title{font-size:17px;font-weight:700;fill:#1f2b23}.body{font-size:14px;fill:#606b64}.small{font-size:12px;fill:#68736c}.mono{font-family:"SFMono-Regular",Consolas,monospace;font-size:12px;fill:#536059}.boundary{fill:#fbfcfb;stroke:#c9d1cc;stroke-width:2}.band{fill:#f5f8f6;stroke:#d9dfdb;stroke-width:1.5}.card{fill:#fff;stroke:#ccd4cf;stroke-width:1.5}.core{fill:#f0f8f3;stroke:#2b8051;stroke-width:2}.soft{fill:#edf7f1;stroke:#82b697;stroke-width:1.5}.tag{fill:#e3f1e8;stroke:#a8cbb6;stroke-width:1}.tag-text{font-size:12px;font-weight:700;fill:#286c46}.line{fill:none;stroke:#237a4b;stroke-width:2;marker-end:url(#arrow-green)}.bus{fill:none;stroke:#9aa49e;stroke-width:1.5}.dot{fill:#237a4b}
+    </style>
+  </defs>
+  <rect width="1600" height="1160" fill="#fff"/>
+  <text x="60" y="65" class="title">Pi Agent kernel and Profile composition</text>
+  <text x="60" y="96" class="subtitle">One portable loop, composed at runtime into five purpose-built Wordless work modes.</text>
+  <rect x="60" y="126" width="1480" height="970" rx="8" class="boundary"/>
+  <rect x="78" y="142" width="212" height="26" rx="4" class="tag"/><text x="92" y="160" class="tag-text">PROFILE / DRIVER REGISTRY</text>
+
+  <rect x="90" y="190" width="1420" height="112" rx="8" class="band"/>
+  <text x="116" y="221" class="eyebrow">01 / RUNTIME SELECTION</text>
+  <text x="116" y="251" class="section-title">WordlessRuntime resolves the work mode before the agent session starts</text>
+  <rect x="1060" y="208" width="412" height="72" rx="7" class="core"/>
+  <text x="1082" y="236" class="card-title">Session configuration</text>
+  <text x="1082" y="260" class="body">Profile ID · model · Skills · Connectors · access</text>
+  <path d="M800 302V332" class="line"/>
+
+  <rect x="90" y="332" width="1420" height="250" rx="8" class="band"/>
+  <text x="116" y="363" class="eyebrow">02 / DECLARATIVE PROFILES</text>
+  <text x="116" y="393" class="section-title">A Profile declares intent, tools, artifacts, and the target workbench</text>
+  <g>
+    <rect x="110" y="420" width="260" height="132" rx="7" class="card"/><text x="130" y="450" class="card-title">General</text><text x="130" y="476" class="body">Conversation workbench</text><text x="130" y="499" class="body">Filesystem · Shell · Browser</text><text x="130" y="526" class="mono">@wordless/profile-general</text>
+    <rect x="390" y="420" width="260" height="132" rx="7" class="card"/><text x="410" y="450" class="card-title">Coding</text><text x="410" y="476" class="body">Code workbench</text><text x="410" y="499" class="body">Search · Edit · Shell · Tests</text><text x="410" y="526" class="mono">@wordless/profile-coding</text>
+    <rect x="670" y="420" width="260" height="132" rx="7" class="card"/><text x="690" y="450" class="card-title">Presentation</text><text x="690" y="476" class="body">Presentation workbench</text><text x="690" y="499" class="body">Office · Design · Vision</text><text x="690" y="526" class="mono">@wordless/profile-ppt</text>
+    <rect x="950" y="420" width="260" height="132" rx="7" class="card"/><text x="970" y="450" class="card-title">Spreadsheet</text><text x="970" y="476" class="body">Workbook workbench</text><text x="970" y="499" class="body">Office · Data · Selection</text><text x="970" y="526" class="mono">@wordless/profile-excel</text>
+    <rect x="1230" y="420" width="260" height="132" rx="7" class="card"/><text x="1250" y="450" class="card-title">Data Analysis</text><text x="1250" y="476" class="body">Analysis workbench</text><text x="1250" y="499" class="body">Data · Research · Evidence</text><text x="1250" y="526" class="mono">@wordless/profile-data</text>
+  </g>
+  <path d="M240 552V610M520 552V610M800 552V610M1080 552V610M1360 552V610" class="bus"/>
+
+  <rect x="90" y="610" width="1420" height="190" rx="8" class="band"/>
+  <text x="116" y="641" class="eyebrow">03 / AGENT DRIVERS</text>
+  <text x="116" y="671" class="section-title">Drivers translate a Profile into tools, events, and domain behavior</text>
+  <rect x="110" y="700" width="484" height="72" rx="7" class="card"/><text x="130" y="729" class="card-title">Generic Driver</text><text x="130" y="752" class="body">General + Data Analysis · shared harness and tool assembly</text>
+  <rect x="614" y="700" width="270" height="72" rx="7" class="card"/><text x="634" y="729" class="card-title">Coding Driver</text><text x="634" y="752" class="mono">agent-driver-coding</text>
+  <rect x="904" y="700" width="270" height="72" rx="7" class="card"/><text x="924" y="729" class="card-title">Presentation Driver</text><text x="924" y="752" class="mono">agent-driver-presentation</text>
+  <rect x="1194" y="700" width="296" height="72" rx="7" class="card"/><text x="1214" y="729" class="card-title">Spreadsheet Driver</text><text x="1214" y="752" class="mono">agent-driver-spreadsheet</text>
+  <path d="M240 610V700M520 610V680H749V700M800 610V670H1039V700M1080 610V660H1342V700M1360 610V650H352V700" class="bus"/>
+  <path d="M800 800V828" class="line"/>
+
+  <rect x="210" y="828" width="1180" height="64" rx="8" class="soft"/>
+  <text x="238" y="855" class="card-title">AgentDriver SDK contract</text><text x="238" y="878" class="body">create session · stream events · resolve approvals · project messages</text>
+  <text x="1138" y="866" class="mono">@wordless/agent-driver-sdk</text>
+  <path d="M800 892V918" class="line"/>
+
+  <rect x="90" y="918" width="1420" height="150" rx="8" class="band"/>
+  <text x="116" y="949" class="eyebrow">04 / PORTABLE EXECUTION CORE</text>
+  <rect x="116" y="974" width="310" height="70" rx="7" class="card"/><text x="136" y="1003" class="card-title">Extensions</text><text x="136" y="1027" class="body">Plan · subagent · compaction · runtime</text>
+  <rect x="450" y="962" width="700" height="92" rx="7" class="core"/><text x="474" y="991" class="eyebrow">PI-DERIVED KERNEL</text><text x="474" y="1020" class="section-title">Model stream → reasoning → tool call → tool result → continue</text><text x="474" y="1041" class="mono">@wordless/agent + @wordless/ai</text>
+  <rect x="1174" y="974" width="310" height="70" rx="7" class="card"/><text x="1194" y="1003" class="card-title">Workspace policy</text><text x="1194" y="1027" class="body">Preflight · risk · approval before effects</text>
+  <path d="M426 1009H450M1150 1009H1174" class="line"/>
+  <text x="60" y="1134" class="small">Portable boundary: Profiles and Drivers are independent of Electron UI; the desktop owns policy, persistence, and user interaction.</text>
+</svg>

@@ -1,0 +1,46 @@
+---
+title: Skills & MCP
+description: 安装 Skill、选择 Skill、连接自定义 MCP，并安全管理 OAuth 与凭据。
+---
+import { Steps } from '@astrojs/starlight/components';
+import { Tabs, TabItem } from '@astrojs/starlight/components';
+import Prerequisites from '../../../components/docs/Prerequisites.astro';
+import ApprovalCheckpoint from '../../../components/docs/ApprovalCheckpoint.astro';
+import ScreenshotFrame from '../../../components/docs/ScreenshotFrame.astro';
+
+<Prerequisites>
+- 只有信任来源的 Skill 或 MCP 才应安装
+- 远程服务的 URL、OAuth 配置或 bearer token 已由服务提供方给出
+- 不要把 token 写入 JSON、截图或会话消息
+</Prerequisites>
+
+## 安装与选择 Skill
+
+<Steps>
+1. 打开左侧 **Skills & MCP**，导入或安装 Skill，确认它的来源、工具和权限说明。
+2. 启用后回到 Composer，输入 `$`；用 ↑/↓ 选择 Skill，Enter 插入 token。
+3. 在提示词中说明要使用的输入文件、输出路径和验收标准。
+4. 发送后观察 Skill 工具调用的状态与审批卡。
+</Steps>
+
+<ScreenshotFrame src="/images/skills-mcp/skills.png" alt="Skills 列表和启用状态" caption="Skills 页面区分全局与工作区 Skill，并显示搜索、导入、刷新和启用状态。" />
+<ScreenshotFrame src="/images/skills-mcp/skill-import.png" alt="导入 Skill 文件或文件夹" caption="导入前确认压缩包或目录包含 SKILL.md；自动安装只应用于你确认过的非高风险 Skill。" />
+
+## 添加自定义 MCP
+
+<Tabs>
+  <TabItem label="stdio">
+    填写命令和参数，确认二进制文件存在且可执行。环境变量只在 MCP 进程需要时传入。
+  </TabItem>
+  <TabItem label="Remote HTTP">
+    填写 HTTPS URL，选择 OAuth 或 bearer token。优先 OAuth，不要把长期 token 写在共享配置中。
+  </TabItem>
+</Tabs>
+
+<ScreenshotFrame src="/images/skills-mcp/mcp.png" alt="MCP 连接器列表、状态和管理操作" caption="连接器卡片展示可用性、连接状态、启用开关和删除入口；失败状态会保留明确错误。" />
+<ScreenshotFrame src="/images/skills-mcp/mcp-new.png" alt="添加 Remote HTTP 或 Local command MCP 连接器" caption="新增连接器时选择 Remote HTTP 或 Local command，并只填写服务要求的 URL、OAuth 或请求凭据。" />
+<ApprovalCheckpoint>首次连接、启动 stdio 进程、访问远程服务或使用 MCP 工具时可能需要审批。验证服务名称、域名和工具参数。</ApprovalCheckpoint>
+
+## 测试与删除
+
+点击 **Test connection**，确认工具列表和健康状态；失败时保留原始错误。删除连接只移除本地配置，不代表撤销远程服务端的 OAuth 授权，需要在服务方单独撤销。

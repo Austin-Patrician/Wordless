@@ -1,0 +1,19 @@
+---
+title: Settings & updates
+description: Configure models, appearance, privacy, account, and optional GitHub Release updates.
+---
+import { Steps } from '@astrojs/starlight/components';
+import ScreenshotFrame from '../../../../components/docs/ScreenshotFrame.astro';
+
+Models, thinking depth, appearance, language, notifications, Data & Privacy, Google account, and About & Updates live in Settings. Thinking depth appears only for the selected model and defaults to `medium` when supported.
+
+<Steps>
+1. Open **Settings → About & Updates** and check for a release.
+2. Read the version notes, then choose to defer or download; updates are optional.
+3. When ready, click **Restart & Install**.
+4. On unsigned macOS builds, code-signature validation may require downloading the DMG from GitHub Releases and installing it manually.
+</Steps>
+
+<ScreenshotFrame src="/images/settings/settings-update.png" alt="About & Updates version, GitHub link, and release history" caption="About & Updates shows the current version and architecture, manual check action, repository link, and expandable release history." />
+
+A failed update leaves the current installation in place. Check network, release assets, disk space, and macOS signing restrictions before trying the manual Release download.

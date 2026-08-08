@@ -1,0 +1,56 @@
+---
+title: General Work（日常办公）
+description: 用同一会话完成研究、草稿、规划与可验证的日常任务。
+---
+import { Steps } from '@astrojs/starlight/components';
+import Prerequisites from '../../../../components/docs/Prerequisites.astro';
+import PromptBlock from '../../../../components/docs/PromptBlock.astro';
+import ExpectedResult from '../../../../components/docs/ExpectedResult.astro';
+import ApprovalCheckpoint from '../../../../components/docs/ApprovalCheckpoint.astro';
+import ScreenshotFrame from '../../../../components/docs/ScreenshotFrame.astro';
+
+## 目标
+
+从零开始完成规划、研究或草稿；需要时再逐步加入工作区文件，并保留来源位置与待确认事项。
+
+<Prerequisites>
+- 已配置可用模型并选中 General Work
+- 工作区与来源文件都是可选项；没有资料时 Agent 必须先提出问题，不能虚构内部事实
+- 明确输出格式、受众和截止时间
+</Prerequisites>
+
+## 推荐流程
+
+<Steps>
+1. 先说明任务目标、输出格式、受众、不要做的事情和验收标准。
+2. 如果已有工作区，再用 `@` 引用来源；没有工作区时要求 Agent 标出假设和资料缺口。
+3. 要求 Agent 先列计划，再执行；涉及写入文件时保留 Manual approve。
+4. 逐张审批卡核对目标路径和参数；拒绝不符合预期的操作，并在会话里补充约束。
+5. 打开生成文件或复制结果，按验收清单逐项检查。
+</Steps>
+
+<PromptBlock>
+我需要为产品评审准备一页纸决策简报。请先列出需要确认的事实、冲突和缺失信息，再给出三个选项、推荐项、风险与下一步。当前没有选择工作区，也没有提供文件，请不要假设任何内部数据；用公开常识标出假设，并把需要我补充的资料整理成清单。输出使用 Markdown 标题和表格。
+</PromptBlock>
+
+<ScreenshotFrame src="/images/workflows/general-empty-context-plan.png" alt="General Work 空会话与任务规划" caption="未选择工作区时，Agent 先确认任务边界、输出格式和必要资料。" />
+<ScreenshotFrame src="/images/workflows/general-research-draft.png" alt="General Work 研究与草稿结果" caption="研究结果在同一线程中区分事实、假设与来源，再整理为可继续修改的草稿。" />
+
+<ApprovalCheckpoint>读取、总结和草拟不会自动代表事实正确；发送前必须核对引用位置。写入、删除或执行命令时，审批卡是最后一道人工检查。</ApprovalCheckpoint>
+<ExpectedResult>得到一份带来源标注的简报，冲突信息被单独列出，不能从资料推断的内容明确标为待确认。</ExpectedResult>
+
+## Wordless 的差异
+
+普通聊天产品通常只返回一段答案；Wordless 把工作区引用、工具审批、文件写入和成功/失败状态放在同一条会话时间线上。你可以从空上下文开始，也可以逐步添加 `@` 文件、`$` Skill 和审批约束，不必为了获得一个答案先把资料手工拼进提示词。
+
+## 适合的实际场景
+
+| 场景 | 输入方式 | 可验收结果 |
+| --- | --- | --- |
+| 空上下文方案讨论 | 仅文字目标，不选工作区 | 假设与待补资料被明确分开 |
+| 多文件决策简报 | `@` 引用 brief 与 notes 文件夹 | 每条结论带来源路径 |
+| 需要落盘的执行计划 | 文字 + 输出路径 | 审批后生成文件，并在会话中看到写入状态 |
+
+## 失败恢复
+
+文件太多时先缩小文件夹引用范围；答案缺少来源时要求“每个结论都必须附路径”；工具失败时不要重复点击发送，先展开失败卡并处理路径、权限或参数错误。

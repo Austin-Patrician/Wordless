@@ -1,0 +1,70 @@
+---
+title: Spreadsheet
+description: Select a workbook range, request analysis or edits, and verify the result immediately in Wordless.
+---
+import { Steps } from '@astrojs/starlight/components';
+import Prerequisites from '../../../../../components/docs/Prerequisites.astro';
+import PromptBlock from '../../../../../components/docs/PromptBlock.astro';
+import ExpectedResult from '../../../../../components/docs/ExpectedResult.astro';
+import ApprovalCheckpoint from '../../../../../components/docs/ApprovalCheckpoint.astro';
+import ScreenshotFrame from '../../../../../components/docs/ScreenshotFrame.astro';
+
+## Goal
+
+Inspect data, create formulas or charts, and verify each change in the right workspace without damaging the original workbook. The sheet is not an attachment preview; it is the agent's interactive context.
+
+## The worksheet is the context
+
+When you select a contiguous range, Wordless records its sheet, locator, formulas, and values. Choose **Reference**, **Analyze**, **Formula**, **Chart**, or **Pivot**, then describe the goal in Composer. The agent does not have to guess what `A1:H500` means. After a tool succeeds, the preview refreshes and Changes plus quality checks remain in the same session.
+
+<Steps>
+1. Open the workbook and target sheet from Workspace Files; the right panel shows an interactive workbook preview.
+2. Drag across the contiguous range you want to work on and inspect its locator, formula, and value details.
+3. Choose **Reference**, **Analyze**, **Formula**, **Chart**, or **Pivot** from the selection actions.
+4. The selection becomes a structured token in Composer. Add the goal, output location, and ranges that must remain untouched.
+5. Request a quality scan or analysis plan first; review each approval card before a write.
+6. Ask the agent to apply formulas, charts, or pivots in a copy of the workbook.
+7. When the tool succeeds, the right preview refreshes immediately. Select another range and continue iterating.
+8. Review Changes and quality checks, then recalculate and publish from Excel/WPS.
+</Steps>
+
+<PromptBlock label="Copyable interaction prompt">Analyze the range I just selected: check blanks, duplicate records, and amount anomalies. Then create a monthly revenue table and line chart in an Analysis sheet. Do not overwrite the original data; refresh the workbook preview when finished and list the new formulas and chart source range.</PromptBlock>
+
+<ScreenshotFrame src="/images/workflows/spreadsheet-selection-actions.png" alt="Spreadsheet interactive selection and structured context" caption="Select a contiguous range in the workbook and use Chart to send the exact sheet and range to Composer as a token." />
+<ScreenshotFrame src="/images/workflows/spreadsheet-live-update.png" alt="Spreadsheet analysis with multiple selections" caption="Analyze can carry multiple selections while the right panel shows each locator and quality profile." />
+<ScreenshotFrame src="/images/workflows/spreadsheet-generate-chart.png" alt="Immediate spreadsheet edit and chart render" caption="After the edit succeeds, target ranges render immediately and the latest chart stays beside the tool states." />
+<ScreenshotFrame src="/images/workflows/spreadsheet-changes-quality.png" alt="Spreadsheet Changes history" caption="Changes groups table additions and cell updates by revision and target sheet for direct verification." />
+
+<ExpectedResult>The agent receives an exact sheet and range context. After formulas, charts, or pivots are applied to the copy, the right preview, Changes, and quality status update together while the original remains unchanged.</ExpectedResult>
+
+## End-to-end analysis flow
+
+<Prerequisites>
+- An `.xlsx`, `.xls`, `.csv`, or `.tsv` file in the workspace
+- Known headers, date/number units, and a contiguous data range
+- A read-only backup copy of the original workbook
+</Prerequisites>
+
+<Steps>
+1. Open the target sheet and select a contiguous range; reference the whole workbook with `@` only when needed.
+2. Run a quality scan for blanks, duplicates, outliers, mixed types, formula errors, and hidden rows.
+3. Ask for an analysis plan that names the copy path, target sheet, and cell range.
+4. Approve the write, then inspect number formats, formulas, and chart axes in the preview.
+5. Review Changes and quality checks. Recalculate formula caches in Excel/WPS before saving.
+</Steps>
+
+<PromptBlock label="Copyable analysis prompt">Analyze @sales.xlsx Sheet1!A1:H500. Scan for blanks, duplicate orders, date anomalies, negative amounts, and type mismatches with row numbers. Do not edit the original. In a copy, create monthly revenue and regional ranking in an Analysis sheet with formulas and one chart, then provide a verification checklist.</PromptBlock>
+
+<ApprovalCheckpoint>Keep the original read-only. Review the copy path and every write or Python execution approval.</ApprovalCheckpoint>
+
+## What is different in Wordless
+
+Traditional workflows copy ranges between chat, Excel, and a terminal. Wordless keeps selection references, analysis, approval, live preview, change history, and quality checks in one thread. Workbook operations integrate [iOfficeAI/OfficeCLI](https://github.com/iOfficeAI/OfficeCLI); recalculate formula caches in Excel/WPS before final verification.
+
+| Scenario | Action in Wordless | Verification |
+| --- | --- | --- |
+| Data quality audit | Select a range and choose Analyze | Every finding has a row and field |
+| Monthly analysis | Choose Formula/Chart for the selected range and write to a copy | Original unchanged and chart source correct |
+| Template report | Reference a sheet and choose Pivot | Sheets and formatting preserved, no recalculation errors |
+
+Some spreadsheet libraries write formulas without recalculating cached values. Open and recalculate in Excel/WPS, save, and verify again before treating a preview as final.

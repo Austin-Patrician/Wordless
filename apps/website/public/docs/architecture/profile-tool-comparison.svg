@@ -1,0 +1,62 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="1160" viewBox="0 0 1600 1160" role="img" aria-labelledby="title desc">
+  <title id="title">Wordless Profile tool and workbench comparison</title>
+  <desc id="desc">A comparison of the five Wordless Profiles, their drivers, capabilities, tools, artifacts, and interactive workbenches.</desc>
+  <defs>
+    <style>
+      text{font-family:Inter,-apple-system,BlinkMacSystemFont,"Segoe UI",Arial,sans-serif;letter-spacing:0}.title{font-size:34px;font-weight:700;fill:#15221a}.subtitle{font-size:17px;fill:#5e6962}.eyebrow{font-size:13px;font-weight:700;fill:#237a4b}.card-title{font-size:18px;font-weight:700;fill:#1f2b23}.label{font-size:11px;font-weight:700;fill:#237a4b}.body{font-size:14px;fill:#536059}.small{font-size:12px;fill:#68736c}.mono{font-family:"SFMono-Regular",Consolas,monospace;font-size:11px;fill:#536059}.boundary{fill:#fbfcfb;stroke:#c9d1cc;stroke-width:2}.column{fill:#fff;stroke:#ccd4cf;stroke-width:1.5}.header{fill:#edf7f1;stroke:#82b697;stroke-width:1.5}.section{fill:#f7f9f8;stroke:#e0e5e2;stroke-width:1}.shared{fill:#f0f8f3;stroke:#2b8051;stroke-width:2}.tag{fill:#e3f1e8;stroke:#a8cbb6;stroke-width:1}.tag-text{font-size:12px;font-weight:700;fill:#286c46}.rule{stroke:#e0e5e2;stroke-width:1}
+    </style>
+  </defs>
+  <rect width="1600" height="1160" fill="#fff"/>
+  <text x="60" y="65" class="title">Profile tools and interactive workbenches</text>
+  <text x="60" y="96" class="subtitle">The loop stays constant; each Profile changes context, tools, artifacts, and the verification surface.</text>
+  <rect x="60" y="126" width="1480" height="970" rx="8" class="boundary"/>
+  <rect x="78" y="142" width="186" height="26" rx="4" class="tag"/><text x="92" y="160" class="tag-text">PROFILE COMPARISON</text>
+
+  <g>
+    <rect x="90" y="190" width="272" height="746" rx="8" class="column"/><rect x="90" y="190" width="272" height="84" rx="8" class="header"/><text x="112" y="224" class="card-title">General</text><text x="112" y="249" class="body">Composable everyday work</text>
+    <text x="112" y="310" class="label">WORKBENCH</text><text x="112" y="335" class="body">Conversation</text><line x1="112" y1="355" x2="340" y2="355" class="rule"/>
+    <text x="112" y="389" class="label">DRIVER</text><text x="112" y="414" class="mono">generic</text><line x1="112" y1="434" x2="340" y2="434" class="rule"/>
+    <text x="112" y="468" class="label">CAPABILITIES</text><text x="112" y="493" class="body">Filesystem · Shell</text><text x="112" y="516" class="body">Browser</text><line x1="112" y1="536" x2="340" y2="536" class="rule"/>
+    <text x="112" y="570" class="label">PRIMARY TOOLS</text><text x="112" y="596" class="mono">read · grep · find · ls</text><text x="112" y="619" class="mono">bash · edit · write</text><text x="112" y="642" class="mono">Skills · MCP tools</text><line x1="112" y1="662" x2="340" y2="662" class="rule"/>
+    <text x="112" y="696" class="label">ARTIFACTS</text><text x="112" y="721" class="body">Report · image</text><line x1="112" y1="741" x2="340" y2="741" class="rule"/>
+    <text x="112" y="775" class="label">VERIFY IN PLACE</text><text x="112" y="801" class="body">Sources, files, tool states</text><text x="112" y="824" class="body">and approvals in one thread</text>
+
+    <rect x="377" y="190" width="272" height="746" rx="8" class="column"/><rect x="377" y="190" width="272" height="84" rx="8" class="header"/><text x="399" y="224" class="card-title">Coding</text><text x="399" y="249" class="body">Repository-aware execution</text>
+    <text x="399" y="310" class="label">WORKBENCH</text><text x="399" y="335" class="body">Code</text><line x1="399" y1="355" x2="627" y2="355" class="rule"/>
+    <text x="399" y="389" class="label">DRIVER</text><text x="399" y="414" class="mono">coding</text><line x1="399" y1="434" x2="627" y2="434" class="rule"/>
+    <text x="399" y="468" class="label">CAPABILITIES</text><text x="399" y="493" class="body">Filesystem · Shell</text><text x="399" y="516" class="body">Browser</text><line x1="399" y1="536" x2="627" y2="536" class="rule"/>
+    <text x="399" y="570" class="label">PRIMARY TOOLS</text><text x="399" y="596" class="mono">indexed grep · find</text><text x="399" y="619" class="mono">read · edit · write · bash</text><text x="399" y="642" class="mono">diff · tests</text><line x1="399" y1="662" x2="627" y2="662" class="rule"/>
+    <text x="399" y="696" class="label">ARTIFACTS</text><text x="399" y="721" class="body">Code change set · file</text><line x1="399" y1="741" x2="627" y2="741" class="rule"/>
+    <text x="399" y="775" class="label">VERIFY IN PLACE</text><text x="399" y="801" class="body">Inspect → patch → test</text><text x="399" y="824" class="body">with visible outcomes</text>
+
+    <rect x="664" y="190" width="272" height="746" rx="8" class="column"/><rect x="664" y="190" width="272" height="84" rx="8" class="header"/><text x="686" y="224" class="card-title">Presentation</text><text x="686" y="249" class="body">Editable slide production</text>
+    <text x="686" y="310" class="label">WORKBENCH</text><text x="686" y="335" class="body">Presentation</text><line x1="686" y1="355" x2="914" y2="355" class="rule"/>
+    <text x="686" y="389" class="label">DRIVER</text><text x="686" y="414" class="mono">presentation</text><line x1="686" y1="434" x2="914" y2="434" class="rule"/>
+    <text x="686" y="468" class="label">CAPABILITIES</text><text x="686" y="493" class="body">Filesystem · Office</text><text x="686" y="516" class="body">Design · Vision</text><line x1="686" y1="536" x2="914" y2="536" class="rule"/>
+    <text x="686" y="570" class="label">PRIMARY TOOLS</text><text x="686" y="596" class="mono">presentation_create</text><text x="686" y="619" class="mono">edit · render · inspect</text><text x="686" y="642" class="mono">quality · publish</text><line x1="686" y1="662" x2="914" y2="662" class="rule"/>
+    <text x="686" y="696" class="label">ARTIFACTS</text><text x="686" y="721" class="body">Editable presentation</text><line x1="686" y1="741" x2="914" y2="741" class="rule"/>
+    <text x="686" y="775" class="label">VERIFY IN PLACE</text><text x="686" y="801" class="body">Select slide elements</text><text x="686" y="824" class="body">and re-render immediately</text>
+
+    <rect x="951" y="190" width="272" height="746" rx="8" class="column"/><rect x="951" y="190" width="272" height="84" rx="8" class="header"/><text x="973" y="224" class="card-title">Spreadsheet</text><text x="973" y="249" class="body">Structured workbook editing</text>
+    <text x="973" y="310" class="label">WORKBENCH</text><text x="973" y="335" class="body">Workbook</text><line x1="973" y1="355" x2="1201" y2="355" class="rule"/>
+    <text x="973" y="389" class="label">DRIVER</text><text x="973" y="414" class="mono">spreadsheet</text><line x1="973" y1="434" x2="1201" y2="434" class="rule"/>
+    <text x="973" y="468" class="label">CAPABILITIES</text><text x="973" y="493" class="body">Filesystem · Office</text><text x="973" y="516" class="body">Data</text><line x1="973" y1="536" x2="1201" y2="536" class="rule"/>
+    <text x="973" y="570" class="label">PRIMARY TOOLS</text><text x="973" y="596" class="mono">spreadsheet_read</text><text x="973" y="619" class="mono">edit · chart · pivot</text><text x="973" y="642" class="mono">quality · publish</text><line x1="973" y1="662" x2="1201" y2="662" class="rule"/>
+    <text x="973" y="696" class="label">ARTIFACTS</text><text x="973" y="721" class="body">Editable spreadsheet</text><line x1="973" y1="741" x2="1201" y2="741" class="rule"/>
+    <text x="973" y="775" class="label">VERIFY IN PLACE</text><text x="973" y="801" class="body">Select exact ranges</text><text x="973" y="824" class="body">and inspect live changes</text>
+
+    <rect x="1238" y="190" width="272" height="746" rx="8" class="column"/><rect x="1238" y="190" width="272" height="84" rx="8" class="header"/><text x="1260" y="224" class="card-title">Data Analysis</text><text x="1260" y="249" class="body">Evidence-backed research</text>
+    <text x="1260" y="310" class="label">WORKBENCH</text><text x="1260" y="335" class="body">Analysis</text><line x1="1260" y1="355" x2="1488" y2="355" class="rule"/>
+    <text x="1260" y="389" class="label">DRIVER</text><text x="1260" y="414" class="mono">generic + data tools</text><line x1="1260" y1="434" x2="1488" y2="434" class="rule"/>
+    <text x="1260" y="468" class="label">CAPABILITIES</text><text x="1260" y="493" class="body">Filesystem · Shell</text><text x="1260" y="516" class="body">Browser · Data</text><line x1="1260" y1="536" x2="1488" y2="536" class="rule"/>
+    <text x="1260" y="570" class="label">PRIMARY TOOLS</text><text x="1260" y="596" class="mono">data_inspect · validate</text><text x="1260" y="619" class="mono">research_prepare</text><text x="1260" y="642" class="mono">delegate · review · publish</text><line x1="1260" y1="662" x2="1488" y2="662" class="rule"/>
+    <text x="1260" y="696" class="label">ARTIFACTS</text><text x="1260" y="721" class="body">Report · dataset · chart</text><line x1="1260" y1="741" x2="1488" y2="741" class="rule"/>
+    <text x="1260" y="775" class="label">VERIFY IN PLACE</text><text x="1260" y="801" class="body">Trace claims to sources</text><text x="1260" y="824" class="body">and review dimensions</text>
+  </g>
+
+  <rect x="90" y="964" width="1420" height="104" rx="8" class="shared"/>
+  <text x="116" y="995" class="eyebrow">SHARED EXECUTION CONTRACT</text>
+  <text x="116" y="1025" class="card-title">Pi-derived agent loop</text><text x="330" y="1025" class="body">model stream → tool call → preflight policy → approval when required → result → continue</text>
+  <text x="116" y="1051" class="small">Skills and enabled MCP tools are session composition; Profile tools remain explicit and policy-controlled.</text>
+  <text x="60" y="1134" class="small">The Profile changes specialization without forking the conversation model, persistence format, approval system, or desktop shell.</text>
+</svg>

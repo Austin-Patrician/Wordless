@@ -1,0 +1,23 @@
+---
+title: Wordless 使用手册
+description: 从安装、模型配置到完整 Agent 工作流的 Wordless 桌面端文档。
+template: splash
+hero:
+  tagline: 把模型、工具与工作区上下文组织进一个可控的桌面 Agent 工作空间。
+  actions:
+    - text: 安装 Wordless
+      link: /docs/installation/
+      icon: right-arrow
+      variant: primary
+    - text: 查看核心概念
+      link: /docs/core-concepts/
+      icon: open-book
+      variant: minimal
+---
+import ManualHome from '../../../components/docs/ManualHome.astro';
+
+<ManualHome locale="zh-CN" />
+
+## 开源项目与致谢
+
+Wordless 复用了并适配了多个优秀的开源项目：Agent 内核来自 [Pi Agent Harness](https://github.com/earendil-works/pi)，文档站基于 [Astro Starlight](https://github.com/withastro/starlight)，桌面容器使用 [Electron](https://github.com/electron/electron)，首页 3D 场景使用 [Three.js](https://github.com/mrdoob/three.js)。二次分发时请保留各项目的许可证和原始仓库地址。

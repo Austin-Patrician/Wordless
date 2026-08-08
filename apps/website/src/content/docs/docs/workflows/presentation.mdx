@@ -1,0 +1,80 @@
+---
+title: Presentation（演示文稿）
+description: 在 Wordless 内选中幻灯片元素、发出修改指令，并即时预览可编辑 PPTX。
+---
+import { Steps } from '@astrojs/starlight/components';
+import Prerequisites from '../../../../components/docs/Prerequisites.astro';
+import PromptBlock from '../../../../components/docs/PromptBlock.astro';
+import ExpectedResult from '../../../../components/docs/ExpectedResult.astro';
+import ApprovalCheckpoint from '../../../../components/docs/ApprovalCheckpoint.astro';
+import ScreenshotFrame from '../../../../components/docs/ScreenshotFrame.astro';
+
+## 目标
+
+生成一个可编辑、可预览、结构与视觉都经过检查的 `.pptx`。更重要的是，你不必反复下载、打开和重新上传文件：幻灯片始终显示在右侧工作区，选中具体元素后即可在 Composer 中要求 Agent 定点修改。
+
+## 在页面内完成设计闭环
+
+右侧 Presentation 不是最终结果的静态截图，而是当前会话的工作界面。你可以浏览页面、缩放预览、刷新结果、选中页面元素，并把选择结果作为结构化上下文送入 Composer。Agent 修改完成后，预览会在同一位置更新，下一轮修改可以立即继续。
+
+<Steps>
+1. 选择 **Presentation**，在 Guided 或 Quick 流程中选择模板和起始方式。
+2. 确认语言、风格、受众和页面数量，让 Agent 生成第一版。
+3. 在右侧预览中切换幻灯片，使用缩放和刷新检查细节。
+4. 进入选择模式，点击需要修改的标题、文本框或其他元素，并确认选择。
+5. 点击 **Use selection**。Composer 接收到的是被选元素的结构化信息，而不只是“第 3 页标题”这段文字。
+6. 描述局部修改，并明确哪些元素不能改变。
+7. 等待工具执行成功；右侧预览会刷新到最新版本，无需下载或重新打开 PPTX。
+8. 继续选择下一个元素迭代，最后运行 **Check presentation** 检查溢出、遮挡和对比度。
+</Steps>
+
+<PromptBlock>
+只修改我刚刚选中的标题：将它改成“可迁移的 Agent 内核”，保持当前位置和左对齐；字号缩小到不换行，其他元素不要改。修改后立即重新渲染当前页，并检查文字溢出和对比度。
+</PromptBlock>
+
+<ScreenshotFrame src="/images/workflows/presentation-template-structure.png" alt="Presentation 模板和起始结构选择" caption="选择 Guided 或 Quick 流程，并确定模板与起始结构。" />
+<ScreenshotFrame src="/images/workflows/presentation-confirm-template.png" alt="Presentation 语言和视觉方向确认" caption="在生成前确认语言、视觉风格和关键约束，减少生成后的大范围返工。" />
+<ScreenshotFrame src="/images/workflows/presentation-preview-slides.png" alt="Wordless 右侧幻灯片预览" caption="第一版生成后直接在右侧工作区浏览各页，不需要先导出文件。" />
+<ScreenshotFrame src="/images/workflows/presentation-preview-tools.png" alt="Presentation 预览、工具状态和检查操作" caption="工具执行状态、当前预览和质量检查保留在同一个会话界面中。" />
+
+<ExpectedResult>选中的元素会成为 Composer 中可追踪的上下文；修改完成后右侧预览立即更新，并且最终 PPTX 仍可在 PowerPoint 或 Keynote 中继续编辑。</ExpectedResult>
+
+## 完整制作流程
+
+<Prerequisites>
+- 已安装与当前平台匹配的 OfficeCLI 引擎；启动时不能出现 `officecli ENOENT`
+- 准备提纲、品牌色、受众和页数；可选准备 `.pptx` 模板
+- 确认工作区有输出目录写入权限
+</Prerequisites>
+
+<Steps>
+1. 用 `@` 引用提纲、数据和模板文件，明确 16:9 比例、字体和输出路径。
+2. 让 Agent 先创建页面结构和每页结论，再分批执行 `presentation_apply`。
+3. Tool Approval 出现时，检查 `parent` 和 `path` 使用 `/slide[N]`（例如 `/slide[1]`），而不是 `/slides/1`。
+4. 每批操作后等待 `presentation_render` 成功，在右侧检查文字方向、溢出、遮挡和对比度。
+5. 使用元素选择完成定点修复，再运行 **Check presentation**。
+6. 最后导出，并用 PowerPoint 或 Keynote 验证字体替换、动画和可编辑性。
+</Steps>
+
+<PromptBlock>
+使用 @outline.md 生成一份 8 页、16:9 的产品评审演示文稿。先创建页面结构和每页一句结论，再按批次添加形状、文本和图表。使用深墨色背景与 Wordless 绿色强调色，所有正文保持可读字号。每批操作后渲染预览；如果出现文字溢出或方向异常先停止并修复，不要继续堆叠元素。输出到 /deliverables/review.pptx。
+</PromptBlock>
+
+<ApprovalCheckpoint risk="high">创建或覆盖 PPTX、写入工作区外路径、调用 OfficeCLI 都可能需要审批。确认输出路径、是否覆盖已有文件，以及每条 apply 命令的 `type`、`from`、`parent` 字段。</ApprovalCheckpoint>
+
+## Wordless 的差异
+
+普通的“生成 PPT”流程通常在下载文件时结束；Wordless 把预览本身变成下一轮指令的上下文。结构生成、分批 apply、元素选择、即时 render 和人工验收都在一个线程中，因此你能定位到具体页面和元素，而不是要求模型盲改整份文稿。Office 引擎来自 [iOfficeAI/OfficeCLI](https://github.com/iOfficeAI/OfficeCLI)。
+
+| 场景 | Wordless 中的操作 | 验收方式 |
+| --- | --- | --- |
+| 从提纲生成评审稿 | 结构先行，右侧逐页检查 | 每页只有一个核心结论 |
+| 调整单个标题或图形 | 选中元素并发送局部指令 | 其他元素位置和样式保持不变 |
+| 修复已有 PPTX | 选择问题元素、修改、即时 render | 修改前后可在同一工作区连续核对 |
+
+## 常见恢复
+
+- `add command requires type or from`：给 `add` 提供顶层 `type` 或复制来源 `from`，不要只放在 `props.type`。
+- `Path must start with /slide[N]`：将 `/slides/1` 改为 `/slide[1]`。
+- 预览文字竖排：检查文本框宽高、旋转角度、字体和换行属性；先让 Agent 读取渲染结果再修改。
+- `Office engine unavailable`：重新安装匹配架构的 OfficeCLI，确认执行文件存在且可执行。

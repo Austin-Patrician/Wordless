@@ -1,0 +1,39 @@
+---
+title: Code Development
+description: Inspect, change, test, and review code inside explicit permission boundaries.
+---
+import { Steps } from '@astrojs/starlight/components';
+import Prerequisites from '../../../../../components/docs/Prerequisites.astro';
+import PromptBlock from '../../../../../components/docs/PromptBlock.astro';
+import ExpectedResult from '../../../../../components/docs/ExpectedResult.astro';
+import ApprovalCheckpoint from '../../../../../components/docs/ApprovalCheckpoint.astro';
+import ScreenshotFrame from '../../../../../components/docs/ScreenshotFrame.astro';
+
+<Prerequisites>
+- A clean branch or a recorded set of existing local changes
+- A narrow scope, forbidden directories, and acceptance commands
+- The required runtime, package manager, and credentials
+</Prerequisites>
+
+<Steps>
+1. Reference the relevant files and ask the agent to summarize current behavior.
+2. Give the target behavior, edge cases, and test commands; request a plan first.
+3. Keep Manual approve and review every write and shell command.
+4. Run focused tests, then project checks.
+5. Review the diff for secrets, generated files, and unrelated refactors.
+</Steps>
+
+<PromptBlock label="Copyable prompt">Inspect @apps/desktop/src/renderer/features/thread/. Explain the current message-list positioning behavior and propose the smallest fix. Change only relevant source and tests, run the focused tests, and report failures. Do not reset git, delete files, or access paths outside the workspace.</PromptBlock>
+<ApprovalCheckpoint risk="high">Confirm the working directory, command arguments, and side effects before allowing shell operations.</ApprovalCheckpoint>
+<ExpectedResult>A reviewable diff with a plan, changed-file list, test output, and remaining risks.</ExpectedResult>
+<ScreenshotFrame src="/images/workflows/code-plan-diff-tests.png" alt="Code Development diff and tool execution states" caption="The edit is shown as an expandable diff while command states and workspace files remain in the same task surface." />
+
+## What is different in Wordless
+
+The value is not merely writing code: each command, permission, diff, and test result stays aligned to one task. `@` references narrow the context, approval cards show the real command, and the original failure log remains available for a targeted continuation.
+
+| Scenario | Key capability | Verification |
+| --- | --- | --- |
+| Diagnose a regression | Narrow `@` scope, search, original logs | Cause first, then the smallest diff |
+| Implement a feature | Plan, edit, test, review | Focused and project checks remain visible |
+| Controlled commands | Default Access, approval, one-time elevation | Working directory and arguments are explicit |

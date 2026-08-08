@@ -1,0 +1,7 @@
+---
+interface Props { title?: string; risk?: 'normal' | 'high' }
+const { title = (Astro.currentLocale === 'en' ? 'Approval checkpoint' : '审批检查点'), risk = 'normal' } = Astro.props
+---
+<aside class:list={['doc-approval', { 'doc-approval--high': risk === 'high' }]}>
+  <span aria-hidden="true">◇</span><div><strong>{title}</strong><slot /></div>
+</aside>
