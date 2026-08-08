@@ -1,0 +1,177 @@
+---
+import {
+  ArrowUpRight,
+  Cable,
+  Check,
+  CircleCheck,
+  FileKey2,
+  LockKeyhole,
+  Mail,
+  ShieldCheck,
+  Workflow,
+} from 'lucide-react';
+
+interface Props { locale?: 'zh-CN' | 'en' }
+const { locale = 'zh-CN' } = Astro.props;
+const english = locale === 'en';
+const email = '15014915381z@gmail.com';
+const subject = encodeURIComponent(english ? 'Wordless commercial collaboration inquiry' : 'Wordless 商务合作咨询');
+const mailto = `mailto:${email}?subject=${subject}`;
+const copy = english ? {
+  marker: 'WORDLESS / COMMERCIAL DESK',
+  headline: 'A clear path from agent capability to team delivery.',
+  intro: 'For commercial use or a tailored Wordless experience, start a focused conversation about authorization terms and the design work your team actually needs.',
+  mail: 'Start a conversation',
+  license: 'Review license terms',
+  desk: 'Engagement brief',
+  deskStatus: 'Direct channel available',
+  deskRows: [
+    ['Scope', 'License · Custom design'],
+    ['Format', 'Authorization or tailored delivery'],
+    ['Entry', 'A concise use-case brief'],
+  ],
+  trust: [
+    ['Clear license boundary', 'Commercial rights are agreed before use begins.'],
+    ['Designed for the outcome', 'Custom work starts from a concrete user and business need.'],
+    ['Inspectable delivery', 'Milestones, ownership, and acceptance remain visible.'],
+  ],
+  waysLabel: 'ENGAGEMENT / 01',
+  waysTitle: 'Two reasons to get in touch',
+  waysBody: 'Keep the first conversation focused: secure the right to use Wordless commercially, or shape a tailored experience around a defined outcome.',
+  ways: [
+    { code: 'LIC', title: 'Commercial licensing', body: 'For revenue-generating products, paid services, SaaS, bundled distribution, or any other commercial use of Wordless.', output: 'Authorization scope and usage terms' },
+    { code: 'DES', title: 'Custom design', body: 'Shape a focused Agent workflow, Office experience, Skills/MCP integration, or product surface around one concrete outcome.', output: 'Design direction and acceptance path' },
+  ],
+  processLabel: 'DELIVERY / 02',
+  processTitle: 'A compact path from need to agreement',
+  processBody: 'Every phase reduces ambiguity before implementation effort expands.',
+  steps: [
+    { code: '01', title: 'Need', body: 'Share whether you need commercial authorization or custom design, with the outcome and intended users.', result: 'Use-case brief' },
+    { code: '02', title: 'Scope', body: 'Clarify license boundaries, design direction, dependencies, and the smallest useful milestone.', result: 'Agreed boundary' },
+    { code: '03', title: 'Agreement', body: 'Confirm the written authorization or design engagement, owners, checkpoints, and acceptance path.', result: 'Clear next step' },
+  ],
+  prepareLabel: 'PROJECT BRIEF / 03',
+  prepareTitle: 'Give the first conversation enough signal',
+  prepareBody: 'You do not need a finished specification. Four pieces of context are enough to begin a useful discussion.',
+  prepare: ['Which path you need: commercial license or custom design', 'The product, workflow, or deliverable involved', 'Who will use it and what a successful result looks like', 'Target timing, budget, or procurement constraints'],
+  contactLabel: 'DIRECT CONTACT',
+  contactTitle: 'Start with one concrete outcome.',
+  contactBody: 'Use email for project context that should not be placed in a public GitHub issue.',
+  noteTitle: 'Commercial use needs written authorization',
+  note: 'Wordless is source-available. Commercial use, paid services, SaaS, resale, commercial hosting, and revenue-related distribution require prior written authorization. An email starts a conversation; it does not itself grant a commercial license.',
+} : {
+  marker: 'WORDLESS / 商务合作',
+  headline: '从 Agent 能力到团队交付，建立一条清晰路径。',
+  intro: '如果你需要商业化使用 Wordless，或希望围绕具体业务结果进行定制化设计，可以从授权条款和设计需求开始一次聚焦的沟通。',
+  mail: '发起商务咨询',
+  license: '查看授权条款',
+  desk: '合作摘要',
+  deskStatus: '直接沟通渠道已开放',
+  deskRows: [
+    ['合作范围', '商业授权 · 定制设计'],
+    ['合作形式', '书面授权或定制交付'],
+    ['开始方式', '一份简洁的需求 Brief'],
+  ],
+  trust: [
+    ['清晰的授权边界', '在开始商业使用前明确约定权利范围。'],
+    ['围绕结果设计', '定制工作从具体使用者和业务需求出发。'],
+    ['可检查的交付', '里程碑、负责人和验收方式始终可见。'],
+  ],
+  waysLabel: '合作方式 / 01',
+  waysTitle: '两种适合联系的合作需求',
+  waysBody: '让第一次沟通保持聚焦：为 Wordless 商业使用取得合适授权，或围绕明确结果设计定制化体验。',
+  ways: [
+    { code: 'LIC', title: '商业授权', body: '适用于营收型产品、收费服务、SaaS、捆绑分发或其他 Wordless 商业使用场景。', output: '明确授权范围与使用条款' },
+    { code: 'DES', title: '定制化设计', body: '围绕一个明确结果，设计 Agent 工作流、Office 体验、Skills/MCP 集成或产品界面。', output: '形成设计方向与验收路径' },
+  ],
+  processLabel: '交付路径 / 02',
+  processTitle: '从需求到约定的清晰路径',
+  processBody: '每个阶段先消除关键歧义，再扩大实际投入。',
+  steps: [
+    { code: '01', title: '明确需求', body: '说明需要商业授权还是定制设计，以及目标、使用者和预期结果。', result: '需求 Brief' },
+    { code: '02', title: '对齐范围', body: '确认授权边界、设计方向、依赖条件和最小价值里程碑。', result: '一致的边界' },
+    { code: '03', title: '形成约定', body: '确认书面授权或定制合作，明确负责人、检查点和验收方式。', result: '清晰的下一步' },
+  ],
+  prepareLabel: '项目 BRIEF / 03',
+  prepareTitle: '让第一次沟通拥有足够信息',
+  prepareBody: '不需要先准备完整方案。提供四项关键背景，就能开始一次有效讨论。',
+  prepare: ['需要哪条路径：商业授权或定制化设计', '涉及的产品、工作流或交付物', '预期使用者，以及成功结果的判断方式', '目标时间、预算或采购限制'],
+  contactLabel: '直接联系',
+  contactTitle: '从一个明确结果开始。',
+  contactBody: '涉及项目背景或非公开信息时，请使用邮件，不要发布到公开 GitHub Issue。',
+  noteTitle: '商业使用需要书面授权',
+  note: 'Wordless 采用源码可见许可证。商业使用、收费服务、SaaS、转售、商业托管及与营收相关的分发，均需事先获得书面授权。邮件用于发起沟通，本身不构成商业授权。',
+};
+const wayIcons = [FileKey2, Cable];
+const trustIcons = [LockKeyhole, ShieldCheck, CircleCheck];
+---
+
+<div class="commercial-page">
+  <section class="commercial-hero" aria-labelledby="commercial-headline">
+    <div class="commercial-hero__main">
+      <p class="commercial-kicker"><span></span>{copy.marker}</p>
+      <h2 id="commercial-headline">{copy.headline}</h2>
+      <p class="commercial-hero__intro">{copy.intro}</p>
+      <div class="commercial-actions">
+        <a class="commercial-action commercial-action--primary" href={mailto}><Mail aria-hidden="true" size={17} strokeWidth={1.7} />{copy.mail}<ArrowUpRight aria-hidden="true" size={16} strokeWidth={1.7} /></a>
+        <a class="commercial-action commercial-action--secondary" href="https://github.com/Austin-Patrician/Wordless/blob/main/LICENSE" target="_blank" rel="noreferrer">{copy.license}<ArrowUpRight aria-hidden="true" size={15} strokeWidth={1.7} /></a>
+      </div>
+    </div>
+    <aside class="commercial-brief" aria-label={copy.desk}>
+      <div class="commercial-brief__header"><span>{copy.desk}</span><span class="commercial-brief__status"><i></i>{copy.deskStatus}</span></div>
+      <dl>{copy.deskRows.map(([term, value]) => <div><dt>{term}</dt><dd>{value}</dd></div>)}</dl>
+      <a href={mailto}><span>{email}</span><ArrowUpRight aria-hidden="true" size={17} strokeWidth={1.7} /></a>
+    </aside>
+  </section>
+
+  <ul class="commercial-trust" aria-label={english ? 'Collaboration principles' : '合作原则'}>
+    {copy.trust.map(([title, body], index) => {
+      const Icon = trustIcons[index]!;
+      return <li><Icon aria-hidden="true" size={18} strokeWidth={1.6} /><span><strong>{title}</strong><small>{body}</small></span></li>;
+    })}
+  </ul>
+
+  <section class="commercial-section" aria-labelledby="commercial-ways">
+    <header class="commercial-section__heading"><p>{copy.waysLabel}</p><div><h2 id="commercial-ways">{copy.waysTitle}</h2><span>{copy.waysBody}</span></div></header>
+    <div class="commercial-offers">
+      {copy.ways.map((way, index) => {
+        const Icon = wayIcons[index]!;
+        return <article class="commercial-offer">
+          <div class="commercial-offer__top"><span>{String(index + 1).padStart(2, '0')}</span><Icon aria-hidden="true" size={20} strokeWidth={1.55} /></div>
+          <p class="commercial-offer__code">{way.code}</p>
+          <h3>{way.title}</h3>
+          <p>{way.body}</p>
+          <div class="commercial-offer__output"><Check aria-hidden="true" size={14} strokeWidth={2} /><span>{way.output}</span></div>
+        </article>;
+      })}
+    </div>
+  </section>
+
+  <section class="commercial-section" aria-labelledby="commercial-process">
+    <header class="commercial-section__heading"><p>{copy.processLabel}</p><div><h2 id="commercial-process">{copy.processTitle}</h2><span>{copy.processBody}</span></div></header>
+    <ol class="commercial-process">
+      {copy.steps.map((step) => <li>
+        <div class="commercial-process__node"><span>{step.code}</span></div>
+        <div class="commercial-process__body"><h3>{step.title}</h3><p>{step.body}</p><small><CircleCheck aria-hidden="true" size={14} strokeWidth={1.9} />{step.result}</small></div>
+      </li>)}
+    </ol>
+  </section>
+
+  <section class="commercial-contact" aria-labelledby="commercial-prepare">
+    <div class="commercial-contact__brief">
+      <p class="commercial-kicker"><span></span>{copy.prepareLabel}</p>
+      <h2 id="commercial-prepare">{copy.prepareTitle}</h2>
+      <p>{copy.prepareBody}</p>
+      <ul>{copy.prepare.map((item, index) => <li><span>{String(index + 1).padStart(2, '0')}</span><Check aria-hidden="true" size={15} strokeWidth={2} />{item}</li>)}</ul>
+    </div>
+    <aside class="commercial-contact__action">
+      <Workflow aria-hidden="true" size={24} strokeWidth={1.45} />
+      <p>{copy.contactLabel}</p>
+      <h3>{copy.contactTitle}</h3>
+      <span>{copy.contactBody}</span>
+      <a href={mailto}><Mail aria-hidden="true" size={17} strokeWidth={1.7} /><span>{email}</span><ArrowUpRight aria-hidden="true" size={17} strokeWidth={1.7} /></a>
+    </aside>
+  </section>
+
+  <aside class="commercial-license-note"><ShieldCheck aria-hidden="true" size={21} strokeWidth={1.55} /><div><strong>{copy.noteTitle}</strong><p>{copy.note}</p></div></aside>
+</div>

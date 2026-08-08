@@ -102,6 +102,45 @@ function planModeFromSnapshot(snapshot: SessionSnapshot): "off" | "planning" | "
   return state?.mode === "planning" || state?.mode === "executing" ? state.mode : "off";
 }
 
+function terminalizeToolDetails(details: unknown, reason: string): unknown {
+  if (typeof details !== "object" || details === null || Array.isArray(details)) return details;
+  const record = details as Record<string, unknown>;
+  if (!Array.isArray(record.tasks)) return details;
+  return {
+    ...record,
+    updatedAt: Date.now(),
+    tasks: record.tasks.map((value) => {
+      if (typeof value !== "object" || value === null || Array.isArray(value)) return value;
+      const task = value as Record<string, unknown>;
+      if (task.status === "completed" || task.status === "failed" || task.status === "cancelled") return task;
+      return {
+        ...task,
+        status: "cancelled",
+        completedAt: Date.now(),
+        error: typeof task.error === "string" ? task.error : reason,
+        ...(typeof task.activeTool === "object" && task.activeTool !== null && !Array.isArray(task.activeTool)
+          ? { activeTool: { ...(task.activeTool as Record<string, unknown>), state: "error" } }
+          : {}),
+      };
+    }),
+  };
+}
+
+function terminalizeActiveTools(messages: ConversationMessage[], reason: string): ConversationMessage[] {
+  return messages.map((message) => ({
+    ...message,
+    blocks: message.blocks.map((block) => {
+      if (block.type !== "tool" || ["complete", "error"].includes(block.state)) return block;
+      return {
+        ...block,
+        state: "error" as const,
+        output: block.output ? `${block.output}\n\n${reason}` : reason,
+        details: terminalizeToolDetails(block.details, reason),
+      };
+    }),
+  }));
+}
+
 function applyEvent(snapshot: SessionSnapshot, event: RuntimeEventEnvelope): SessionSnapshot {
   const messages = [...snapshot.messages];
   const payload = event.event;
@@ -251,9 +290,20 @@ function applyEvent(snapshot: SessionSnapshot, event: RuntimeEventEnvelope): Ses
     messages[index] = { ...message, blocks };
     return { ...snapshot, messages, isRunning: true };
   }
+  if (payload.type === "run.failed" || payload.type === "run.cancelled") {
+    const reason = payload.type === "run.failed" ? `Agent run failed: ${payload.message}` : "Agent run cancelled";
+    return {
+      ...snapshot,
+      messages: terminalizeActiveTools(messages, reason),
+      isRunning: false,
+      isCompacting: false,
+      toolApprovalMode: "manual",
+    };
+  }
   if (payload.type === "session.idle") {
     return {
       ...snapshot,
+      messages: terminalizeActiveTools(messages, "Agent run ended before the tool completed"),
       isRunning: false,
       isCompacting: false,
       toolApprovalMode: "manual",

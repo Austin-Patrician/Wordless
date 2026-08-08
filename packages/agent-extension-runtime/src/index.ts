@@ -273,6 +273,11 @@ export class SubagentTaskPool implements SubagentRunner {
     this.active.get(taskId)?.abort();
   }
 
+  async dispose(): Promise<void> {
+    const taskIds = new Set([...this.pending.keys(), ...this.active.keys()]);
+    await Promise.all([...taskIds].map((taskId) => this.cancel(taskId)));
+  }
+
   private schedule(): void {
     while (this.active.size < this.maxConcurrency && this.pending.size > 0) {
       const next = this.pending.values().next().value as { task: SubagentTask; onUpdate?: (progress: SubagentTaskProgress) => void; resolve: (result: SubagentResult) => void; reject: (cause: unknown) => void } | undefined;

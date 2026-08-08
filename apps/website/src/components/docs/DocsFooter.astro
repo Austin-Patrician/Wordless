@@ -1,0 +1,41 @@
+---
+import EditLink from '@astrojs/starlight/components/EditLink.astro';
+import LastUpdated from '@astrojs/starlight/components/LastUpdated.astro';
+import Pagination from '@astrojs/starlight/components/Pagination.astro';
+import type { StarlightRouteData } from '@astrojs/starlight/route-data';
+import CommercialFooter from './CommercialFooter.astro';
+
+const { locale, id } = (Astro.locals as { starlightRoute: StarlightRouteData }).starlightRoute;
+const english = locale === 'en';
+const isBusinessPage = id.endsWith('/docs/business');
+---
+
+<footer class="wordless-doc-footer sl-flex">
+  {!isBusinessPage && <CommercialFooter english={english} />}
+  <div class="meta sl-flex">
+    <EditLink />
+    <LastUpdated />
+  </div>
+  <Pagination />
+</footer>
+
+<style>
+  @layer starlight.core {
+    .wordless-doc-footer {
+      flex-direction: column;
+      gap: 1.5rem;
+    }
+
+    .meta {
+      gap: .75rem 3rem;
+      justify-content: space-between;
+      flex-wrap: wrap;
+      margin-top: 3rem;
+      font-size: var(--sl-text-sm);
+      color: var(--sl-color-gray-3);
+    }
+
+    .meta > :global(p:only-child) { margin-inline-start: auto; }
+
+  }
+</style>

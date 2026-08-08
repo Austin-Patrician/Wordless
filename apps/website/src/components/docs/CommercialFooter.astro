@@ -1,0 +1,29 @@
+---
+import { ArrowUpRight, BriefcaseBusiness, Mail } from 'lucide-react';
+
+interface Props { english?: boolean }
+const { english = false } = Astro.props;
+const href = english ? '/en/docs/business/' : '/docs/business/';
+const copy = english ? {
+  index: 'COMMERCIAL DESK',
+  title: 'A clear path from Wordless to team delivery.',
+  body: 'Commercial licensing, managed deployment, and focused workflow integration.',
+  action: 'Explore collaboration',
+  email: 'Direct email',
+} : {
+  index: '商务合作',
+  title: '从 Wordless 到团队交付，建立清晰路径。',
+  body: '商业授权、团队部署，以及聚焦真实结果的工作流集成。',
+  action: '查看合作方式',
+  email: '直接联系',
+};
+---
+
+<aside class="commercial-footer" aria-label={copy.title}>
+  <div class="commercial-footer__signal"><span class="commercial-footer__icon"><BriefcaseBusiness aria-hidden="true" size={18} strokeWidth={1.6} /></span><span>{copy.index}</span></div>
+  <div class="commercial-footer__content"><strong>{copy.title}</strong><p>{copy.body}</p></div>
+  <div class="commercial-footer__actions">
+    <a class="commercial-footer__primary" href={href}>{copy.action}<ArrowUpRight aria-hidden="true" size={16} strokeWidth={1.7} /></a>
+    <a class="commercial-footer__email" href="mailto:15014915381z@gmail.com"><Mail aria-hidden="true" size={15} strokeWidth={1.7} />{copy.email}</a>
+  </div>
+</aside>

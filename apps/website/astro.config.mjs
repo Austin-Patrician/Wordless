@@ -25,6 +25,7 @@ const zhSidebar = [
   { label: '安全与隐私', translations: { en: 'Security & privacy' }, items: ['docs/security-privacy'] },
   { label: '设置与更新', translations: { en: 'Settings & updates' }, items: ['docs/settings-updates'] },
   { label: '故障排查', translations: { en: 'Troubleshooting' }, items: ['docs/troubleshooting'] },
+  { label: '商务合作', translations: { en: 'Commercial' }, items: ['docs/business'] },
 ]
 
 export default defineConfig({
@@ -36,7 +37,10 @@ export default defineConfig({
       description: 'Wordless desktop agent user manual and workflow guides.',
       favicon: '/favicon.png',
       customCss: ['./src/styles/docs.css'],
-      components: { SiteTitle: './src/components/docs/SiteTitle.astro' },
+      components: {
+        SiteTitle: './src/components/docs/SiteTitle.astro',
+        Footer: './src/components/docs/DocsFooter.astro',
+      },
       social: [{ icon: 'github', label: 'GitHub', href: 'https://github.com/Austin-Patrician/Wordless' }],
       editLink: { baseUrl: 'https://github.com/Austin-Patrician/Wordless/edit/main/apps/website/' },
       lastUpdated: true,

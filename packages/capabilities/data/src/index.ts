@@ -56,6 +56,9 @@ function updateResearchTask(task: ResearchDelegationTask, next: SubagentTaskProg
   if (next.usage !== undefined) task.usage = next.usage;
   if (next.approval !== undefined) task.approval = next.approval;
   if (next.userRequest !== undefined) task.userRequest = next.userRequest;
+  if (["failed", "cancelled"].includes(next.status) && task.activeTool?.state === "running") {
+    task.activeTool = { ...task.activeTool, state: "error" };
+  }
   if (!next.tool) return;
 
   const inputSummary = safeInputSummary(next.tool.input);
@@ -281,6 +284,13 @@ export function createDataAnalysisTools(service: DataAnalysisService, context: {
             details.updatedAt = Date.now();
             emitUpdate();
           } });
+        } catch (cause) {
+          resultValue = {
+            taskId: detail.taskId,
+            status: taskController.signal.aborted ? "cancelled" : "failed",
+            text: detail.output ?? "",
+            error: cause instanceof Error ? cause.message : String(cause),
+          };
         } finally {
           clearTimeout(timeout);
           signal?.removeEventListener("abort", abortTask);
@@ -289,23 +299,31 @@ export function createDataAnalysisTools(service: DataAnalysisService, context: {
           resultValue = { ...resultValue, status: "failed", error: `Research dimension timed out after ${RESEARCH_DIMENSION_TIMEOUT_MS / 60_000} minutes` };
         }
         let verifiedResult = resultValue;
-        if (resultValue.status === "completed") {
-          const refreshed = (await service.snapshot(context.sessionId, context.workspaceRoot)).runs.find((run) => run.id === input.analysisId);
-          const dimension = refreshed?.research?.dimensions.find((candidate) => candidate.id === task.dimensionId);
-          const claims = refreshed?.research?.claims.filter((claim) => claim.dimensionId === task.dimensionId) ?? [];
-          const sourceIds = new Set(refreshed?.research?.sources.map((source) => source.id) ?? []);
-          const missingResult = task.agent === "researcher"
-            ? !dimension || dimension.status !== "ready" || claims.length === 0 || claims.some((claim) => claim.evidenceRefs.some((reference) => !sourceIds.has(reference)))
-            : !dimension?.review;
-          if (missingResult) {
-            verifiedResult = {
-              ...resultValue,
-              status: "failed",
-              error: task.agent === "researcher"
-                ? "Researcher finished without submitting complete source-grounded claims."
-                : "Research reviewer finished without recording a review verdict.",
-            };
+        try {
+          if (resultValue.status === "completed") {
+            const refreshed = (await service.snapshot(context.sessionId, context.workspaceRoot)).runs.find((run) => run.id === input.analysisId);
+            const dimension = refreshed?.research?.dimensions.find((candidate) => candidate.id === task.dimensionId);
+            const claims = refreshed?.research?.claims.filter((claim) => claim.dimensionId === task.dimensionId) ?? [];
+            const sourceIds = new Set(refreshed?.research?.sources.map((source) => source.id) ?? []);
+            const missingResult = task.agent === "researcher"
+              ? !dimension || dimension.status !== "ready" || claims.length === 0 || claims.some((claim) => claim.evidenceRefs.some((reference) => !sourceIds.has(reference)))
+              : !dimension?.review;
+            if (missingResult) {
+              verifiedResult = {
+                ...resultValue,
+                status: "failed",
+                error: task.agent === "researcher"
+                  ? "Researcher finished without submitting complete source-grounded claims."
+                  : "Research reviewer finished without recording a review verdict.",
+              };
+            }
           }
+        } catch (cause) {
+          verifiedResult = {
+            ...resultValue,
+            status: "failed",
+            error: cause instanceof Error ? cause.message : String(cause),
+          };
         }
         updateResearchTask(detail, { taskId: detail.taskId, status: verifiedResult.status, output: verifiedResult.text, usage: verifiedResult.usage });
         if (verifiedResult.error) detail.error = verifiedResult.error;

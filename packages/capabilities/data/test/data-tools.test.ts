@@ -85,6 +85,13 @@ class BlockingSubagentRunner implements SubagentRunner {
   async cancel(): Promise<void> {}
 }
 
+class RejectingSubagentRunner implements SubagentRunner {
+  async run(): Promise<never> {
+    throw new Error("upstream model returned 502");
+  }
+  async cancel(): Promise<void> {}
+}
+
 describe("data analysis tools", () => {
   it("exposes autonomous data primitives without imposing an execution order", async () => {
     const service = new FauxDataService();
@@ -168,6 +175,26 @@ describe("data analysis tools", () => {
     expect((result as { isError?: boolean }).isError).toBe(true);
     expect(details.tasks[0]?.status).toBe("failed");
     expect(details.tasks[0]?.error).toContain("without submitting complete source-grounded claims");
+  });
+
+  it("terminates every delegated task when a subagent request rejects", async () => {
+    const service = new FauxDataService();
+    const tools = createDataAnalysisTools(service, { sessionId: "session-1", workspaceRoot: "workspace", subagentRunner: new RejectingSubagentRunner() });
+    const delegate = tools.find((tool) => tool.name === "research_delegate")!;
+
+    const result = await delegate.execute("call-failure", {
+      analysisId: "analysis-1",
+      mode: "parallel",
+      tasks: [
+        { agent: "researcher", dimensionId: "drivers", task: "Research market drivers" },
+        { agent: "researcher", dimensionId: "outlook", task: "Research market outlook" },
+      ],
+    });
+    const details = result.details as ResearchDelegationDetails;
+
+    expect((result as { isError?: boolean }).isError).toBe(true);
+    expect(details.tasks.every((task) => task.status === "failed")).toBe(true);
+    expect(details.tasks.every((task) => Boolean(task.error))).toBe(true);
   });
 
   it("times out a stuck research dimension without waiting indefinitely", async () => {

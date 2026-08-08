@@ -118,7 +118,7 @@ export class SessionSubagentRunner implements SubagentRunner, SubagentTaskExecut
   }
 
   async dispose(): Promise<void> {
-    await Promise.all([...this.active.keys()].map((taskId) => this.cancel(taskId)));
+    await this.pool.dispose();
   }
 
   async execute(task: SubagentTask, signal: AbortSignal, onUpdate?: (progress: SubagentTaskProgress) => void): Promise<SubagentResult> {

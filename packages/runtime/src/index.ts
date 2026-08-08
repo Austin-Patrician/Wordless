@@ -659,10 +659,35 @@ class VaultCredentialStore implements CredentialStore {
   }
 }
 
+function terminalizeToolDetails(details: unknown, reason: string): unknown {
+  if (typeof details !== "object" || details === null || Array.isArray(details)) return details;
+  const record = details as Record<string, unknown>;
+  if (!Array.isArray(record.tasks)) return details;
+  return {
+    ...record,
+    updatedAt: Date.now(),
+    tasks: record.tasks.map((value) => {
+      if (typeof value !== "object" || value === null || Array.isArray(value)) return value;
+      const task = value as Record<string, unknown>;
+      const status = task.status;
+      if (status === "completed" || status === "failed" || status === "cancelled") return task;
+      return {
+        ...task,
+        status: "cancelled",
+        completedAt: Date.now(),
+        error: typeof task.error === "string" ? task.error : reason,
+        ...(typeof task.activeTool === "object" && task.activeTool !== null && !Array.isArray(task.activeTool)
+          ? { activeTool: { ...(task.activeTool as Record<string, unknown>), state: "error" } }
+          : {}),
+      };
+    }),
+  };
+}
+
 type ActiveRun = {
   driverSession: AgentDriverSession;
   subagents: SessionSubagentRunner;
-  tools: Map<string, MessageToolBlock>;
+  tools: Map<string, MessageToolBlock & { messageId: string }>;
   kind: "prompt" | "compaction";
   isCompacting: boolean;
   compactionTrigger?: ContextCompactionRecord["trigger"];
@@ -1963,7 +1988,15 @@ export class WordlessRuntime {
       await active.driverSession.execute({ type: "prompt", text: prompt, selectedSkills, submission });
       this.emit(sessionId, active, { type: "run.completed", runId: active.runId });
     } catch (error) {
-      this.emit(sessionId, active, { type: "run.failed", runId: active.runId, message: error instanceof Error ? error.message : String(error) });
+      const message = error instanceof Error ? error.message : String(error);
+      try {
+        await active.driverSession.execute({ type: "cancel" });
+      } catch {
+        // The driver may already have torn down its harness after the request failure.
+      }
+      this.finalizeActiveTools(sessionId, active, `Agent run failed: ${message}`);
+      await active.subagents.dispose();
+      this.emit(sessionId, active, { type: "run.failed", runId: active.runId, message });
       throw error;
     } finally {
       this.closeActiveRun(sessionId, active);
@@ -2046,6 +2079,7 @@ export class WordlessRuntime {
   }
 
   private closeActiveRun(sessionId: string, active: ActiveRun): void {
+    this.finalizeActiveTools(sessionId, active, "Agent run ended before the tool completed");
     active.unsubscribe();
     active.driverSession.dispose();
     void active.subagents.dispose();
@@ -2053,6 +2087,25 @@ export class WordlessRuntime {
     this.emit(sessionId, active, { type: "session.idle" });
     const current = this.requireSession(sessionId);
     this.database.upsertSession({ ...current, updatedAt: Date.now() });
+  }
+
+  private finalizeActiveTools(sessionId: string, active: ActiveRun, reason: string): void {
+    for (const [callId, tool] of active.tools) {
+      if (tool.state === "complete" || tool.state === "error") continue;
+      const details = terminalizeToolDetails(tool.details, reason);
+      const output = tool.output ? `${tool.output}\n\n${reason}` : reason;
+      active.tools.set(callId, { ...tool, state: "error", output, details });
+      this.emit(sessionId, active, {
+        type: "tool.completed",
+        messageId: tool.messageId,
+        callId,
+        output,
+        details,
+        ...(tool.usage ? { usage: tool.usage } : {}),
+        isError: true,
+      });
+    }
+    this.historyCache.delete(sessionId);
   }
 
   private async persistSubagentFileChanges(parent: SessionRecord, changes: SubagentFileChange[]): Promise<void> {
@@ -2082,6 +2135,7 @@ export class WordlessRuntime {
       const configuredTimeout = event.input.timeout;
       active.tools.set(event.callId, {
         type: "tool",
+        messageId: event.messageId,
         callId: event.callId,
         name: event.name,
         state: "running",
@@ -2698,11 +2752,22 @@ export class WordlessRuntime {
         }
       }
     }
+    const interrupted = value.stopReason === "error" || value.stopReason === "aborted";
+    const normalizedBlocks = interrupted
+      ? blocks.map((block) => block.type === "tool" && block.state === "pending"
+        ? {
+            ...block,
+            state: "error" as const,
+            output: typeof value.errorMessage === "string" ? value.errorMessage : "The agent run ended before the tool completed.",
+            details: terminalizeToolDetails(block.details, typeof value.errorMessage === "string" ? value.errorMessage : "The agent run ended before the tool completed."),
+          }
+        : block)
+      : blocks;
     return {
       id,
       role: value.role,
       status: value.stopReason === "error" ? "error" : value.stopReason === "aborted" ? "aborted" : "complete",
-      blocks,
+      blocks: normalizedBlocks,
       model: value.role === "assistant" ? model : null,
       timestamp: typeof value.timestamp === "number" ? value.timestamp : Date.now(),
       usage: value.role === "assistant" ? toConversationUsage(value.usage) : undefined,
@@ -2803,8 +2868,10 @@ export class WordlessRuntime {
     const block = message.blocks[location.blockIndex];
     if (!block || block.type !== "tool") return;
     const blocks = [...message.blocks];
-    const details = asRecord(result.details);
-    const usage = conversationUsageFromUnknown(details?.usage);
+    const output = contentToText(result.content);
+    const detailsRecord = asRecord(result.details);
+    const details = result.isError ? terminalizeToolDetails(result.details, output || "Tool execution failed") : result.details;
+    const usage = conversationUsageFromUnknown(detailsRecord?.usage);
     const approval = persisted?.resolution
       ? {
           ...persisted.approval,
@@ -2817,7 +2884,7 @@ export class WordlessRuntime {
     const next: MessageToolBlock = {
       ...block,
       state: result.isError === true ? "error" : "complete",
-      output: contentToText(result.content),
+      output,
       details,
       ...(usage ? { usage } : block.usage ? { usage: block.usage } : {}),
       approval,
