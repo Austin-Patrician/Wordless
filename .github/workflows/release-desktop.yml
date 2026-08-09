@@ -10,6 +10,11 @@ on:
         description: "Existing release tag (vX.Y.Z)"
         required: true
         type: string
+      mirror_only:
+        description: "Only re-sync an existing published release to R2"
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: write
@@ -39,6 +44,7 @@ jobs:
           echo "tag=$RELEASE_TAG" >> "$GITHUB_OUTPUT"
           echo "version=${RELEASE_TAG#v}" >> "$GITHUB_OUTPUT"
       - name: Validate Google OAuth configuration
+        if: ${{ github.event_name != 'workflow_dispatch' || !inputs.mirror_only }}
         shell: bash
         env:
           GOOGLE_OAUTH_CLIENT_ID: ${{ vars.GOOGLE_OAUTH_CLIENT_ID }}
@@ -56,6 +62,7 @@ jobs:
 
   verify:
     needs: prepare
+    if: ${{ github.event_name != 'workflow_dispatch' || !inputs.mirror_only }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -73,6 +80,7 @@ jobs:
 
   build-macos:
     needs: [prepare, verify]
+    if: ${{ github.event_name != 'workflow_dispatch' || !inputs.mirror_only }}
     strategy:
       fail-fast: false
       matrix:
@@ -110,14 +118,15 @@ jobs:
           name: wordless-macos-${{ matrix.arch }}
           retention-days: 3
           path: |
-            apps/desktop/release/*.dmg
-            apps/desktop/release/*.zip
-            apps/desktop/release/*.blockmap
-            apps/desktop/release/*.yml
+            apps/desktop/release/Wordless-*-mac-${{ matrix.arch }}.dmg
+            apps/desktop/release/Wordless-*-mac-${{ matrix.arch }}.dmg.blockmap
+            apps/desktop/release/Wordless-*-mac-${{ matrix.arch }}.zip
+            apps/desktop/release/Wordless-*-mac-${{ matrix.arch }}.zip.blockmap
           if-no-files-found: error
 
   build-windows:
     needs: [prepare, verify]
+    if: ${{ github.event_name != 'workflow_dispatch' || !inputs.mirror_only }}
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
@@ -184,6 +193,7 @@ jobs:
 
   publish:
     needs: [prepare, build-macos, build-windows]
+    if: ${{ github.event_name != 'workflow_dispatch' || !inputs.mirror_only }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -194,6 +204,12 @@ jobs:
           pattern: wordless-*
           path: release
           merge-multiple: true
+      - name: Generate combined macOS update metadata
+        run: |
+          node apps/desktop/scripts/generate-mac-update-manifest.mjs \
+            --release-dir release \
+            --version "${{ needs.prepare.outputs.version }}" \
+            --output release/latest-mac.yml
       - name: Generate checksums
         working-directory: release
         run: find . -maxdepth 1 -type f ! -name SHA256SUMS.txt -printf '%f\0' | sort -z | xargs -0 sha256sum > SHA256SUMS.txt
@@ -215,8 +231,8 @@ jobs:
 
   mirror-r2:
     needs: [prepare, publish]
+    if: ${{ always() && needs.prepare.result == 'success' && (needs.publish.result == 'success' || (github.event_name == 'workflow_dispatch' && inputs.mirror_only)) }}
     runs-on: ubuntu-latest
-    continue-on-error: true
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
@@ -225,16 +241,10 @@ jobs:
       R2_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
       R2_BUCKET_NAME: ${{ vars.R2_BUCKET_NAME }}
       R2_PUBLIC_BASE_URL: ${{ vars.R2_PUBLIC_BASE_URL }}
+      R2_RELEASE_RETENTION: "5"
       RELEASE_TAG: ${{ needs.prepare.outputs.tag }}
     steps:
       - uses: actions/checkout@v4
-        with:
-          ref: ${{ needs.prepare.outputs.tag }}
-      - uses: actions/download-artifact@v4
-        with:
-          pattern: wordless-*
-          path: release
-          merge-multiple: true
       - name: Validate R2 configuration
         shell: bash
         run: |
@@ -244,11 +254,19 @@ jobs:
           [[ "$R2_PUBLIC_BASE_URL" =~ ^https:// ]] || { echo "Repository variable R2_PUBLIC_BASE_URL must be an HTTPS URL" >&2; exit 1; }
           test -n "$AWS_ACCESS_KEY_ID" || { echo "Repository secret R2_ACCESS_KEY_ID is required" >&2; exit 1; }
           test -n "$AWS_SECRET_ACCESS_KEY" || { echo "Repository secret R2_SECRET_ACCESS_KEY is required" >&2; exit 1; }
-      - name: Generate mirror checksums and release manifest
+          test "${#AWS_ACCESS_KEY_ID}" -eq 32 || { echo "R2_ACCESS_KEY_ID must be the 32-character R2 Access Key ID, not the API token value" >&2; exit 1; }
+      - name: Download the published GitHub release
         shell: bash
         run: |
           set -euo pipefail
-          find release -maxdepth 1 -type f ! -name SHA256SUMS.txt -printf '%f\0' | sort -z | xargs -0 -I{} sha256sum "release/{}" | sed 's#release/##' > release/SHA256SUMS.txt
+          mkdir -p release
+          gh release download "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --dir release
+          test -f release/SHA256SUMS.txt || { echo "Published release is missing SHA256SUMS.txt" >&2; exit 1; }
+          (cd release && sha256sum --check SHA256SUMS.txt)
+      - name: Generate release manifest from published assets
+        shell: bash
+        run: |
+          set -euo pipefail
           gh api "repos/$GITHUB_REPOSITORY/releases?per_page=20" > release/github-releases.json
           node apps/desktop/scripts/generate-release-manifest.mjs \
             --release-dir release \
@@ -261,31 +279,95 @@ jobs:
         run: |
           set -euo pipefail
           ENDPOINT="https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com"
+          upload_and_verify() {
+            local file="$1"
+            local cache_control="$2"
+            local content_type="${3:-}"
+            local name size hash remote
+            name="$(basename "$file")"
+            size="$(stat -c %s "$file")"
+            hash="$(sha256sum "$file" | cut -d ' ' -f 1)"
+            local -a args=(
+              "$file" "s3://${R2_BUCKET_NAME}/releases/${name}"
+              --endpoint-url "$ENDPOINT"
+              --cache-control "$cache_control"
+              --metadata "sha256=$hash"
+              --no-progress
+            )
+            if [[ -n "$content_type" ]]; then args+=(--content-type "$content_type"); fi
+            aws s3 cp "${args[@]}"
+            remote="$(aws s3api head-object \
+              --bucket "$R2_BUCKET_NAME" \
+              --key "releases/${name}" \
+              --endpoint-url "$ENDPOINT" \
+              --query '[ContentLength, Metadata.sha256]' \
+              --output text)"
+            read -r remote_size remote_hash <<< "$remote"
+            test "$remote_size" = "$size" || { echo "R2 size mismatch for $name" >&2; exit 1; }
+            test "$remote_hash" = "$hash" || { echo "R2 hash metadata mismatch for $name" >&2; exit 1; }
+          }
           while IFS= read -r -d '' file; do
             name="$(basename "$file")"
-            aws s3 cp "$file" "s3://${R2_BUCKET_NAME}/releases/${name}" \
-              --endpoint-url "$ENDPOINT" \
-              --cache-control "public, max-age=31536000, immutable" \
-              --no-progress
+            case "$name" in
+              latest.yml|latest-mac.yml) upload_and_verify "$file" "no-cache, max-age=0" "text/yaml" ;;
+              SHA256SUMS.txt) upload_and_verify "$file" "no-cache, max-age=0" "text/plain" ;;
+              *) upload_and_verify "$file" "public, max-age=31536000, immutable" ;;
+            esac
           done < <(find release -maxdepth 1 -type f ! -name github-releases.json ! -name releases.json -print0)
-          aws s3 cp release/releases.json "s3://${R2_BUCKET_NAME}/releases/releases.json" \
-            --endpoint-url "$ENDPOINT" \
-            --content-type "application/json" \
-            --cache-control "no-cache, max-age=0" \
-            --no-progress
-          for metadata in latest.yml latest-mac.yml SHA256SUMS.txt; do
-            if [[ -f "release/$metadata" ]]; then
-              aws s3 cp "release/$metadata" "s3://${R2_BUCKET_NAME}/releases/$metadata" \
-                --endpoint-url "$ENDPOINT" \
-                --content-type "text/yaml" \
-                --cache-control "no-cache, max-age=0" \
-                --no-progress
-            fi
-          done
+          upload_and_verify release/releases.json "no-cache, max-age=0" "application/json"
       - name: Verify public R2 release manifest
         shell: bash
         run: |
           set -euo pipefail
           MANIFEST_URL="${R2_PUBLIC_BASE_URL%/}/releases/releases.json"
           curl --fail --location --retry 5 --retry-all-errors --max-time 30 "$MANIFEST_URL" -o downloaded-releases.json
-          node -e 'const value = require("./downloaded-releases.json"); if (value.schemaVersion !== 1 || !value.releases?.some((release) => `v${release.version}` === process.env.RELEASE_TAG)) process.exit(1)'
+          node - <<'NODE'
+          void (async () => {
+            const manifest = require("./downloaded-releases.json");
+            const release = manifest.releases?.find((candidate) => `v${candidate.version}` === process.env.RELEASE_TAG);
+            if (manifest.schemaVersion !== 1 || !release) throw new Error("The public R2 manifest does not contain the mirrored release");
+            const base = `${process.env.R2_PUBLIC_BASE_URL.replace(/\/$/, "")}/releases/`;
+            const mirrored = release.assets.filter((asset) => asset.urls?.[0]?.startsWith(base));
+            if (!mirrored.length) throw new Error("The public manifest does not expose R2 assets");
+            await Promise.all(mirrored.map(async (asset) => {
+              const response = await fetch(asset.urls[0], { method: "HEAD", signal: AbortSignal.timeout(30_000) });
+              const size = Number(response.headers.get("content-length"));
+              if (!response.ok || size !== asset.size) throw new Error(`Public R2 asset verification failed for ${asset.name}`);
+            }));
+            console.log(`Verified ${mirrored.length} public R2 assets for ${process.env.RELEASE_TAG}`);
+          })();
+          NODE
+      - name: Retain the latest five R2 releases
+        shell: bash
+        run: |
+          set -euo pipefail
+          ENDPOINT="https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com"
+          aws s3api list-objects-v2 \
+            --bucket "$R2_BUCKET_NAME" \
+            --prefix "releases/" \
+            --endpoint-url "$ENDPOINT" \
+            --output json > r2-objects-before-prune.json
+          node apps/desktop/scripts/plan-r2-release-retention.mjs \
+            --github-releases release/github-releases.json \
+            --r2-objects r2-objects-before-prune.json \
+            --output-directory r2-retention-plan \
+            --retain "$R2_RELEASE_RETENTION"
+          shopt -s nullglob
+          plans=(r2-retention-plan/delete-*.json)
+          for plan in "${plans[@]}"; do
+            aws s3api delete-objects \
+              --bucket "$R2_BUCKET_NAME" \
+              --endpoint-url "$ENDPOINT" \
+              --delete "file://${plan}"
+          done
+          aws s3api list-objects-v2 \
+            --bucket "$R2_BUCKET_NAME" \
+            --prefix "releases/" \
+            --endpoint-url "$ENDPOINT" \
+            --output json > r2-objects-after-prune.json
+          node apps/desktop/scripts/plan-r2-release-retention.mjs \
+            --github-releases release/github-releases.json \
+            --r2-objects r2-objects-after-prune.json \
+            --output-directory r2-retention-verification \
+            --retain "$R2_RELEASE_RETENTION" \
+            --verify-clean

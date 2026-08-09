@@ -31,14 +31,8 @@ mac:
   category: public.app-category.developer-tools
   minimumSystemVersion: '13.0.0'
   target:
-    - target: dmg
-      arch:
-        - arm64
-        - x64
-    - target: zip
-      arch:
-        - arm64
-        - x64
+    - dmg
+    - zip
   identity: '-'
   hardenedRuntime: false
   gatekeeperAssess: false
@@ -50,9 +44,7 @@ win:
     signingHashAlgorithms:
       - sha256
   target:
-    - target: nsis
-      arch:
-        - x64
+    - nsis
 nsis:
   oneClick: false
   perMachine: false

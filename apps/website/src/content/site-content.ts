@@ -54,6 +54,15 @@ type Copy = {
     primary: string
     secondary: string
     unsupported: string
+    choose: string
+    appleSilicon: string
+    appleSiliconDetail: string
+    intelMac: string
+    intelMacDetail: string
+    windows: string
+    windowsDetail: string
+    directSource: string
+    fallbackSource: string
   }
   contact: {
     index: string
@@ -139,10 +148,19 @@ export const copy: Record<Locale, Copy> = {
       index: '06 / Get started',
       eyebrow: 'Run your workspace locally.',
       heading: 'Bring Wordless to your desktop.',
-      body: 'Choose your platform. New releases remain optional and visible on GitHub.',
+      body: 'Choose the package that matches your machine. Downloads are delivered directly from the Wordless release mirror.',
       primary: 'Download for',
       secondary: 'View all releases',
       unsupported: 'Desktop builds are currently available for macOS and Windows.',
+      choose: 'Choose your download',
+      appleSilicon: 'macOS · Apple Silicon',
+      appleSiliconDetail: 'M1 and later · ARM64 DMG',
+      intelMac: 'macOS · Intel',
+      intelMacDetail: 'Intel processor · x64 DMG',
+      windows: 'Windows',
+      windowsDetail: 'Windows 10/11 · x64 installer',
+      directSource: 'R2 direct',
+      fallbackSource: 'GitHub fallback',
     },
     contact: {
       index: '07 / Work together',
@@ -226,10 +244,19 @@ export const copy: Record<Locale, Copy> = {
       index: '06 / 开始使用',
       eyebrow: '在本地运行你的工作空间',
       heading: '将 Wordless 带到桌面端',
-      body: '按你的平台下载。新的版本保持可选，并可在 GitHub 上查看',
+      body: '选择与你设备匹配的安装包，通过 Wordless 发布镜像直接下载',
       primary: '下载',
       secondary: '查看全部版本',
       unsupported: '桌面版本目前支持 macOS 与 Windows',
+      choose: '选择安装包',
+      appleSilicon: 'macOS · Apple 芯片',
+      appleSiliconDetail: 'M1 及更新芯片 · ARM64 DMG',
+      intelMac: 'macOS · Intel',
+      intelMacDetail: 'Intel 处理器 · x64 DMG',
+      windows: 'Windows',
+      windowsDetail: 'Windows 10/11 · x64 安装程序',
+      directSource: 'R2 直连',
+      fallbackSource: 'GitHub 备用源',
     },
     contact: {
       index: '07 / 合作联系',

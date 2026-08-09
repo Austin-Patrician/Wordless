@@ -82,14 +82,16 @@ function requestSignal(signal: AbortSignal | undefined, timeout: number): AbortS
   return signal ? AbortSignal.any([signal, AbortSignal.timeout(timeout)]) : AbortSignal.timeout(timeout)
 }
 
-export function getPlatformAsset(release: LatestRelease | null, platform: string): ReleaseAsset | undefined {
+export type DesktopDownloadTarget = 'mac-arm64' | 'mac-x64' | 'win-x64'
+
+export function getReleaseAsset(release: LatestRelease | null, target: DesktopDownloadTarget): ReleaseAsset | undefined {
   if (!release) return undefined
-  const matchers: Record<string, RegExp> = {
-    mac: /\.(dmg|zip)$/i,
-    win: /\.exe$/i,
+  const matchers: Record<DesktopDownloadTarget, RegExp> = {
+    'mac-arm64': /-mac-arm64\.dmg$/i,
+    'mac-x64': /-mac-x64\.dmg$/i,
+    'win-x64': /-win-x64\.exe$/i,
   }
-  const matcher = matchers[platform]
-  return matcher ? release.assets.find((asset) => matcher.test(asset.name)) : undefined
+  return release.assets.find((asset) => matchers[target].test(asset.name))
 }
 
 export function detectPlatform() {

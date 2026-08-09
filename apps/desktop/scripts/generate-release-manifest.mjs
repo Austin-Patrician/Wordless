@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { createReadStream } from "node:fs";
-import { readFile, readdir, writeFile } from "node:fs/promises";
+import { readFile, readdir, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 function argument(name) {
@@ -35,10 +35,11 @@ const githubReleases = JSON.parse(await readFile(githubReleasesPath, "utf8"));
 if (!Array.isArray(githubReleases)) throw new Error("GitHub releases input must be an array");
 
 const localNames = new Set((await readdir(releaseDirectory, { withFileTypes: true })).filter((entry) => entry.isFile()).map((entry) => entry.name));
-const localHashes = new Map();
+const localFiles = new Map();
 for (const name of localNames) {
   if (name === path.basename(outputPath) || name === path.basename(githubReleasesPath)) continue;
-  localHashes.set(name, await sha256File(path.join(releaseDirectory, name)));
+  const filePath = path.join(releaseDirectory, name);
+  localFiles.set(name, { sha256: await sha256File(filePath), size: (await stat(filePath)).size });
 }
 
 const releases = githubReleases
@@ -54,13 +55,16 @@ const releases = githubReleases
     assets: Array.isArray(release.assets)
       ? release.assets.flatMap((asset) => {
           if (!asset || typeof asset.name !== "string" || typeof asset.browser_download_url !== "string") return [];
-          const mirrored = release.tag_name === currentTag && localNames.has(asset.name);
+          const localFile = release.tag_name === currentTag ? localFiles.get(asset.name) : undefined;
+          if (localFile && typeof asset.size === "number" && asset.size !== localFile.size) {
+            throw new Error(`Published asset size does not match the mirror input for ${asset.name}`);
+          }
           return [{
             name: asset.name,
-            size: typeof asset.size === "number" ? asset.size : 0,
-            sha256: mirrored ? localHashes.get(asset.name) : undefined,
+            size: localFile?.size ?? (typeof asset.size === "number" ? asset.size : 0),
+            sha256: localFile?.sha256,
             urls: [
-              ...(mirrored ? [assetUrl(publicBaseUrl, asset.name)] : []),
+              ...(localFile ? [assetUrl(publicBaseUrl, asset.name)] : []),
               asset.browser_download_url,
             ],
           }];
