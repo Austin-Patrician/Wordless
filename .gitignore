@@ -23,3 +23,5 @@ apps/desktop/resources/presentation-templates/*
 
 # Local high-resolution sources; optimized website models are committed from public/glb.
 apps/website/assets/glb-source/
+.baoyu-skills/
+image-cards/

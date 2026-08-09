@@ -1,12 +1,15 @@
 import { Button } from "@wordless/ui-kit";
-import { AlertCircle, Check, Download, ExternalLink, FolderOpen, LoaderCircle, RefreshCw, RotateCcw } from "lucide-react";
-import { useEffect } from "react";
+import { AlertCircle, Check, Download, ExternalLink, FolderOpen, ImageOff, LoaderCircle, RefreshCw, RotateCcw, ScanLine, Users } from "lucide-react";
+import { useEffect, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { useDesktopUpdate } from "../../platform/desktop-update";
+import { usePreferences } from "../../shared/preferences";
 import { useRuntime } from "../../shared/runtime";
 import wordlessIcon from "../../../icons/common-icons/wordless.png";
 import githubIcon from "../../../icons/common-icons/github.svg";
+
+const WECHAT_GROUP_QR_URL = "https://qr.wordless.20250230.xyz/wechat-group.png";
 
 function releaseDate(value: string): string {
   if (!value) return "";
@@ -17,7 +20,10 @@ function releaseDate(value: string): string {
 export function AboutUpdatesSettings() {
   const update = useDesktopUpdate();
   const { client } = useRuntime();
+  const { locale } = usePreferences();
+  const [groupQrAvailable, setGroupQrAvailable] = useState(true);
   const { appInfo, snapshot } = update;
+  const chinese = locale.startsWith("zh");
 
   useEffect(() => {
     void update.loadReleases();
@@ -41,7 +47,7 @@ export function AboutUpdatesSettings() {
               <span>Version {appInfo?.version ?? "-"}</span><span aria-hidden="true">/</span><span>{appInfo ? `${appInfo.platform} ${appInfo.arch}` : "Loading platform"}</span>
             </div>
           </div>
-          <Button onClick={() => void update.openReleasePage()} type="button" variant="outline"><img alt="" aria-hidden="true" className="h-4 w-4 object-contain dark:invert" src={githubIcon} />github.com/Austin-Patrician/Wordless</Button>
+          <Button onClick={() => void update.openReleasePage()} type="button" variant="outline"><img alt="" aria-hidden="true" className="h-4 w-4 object-contain dark:invert" src={githubIcon} />Austin-Patrician/Wordless</Button>
         </section>
 
         <section className="about-update-row" aria-label="Update status">
@@ -58,6 +64,25 @@ export function AboutUpdatesSettings() {
           </div>
         </section>
         {appInfo?.platform === "darwin" ? <p className="border-b border-border py-3 text-[10px] leading-4 text-muted-foreground">{manualMacUpdate ? "This build uses manual DMG updates because it is not signed with an Apple Developer certificate." : "Automatic macOS updates are available for releases signed with an Apple Developer certificate."}</p> : null}
+
+        <section className="about-community" aria-labelledby="about-community-title">
+          <div className="about-community__mark" aria-hidden="true"><Users /></div>
+          <div className="min-w-0 flex-1">
+            <p className="about-community__eyebrow">WORDLESS COMMUNITY</p>
+            <h3 id="about-community-title">{chinese ? "加入 Wordless 微信群" : "Join the Wordless WeChat community"}</h3>
+            <p>{chinese ? "交流使用体验、问题反馈与 Agent 工作流。" : "Share product feedback, questions, and Agent workflows."}</p>
+          </div>
+          <button
+            aria-label={chinese ? "放大并打开微信群二维码" : "Enlarge and open the WeChat group QR code"}
+            className={`about-community__qr ${groupQrAvailable ? "" : "is-unavailable"}`}
+            disabled={!groupQrAvailable}
+            onClick={() => void client?.openExternalUrl(WECHAT_GROUP_QR_URL)}
+            type="button"
+          >
+            {groupQrAvailable ? <img alt={chinese ? "Wordless 微信群二维码" : "Wordless WeChat group QR code"} draggable={false} onError={() => setGroupQrAvailable(false)} referrerPolicy="no-referrer" src={WECHAT_GROUP_QR_URL} /> : <span><ImageOff /><small>{chinese ? "暂不可用" : "Unavailable"}</small></span>}
+            {groupQrAvailable ? <i aria-hidden="true"><ScanLine /></i> : null}
+          </button>
+        </section>
 
         <section className="mt-10">
           <div className="flex items-end justify-between border-b border-border pb-3">

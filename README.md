@@ -1,8 +1,9 @@
 <div align="center">
+  <p><strong>English</strong> · <a href="README.zh-CN.md">简体中文</a></p>
   <img src="docs/assets/desktop/wordless-logo.webp" alt="Wordless" width="112" />
   <h1>Wordless</h1>
-  <p><strong>面向文档、数据、演示文稿与代码的本地优先桌面 Agent 工作空间。</strong></p>
-  <p>让 Agent 在一个连续界面中理解工作区、调用工具，并与你共同编辑真实产物。</p>
+  <p><strong>Less talk. Finish the work.</strong></p>
+  <p>A local-first Agent platform for real tasks: focused context, fewer wasted tokens and round trips, and editable, verifiable deliverables.</p>
 
   <p>
     <a href="https://github.com/Austin-Patrician/Wordless/releases/latest"><img alt="GitHub Release" src="https://img.shields.io/github/v/release/Austin-Patrician/Wordless?display_name=tag&style=flat-square" /></a>
@@ -13,75 +14,136 @@
   </p>
 
   <p>
-    <a href="https://github.com/Austin-Patrician/Wordless/releases/latest"><strong>下载最新版</strong></a>
+    <a href="https://github.com/Austin-Patrician/Wordless/releases/latest"><strong>Download the latest release</strong></a>
     ·
-    <a href="apps/website/src/content/docs/docs/index.mdx">用户手册</a>
+    <a href="apps/website/src/content/docs/en/docs/index.mdx">User manual</a>
     ·
-    <a href="docs/architecture/overview.md">架构说明</a>
+    <a href="docs/architecture/overview.md">Architecture</a>
     ·
-    <a href="https://github.com/Austin-Patrician/Wordless/issues">问题反馈</a>
+    <a href="https://github.com/Austin-Patrician/Wordless/issues">Report an issue</a>
   </p>
 </div>
 
 ![Wordless desktop workspace](docs/assets/desktop/wordless-workspace.webp)
 
-## Wordless 是什么
+## What is Wordless?
 
-Wordless 不是一个只返回文本的聊天窗口。它是运行在 macOS 和 Windows 上的 Agent 工作台：你选择工作区、模型和任务模式，Agent 在明确的权限边界内读取上下文、调用工具，并将演示文稿、电子表格、研究结果或代码变更呈现在同一个界面中。
+Wordless is not another chat window that only returns text. It is an Agent workbench for macOS and Windows: select a workspace, model, and work mode, then let the Agent read context and invoke tools within explicit permission boundaries. Presentations, spreadsheets, research results, and code changes stay visible in the same interface where the work happens.
 
-项目采用本地优先设计。工作区、会话和产物保存在设备上；Google 登录与云同步均为可选能力，未登录或网络不可用不会阻止本地工作。
+Wordless is local-first. Workspaces, conversations, and artifacts remain on your device. Google sign-in and cloud sync are optional, so local work continues when you are signed out or offline.
 
-## 核心能力
+## Why we built Wordless
 
-- **工作区上下文**：通过 `@` 快速引用工作区内的文件和文件夹，通过 `$` 选择 Skills；文件索引遵循 `.gitignore`。
-- **可控工具执行**：默认手动审批工具调用，也可在当前会话启用自动审批；高风险操作仍会回到人工确认，并支持单次工作区外访问授权。
-- **交互式 Presentation**：Agent 创建和修改幻灯片后，可在右侧工作区查看页面、选择对象并继续迭代，而不只是下载一次性文件。
-- **交互式 Spreadsheet**：直接查看单元格、图表和变更，在当前选区继续发出指令并即时验证结果。
-- **Data Analysis 与深度研究**：拆分研究维度、并行委派、追踪进度，并将分析结果与图表放回工作区。
-- **Coding 工作流**：结合计划、文件检索、Shell、差异视图和测试结果完成可审阅的代码修改。
-- **模型与思考深度**：支持内置及 OpenAI-compatible Provider，自定义 Base URL、模型能力、上下文限制与推理级别。
-- **Skills & MCP**：导入 Skills，并连接兼容 Model Context Protocol 的外部工具服务。
-- **会话体验**：消息搜索与定位、上下文压缩、Markdown/GFM、代码高亮、Mermaid 与 KaTeX 数学公式渲染。
+Most AI products are optimized to produce an answer. Real work needs something stricter: understand only the relevant context, take the right action, leave a usable artifact, and verify what happened. Wordless is built around that outcome rather than around a longer conversation.
 
-## 为真实产物设计
+- **Output before narration**: execution status belongs in the interface. The model should spend its response on decisions, results, and exceptions instead of repeatedly describing progress.
+- **Scoped context before bulk ingestion**: `@` references, workbook selections, presentation elements, and work-mode Profiles narrow the input to what the task actually needs.
+- **Tokens spent on useful work**: task-specific tools, context compaction, and provider cache accounting are designed to reduce repeated or irrelevant context.
+- **End-to-end delivery**: planning, tool execution, artifact creation, inspection, and correction remain in one task instead of stopping at advice.
+- **Verification before confidence**: tests, quality scans, sources, diffs, tool results, and interactive previews make the result inspectable.
+
+> [!NOTE]
+> "Fewer tokens" is a design objective, not a fixed savings guarantee. Actual usage depends on the model, provider, task, selected context, and number of correction rounds. "Finish the work" means minimizing avoidable handoffs and round trips, not pretending every complex task can be completed correctly in one model turn.
+
+## Why Pi Agent Harness
+
+Wordless uses the MIT-licensed [Pi Agent Harness](https://github.com/earendil-works/pi) as its agent foundation instead of rebuilding a generic model and tool loop. Pi provides the portable primitives; Wordless turns them into scenario-specific desktop workflows.
+
+| Product need | Pi foundation | Wordless adaptation |
+| --- | --- | --- |
+| Multiple model providers | Unified streaming API and model capability data | Visual provider configuration, reasoning depth, credential storage, and usage display |
+| Multi-step execution | Agent loop, structured tool calls, events, and state | Approval checkpoints, risk handling, visible tool states, persistence, and recovery |
+| Different kinds of work | Composable tools and a UI-independent core | Profiles, Drivers, Extensions, specialized capabilities, and artifact workbenches |
+| Long-running context | Continuable message and Agent state | Session journal, search, context compaction, steering, and follow-up handling |
+
+```text
+Task intent
+    -> Profile
+    -> Driver + Extensions
+    -> Pi-derived agent loop
+    -> Capabilities and workspace policy
+    -> Interactive artifact surface
+```
+
+One loop does not mean one generic Agent. Each Profile deliberately changes the context, tools, permission declarations, execution guidance, artifact type, and verification surface:
+
+| Profile | Scenario adaptation |
+| --- | --- |
+| General | Everyday work, Skills, MCP, and optional workspace tools |
+| Coding | Indexed search, file edits, Shell, tests, diffs, and coding policy |
+| Presentation | OfficeCLI-backed slide tools, quality scans, and interactive PPTX preview |
+| Spreadsheet | Workbook selections, formulas, charts, quality checks, and publishing |
+| Data Analysis | Data inspection, confirmed research plans, delegated dimensions, sources, and reports |
+
+This separation keeps Pi replaceable. Provider protocols live behind `@wordless/ai`, the loop and events behind `@wordless/agent`, and concrete runtime integration behind the Driver SDK. Upgrading Pi or introducing another Driver should change adapters and event mapping rather than every Composer, approval, storage, and artifact UI.
+
+## Wordless and Tencent WorkBuddy
+
+Wordless and Tencent WorkBuddy both aim to move beyond chat and deliver real work. They take different product routes. The comparison below is based on Tencent's public [WorkBuddy product page](https://cloud.tencent.com/product/workbuddy) and [official overview](https://www.workbuddy.cn/docs/workbuddy/Overview) available in August 2026; capabilities and commercial plans may change.
+
+| Dimension | Wordless | Tencent WorkBuddy |
+| --- | --- | --- |
+| Product route | Local-first, source-available Agent platform for users who want to control models, tools, permissions, and extensions | Turnkey commercial workplace Agent for broad business roles and managed adoption |
+| Scenario composition | Repository-visible Profiles, Drivers, Extensions, Skills, and MCP integrations | Domain experts, Skills, project spaces, and multi-Agent collaboration |
+| Models and cost | Bring your own provider and API key; usage is billed by the selected provider | Tencent-operated product and quota plans, with model configuration exposed through its product experience |
+| Data and execution | Conversations and artifacts stay local by default; workspace policy and explicit approvals gate tool execution | Can operate authorized local folders while account, service, and team boundaries follow the Tencent product |
+| Artifact experience | Dedicated in-app PPT and spreadsheet previews support selecting an object or range and continuing from that exact context | Covers broad document, spreadsheet, PPT, research, coding, and creative delivery workflows |
+| Collaboration and ecosystem | Currently optimized for individual, local workflows with optional settings sync and developer-controlled extensions | Project spaces, shared experts, Skills, connectors, team reuse, and the Tencent ecosystem |
+| Transparency and customization | Source-visible architecture, BYOK models, explicit event and permission boundaries, replaceable adapters | Managed product with a larger ready-made expert and service ecosystem |
+
+Choose WorkBuddy when you want a mature, ready-made office and team ecosystem with managed experts. Choose Wordless when local-first data, BYOK models, explicit approvals, source-visible architecture, and deep workflow customization matter more. This is a difference in product priorities, not a claim that one tool is universally better.
+
+## Core capabilities
+
+- **Workspace context**: use `@` to reference workspace files and folders, and `$` to select Skills. File indexing respects `.gitignore`.
+- **Controlled tool execution**: tool calls require manual approval by default. Session auto-approval is available, while high-risk actions return to explicit review. One-time access outside the workspace is also supported.
+- **Interactive Presentation**: after the Agent creates or edits slides, inspect pages, select elements, and continue iterating in the right workspace instead of downloading a one-off file.
+- **Interactive Spreadsheet**: inspect cells, charts, and changes directly. Continue from the current selection and verify updates immediately.
+- **Data Analysis and deep research**: divide research into dimensions, delegate work in parallel, follow progress, and return reports and charts to the workspace.
+- **Coding workflow**: combine planning, file search, Shell, diffs, and test results into reviewable code changes.
+- **Models and reasoning depth**: configure built-in and OpenAI-compatible providers, Base URLs, model capabilities, context limits, and reasoning levels.
+- **Skills & MCP**: import reusable Skills and connect external services compatible with the Model Context Protocol.
+- **Conversation experience**: message search and navigation, context compaction, Markdown/GFM, syntax highlighting, Mermaid, and KaTeX math rendering.
+
+## Built for real artifacts
 
 ### Presentation
 
-生成过程、工具状态和幻灯片预览保持在同一个任务上下文中。选择具体页面或对象后可以继续要求 Agent 调整布局、内容和视觉表达。
+Generation progress, tool states, and slide previews remain in one task context. Select a page or an individual object and ask the Agent to continue refining its layout, content, or visual treatment.
 
 ![Interactive presentation workspace](docs/assets/desktop/presentation-preview.png)
 
 ### Spreadsheet
 
-在表格预览中选择数据区域，把当前选择作为下一步操作的精确上下文；Agent 的修改会立即反映到工作簿，而不是停留在文字建议中。
+Select a data region in the workbook preview and use that selection as precise context for the next action. Agent changes appear in the workbook immediately instead of remaining as text suggestions.
 
 ![Interactive spreadsheet selection](docs/assets/desktop/spreadsheet-selection.png)
 
 ### Data Analysis
 
-复杂研究任务可以按维度委派，并在时间线中区分 queued、running、completed 和 failed 状态，方便判断每个研究员正在处理什么。
+Delegate complex research by dimension and distinguish queued, running, completed, and failed work in the timeline, making every researcher's current activity visible.
 
 ![Parallel data analysis research](docs/assets/desktop/data-analysis-research.png)
 
 ### Coding
 
-从计划到文件修改、Diff 和测试结果都可追踪。工具执行受工作区策略约束，关键操作在实际发生前进入审批流程。
+Plans, file edits, diffs, and test results remain traceable. Workspace policy governs tool execution, and critical actions enter the approval flow before they occur.
 
 ![Coding plan, diff, and tests](docs/assets/desktop/code-plan-diff-tests.png)
 
-## 扩展与控制
+## Extension and control
 
-Skills 用于沉淀可复用工作方法，MCP 用于连接外部能力。模型能力和工具权限彼此独立：模型能生成请求，不代表工具已获得执行权限。
+Skills capture reusable working methods, while MCP connects external capabilities. Model capability and tool permission remain separate: a model can request an action without automatically receiving permission to execute it.
 
 ![Skills and MCP settings](docs/assets/desktop/skills-and-mcp.png)
 
-API Key、OAuth token 等敏感凭据优先进入操作系统安全存储。Google 云同步默认关闭；开启后仅同步设置页面声明的数据类型，不同步 API Key、工作区文件、生成产物和会话正文。
+Sensitive credentials such as API keys and OAuth tokens are stored in the operating system's secure credential storage when available. Google cloud sync is disabled by default. When enabled, it only syncs the data types declared in Settings, excluding API keys, workspace files, generated artifacts, and conversation content.
 
 ![Security and privacy settings](docs/assets/desktop/security-privacy.png)
 
-## 架构
+## Architecture
 
-Wordless 是一个模块化单体桌面应用，不依赖单独的本地 HTTP 后端。React Renderer 通过受限 Preload Bridge 与 Electron Main 通信；主进程组合 Runtime、Agent Profiles、Capabilities、持久化和平台适配器。
+Wordless is a modular monolithic desktop application and does not require a separate local HTTP backend. The React Renderer communicates with Electron Main through a restricted Preload Bridge. The main process composes the Runtime, Agent Profiles, Capabilities, persistence, and platform adapters.
 
 ![Wordless desktop architecture](docs/assets/desktop/desktop-architecture.png)
 
@@ -100,58 +162,58 @@ Electron Main
     `-- Credential, window, browser, and notification adapters
 ```
 
-不同场景不是复制出来的多套 Agent。Profile 负责组装提示、工具、驱动和扩展，公共 Runtime 负责会话、事件、审批和持久化，因此场景能力可以独立演进，也可以迁移或替换底层依赖。
+Work modes are not separate copies of the Agent. Profiles assemble prompts, tools, drivers, and extensions, while the shared Runtime owns sessions, events, approvals, and persistence. Each work mode can evolve independently, and underlying dependencies remain replaceable.
 
-### Agent 内核与 Profiles
+### Kernel boundaries and portability
 
-Wordless 基于 [Pi Agent Harness](https://github.com/earendil-works/pi) 的 AI 与 Agent 包构建内部 fork，在其事件循环之上增加 Profile、Driver、Extension、审批、工作区策略与桌面持久化。上游依赖被隔离在明确边界后，模型层或 Agent 内核可以升级、替换，而不要求重写各场景 UI。
+The product-level Profile mapping above is implemented through explicit dependency boundaries. `@wordless/ai` isolates provider protocols and model capabilities, `@wordless/agent` isolates the loop and event types, and `agent-driver-sdk` defines the contract between Runtime and a concrete kernel. Profiles do not depend directly on Electron, while session journals and domain messages remain owned by Wordless.
 
-| Profile 组装与驱动注册 | 不同场景的工具边界 |
+| Profile assembly and driver registry | Tool boundaries across work modes |
 | --- | --- |
 | ![Profile, driver, and registry architecture](docs/assets/desktop/profile-driver-registry.png) | ![Profile tool comparison](docs/assets/desktop/profile-tool-comparison.png) |
 
-更详细的边界说明见 [Architecture Overview](docs/architecture/overview.md)、[Dependency Rules](docs/architecture/dependencies.md) 和 [Upstream Source Record](UPSTREAM.md)。
+Upstream Pi remains credited under its original MIT license. See [Architecture Overview](docs/architecture/overview.md), [Dependency Rules](docs/architecture/dependencies.md), and [Upstream Source Record](UPSTREAM.md) for the detailed boundaries.
 
-## 安装
+## Installation
 
-从 [GitHub Releases](https://github.com/Austin-Patrician/Wordless/releases/latest) 下载与你设备匹配的安装包：
+Download the package for your device from [GitHub Releases](https://github.com/Austin-Patrician/Wordless/releases/latest):
 
-| 设备 | 安装文件 | 说明 |
+| Device | Installer | Requirement |
 | --- | --- | --- |
-| Apple Silicon Mac（M1/M2/M3/M4 及后续） | `Wordless-<version>-mac-arm64.dmg` | macOS 13 或更高版本 |
-| Intel Mac | `Wordless-<version>-mac-x64.dmg` | macOS 13 或更高版本 |
-| Windows 10/11 x64 | `Wordless-<version>-win-x64.exe` | NSIS 安装程序 |
+| Apple Silicon Mac (M1/M2/M3/M4 and later) | `Wordless-<version>-mac-arm64.dmg` | macOS 13 or later |
+| Intel Mac | `Wordless-<version>-mac-x64.dmg` | macOS 13 or later |
+| Windows 10/11 x64 | `Wordless-<version>-win-x64.exe` | NSIS installer |
 
-`.zip`、`.blockmap`、`latest.yml` 和 `latest-mac.yml` 主要供更新流程使用，正常安装请选择 `.dmg` 或 `.exe`。
+Files ending in `.zip`, `.blockmap`, `latest.yml`, and `latest-mac.yml` are primarily used by the update workflow. For a normal installation, choose the `.dmg` or `.exe` file.
 
 > [!IMPORTANT]
-> 当前 macOS Release 是未使用 Apple Developer ID 公证的测试构建。请只从本仓库的官方 Release 下载；首次打开时可能需要在 Finder 中按住 Control 点击 Wordless 并选择“打开”，或前往“系统设置 → 隐私与安全性 → 仍要打开”。不要全局关闭 Gatekeeper。
+> Current macOS releases are test builds without Apple Developer ID notarization. Download them only from the official Wordless repository. On first launch, you may need to Control-click Wordless in Finder and choose **Open**, or use **System Settings → Privacy & Security → Open Anyway**. Do not disable Gatekeeper globally.
 
-应用会提示可用的新版本，但不会强制安装。受 macOS 未签名构建的代码签名限制，部分版本需要按照应用内链接下载 DMG 并手动覆盖安装。
+Wordless notifies you when a new version is available but never forces installation. Because unsigned macOS builds cannot use the standard signed update path reliably, some versions must be downloaded as a DMG and installed manually over the existing application.
 
-## 模型配置
+## Model configuration
 
-Wordless 不捆绑模型额度。首次任务前，在 **Settings → Models** 中配置一个可用的 Provider：
+Wordless does not bundle model credits. Before starting your first task, configure an available provider under **Settings → Models**:
 
-1. 选择内置 Provider，或创建自定义 Provider。
-2. 输入 API Key；密钥与普通模型 JSON 分开保存。
-3. 对于 OpenAI-compatible 服务，填写通常以 `/v1` 结尾的 Base URL、实际 Model ID 和对应协议。
-4. 在 **Enabled models** 中启用模型，然后回到 Composer 选择它。
-5. 如果模型声明了推理能力，可在当前模型的二级选项中选择思考深度；未手动设置时默认使用 `medium`。
+1. Select a built-in provider or create a custom provider.
+2. Enter the API key. Credentials are stored separately from ordinary model JSON.
+3. For OpenAI-compatible services, enter the Base URL, typically ending in `/v1`, the actual Model ID, and the matching protocol.
+4. Enable the model under **Enabled models**, then return to the Composer and select it.
+5. If the model declares reasoning support, select a reasoning depth from the chosen model's secondary options. The default is `medium` until changed manually.
 
 ![Model and thinking-depth selector](docs/assets/desktop/model-thinking-depth.png)
 
-完整字段、JSON 示例与故障排查见[自定义模型配置手册](apps/website/src/content/docs/docs/models.mdx)。请始终依据提供商文档填写上下文窗口、最大输出和推理参数。
+See the [custom model configuration guide](apps/website/src/content/docs/en/docs/models.mdx) for complete field descriptions, JSON examples, and troubleshooting. Always use the provider's own documentation when setting context windows, maximum output, and reasoning parameters.
 
-## 本地开发
+## Local development
 
-### 环境要求
+### Requirements
 
-- Node.js `22.19.0` 或更高版本
-- npm（随兼容 Node.js 版本提供）
-- macOS 13+ 或 Windows 10/11 x64，用于运行对应桌面构建
+- Node.js `22.19.0` or later
+- npm, included with a compatible Node.js release
+- macOS 13+ or Windows 10/11 x64 to run the corresponding desktop build
 
-### 启动桌面端
+### Start the desktop application
 
 ```bash
 git clone https://github.com/Austin-Patrician/Wordless.git
@@ -160,25 +222,25 @@ npm ci
 npm run dev:electron --workspace=@wordless/desktop
 ```
 
-桌面开发命令会准备匹配当前平台的 OfficeCLI 资源、构建 Electron 主进程，并启动 Renderer 与 Electron。
+The desktop development command prepares the OfficeCLI assets for the current platform, builds the Electron main process, and starts both the Renderer and Electron.
 
-### 常用命令
+### Common commands
 
 ```bash
-# 全仓库类型检查与静态检查
+# Run repository type and static checks
 npm run check
 
-# Desktop 主进程测试
+# Run Desktop main-process tests
 npm run test:host --workspace=@wordless/desktop
 
-# 构建 Desktop（不生成安装包）
+# Build Desktop without creating an installer
 npm run build:desktop --workspace=@wordless/desktop
 
-# 检查并构建 Website 与用户手册
+# Check and build the Website and user manual
 npm run build --workspace=@wordless/website
 ```
 
-打包命令：
+Packaging commands:
 
 ```bash
 npm run dist:mac --workspace=@wordless/desktop
@@ -189,56 +251,56 @@ npm run dist:win --workspace=@wordless/desktop
 
 ```text
 apps/
-  desktop/                         Electron 主进程、Preload 与 React Renderer
-  website/                         Astro 官网与 Starlight 双语用户手册
+  desktop/                         Electron main, Preload, and React Renderer
+  website/                         Astro website and bilingual Starlight manual
 packages/
-  ai, agent/                       基于 Pi 的内部 fork
-  runtime, protocol, persistence/  会话编排、IPC 契约与本地持久化
-  agent-driver-*/                  General、Coding、Presentation、Spreadsheet 驱动
-  agent-extension-*/               压缩、计划、运行时与 Subagent 扩展
-  capabilities/                    文件、Shell、Office、数据、浏览器等能力
-  profiles/                        内置场景 Profile
-  model-config, skill-registry/    模型配置与 Skills 注册
-  workspace-search/                工作区文件搜索与忽略规则
-  ui-kit/                          Renderer 共享状态与 UI 原语
-docs/                              架构文档与 README 资产
-third_party/                       随发行版保留的第三方许可材料
+  ai, agent/                       Internal fork based on Pi
+  runtime, protocol, persistence/  Session orchestration, IPC contracts, persistence
+  agent-driver-*/                  General, Coding, Presentation, Spreadsheet drivers
+  agent-extension-*/               Compaction, planning, runtime, Subagent extensions
+  capabilities/                    Files, Shell, Office, data, browser capabilities
+  profiles/                        Built-in work-mode Profiles
+  model-config, skill-registry/    Model configuration and Skills registry
+  workspace-search/                Workspace search and ignore rules
+  ui-kit/                          Shared Renderer state and UI primitives
+docs/                              Architecture documentation and README assets
+third_party/                       Third-party notices shipped with releases
 ```
 
-`apps/website` 是独立构建和部署的静态站点，不会被打包进 Desktop 安装包。
+`apps/website` is built and deployed independently and is not packaged into the Desktop installer.
 
-## 数据与隐私
+## Data and privacy
 
-- 工作区文件、会话和产物默认保存在本地。
-- 模型请求会发送到用户选择的模型提供商；发送范围取决于任务和显式引用的上下文。
-- 工具在 Electron 主进程或用户配置的 MCP 服务中执行，Renderer 不直接获得 Node.js 权限。
-- Google 登录是可选项；Google Cloud Sync 需要用户单独开启，网络失败不会阻断本地功能。
-- 云同步当前面向模型元数据和用户偏好，不包含 API Key、会话正文、工作区文件和生成产物。
+- Workspace files, conversations, and artifacts remain local by default.
+- Model requests are sent to the provider selected by the user. The transmitted context depends on the task and explicitly referenced material.
+- Tools execute in Electron Main or in a user-configured MCP service. The Renderer does not receive direct Node.js access.
+- Google sign-in is optional. Google Cloud Sync must be enabled separately, and network failures never block local work.
+- Cloud sync currently covers model metadata and user preferences. It excludes API keys, conversation content, workspace files, and generated artifacts.
 
-安全边界和数据流向详见 [Security & Privacy](apps/website/src/content/docs/docs/security-privacy.mdx)。安全问题请避免在公开 Issue 中附带 API Key、OAuth token、私有文件或完整日志中的敏感数据。
+See [Security & Privacy](apps/website/src/content/docs/en/docs/security-privacy.mdx) for security boundaries and data flows. Do not include API keys, OAuth tokens, private files, or sensitive full logs in public issues.
 
-## 第三方项目
+## Third-party projects
 
-Wordless 建立在多个优秀项目之上，并保留其原始许可证与归属：
+Wordless builds on excellent third-party projects and retains their original licenses and attribution:
 
-- [Pi Agent Harness](https://github.com/earendil-works/pi)：`packages/ai` 与 `packages/agent` 的上游来源，详见 [UPSTREAM.md](UPSTREAM.md)。
-- [OfficeCLI](https://github.com/iOfficeAI/OfficeCLI)：Presentation 与 Office 文档操作引擎。
-- [Electron](https://github.com/electron/electron)、[React](https://github.com/facebook/react) 与 [Vite](https://github.com/vitejs/vite)：桌面与前端基础设施。
-- [React Virtuoso](https://github.com/petyosi/react-virtuoso)：长会话虚拟列表。
-- [Astro](https://github.com/withastro/astro) 与 [Starlight](https://github.com/withastro/starlight)：官网和用户手册。
-- [Three.js](https://github.com/mrdoob/three.js)：Website 的 3D 视觉体验。
+- [Pi Agent Harness](https://github.com/earendil-works/pi): upstream source for `packages/ai` and `packages/agent`; see [UPSTREAM.md](UPSTREAM.md).
+- [OfficeCLI](https://github.com/iOfficeAI/OfficeCLI): Presentation and Office document engine.
+- [Electron](https://github.com/electron/electron), [React](https://github.com/facebook/react), and [Vite](https://github.com/vitejs/vite): desktop and frontend foundations.
+- [React Virtuoso](https://github.com/petyosi/react-virtuoso): virtualization for long conversations.
+- [Astro](https://github.com/withastro/astro) and [Starlight](https://github.com/withastro/starlight): website and user manual.
+- [Three.js](https://github.com/mrdoob/three.js): 3D visuals on the Website.
 
-第三方组件不受 Wordless 自定义许可证重新授权；它们继续遵循各自仓库或随附文件中的许可证。
+Third-party components are not relicensed under the Wordless custom license. They remain subject to the licenses in their own repositories or accompanying files.
 
-## 参与贡献
+## Contributing
 
-欢迎通过 [Issues](https://github.com/Austin-Patrician/Wordless/issues) 提交可复现的问题、功能建议和文档反馈，也欢迎发起 Pull Request。提交代码前请运行与你改动范围对应的检查和测试，并避免提交密钥、个人数据、构建产物或工作区内容。
+Reproducible bug reports, feature proposals, documentation feedback, and pull requests are welcome through [GitHub Issues](https://github.com/Austin-Patrician/Wordless/issues). Run checks and tests appropriate to your change before submitting, and never commit credentials, personal data, build artifacts, or workspace content.
 
-## 许可证与商业授权
+## License and commercial use
 
-Wordless 原创代码和资产使用 [Wordless Source-Available License 1.0](LICENSE)。个人、教育、研究、评估及非商业内部使用可以免费进行；任何商业使用、收费服务、SaaS、转售、商业托管或与营收相关的分发，都必须事先获得书面授权。
+Original Wordless code and assets are licensed under the [Wordless Source-Available License 1.0](LICENSE). Personal, educational, research, evaluation, and non-commercial internal use is free. Commercial use, paid services, SaaS, resale, commercial hosting, or revenue-related distribution requires prior written authorization.
 
-这是一份**源码可见许可证，而不是 OSI 定义的开源许可证**。需要商业授权时，请通过本仓库的 [GitHub Issues](https://github.com/Austin-Patrician/Wordless/issues) 联系维护者，并避免在 Issue 中披露商业机密。第三方与上游代码仍适用其原始许可证。
+This is a **source-available license, not an OSI-approved open-source license**. For commercial licensing, contact the maintainers through [GitHub Issues](https://github.com/Austin-Patrician/Wordless/issues) without disclosing confidential business information. Third-party and upstream code remains subject to its original licenses.
 
 ## Star History
 
@@ -250,6 +312,31 @@ Wordless 原创代码和资产使用 [Wordless Source-Available License 1.0](LIC
   </picture>
 </a>
 
+## Community & Support
+
+<table>
+  <tr>
+    <td align="center" width="50%">
+      <a href="https://qr.wordless.20250230.xyz/wechat-group.png">
+        <img src="https://qr.wordless.20250230.xyz/wechat-group.png" alt="Scan with WeChat to join the Wordless community" width="180" />
+      </a>
+      <br />
+      <strong>Join the Wordless WeChat group</strong>
+      <br />
+      <sub>Share product feedback, questions, and Agent workflows</sub>
+    </td>
+    <td align="center" width="50%">
+      <a href="https://qr.wordless.20250230.xyz/buy-me-coffee.png">
+        <img src="https://qr.wordless.20250230.xyz/buy-me-coffee.png" alt="Buy me a coffee" width="180" />
+      </a>
+      <br />
+      <strong>Buy Me a Coffee</strong>
+      <br />
+      <sub>Support the continued development and maintenance of Wordless</sub>
+    </td>
+  </tr>
+</table>
+
 ---
 
-Finally, thanks to everyone on LinuxDo for their support! Welcome to join [https://linux.do/](https://linux.do/) for all kinds of technical exchanges, cutting-edge AI information, and AI experience sharing, all on LinuxDo!
+Finally, thank you to everyone at LinuxDo for supporting Wordless. Join [https://linux.do/](https://linux.do/) for technical discussions, frontier AI news, and practical AI experience sharing.
