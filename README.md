@@ -239,3 +239,17 @@ Wordless 建立在多个优秀项目之上，并保留其原始许可证与归�
 Wordless 原创代码和资产使用 [Wordless Source-Available License 1.0](LICENSE)。个人、教育、研究、评估及非商业内部使用可以免费进行；任何商业使用、收费服务、SaaS、转售、商业托管或与营收相关的分发，都必须事先获得书面授权。
 
 这是一份**源码可见许可证，而不是 OSI 定义的开源许可证**。需要商业授权时，请通过本仓库的 [GitHub Issues](https://github.com/Austin-Patrician/Wordless/issues) 联系维护者，并避免在 Issue 中披露商业机密。第三方与上游代码仍适用其原始许可证。
+
+## Star History
+
+<a href="https://www.star-history.com/#Austin-Patrician/Wordless&amp;Date">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=Austin-Patrician/Wordless&amp;type=Date&amp;theme=dark" />
+    <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=Austin-Patrician/Wordless&amp;type=Date" />
+    <img alt="Wordless GitHub star history chart" src="https://api.star-history.com/svg?repos=Austin-Patrician/Wordless&amp;type=Date" />
+  </picture>
+</a>
+
+---
+
+Finally, thanks to everyone on LinuxDo for their support! Welcome to join [https://linux.do/](https://linux.do/) for all kinds of technical exchanges, cutting-edge AI information, and AI experience sharing, all on LinuxDo!

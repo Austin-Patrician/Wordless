@@ -1,6 +1,6 @@
 ---
 title: 安装 Wordless
-description: 从 GitHub Releases 选择与你的 Mac 或 Windows 设备匹配的安装包，并完成首次启动。
+description: 从 Wordless 官方下载页选择与你的 Mac 或 Windows 设备匹配的安装包，并完成首次启动。
 ---
 import { Steps, Tabs, TabItem } from '@astrojs/starlight/components';
 import Prerequisites from '../../../components/docs/Prerequisites.astro';
@@ -9,12 +9,12 @@ import ScreenshotFrame from '../../../components/docs/ScreenshotFrame.astro';
 
 ## 下载地址
 
-Wordless 桌面端安装包发布在项目的 GitHub Releases 页面：
+Wordless 桌面端安装包通过官方下载页提供，并保留 GitHub Releases 作为备用来源：
 
-- **最新稳定版本：** [打开 Wordless Latest Release](https://github.com/Austin-Patrician/Wordless/releases/latest)
+- **最新稳定版本：** [打开 Wordless 官方下载页](https://wordless.20250230.xyz/#download)
 - **全部历史版本：** [查看所有 Releases](https://github.com/Austin-Patrician/Wordless/releases)
 
-进入版本页面后，向下找到 **Assets**。如果 Assets 被折叠，点击标题展开。版本号会随发布变化，例如 `Wordless-0.1.1-mac-arm64.dmg`；选择时主要看文件名末尾的平台和架构。
+如果需要从 GitHub 备用源手动选择架构，进入版本页面后向下找到 **Assets**。如果 Assets 被折叠，点击标题展开。版本号会随发布变化，例如 `Wordless-0.1.1-mac-arm64.dmg`；选择时主要看文件名末尾的平台和架构。
 
 <ScreenshotFrame src="/images/settings/github-release-assets.png" alt="GitHub Release 展开的 Assets 下载区域" caption="在 Release 的 Assets 区域，按设备架构选择对应的 DMG 或 Windows 安装程序；不要下载 .blockmap、.yml 或 Source code 文件。" />
 
@@ -45,21 +45,21 @@ macOS 当前要求 **macOS 13 或更高版本**。Windows 当前只提供 **x64*
     3. 将 **Wordless** 图标拖入 **Applications（应用程序）** 文件夹。
     4. 等待复制完成，弹出 DMG，然后从“应用程序”打开 Wordless。不要一直从 DMG 窗口运行应用。
     5. 内测包未经过 Apple Developer ID 公证时，macOS 可能提示无法验证开发者。回到 Finder，在“应用程序”中按住 Control 点击 Wordless，选择 **打开**；或进入 **系统设置 → 隐私与安全性**，确认刚刚被阻止的 Wordless 后选择 **仍要打开**。
-    6. 仅当安装包来自上面的 Wordless 官方 GitHub 仓库时确认打开。不要关闭 Gatekeeper，也不要全局降低 macOS 安全设置。
+    6. 仅当安装包来自 Wordless 官方下载域名或上面的官方 GitHub 仓库时确认打开。不要关闭 Gatekeeper，也不要全局降低 macOS 安全设置。
     </Steps>
   </TabItem>
   <TabItem label="Windows">
     <Steps>
     1. 下载 `Wordless-<版本>-win-x64.exe`。
     2. 双击安装程序，按向导选择安装位置并完成安装。
-    3. 如果 SmartScreen 显示“Windows 已保护你的电脑”，先确认文件来自 Wordless 官方 GitHub Release，再选择 **更多信息 → 仍要运行**。
+    3. 如果 SmartScreen 显示“Windows 已保护你的电脑”，先确认文件来自 Wordless 官方下载域名或 GitHub Release，再选择 **更多信息 → 仍要运行**。
     4. 从开始菜单或桌面快捷方式启动 Wordless。
     </Steps>
   </TabItem>
 </Tabs>
 
 <Prerequisites title="下载前的安全检查">
-- 浏览器地址栏中的仓库必须是 `github.com/Austin-Patrician/Wordless`
+- 浏览器地址应为 `wordless.20250230.xyz`、`download.wordless.20250230.xyz` 或 `github.com/Austin-Patrician/Wordless`
 - Release 应有明确版本号和发布说明，不要使用聊天或网盘转发的安装包
 - 升级已有版本前先退出 Wordless；你的工作区文件不会被安装程序删除
 </Prerequisites>

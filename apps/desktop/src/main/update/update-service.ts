@@ -6,6 +6,7 @@ import type { DesktopAppInfo, DesktopHostEvent, DesktopRelease, DesktopUpdateSna
 import { DesktopReleaseService } from "./release-service";
 
 const REPOSITORY_URL = "https://github.com/Austin-Patrician/Wordless";
+const R2_UPDATE_URL = "https://download.wordless.20250230.xyz/releases";
 
 type SendHostEvent = (event: DesktopHostEvent) => void;
 
@@ -30,6 +31,7 @@ export class DesktopUpdateService {
   };
   private readonly releases: DesktopReleaseService;
   private readonly send: SendHostEvent;
+  private suppressUpdaterErrors = false;
 
   constructor(send: SendHostEvent, userDataPath = app.getPath("userData"), downloadsPath = app.getPath("downloads")) {
     this.send = send;
@@ -40,6 +42,7 @@ export class DesktopUpdateService {
   initialize(): void {
     autoUpdater.autoDownload = false;
     autoUpdater.autoInstallOnAppQuit = false;
+    this.useR2Feed();
     autoUpdater.on("checking-for-update", () => this.update({ state: "checking", error: undefined }));
     autoUpdater.on("update-not-available", () => this.update({ state: "up-to-date", checkedAt: Date.now(), availableVersion: undefined, releaseNotes: undefined, progress: undefined, error: undefined }));
     autoUpdater.on("update-available", (info) => {
@@ -65,7 +68,9 @@ export class DesktopUpdateService {
     });
     autoUpdater.on("download-progress", (progress) => this.update({ state: "downloading", progress: Math.round(progress.percent), error: undefined }));
     autoUpdater.on("update-downloaded", (info) => this.update({ state: "ready", availableVersion: versionFrom(info) ?? this.snapshot.availableVersion, releaseNotes: notesFrom(info) ?? this.snapshot.releaseNotes, progress: 100, installMode: this.snapshot.installMode, error: undefined }));
-    autoUpdater.on("error", (error) => this.fail(error));
+    autoUpdater.on("error", (error) => {
+      if (!this.suppressUpdaterErrors) this.fail(error);
+    });
   }
 
   getAppInfo(): DesktopAppInfo {
@@ -83,10 +88,19 @@ export class DesktopUpdateService {
   async check(): Promise<DesktopUpdateSnapshot> {
     if (!app.isPackaged) return this.getSnapshot();
     this.update({ state: "checking", error: undefined });
+    this.suppressUpdaterErrors = true;
     try {
+      this.useR2Feed();
       await autoUpdater.checkForUpdates();
-    } catch (error) {
-      this.fail(error);
+    } catch {
+      try {
+        this.useGithubFeed();
+        await autoUpdater.checkForUpdates();
+      } catch (error) {
+        this.fail(error);
+      }
+    } finally {
+      this.suppressUpdaterErrors = false;
     }
     return this.getSnapshot();
   }
@@ -111,10 +125,19 @@ export class DesktopUpdateService {
       return this.getSnapshot();
     }
 
+    this.suppressUpdaterErrors = true;
     try {
       await autoUpdater.downloadUpdate();
-    } catch (error) {
-      this.fail(error);
+    } catch {
+      try {
+        this.useGithubFeed();
+        await autoUpdater.checkForUpdates();
+        await autoUpdater.downloadUpdate();
+      } catch (error) {
+        this.fail(error);
+      }
+    } finally {
+      this.suppressUpdaterErrors = false;
     }
     return this.getSnapshot();
   }
@@ -145,6 +168,14 @@ export class DesktopUpdateService {
 
   private fail(error: unknown): void {
     this.update({ state: "error", error: error instanceof Error ? error.message : String(error), progress: undefined });
+  }
+
+  private useR2Feed(): void {
+    autoUpdater.setFeedURL({ provider: "generic", url: process.env.WORDLESS_UPDATE_BASE_URL?.trim() || R2_UPDATE_URL });
+  }
+
+  private useGithubFeed(): void {
+    autoUpdater.setFeedURL({ provider: "github", owner: "Austin-Patrician", repo: "Wordless" });
   }
 }
 

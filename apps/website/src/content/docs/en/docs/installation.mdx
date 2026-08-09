@@ -1,6 +1,6 @@
 ---
 title: Install Wordless
-description: Choose the correct Wordless package from GitHub Releases and complete the first launch on macOS or Windows.
+description: Choose the correct package from the official Wordless download page and complete the first launch on macOS or Windows.
 ---
 import { Steps, Tabs, TabItem } from '@astrojs/starlight/components';
 import Prerequisites from '../../../../components/docs/Prerequisites.astro';
@@ -9,12 +9,12 @@ import ScreenshotFrame from '../../../../components/docs/ScreenshotFrame.astro';
 
 ## Download
 
-Wordless desktop installers are published on the project's GitHub Releases page:
+Wordless desktop installers are available from the official download page, with GitHub Releases retained as a fallback:
 
-- **Latest stable release:** [Open the latest Wordless release](https://github.com/Austin-Patrician/Wordless/releases/latest)
+- **Latest stable release:** [Open the official Wordless download page](https://wordless.20250230.xyz/#download)
 - **Previous releases:** [View all releases](https://github.com/Austin-Patrician/Wordless/releases)
 
-On the release page, scroll to **Assets** and expand it if necessary. The version changes between releases, as in `Wordless-0.1.1-mac-arm64.dmg`; identify the package by the platform and architecture at the end of its filename.
+To choose an architecture manually from the GitHub fallback, scroll to **Assets** and expand it if necessary. The version changes between releases, as in `Wordless-0.1.1-mac-arm64.dmg`; identify the package by the platform and architecture at the end of its filename.
 
 <ScreenshotFrame src="/images/settings/github-release-assets.png" alt="Expanded Assets section on a Wordless GitHub Release" caption="In the Release Assets section, choose the DMG or Windows installer that matches your device. Do not download .blockmap, .yml, or Source code files." />
 
@@ -45,21 +45,21 @@ Do not use these files as installers:
     3. Drag **Wordless** into **Applications**.
     4. Wait for the copy to finish, eject the DMG, and open Wordless from Applications. Do not keep running it from the DMG window.
     5. Because test builds are not notarized with an Apple Developer ID, macOS may say it cannot verify the developer. In Finder, Control-click Wordless in Applications and choose **Open**; alternatively, use **System Settings → Privacy & Security → Open Anyway** for the blocked Wordless launch.
-    6. Confirm this only for a package downloaded from the official Wordless GitHub repository above. Do not disable Gatekeeper or globally lower macOS security.
+    6. Confirm this only for a package downloaded from the official Wordless download domain or GitHub repository above. Do not disable Gatekeeper or globally lower macOS security.
     </Steps>
   </TabItem>
   <TabItem label="Windows">
     <Steps>
     1. Download `Wordless-<version>-win-x64.exe`.
     2. Run the installer, choose an installation folder, and complete the wizard.
-    3. If SmartScreen displays “Windows protected your PC,” first verify the official GitHub Release source, then choose **More info → Run anyway**.
+    3. If SmartScreen displays “Windows protected your PC,” first verify the official Wordless download domain or GitHub Release source, then choose **More info → Run anyway**.
     4. Start Wordless from the Start menu or desktop shortcut.
     </Steps>
   </TabItem>
 </Tabs>
 
 <Prerequisites title="Safety check before installation">
-- The browser address must be `github.com/Austin-Patrician/Wordless`
+- The browser address must be `wordless.20250230.xyz`, `download.wordless.20250230.xyz`, or `github.com/Austin-Patrician/Wordless`
 - Use a release with a clear version and release notes, not an installer forwarded through chat or file sharing
 - Quit Wordless before upgrading; installation does not remove your workspace files
 </Prerequisites>

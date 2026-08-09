@@ -212,3 +212,80 @@ jobs:
           fi
           gh release upload "$RELEASE_TAG" release/* --repo "$GITHUB_REPOSITORY" --clobber
           gh release edit "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --draft=false
+
+  mirror-r2:
+    needs: [prepare, publish]
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+      AWS_DEFAULT_REGION: auto
+      R2_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+      R2_BUCKET_NAME: ${{ vars.R2_BUCKET_NAME }}
+      R2_PUBLIC_BASE_URL: ${{ vars.R2_PUBLIC_BASE_URL }}
+      RELEASE_TAG: ${{ needs.prepare.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare.outputs.tag }}
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: wordless-*
+          path: release
+          merge-multiple: true
+      - name: Validate R2 configuration
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$R2_ACCOUNT_ID" || { echo "Repository variable CLOUDFLARE_ACCOUNT_ID is required" >&2; exit 1; }
+          test -n "$R2_BUCKET_NAME" || { echo "Repository variable R2_BUCKET_NAME is required" >&2; exit 1; }
+          [[ "$R2_PUBLIC_BASE_URL" =~ ^https:// ]] || { echo "Repository variable R2_PUBLIC_BASE_URL must be an HTTPS URL" >&2; exit 1; }
+          test -n "$AWS_ACCESS_KEY_ID" || { echo "Repository secret R2_ACCESS_KEY_ID is required" >&2; exit 1; }
+          test -n "$AWS_SECRET_ACCESS_KEY" || { echo "Repository secret R2_SECRET_ACCESS_KEY is required" >&2; exit 1; }
+      - name: Generate mirror checksums and release manifest
+        shell: bash
+        run: |
+          set -euo pipefail
+          find release -maxdepth 1 -type f ! -name SHA256SUMS.txt -printf '%f\0' | sort -z | xargs -0 -I{} sha256sum "release/{}" | sed 's#release/##' > release/SHA256SUMS.txt
+          gh api "repos/$GITHUB_REPOSITORY/releases?per_page=20" > release/github-releases.json
+          node apps/desktop/scripts/generate-release-manifest.mjs \
+            --release-dir release \
+            --github-releases release/github-releases.json \
+            --output release/releases.json \
+            --public-base-url "${R2_PUBLIC_BASE_URL%/}/releases" \
+            --current-tag "$RELEASE_TAG"
+      - name: Upload release files to Cloudflare R2
+        shell: bash
+        run: |
+          set -euo pipefail
+          ENDPOINT="https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com"
+          while IFS= read -r -d '' file; do
+            name="$(basename "$file")"
+            aws s3 cp "$file" "s3://${R2_BUCKET_NAME}/releases/${name}" \
+              --endpoint-url "$ENDPOINT" \
+              --cache-control "public, max-age=31536000, immutable" \
+              --no-progress
+          done < <(find release -maxdepth 1 -type f ! -name github-releases.json ! -name releases.json -print0)
+          aws s3 cp release/releases.json "s3://${R2_BUCKET_NAME}/releases/releases.json" \
+            --endpoint-url "$ENDPOINT" \
+            --content-type "application/json" \
+            --cache-control "no-cache, max-age=0" \
+            --no-progress
+          for metadata in latest.yml latest-mac.yml SHA256SUMS.txt; do
+            if [[ -f "release/$metadata" ]]; then
+              aws s3 cp "release/$metadata" "s3://${R2_BUCKET_NAME}/releases/$metadata" \
+                --endpoint-url "$ENDPOINT" \
+                --content-type "text/yaml" \
+                --cache-control "no-cache, max-age=0" \
+                --no-progress
+            fi
+          done
+      - name: Verify public R2 release manifest
+        shell: bash
+        run: |
+          set -euo pipefail
+          MANIFEST_URL="${R2_PUBLIC_BASE_URL%/}/releases/releases.json"
+          curl --fail --location --retry 5 --retry-all-errors --max-time 30 "$MANIFEST_URL" -o downloaded-releases.json
+          node -e 'const value = require("./downloaded-releases.json"); if (value.schemaVersion !== 1 || !value.releases?.some((release) => `v${release.version}` === process.env.RELEASE_TAG)) process.exit(1)'
