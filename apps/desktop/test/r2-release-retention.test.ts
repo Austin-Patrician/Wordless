@@ -9,7 +9,7 @@ import test from "node:test";
 const execFileAsync = promisify(execFile);
 const retentionScript = new URL("../scripts/plan-r2-release-retention.mjs", import.meta.url);
 
-test("R2 retention keeps five stable releases and never deletes shared metadata", async () => {
+test("R2 retention keeps five stable version directories and never deletes shared or legacy objects", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "wordless-r2-retention-"));
   try {
     const releasesPath = path.join(root, "github-releases.json");
@@ -23,11 +23,13 @@ test("R2 retention keeps five stable releases and never deletes shared metadata"
     }))));
     await writeFile(objectsPath, JSON.stringify({ Contents: [
       ...versions.flatMap((version) => [
-        { Key: `releases/Wordless-${version}-mac-arm64.dmg` },
-        { Key: `releases/Wordless-${version}-win-x64.exe.blockmap` },
+        { Key: `releases/v${version}/Wordless-${version}-mac-arm64.dmg` },
+        { Key: `releases/v${version}/Wordless-${version}-win-x64.exe.blockmap` },
+        { Key: `releases/v${version}/SHA256SUMS.txt` },
       ]),
       { Key: "releases/releases.json" },
       { Key: "releases/latest-mac.yml" },
+      { Key: "releases/Wordless-0.1.8-mac-arm64.dmg" },
       { Key: "releases/unrecognized-user-file.bin" },
     ] }));
 
@@ -40,8 +42,9 @@ test("R2 retention keeps five stable releases and never deletes shared metadata"
     ]);
     const plan = JSON.parse(await readFile(path.join(outputDirectory, "delete-001.json"), "utf8"));
     assert.deepEqual(plan.Objects, [
-      { Key: "releases/Wordless-0.1.8-mac-arm64.dmg" },
-      { Key: "releases/Wordless-0.1.8-win-x64.exe.blockmap" },
+      { Key: "releases/v0.1.8/Wordless-0.1.8-mac-arm64.dmg" },
+      { Key: "releases/v0.1.8/Wordless-0.1.8-win-x64.exe.blockmap" },
+      { Key: "releases/v0.1.8/SHA256SUMS.txt" },
     ]);
 
     await assert.rejects(execFileAsync(process.execPath, [
@@ -51,11 +54,11 @@ test("R2 retention keeps five stable releases and never deletes shared metadata"
       "--output-directory", path.join(root, "failed-verification"),
       "--retain", "5",
       "--verify-clean",
-    ]), /retention verification found 2 stale release artifacts/);
+    ]), /retention verification found 3 stale release artifacts/);
 
     const cleanObjectsPath = path.join(root, "r2-objects-clean.json");
     const objects = JSON.parse(await readFile(objectsPath, "utf8"));
-    objects.Contents = objects.Contents.filter(({ Key }: { Key: string }) => !Key.includes("Wordless-0.1.8-"));
+    objects.Contents = objects.Contents.filter(({ Key }: { Key: string }) => !Key.startsWith("releases/v0.1.8/"));
     await writeFile(cleanObjectsPath, JSON.stringify(objects));
     await execFileAsync(process.execPath, [
       retentionScript.pathname,

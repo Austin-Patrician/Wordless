@@ -29,8 +29,8 @@ const stableVersions = githubReleases
 const retainedVersions = new Set(stableVersions.slice(0, retain));
 if (retainedVersions.size < 1) throw new Error("No stable GitHub release versions are available for retention");
 
-// Only versioned installer artifacts are eligible. Shared metadata and unknown objects are never removed.
-const artifactPattern = /^releases\/Wordless-(\d+\.\d+\.\d+)-(?:mac-(?:arm64|x64)\.(?:dmg|zip)(?:\.blockmap)?|win-x64\.exe(?:\.blockmap)?)$/;
+// Only objects inside strict semantic-version directories are eligible. Shared and legacy objects are never removed.
+const artifactPattern = /^releases\/v(\d+\.\d+\.\d+)\/[^/]+$/;
 const staleKeys = (r2Objects.Contents ?? []).flatMap((object) => {
   if (!object || typeof object.Key !== "string") return [];
   const match = artifactPattern.exec(object.Key);

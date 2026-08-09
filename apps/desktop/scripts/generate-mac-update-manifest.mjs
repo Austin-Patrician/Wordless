@@ -9,6 +9,11 @@ function argument(name) {
   return process.argv[index + 1];
 }
 
+function optionalArgument(name, fallback = "") {
+  const index = process.argv.indexOf(name);
+  return index < 0 || !process.argv[index + 1] ? fallback : process.argv[index + 1];
+}
+
 async function sha512File(filePath) {
   const hash = createHash("sha512");
   for await (const chunk of createReadStream(filePath)) hash.update(chunk);
@@ -18,6 +23,8 @@ async function sha512File(filePath) {
 const releaseDirectory = path.resolve(argument("--release-dir"));
 const version = argument("--version").replace(/^v/i, "");
 const outputPath = path.resolve(argument("--output"));
+const urlPrefix = optionalArgument("--url-prefix").replace(/^\/+|\/+$/g, "");
+const artifactUrl = (name) => urlPrefix ? `${urlPrefix}/${name}` : name;
 const escapedVersion = version.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 const artifactPattern = new RegExp(`^Wordless-${escapedVersion}-mac-(?:arm64|x64)\\.(?:zip|dmg)$`, "i");
 const names = (await readdir(releaseDirectory)).filter((name) => artifactPattern.test(name)).sort((left, right) => {
@@ -42,14 +49,13 @@ const lines = [
   `version: ${version}`,
   "files:",
   ...files.flatMap((file) => [
-    `  - url: ${file.name}`,
+    `  - url: ${artifactUrl(file.name)}`,
     `    sha512: ${file.sha512}`,
     `    size: ${file.size}`,
   ]),
-  `path: ${primary.name}`,
+  `path: ${artifactUrl(primary.name)}`,
   `sha512: ${primary.sha512}`,
   `releaseDate: '${new Date().toISOString()}'`,
   "",
 ];
 await writeFile(outputPath, lines.join("\n"), "utf8");
-

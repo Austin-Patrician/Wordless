@@ -27,12 +27,16 @@ async function sha256File(filePath) {
 
 const releaseDirectory = path.resolve(argument("--release-dir"));
 const githubReleasesPath = path.resolve(argument("--github-releases"));
+const r2ObjectsPath = path.resolve(argument("--r2-objects"));
 const outputPath = path.resolve(argument("--output"));
 const publicBaseUrl = normalizedBaseUrl(argument("--public-base-url"));
 const currentTag = argument("--current-tag");
 
 const githubReleases = JSON.parse(await readFile(githubReleasesPath, "utf8"));
+const r2Objects = JSON.parse(await readFile(r2ObjectsPath, "utf8"));
 if (!Array.isArray(githubReleases)) throw new Error("GitHub releases input must be an array");
+if (r2Objects.Contents !== undefined && !Array.isArray(r2Objects.Contents)) throw new Error("R2 objects input has an invalid Contents field");
+const r2Keys = new Set((r2Objects.Contents ?? []).flatMap((object) => object && typeof object.Key === "string" ? [object.Key] : []));
 
 const localNames = new Set((await readdir(releaseDirectory, { withFileTypes: true })).filter((entry) => entry.isFile()).map((entry) => entry.name));
 const localFiles = new Map();
@@ -56,6 +60,9 @@ const releases = githubReleases
       ? release.assets.flatMap((asset) => {
           if (!asset || typeof asset.name !== "string" || typeof asset.browser_download_url !== "string") return [];
           const localFile = release.tag_name === currentTag ? localFiles.get(asset.name) : undefined;
+          const version = release.tag_name.replace(/^v/i, "");
+          const r2Key = `releases/v${version}/${asset.name}`;
+          const mirrored = r2Keys.has(r2Key);
           if (localFile && typeof asset.size === "number" && asset.size !== localFile.size) {
             throw new Error(`Published asset size does not match the mirror input for ${asset.name}`);
           }
@@ -64,7 +71,7 @@ const releases = githubReleases
             size: localFile?.size ?? (typeof asset.size === "number" ? asset.size : 0),
             sha256: localFile?.sha256,
             urls: [
-              ...(localFile ? [assetUrl(publicBaseUrl, asset.name)] : []),
+              ...(mirrored ? [assetUrl(`${publicBaseUrl}/v${version}`, asset.name)] : []),
               asset.browser_download_url,
             ],
           }];

@@ -263,32 +263,49 @@ jobs:
           gh release download "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --dir release
           test -f release/SHA256SUMS.txt || { echo "Published release is missing SHA256SUMS.txt" >&2; exit 1; }
           (cd release && sha256sum --check SHA256SUMS.txt)
-      - name: Generate release manifest from published assets
+      - name: Generate versioned update metadata
         shell: bash
         run: |
           set -euo pipefail
-          gh api "repos/$GITHUB_REPOSITORY/releases?per_page=20" > release/github-releases.json
-          node apps/desktop/scripts/generate-release-manifest.mjs \
+          VERSION="${RELEASE_TAG#v}"
+          node apps/desktop/scripts/generate-windows-update-manifest.mjs \
             --release-dir release \
-            --github-releases release/github-releases.json \
-            --output release/releases.json \
-            --public-base-url "${R2_PUBLIC_BASE_URL%/}/releases" \
-            --current-tag "$RELEASE_TAG"
-      - name: Upload release files to Cloudflare R2
+            --version "$VERSION" \
+            --url-prefix "$RELEASE_TAG" \
+            --output release/r2-latest.yml
+          node apps/desktop/scripts/generate-mac-update-manifest.mjs \
+            --release-dir release \
+            --version "$VERSION" \
+            --url-prefix "$RELEASE_TAG" \
+            --output release/r2-latest-mac.yml
+      - name: Upload versioned release files to Cloudflare R2
         shell: bash
         run: |
           set -euo pipefail
           ENDPOINT="https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com"
+          VERSION="${RELEASE_TAG#v}"
+          files=(
+            SHA256SUMS.txt
+            "Wordless-${VERSION}-mac-arm64.dmg"
+            "Wordless-${VERSION}-mac-x64.dmg"
+            "Wordless-${VERSION}-mac-arm64.zip"
+            "Wordless-${VERSION}-mac-x64.zip"
+            "Wordless-${VERSION}-mac-arm64.zip.blockmap"
+            "Wordless-${VERSION}-mac-x64.zip.blockmap"
+            "Wordless-${VERSION}-win-x64.exe"
+            "Wordless-${VERSION}-win-x64.exe.blockmap"
+          )
           upload_and_verify() {
             local file="$1"
-            local cache_control="$2"
-            local content_type="${3:-}"
+            local key="$2"
+            local cache_control="$3"
+            local content_type="${4:-}"
             local name size hash remote
             name="$(basename "$file")"
             size="$(stat -c %s "$file")"
             hash="$(sha256sum "$file" | cut -d ' ' -f 1)"
             local -a args=(
-              "$file" "s3://${R2_BUCKET_NAME}/releases/${name}"
+              "$file" "s3://${R2_BUCKET_NAME}/${key}"
               --endpoint-url "$ENDPOINT"
               --cache-control "$cache_control"
               --metadata "sha256=$hash"
@@ -298,7 +315,7 @@ jobs:
             aws s3 cp "${args[@]}"
             remote="$(aws s3api head-object \
               --bucket "$R2_BUCKET_NAME" \
-              --key "releases/${name}" \
+              --key "$key" \
               --endpoint-url "$ENDPOINT" \
               --query '[ContentLength, Metadata.sha256]' \
               --output text)"
@@ -306,42 +323,24 @@ jobs:
             test "$remote_size" = "$size" || { echo "R2 size mismatch for $name" >&2; exit 1; }
             test "$remote_hash" = "$hash" || { echo "R2 hash metadata mismatch for $name" >&2; exit 1; }
           }
-          while IFS= read -r -d '' file; do
-            name="$(basename "$file")"
+          for name in "${files[@]}"; do
+            file="release/$name"
+            test -f "$file" || { echo "Published release is missing required R2 asset: $name" >&2; exit 1; }
             case "$name" in
-              latest.yml|latest-mac.yml) upload_and_verify "$file" "no-cache, max-age=0" "text/yaml" ;;
-              SHA256SUMS.txt) upload_and_verify "$file" "no-cache, max-age=0" "text/plain" ;;
-              *) upload_and_verify "$file" "public, max-age=31536000, immutable" ;;
+              SHA256SUMS.txt) content_type="text/plain" ;;
+              *.yml) content_type="text/yaml" ;;
+              *) content_type="" ;;
             esac
-          done < <(find release -maxdepth 1 -type f ! -name github-releases.json ! -name releases.json -print0)
-          upload_and_verify release/releases.json "no-cache, max-age=0" "application/json"
-      - name: Verify public R2 release manifest
-        shell: bash
-        run: |
-          set -euo pipefail
-          MANIFEST_URL="${R2_PUBLIC_BASE_URL%/}/releases/releases.json"
-          curl --fail --location --retry 5 --retry-all-errors --max-time 30 "$MANIFEST_URL" -o downloaded-releases.json
-          node - <<'NODE'
-          void (async () => {
-            const manifest = require("./downloaded-releases.json");
-            const release = manifest.releases?.find((candidate) => `v${candidate.version}` === process.env.RELEASE_TAG);
-            if (manifest.schemaVersion !== 1 || !release) throw new Error("The public R2 manifest does not contain the mirrored release");
-            const base = `${process.env.R2_PUBLIC_BASE_URL.replace(/\/$/, "")}/releases/`;
-            const mirrored = release.assets.filter((asset) => asset.urls?.[0]?.startsWith(base));
-            if (!mirrored.length) throw new Error("The public manifest does not expose R2 assets");
-            await Promise.all(mirrored.map(async (asset) => {
-              const response = await fetch(asset.urls[0], { method: "HEAD", signal: AbortSignal.timeout(30_000) });
-              const size = Number(response.headers.get("content-length"));
-              if (!response.ok || size !== asset.size) throw new Error(`Public R2 asset verification failed for ${asset.name}`);
-            }));
-            console.log(`Verified ${mirrored.length} public R2 assets for ${process.env.RELEASE_TAG}`);
-          })();
-          NODE
+            upload_and_verify "$file" "releases/${RELEASE_TAG}/${name}" "public, max-age=31536000, immutable" "$content_type"
+          done
       - name: Retain the latest five R2 releases
         shell: bash
         run: |
           set -euo pipefail
           ENDPOINT="https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com"
+          gh api "repos/$GITHUB_REPOSITORY/releases?per_page=20" > release/github-releases.json
+          LATEST_STABLE_TAG="$(jq -r '[.[] | select(.draft == false and .prerelease == false and (.tag_name | test("^v[0-9]+\\.[0-9]+\\.[0-9]+$")))] | first | .tag_name // empty' release/github-releases.json)"
+          test "$LATEST_STABLE_TAG" = "$RELEASE_TAG" || { echo "R2 update metadata can only be published for the latest stable release ($LATEST_STABLE_TAG), not $RELEASE_TAG" >&2; exit 1; }
           aws s3api list-objects-v2 \
             --bucket "$R2_BUCKET_NAME" \
             --prefix "releases/" \
@@ -371,3 +370,83 @@ jobs:
             --output-directory r2-retention-verification \
             --retain "$R2_RELEASE_RETENTION" \
             --verify-clean
+      - name: Generate release manifest from retained R2 assets
+        shell: bash
+        run: |
+          set -euo pipefail
+          node apps/desktop/scripts/generate-release-manifest.mjs \
+            --release-dir release \
+            --github-releases release/github-releases.json \
+            --r2-objects r2-objects-after-prune.json \
+            --output release/releases.json \
+            --public-base-url "${R2_PUBLIC_BASE_URL%/}/releases" \
+            --current-tag "$RELEASE_TAG"
+      - name: Publish global R2 update metadata
+        shell: bash
+        run: |
+          set -euo pipefail
+          ENDPOINT="https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com"
+          upload_and_verify() {
+            local file="$1"
+            local key="$2"
+            local content_type="$3"
+            local name size hash remote
+            name="$(basename "$file")"
+            size="$(stat -c %s "$file")"
+            hash="$(sha256sum "$file" | cut -d ' ' -f 1)"
+            local -a args=(
+              "$file" "s3://${R2_BUCKET_NAME}/${key}"
+              --endpoint-url "$ENDPOINT"
+              --cache-control "no-cache, max-age=0"
+              --metadata "sha256=$hash"
+              --content-type "$content_type"
+              --no-progress
+            )
+            aws s3 cp "${args[@]}"
+            remote="$(aws s3api head-object \
+              --bucket "$R2_BUCKET_NAME" \
+              --key "$key" \
+              --endpoint-url "$ENDPOINT" \
+              --query '[ContentLength, Metadata.sha256]' \
+              --output text)"
+            read -r remote_size remote_hash <<< "$remote"
+            test "$remote_size" = "$size" || { echo "R2 size mismatch for $name" >&2; exit 1; }
+            test "$remote_hash" = "$hash" || { echo "R2 hash metadata mismatch for $name" >&2; exit 1; }
+          }
+          upload_and_verify release/r2-latest.yml releases/latest.yml text/yaml
+          upload_and_verify release/r2-latest-mac.yml releases/latest-mac.yml text/yaml
+          upload_and_verify release/releases.json releases/releases.json application/json
+      - name: Verify public R2 release manifest
+        shell: bash
+        run: |
+          set -euo pipefail
+          MANIFEST_URL="${R2_PUBLIC_BASE_URL%/}/releases/releases.json"
+          curl --fail --location --retry 5 --retry-all-errors --max-time 30 "$MANIFEST_URL" -o downloaded-releases.json
+          curl --fail --location --retry 5 --retry-all-errors --max-time 30 "${R2_PUBLIC_BASE_URL%/}/releases/latest.yml" -o downloaded-latest.yml
+          curl --fail --location --retry 5 --retry-all-errors --max-time 30 "${R2_PUBLIC_BASE_URL%/}/releases/latest-mac.yml" -o downloaded-latest-mac.yml
+          grep -Fq "url: ${RELEASE_TAG}/" downloaded-latest.yml || { echo "Public Windows update metadata does not point to $RELEASE_TAG" >&2; exit 1; }
+          grep -Fq "url: ${RELEASE_TAG}/" downloaded-latest-mac.yml || { echo "Public macOS update metadata does not point to $RELEASE_TAG" >&2; exit 1; }
+          node - <<'NODE'
+          void (async () => {
+            const manifest = require("./downloaded-releases.json");
+            const release = manifest.releases?.find((candidate) => `v${candidate.version}` === process.env.RELEASE_TAG);
+            if (manifest.schemaVersion !== 1 || !release) throw new Error("The public R2 manifest does not contain the mirrored release");
+            const base = `${process.env.R2_PUBLIC_BASE_URL.replace(/\/$/, "")}/releases/`;
+            const mirrored = release.assets.filter((asset) => asset.urls?.[0]?.startsWith(base));
+            if (!mirrored.length) throw new Error("The public manifest does not expose R2 assets");
+            await Promise.all(mirrored.map(async (asset) => {
+              const response = await fetch(asset.urls[0], {
+                method: "HEAD",
+                headers: { "accept-encoding": "identity" },
+                signal: AbortSignal.timeout(30_000),
+              });
+              const contentLength = response.headers.get("content-length");
+              const size = contentLength === null ? undefined : Number(contentLength);
+              if (!response.ok || size !== asset.size) {
+                const encoding = response.headers.get("content-encoding") ?? "identity";
+                throw new Error(`Public R2 asset verification failed for ${asset.name}: status=${response.status}, expected=${asset.size}, actual=${contentLength ?? "missing"}, encoding=${encoding}`);
+              }
+            }));
+            console.log(`Verified ${mirrored.length} public R2 assets for ${process.env.RELEASE_TAG}`);
+          })();
+          NODE
