@@ -1,0 +1,220 @@
+---
+import LegalLayout from './LegalLayout.astro';
+
+interface Props { lang: 'en' | 'zh-CN' }
+const { lang } = Astro.props;
+const english = lang === 'en';
+const sections = english
+  ? [
+      { id: 'acceptance', label: 'Acceptance' },
+      { id: 'service', label: 'The service' },
+      { id: 'accounts-sync', label: 'Accounts and sync' },
+      { id: 'license', label: 'Software license' },
+      { id: 'responsibilities', label: 'Your responsibilities' },
+      { id: 'content-ai', label: 'Content and AI outputs' },
+      { id: 'third-parties', label: 'Third-party services' },
+      { id: 'availability', label: 'Availability and changes' },
+      { id: 'disclaimers', label: 'Disclaimers and liability' },
+      { id: 'termination', label: 'Termination' },
+      { id: 'changes-contact', label: 'Changes and contact' },
+    ]
+  : [
+      { id: 'acceptance', label: '条款接受' },
+      { id: 'service', label: '服务说明' },
+      { id: 'accounts-sync', label: '账号与同步' },
+      { id: 'license', label: '软件许可' },
+      { id: 'responsibilities', label: '用户责任' },
+      { id: 'content-ai', label: '内容与 AI 输出' },
+      { id: 'third-parties', label: '第三方服务' },
+      { id: 'availability', label: '可用性与变更' },
+      { id: 'disclaimers', label: '免责声明与责任限制' },
+      { id: 'termination', label: '终止' },
+      { id: 'changes-contact', label: '变更与联系' },
+    ];
+---
+
+<LegalLayout
+  lang={lang}
+  eyebrow={english ? 'Legal / Service agreement' : '法律 / 服务协议'}
+  title={english ? 'Terms of Service' : '服务条款'}
+  description={english
+    ? 'The terms that apply when you download, configure, and use the Wordless desktop application, website, and optional connected services.'
+    : '适用于下载、配置和使用 Wordless 桌面应用、网站及可选连接服务的条款。'}
+  effectiveDate={english ? 'August 8, 2026' : '2026年8月8日'}
+  updatedDate={english ? 'August 8, 2026' : '2026年8月8日'}
+  alternateHref={english ? '/zh/terms/' : '/terms/'}
+  alternateLabel={english ? '中文' : 'English'}
+  sections={sections}
+>
+  {english ? (
+    <>
+      <section id="acceptance">
+        <h2>1. Acceptance of these terms</h2>
+        <p>These Terms of Service (“Terms”) govern your use of the Wordless desktop application, website, documentation, release services, and optional integrations (collectively, the “Service”). Wordless is maintained by Austin Patrician and Wordless contributors (“Wordless,” “we,” or “us”).</p>
+        <p>By downloading, installing, accessing, or using the Service, you agree to these Terms and the <a href="/privacy/">Privacy Policy</a>. If you do not agree, do not use the Service.</p>
+      </section>
+
+      <section id="service">
+        <h2>2. The Wordless service</h2>
+        <p>Wordless is a local-first desktop agent workspace for conversations, workspace-aware tasks, tool execution, documents, presentations, spreadsheets, data analysis, code, and other supported workflows. Features may depend on your operating system, configured models, third-party services, workspace permissions, or separately installed components.</p>
+        <p>You can use core local functionality without a Wordless-hosted account. Some actions require network access because you have chosen a remote model Provider, Google service, GitHub release, MCP Connector, or another external integration.</p>
+      </section>
+
+      <section id="accounts-sync">
+        <h2>3. Google accounts and optional cloud sync</h2>
+        <p>Google sign-in is optional and is used to display the account identity you selected. Signing in does not automatically enable cloud sync.</p>
+        <p>If you separately enable Google Cloud Sync, you authorize Wordless to use the Google Drive app-data scope to synchronize eligible preferences and sanitized model metadata. You remain responsible for selecting the correct Google account, reviewing conflicts, and protecting access to your device and Google account.</p>
+        <p>You may pause synchronization, delete Wordless cloud data, sign out, or revoke access through your Google account. Details are provided in the <a href="/privacy/">Privacy Policy</a>.</p>
+      </section>
+
+      <section id="license">
+        <h2>4. Software license and commercial use</h2>
+        <p>Use of Wordless source code, binaries, documentation, visual assets, modifications, and derivative works is governed by the <a href="https://github.com/Austin-Patrician/Wordless/blob/main/LICENSE" target="_blank" rel="noreferrer">Wordless Source-Available License 1.0</a>. These Terms do not expand that license.</p>
+        <ul>
+          <li>Permitted non-commercial uses include personal use, education or academic research, evaluation and testing, and qualifying non-commercial internal use, subject to the license.</li>
+          <li>Commercial use requires a separate prior written agreement from an authorized copyright holder.</li>
+          <li>Third-party components remain subject to their own licenses and notices.</li>
+          <li>No trademark rights are granted except as necessary to identify the origin of an unmodified copy.</li>
+        </ul>
+        <p>Opening an issue or contacting us about commercial authorization does not itself grant commercial rights.</p>
+      </section>
+
+      <section id="responsibilities">
+        <h2>5. Your responsibilities</h2>
+        <p>You are responsible for:</p>
+        <ul>
+          <li>Having the rights and permissions required for files, prompts, credentials, accounts, and other material you provide.</li>
+          <li>Reviewing tool approvals, file changes, commands, generated artifacts, and elevated access before accepting or distributing results.</li>
+          <li>Configuring model Providers, endpoints, API keys, Connectors, and workspace permissions correctly.</li>
+          <li>Complying with applicable law, third-party terms, intellectual-property rights, privacy obligations, and workplace policies.</li>
+          <li>Maintaining backups of important files and outputs.</li>
+        </ul>
+        <p>You must not use Wordless to distribute malware, gain unauthorized access, violate another person’s rights, evade security controls, or perform unlawful or harmful activity.</p>
+      </section>
+
+      <section id="content-ai">
+        <h2>6. Your content and AI-generated outputs</h2>
+        <p>You retain the rights you already hold in content you provide. You instruct Wordless to process that content as necessary to perform the workflows you request.</p>
+        <p>Models and automated tools can produce inaccurate, incomplete, insecure, offensive, or non-unique output. You must independently review results before relying on them for legal, financial, medical, security-critical, production, publication, or other consequential decisions. Wordless does not guarantee ownership, originality, accuracy, or fitness of generated output.</p>
+      </section>
+
+      <section id="third-parties">
+        <h2>7. Third-party services</h2>
+        <p>Wordless can connect to services operated by others, including Google, GitHub, model Providers, MCP servers, OfficeCLI, and other tools you configure. Those services are not controlled by Wordless and are governed by their own licenses, pricing, availability, security, and privacy terms.</p>
+        <p>You are responsible for charges, quotas, account restrictions, and data processing arising from third-party services you choose. Wordless is not responsible for a third party’s content, conduct, outage, API change, or decision to restrict access.</p>
+      </section>
+
+      <section id="availability">
+        <h2>8. Availability, updates, and changes</h2>
+        <p>We may add, modify, suspend, or discontinue features, integrations, builds, documentation, or release channels. Updates are optional unless a particular version can no longer operate safely or compatibly. You are responsible for reviewing release notes and choosing when to install an update.</p>
+        <p>Because Wordless depends on operating systems and third-party APIs, some functionality may become unavailable without notice. We do not promise uninterrupted availability, compatibility with every Provider, or recovery of local or remote data.</p>
+      </section>
+
+      <section id="disclaimers">
+        <h2>9. Disclaimers and limitation of liability</h2>
+        <div class="policy-callout">
+          <p><strong>THE SERVICE IS PROVIDED “AS IS” AND “AS AVAILABLE.”</strong> TO THE MAXIMUM EXTENT PERMITTED BY LAW, WORDLESS AND ITS CONTRIBUTORS DISCLAIM ALL EXPRESS OR IMPLIED WARRANTIES, INCLUDING MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE, TITLE, NON-INFRINGEMENT, ACCURACY, SECURITY, AND AVAILABILITY.</p>
+        </div>
+        <p>To the maximum extent permitted by applicable law, Wordless and its contributors will not be liable for indirect, incidental, special, consequential, exemplary, or punitive damages, or for loss of data, profits, revenue, business, opportunity, or goodwill arising from the Service or your use of third-party services.</p>
+        <p>Some jurisdictions do not allow certain exclusions or limitations. In those jurisdictions, these provisions apply only to the extent permitted by law.</p>
+      </section>
+
+      <section id="termination">
+        <h2>10. Suspension and termination</h2>
+        <p>You may stop using Wordless at any time. Software-license rights terminate automatically when the applicable license terms are breached. We may restrict access to Wordless-operated resources when reasonably necessary to address abuse, security threats, legal obligations, or material violations of these Terms.</p>
+        <p>Terms that by their nature should survive termination—including license restrictions, disclaimers, liability limitations, and provisions concerning third-party rights—will continue to apply.</p>
+      </section>
+
+      <section id="changes-contact">
+        <h2>11. Changes and contact</h2>
+        <p>We may revise these Terms as the Service or applicable requirements change. The “Last updated” date identifies the current version. Continued use after revised Terms take effect means you accept the revised Terms to the extent permitted by law.</p>
+        <p>Questions, commercial authorization requests, and legal notices may be sent to <a href="mailto:15014915381z@gmail.com">15014915381z@gmail.com</a> or submitted through the <a href="https://github.com/Austin-Patrician/Wordless/issues" target="_blank" rel="noreferrer">official Wordless repository</a>. These Terms are governed by applicable law without creating rights unavailable under mandatory local law.</p>
+      </section>
+    </>
+  ) : (
+    <>
+      <section id="acceptance">
+        <h2>1. 接受本条款</h2>
+        <p>本服务条款（“本条款”）适用于 Wordless 桌面应用、网站、文档、版本发布服务及可选集成（统称“服务”）。Wordless 由 Austin Patrician 和 Wordless 贡献者维护（以下称“Wordless”或“我们”）。</p>
+        <p>下载、安装、访问或使用服务，即表示你同意本条款和<a href="/zh/privacy/">隐私政策</a>。如果你不同意，请不要使用服务。</p>
+      </section>
+
+      <section id="service">
+        <h2>2. Wordless 服务</h2>
+        <p>Wordless 是一个本地优先的桌面 Agent 工作空间，支持会话、工作区任务、工具执行、文档、演示文稿、电子表格、数据分析、代码和其他工作流。部分功能依赖操作系统、模型配置、第三方服务、工作区权限或单独安装的组件。</p>
+        <p>不使用 Wordless 托管账号也可以使用核心本地功能。只有你选择远程模型 Provider、Google 服务、GitHub Release、MCP Connector 或其他外部集成时，相关操作才需要网络连接。</p>
+      </section>
+
+      <section id="accounts-sync">
+        <h2>3. Google 账号与可选云同步</h2>
+        <p>Google 登录是可选功能，用于展示你选择的账号身份。登录不会自动启用云同步。</p>
+        <p>如果你另行启用 Google 云同步，即授权 Wordless 使用 Google Drive app-data 权限同步允许的偏好和脱敏模型元数据。你需要负责选择正确账号、处理同步冲突，并保护设备和 Google 账号的访问安全。</p>
+        <p>你可以暂停同步、删除 Wordless 云端数据、退出登录或通过 Google 账号撤销授权。详细说明见<a href="/zh/privacy/">隐私政策</a>。</p>
+      </section>
+
+      <section id="license">
+        <h2>4. 软件许可与商业使用</h2>
+        <p>Wordless 源代码、二进制文件、文档、视觉资产、修改和衍生作品的使用受 <a href="https://github.com/Austin-Patrician/Wordless/blob/main/LICENSE" target="_blank" rel="noreferrer">Wordless Source-Available License 1.0</a> 约束。本条款不会扩大该许可证授予的权利。</p>
+        <ul>
+          <li>许可证允许的非商业用途包括个人使用、教育或学术研究、评估与测试，以及符合条件的非商业内部使用。</li>
+          <li>任何商业使用均需要获得授权版权持有人的事先书面协议。</li>
+          <li>第三方组件继续适用其各自的许可证和声明。</li>
+          <li>除识别未修改副本来源所必需的范围外，不授予任何商标权利。</li>
+        </ul>
+        <p>提交 Issue 或联系我们讨论商业授权，本身并不代表已经获得商业权利。</p>
+      </section>
+
+      <section id="responsibilities">
+        <h2>5. 用户责任</h2>
+        <p>你需要负责：</p>
+        <ul>
+          <li>确保对提交的文件、提示词、凭据、账号及其他材料拥有必要权利和权限。</li>
+          <li>在接受或分发结果前，检查工具审批、文件修改、命令、生成产物和提权访问。</li>
+          <li>正确配置模型 Provider、Endpoint、API Key、Connector 和工作区权限。</li>
+          <li>遵守适用法律、第三方条款、知识产权、隐私义务和组织内部政策。</li>
+          <li>备份重要文件和输出。</li>
+        </ul>
+        <p>不得使用 Wordless 传播恶意软件、未经授权访问系统、侵犯他人权利、规避安全控制，或从事违法及有害活动。</p>
+      </section>
+
+      <section id="content-ai">
+        <h2>6. 用户内容与 AI 生成结果</h2>
+        <p>你继续拥有原本对提交内容享有的权利。你授权 Wordless 在执行所请求工作流所必需的范围内处理这些内容。</p>
+        <p>模型和自动化工具可能产生不准确、不完整、不安全、冒犯性或非唯一的结果。对法律、金融、医疗、安全关键、生产、公开发布及其他重大决定，在依赖输出前必须进行独立审核。Wordless 不保证生成结果的所有权、原创性、准确性或适用性。</p>
+      </section>
+
+      <section id="third-parties">
+        <h2>7. 第三方服务</h2>
+        <p>Wordless 可以连接 Google、GitHub、模型 Provider、MCP Server、OfficeCLI 及你配置的其他工具。这些服务不受 Wordless 控制，并适用各自的许可证、价格、可用性、安全和隐私条款。</p>
+        <p>你需要承担所选第三方服务产生的费用、配额、账号限制和数据处理责任。Wordless 不对第三方内容、行为、服务中断、API 变更或访问限制决定负责。</p>
+      </section>
+
+      <section id="availability">
+        <h2>8. 可用性、更新与变更</h2>
+        <p>我们可能增加、修改、暂停或终止功能、集成、构建版本、文档或发布渠道。除非某个版本无法继续安全或兼容运行，否则更新保持可选；你应查看 Release Notes 并自行决定安装时间。</p>
+        <p>由于 Wordless 依赖操作系统和第三方 API，部分功能可能在没有通知的情况下不可用。我们不承诺服务不间断、兼容所有 Provider，或一定能够恢复本地及远程数据。</p>
+      </section>
+
+      <section id="disclaimers">
+        <h2>9. 免责声明与责任限制</h2>
+        <div class="policy-callout">
+          <p><strong>服务按“现状”和“可用状态”提供。</strong>在法律允许的最大范围内，Wordless 及其贡献者不提供任何明示或默示保证，包括适销性、特定用途适用性、所有权、不侵权、准确性、安全性和可用性保证。</p>
+        </div>
+        <p>在适用法律允许的最大范围内，Wordless 及其贡献者不对任何间接、附带、特殊、后果性、惩罚性损失负责，也不对因服务或第三方服务导致的数据、利润、收入、业务、机会或商誉损失负责。</p>
+        <p>某些司法辖区不允许特定免责或责任限制；在这些地区，本节仅在法律允许的范围内适用。</p>
+      </section>
+
+      <section id="termination">
+        <h2>10. 暂停与终止</h2>
+        <p>你可以随时停止使用 Wordless。违反适用软件许可证时，许可证权利将自动终止。为处理滥用、安全威胁、法律义务或严重违反本条款的行为，我们可能在合理必要范围内限制对 Wordless 运营资源的访问。</p>
+        <p>根据性质应在终止后继续有效的条款，包括许可限制、免责声明、责任限制和第三方权利条款，将继续有效。</p>
+      </section>
+
+      <section id="changes-contact">
+        <h2>11. 条款变更与联系</h2>
+        <p>我们可能根据服务或适用要求的变化修订本条款。“最后更新”日期表示当前版本。在修订条款生效后继续使用服务，即表示你在法律允许范围内接受修订条款。</p>
+        <p>条款问题、商业授权申请和法律通知可以发送至 <a href="mailto:15014915381z@gmail.com">15014915381z@gmail.com</a>，或通过 <a href="https://github.com/Austin-Patrician/Wordless/issues" target="_blank" rel="noreferrer">Wordless 官方仓库</a>提交。本条款受适用法律约束，不排除强制性当地法律赋予你的权利。</p>
+      </section>
+    </>
+  )}
+</LegalLayout>

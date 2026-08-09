@@ -1,0 +1,238 @@
+---
+import LegalLayout from './LegalLayout.astro';
+
+interface Props { lang: 'en' | 'zh-CN' }
+const { lang } = Astro.props;
+const english = lang === 'en';
+const sections = english
+  ? [
+      { id: 'overview', label: 'Overview' },
+      { id: 'google-data', label: 'Google account data' },
+      { id: 'cloud-sync', label: 'Google Drive cloud sync' },
+      { id: 'use-sharing', label: 'Use and disclosure' },
+      { id: 'local-services', label: 'Local data and third parties' },
+      { id: 'security', label: 'Storage and security' },
+      { id: 'controls', label: 'Retention and your controls' },
+      { id: 'children', label: 'Children' },
+      { id: 'changes-contact', label: 'Changes and contact' },
+    ]
+  : [
+      { id: 'overview', label: '政策概览' },
+      { id: 'google-data', label: 'Google 账号数据' },
+      { id: 'cloud-sync', label: 'Google Drive 云同步' },
+      { id: 'use-sharing', label: '数据使用与披露' },
+      { id: 'local-services', label: '本地数据与第三方服务' },
+      { id: 'security', label: '存储与安全' },
+      { id: 'controls', label: '保留期限与用户控制' },
+      { id: 'children', label: '未成年人' },
+      { id: 'changes-contact', label: '政策变更与联系' },
+    ];
+---
+
+<LegalLayout
+  lang={lang}
+  eyebrow={english ? 'Trust center / Google API disclosure' : '信任中心 / Google API 数据披露'}
+  title={english ? 'Privacy Policy' : '隐私政策'}
+  description={english
+    ? 'How Wordless handles local workspace data, Google account information, optional Google Drive app-data sync, and third-party services.'
+    : '说明 Wordless 如何处理本地工作区数据、Google 账号信息、可选的 Google Drive 应用数据同步以及第三方服务。'}
+  effectiveDate={english ? 'August 8, 2026' : '2026年8月8日'}
+  updatedDate={english ? 'August 8, 2026' : '2026年8月8日'}
+  alternateHref={english ? '/zh/privacy/' : '/privacy/'}
+  alternateLabel={english ? '中文' : 'English'}
+  sections={sections}
+>
+  {english ? (
+    <>
+      <section id="overview">
+        <h2>1. Overview</h2>
+        <p>Wordless is a local-first desktop agent workspace maintained by Austin Patrician and Wordless contributors (collectively, “Wordless,” “we,” or “us”). This policy explains the information processed when you use the Wordless desktop application and this website.</p>
+        <p>Most Wordless data remains on your device. Google sign-in is optional. Google Cloud Sync is separately opt-in and is not enabled merely because you sign in.</p>
+      </section>
+
+      <section id="google-data">
+        <h2>2. Google account data</h2>
+        <p>When you choose <strong>Sign in with Google</strong>, Wordless requests the minimum identity scopes needed to identify your account: <code>openid</code>, <code>email</code>, and <code>profile</code>.</p>
+        <div class="legal-table-wrap">
+          <table>
+            <thead><tr><th>Google data</th><th>Purpose</th><th>Where it is handled</th></tr></thead>
+            <tbody>
+              <tr><td>Google account identifier</td><td>Associate the local Wordless account state with the Google account you selected.</td><td>On your device.</td></tr>
+              <tr><td>Name, email address, and profile image</td><td>Display your signed-in identity in Wordless and show which account is used for optional sync.</td><td>On your device.</td></tr>
+              <tr><td>OAuth access and refresh tokens</td><td>Maintain the authorization you granted and call Google APIs on your behalf.</td><td>Access tokens are short-lived; refresh credentials are stored using the operating system’s secure credential storage.</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p>Wordless does not use your Google profile information for advertising, model training, or personalization outside the signed-in account experience.</p>
+      </section>
+
+      <section id="cloud-sync">
+        <h2>3. Optional Google Drive cloud sync</h2>
+        <p>Cloud Sync is off by default. If you explicitly enable it under <strong>Settings → Data &amp; Privacy</strong>, Wordless requests <code>https://www.googleapis.com/auth/drive.appdata</code>. This scope permits Wordless to read and write only its own hidden application-data folder in your Google Drive. It does not permit Wordless to browse, read, or modify your ordinary Drive files.</p>
+        <h3>Data that may be synchronized</h3>
+        <ul>
+          <li>Language, theme, font scale, reduced-motion, notification, and appearance preferences.</li>
+          <li>Default model and per-workbench model selections.</li>
+          <li>Enabled model identifiers and sanitized Provider configuration metadata, such as display name, Base URL, API type, compatibility settings, and model capability definitions.</li>
+          <li>Sync metadata such as update time, device identifier, conflict baseline, and Wordless app-data file identifiers.</li>
+        </ul>
+        <h3>Data excluded from cloud sync</h3>
+        <ul>
+          <li>API keys, passwords, OAuth credentials, authorization headers, and secrets.</li>
+          <li>Conversation history and prompts.</li>
+          <li>Workspace files and folders.</li>
+          <li>Generated presentations, spreadsheets, documents, browser artifacts, and other project outputs.</li>
+        </ul>
+        <p>Wordless communicates directly from the desktop application to Google APIs. Wordless does not operate an intermediary server that stores a copy of your synchronized configuration.</p>
+      </section>
+
+      <section id="use-sharing">
+        <h2>4. How Google data is used and disclosed</h2>
+        <p>Google user data is used only to provide the user-facing sign-in and optional synchronization features you choose. Wordless does not sell Google user data, use it for advertising, or share it with data brokers.</p>
+        <p>Information is disclosed to Google only as necessary to authenticate your account and store or retrieve Wordless files in your own Drive app-data folder. We may disclose information when required by law, to protect users and the service from fraud or abuse, or with your explicit direction.</p>
+        <div class="policy-callout">
+          <p><strong>Google API Limited Use disclosure</strong></p>
+          <p>Wordless’s use and transfer of information received from Google APIs adheres to the <a href="https://developers.google.com/terms/api-services-user-data-policy" target="_blank" rel="noreferrer">Google API Services User Data Policy</a>, including the Limited Use requirements.</p>
+        </div>
+      </section>
+
+      <section id="local-services">
+        <h2>5. Local workspace data and third-party services</h2>
+        <p>Sessions, workspace references, tool activity, generated artifacts, and application settings are primarily stored on your device. Wordless sends prompts and selected context to the model Provider you configure only when you initiate a model request. Google account profile data and Drive app-data are not intentionally included in model prompts.</p>
+        <p>Third-party services have their own policies:</p>
+        <ul>
+          <li><strong>Model Providers and MCP connectors:</strong> receive the requests or data you direct Wordless to send to them.</li>
+          <li><strong>Google:</strong> provides sign-in and optional Drive app-data storage.</li>
+          <li><strong>GitHub:</strong> provides repository, release, and update information.</li>
+          <li><strong>Website hosting:</strong> may process standard server logs such as IP address, user agent, requested URL, response status, and access time for delivery and security.</li>
+        </ul>
+        <p>You should review the privacy terms of every model Provider, connector, and external service you enable.</p>
+      </section>
+
+      <section id="security">
+        <h2>6. Storage and security</h2>
+        <p>Wordless uses operating-system credential storage for Google refresh credentials and Provider secrets. Network requests use HTTPS. Cloud-sync payloads are filtered to remove fields whose names indicate keys, tokens, secrets, passwords, authorization data, credentials, or sensitive headers.</p>
+        <p>No system is completely secure. Keep your operating system updated, protect your device account, review tool approvals, and revoke credentials if you believe your device or account has been compromised.</p>
+      </section>
+
+      <section id="controls">
+        <h2>7. Retention and your controls</h2>
+        <ul>
+          <li><strong>Pause sync:</strong> disable Google Cloud Sync without disabling local Wordless features.</li>
+          <li><strong>Delete cloud data:</strong> use <strong>Delete cloud data</strong> in Data &amp; Privacy to remove Wordless configuration files from Drive appDataFolder without deleting local settings.</li>
+          <li><strong>Sign out:</strong> disconnect the Google account and remove the locally stored Wordless authorization credential.</li>
+          <li><strong>Revoke access:</strong> remove Wordless from <a href="https://myaccount.google.com/permissions" target="_blank" rel="noreferrer">Google Account third-party access</a>. Revocation stops future access but may not itself delete existing app-data files, so delete cloud data first when possible.</li>
+          <li><strong>Local deletion:</strong> delete sessions, workspaces, artifacts, settings, or the application’s local data using Wordless and operating-system controls.</li>
+        </ul>
+        <p>Local data remains until you delete it or remove the relevant application data. Google Drive app-data remains until you delete it, remove it through Google controls where available, or Google deletes it under its own policies.</p>
+      </section>
+
+      <section id="children">
+        <h2>8. Children</h2>
+        <p>Wordless is a general-purpose productivity tool and is not directed to children under the age required to independently consent to data processing in their jurisdiction. If you believe a child has provided personal information through Wordless, contact us so the issue can be reviewed.</p>
+      </section>
+
+      <section id="changes-contact">
+        <h2>9. Changes and contact</h2>
+        <p>We may update this policy as Wordless features or legal obligations change. The “Last updated” date identifies the latest revision. Material changes will be published on this page before or when they take effect.</p>
+        <p>Privacy questions and deletion requests can be sent to <a href="mailto:15014915381z@gmail.com">15014915381z@gmail.com</a> or raised through the <a href="https://github.com/Austin-Patrician/Wordless/issues" target="_blank" rel="noreferrer">official Wordless repository</a>.</p>
+      </section>
+    </>
+  ) : (
+    <>
+      <section id="overview">
+        <h2>1. 政策概览</h2>
+        <p>Wordless 是一个本地优先的桌面 Agent 工作空间，由 Austin Patrician 和 Wordless 贡献者共同维护（以下统称“Wordless”或“我们”）。本政策说明你使用 Wordless 桌面应用及本网站时涉及的信息处理方式。</p>
+        <p>大部分 Wordless 数据保留在你的设备上。Google 登录是可选功能；Google 云同步需要单独主动开启，不会因为登录账号而自动启用。</p>
+      </section>
+
+      <section id="google-data">
+        <h2>2. Google 账号数据</h2>
+        <p>当你选择 <strong>使用 Google 登录</strong> 时，Wordless 只申请识别账号所需的最小身份 scope：<code>openid</code>、<code>email</code> 和 <code>profile</code>。</p>
+        <div class="legal-table-wrap">
+          <table>
+            <thead><tr><th>Google 数据</th><th>用途</th><th>处理位置</th></tr></thead>
+            <tbody>
+              <tr><td>Google 账号标识符</td><td>将本机 Wordless 账号状态与你选择的 Google 账号关联。</td><td>你的设备。</td></tr>
+              <tr><td>姓名、邮箱和头像</td><td>在 Wordless 中展示登录身份，并标明可选同步使用的账号。</td><td>你的设备。</td></tr>
+              <tr><td>OAuth access token 与 refresh token</td><td>维持你授予的授权，并代表你调用 Google API。</td><td>access token 为短期凭据；refresh 凭据使用操作系统安全凭据存储。</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p>Wordless 不会将 Google 个人资料用于广告、模型训练或登录体验之外的个性化处理。</p>
+      </section>
+
+      <section id="cloud-sync">
+        <h2>3. 可选的 Google Drive 云同步</h2>
+        <p>云同步默认关闭。只有你在 <strong>Settings → Data &amp; Privacy</strong> 中主动开启后，Wordless 才会申请 <code>https://www.googleapis.com/auth/drive.appdata</code>。该权限仅允许 Wordless 读写 Google Drive 中属于 Wordless 的隐藏应用数据目录，不能浏览、读取或修改你的普通 Drive 文件。</p>
+        <h3>可能同步的数据</h3>
+        <ul>
+          <li>语言、主题、字体缩放、减少动态效果、通知和外观偏好。</li>
+          <li>默认模型和各工作模式的模型选择。</li>
+          <li>已启用模型标识及脱敏后的 Provider 配置元数据，例如显示名称、Base URL、API 类型、兼容性设置和模型能力定义。</li>
+          <li>同步时间、设备标识、冲突基线和 Wordless 应用数据文件标识等同步元数据。</li>
+        </ul>
+        <h3>不会同步的数据</h3>
+        <ul>
+          <li>API Key、密码、OAuth 凭据、Authorization Header 和其他密钥。</li>
+          <li>会话记录和提示词。</li>
+          <li>工作区文件和文件夹。</li>
+          <li>生成的演示文稿、电子表格、文档、浏览器产物和其他项目输出。</li>
+        </ul>
+        <p>Wordless 桌面应用会直接连接 Google API。Wordless 不运营用于中转或保存同步配置副本的服务器。</p>
+      </section>
+
+      <section id="use-sharing">
+        <h2>4. Google 数据的使用与披露</h2>
+        <p>Google 用户数据只用于提供你主动选择的登录和可选同步功能。Wordless 不出售 Google 用户数据，不将其用于广告，也不向数据经纪商提供。</p>
+        <p>只有在验证账号以及向你自己的 Drive appDataFolder 存取 Wordless 文件所必需时，相关信息才会传递给 Google。我们也可能在法律要求、保护用户和服务免受欺诈或滥用，或者获得你明确指示的情况下披露信息。</p>
+        <div class="policy-callout">
+          <p><strong>Google API Limited Use 声明</strong></p>
+          <p>Wordless 对从 Google API 获取的信息的使用和传输遵守 <a href="https://developers.google.com/terms/api-services-user-data-policy" target="_blank" rel="noreferrer">Google API Services User Data Policy</a>，包括 Limited Use 要求。</p>
+        </div>
+      </section>
+
+      <section id="local-services">
+        <h2>5. 本地工作区数据与第三方服务</h2>
+        <p>会话、工作区引用、工具活动、生成产物和应用设置主要保存在你的设备上。只有你发起模型请求时，Wordless 才会将提示词和选中的必要上下文发送给你配置的模型 Provider。Google 账号资料和 Drive 应用数据不会被有意加入模型提示词。</p>
+        <p>以下第三方服务适用各自的政策：</p>
+        <ul>
+          <li><strong>模型 Provider 与 MCP Connector：</strong>接收你指示 Wordless 发送的请求或数据。</li>
+          <li><strong>Google：</strong>提供登录和可选的 Drive 应用数据存储。</li>
+          <li><strong>GitHub：</strong>提供仓库、Release 和更新信息。</li>
+          <li><strong>网站托管：</strong>可能为内容分发和安全目的处理 IP 地址、User-Agent、请求 URL、响应状态和访问时间等标准服务器日志。</li>
+        </ul>
+        <p>请查看你启用的每个模型 Provider、Connector 和外部服务的隐私条款。</p>
+      </section>
+
+      <section id="security">
+        <h2>6. 存储与安全</h2>
+        <p>Wordless 使用操作系统凭据存储保存 Google refresh 凭据和 Provider 密钥，网络请求使用 HTTPS。云同步数据会过滤字段名包含 key、token、secret、password、authorization、credential 或敏感 header 的内容。</p>
+        <p>任何系统都无法保证绝对安全。请及时更新操作系统、保护设备账号、仔细检查工具审批，并在怀疑设备或账号受损时撤销相关凭据。</p>
+      </section>
+
+      <section id="controls">
+        <h2>7. 数据保留与用户控制</h2>
+        <ul>
+          <li><strong>暂停同步：</strong>关闭 Google 云同步不会影响 Wordless 本地功能。</li>
+          <li><strong>删除云端数据：</strong>在 Data &amp; Privacy 中使用“删除云端数据”，可删除 Drive appDataFolder 中的 Wordless 配置而不删除本机设置。</li>
+          <li><strong>退出登录：</strong>断开 Google 账号并删除 Wordless 在本机保存的授权凭据。</li>
+          <li><strong>撤销授权：</strong>在 <a href="https://myaccount.google.com/permissions" target="_blank" rel="noreferrer">Google 账号第三方访问权限</a>中移除 Wordless。撤销会阻止后续访问，但不一定自动删除已有应用数据，因此建议在撤销前先执行“删除云端数据”。</li>
+          <li><strong>删除本地数据：</strong>通过 Wordless 和操作系统功能删除会话、工作区、产物、设置或应用本地数据。</li>
+        </ul>
+        <p>本地数据会保留到你删除相关内容或应用数据为止；Google Drive 应用数据会保留到你主动删除、通过 Google 提供的控制项删除，或 Google 根据其政策删除为止。</p>
+      </section>
+
+      <section id="children">
+        <h2>8. 未成年人</h2>
+        <p>Wordless 是通用生产力工具，并非面向未达到其所在司法辖区独立同意数据处理年龄的儿童。如果你认为儿童通过 Wordless 提供了个人信息，请联系我们进行处理。</p>
+      </section>
+
+      <section id="changes-contact">
+        <h2>9. 政策变更与联系</h2>
+        <p>我们可能根据 Wordless 功能或法律义务的变化更新本政策。“最后更新”日期表示最新修订时间；重大变更将在生效前或生效时发布于本页面。</p>
+        <p>隐私问题和删除请求可以发送至 <a href="mailto:15014915381z@gmail.com">15014915381z@gmail.com</a>，也可以通过 <a href="https://github.com/Austin-Patrician/Wordless/issues" target="_blank" rel="noreferrer">Wordless 官方仓库</a>提出。</p>
+      </section>
+    </>
+  )}
+</LegalLayout>

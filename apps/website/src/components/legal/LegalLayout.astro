@@ -1,0 +1,197 @@
+---
+import { ArrowLeft, GitBranch, Languages, Mail, ShieldCheck } from 'lucide-react';
+
+interface SectionLink { id: string; label: string }
+interface Props {
+  lang: 'en' | 'zh-CN';
+  eyebrow: string;
+  title: string;
+  description: string;
+  effectiveDate: string;
+  updatedDate: string;
+  alternateHref: string;
+  alternateLabel: string;
+  sections: SectionLink[];
+}
+
+const {
+  lang,
+  eyebrow,
+  title,
+  description,
+  effectiveDate,
+  updatedDate,
+  alternateHref,
+  alternateLabel,
+  sections,
+} = Astro.props;
+const english = lang === 'en';
+const canonical = new URL(Astro.url.pathname, 'https://wordless.20250230.xyz').toString();
+const privacyHref = english ? '/privacy/' : '/zh/privacy/';
+const termsHref = english ? '/terms/' : '/zh/terms/';
+const docsHref = english ? '/en/docs/' : '/docs/';
+---
+
+<!doctype html>
+<html lang={lang}>
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="description" content={description} />
+    <meta name="robots" content="index,follow" />
+    <link rel="canonical" href={canonical} />
+    <link rel="icon" type="image/webp" href="/images/wordless.webp" />
+    <title>{title} | Wordless</title>
+  </head>
+  <body>
+    <header class="legal-header">
+      <a class="legal-brand" href="/" aria-label={english ? 'Wordless home' : 'Wordless 首页'}>
+        <span><img src="/images/wordless.webp" alt="" /></span>
+        <strong>Wordless</strong>
+      </a>
+      <nav aria-label={english ? 'Legal page navigation' : '法律页面导航'}>
+        <a href={docsHref}>{english ? 'Documentation' : '文档'}</a>
+        <a class="language-link" href={alternateHref}><Languages aria-hidden="true" size={15} strokeWidth={1.7} />{alternateLabel}</a>
+      </nav>
+    </header>
+
+    <main class="legal-shell">
+      <div class="legal-rail" aria-hidden="true"><span>WORDLESS / TRUST</span><i></i><span>PUBLIC POLICY</span></div>
+      <header class="legal-intro">
+        <a class="back-link" href="/"><ArrowLeft aria-hidden="true" size={15} strokeWidth={1.7} />{english ? 'Back to Wordless' : '返回 Wordless'}</a>
+        <p class="eyebrow">{eyebrow}</p>
+        <h1>{title}</h1>
+        <p class="lede">{description}</p>
+        <div class="policy-meta">
+          <span><small>{english ? 'Effective' : '生效日期'}</small>{effectiveDate}</span>
+          <span><small>{english ? 'Last updated' : '最后更新'}</small>{updatedDate}</span>
+          <span class="public-status"><ShieldCheck aria-hidden="true" size={17} strokeWidth={1.7} /><b>{english ? 'Public policy' : '公开政策'}</b></span>
+        </div>
+      </header>
+
+      <div class="legal-layout">
+        <aside>
+          <p>{english ? 'On this page' : '本页目录'}</p>
+          <nav aria-label={english ? 'On this page' : '本页目录'}>
+            {sections.map((section, index) => <a href={`#${section.id}`}><span>{String(index + 1).padStart(2, '0')}</span>{section.label}</a>)}
+          </nav>
+        </aside>
+        <article class="legal-document">
+          <slot />
+        </article>
+      </div>
+    </main>
+
+    <footer class="legal-footer">
+      <div>
+        <a class="legal-brand legal-brand--small" href="/"><span><img src="/images/wordless.webp" alt="" /></span><strong>Wordless</strong></a>
+        <p>{english ? 'A local-first desktop agent workspace.' : '一个本地优先的桌面 Agent 工作空间。'}</p>
+      </div>
+      <nav aria-label={english ? 'Legal links' : '法律链接'}>
+        <a href={privacyHref}>{english ? 'Privacy' : '隐私政策'}</a>
+        <a href={termsHref}>{english ? 'Terms' : '服务条款'}</a>
+        <a href="mailto:15014915381z@gmail.com"><Mail aria-hidden="true" size={14} />{english ? 'Contact' : '联系'}</a>
+        <a href="https://github.com/Austin-Patrician/Wordless" target="_blank" rel="noreferrer"><GitBranch aria-hidden="true" size={14} />GitHub</a>
+      </nav>
+    </footer>
+  </body>
+</html>
+
+<style is:global>
+  :root { color: #1b1e1a; background: #f3f4ef; font-family: 'Avenir Next', Avenir, 'Segoe UI', sans-serif; font-synthesis: none; text-rendering: optimizeLegibility; }
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; scroll-padding-top: 2rem; background: #f3f4ef; }
+  body { min-width: 320px; margin: 0; color: #1b1e1a; background: #f3f4ef; }
+  a { color: inherit; text-decoration: none; }
+  a:focus-visible { outline: 2px solid #547428; outline-offset: 4px; }
+  .legal-header { display: flex; align-items: center; justify-content: space-between; width: min(100% - 64px, 1320px); min-height: 74px; margin: 0 auto; border-bottom: 1px solid #d9ddd3; }
+  .legal-header nav, .legal-footer nav { display: flex; align-items: center; gap: 1.25rem; }
+  .legal-header nav a, .legal-footer nav a { color: #646b61; font-size: .75rem; font-weight: 650; transition: color 160ms ease; }
+  .legal-header nav a:hover, .legal-footer nav a:hover { color: #3f5f18; }
+  .language-link { display: inline-flex; align-items: center; gap: .4rem; }
+  .legal-brand { display: inline-flex; align-items: center; gap: .65rem; }
+  .legal-brand > span { display: grid; width: 30px; height: 30px; overflow: hidden; place-items: center; border: 1px solid #b7c8a2; border-radius: 7px; background: #183519; }
+  .legal-brand img { width: 100%; height: 100%; object-fit: cover; }
+  .legal-brand strong { font-family: 'Avenir Next Condensed', 'Arial Narrow', sans-serif; font-size: 1.3rem; letter-spacing: 0; }
+  .legal-shell { position: relative; width: min(100% - 64px, 1320px); margin: 0 auto; padding: 4.25rem 0 6.5rem; }
+  .legal-rail { display: grid; grid-template-columns: auto 1fr auto; gap: 1rem; align-items: center; margin-bottom: 4rem; color: #879083; font-family: ui-monospace, 'SFMono-Regular', Consolas, monospace; font-size: .62rem; letter-spacing: .12em; }
+  .legal-rail i { height: 1px; background: #d5d9d0; }
+  .legal-intro { max-width: 980px; padding-bottom: 4.5rem; }
+  .back-link { display: inline-flex; align-items: center; gap: .45rem; margin-bottom: 3.5rem; color: #697064; font-size: .76rem; font-weight: 650; }
+  .back-link:hover { color: #3f5f18; }
+  .eyebrow { margin: 0 0 1.25rem; color: #55772b; font-family: ui-monospace, 'SFMono-Regular', Consolas, monospace; font-size: .68rem; font-weight: 700; letter-spacing: .11em; text-transform: uppercase; }
+  .legal-intro h1 { max-width: 850px; margin: 0; font-family: Charter, 'Bitstream Charter', 'Sitka Text', Georgia, serif; font-size: clamp(3.4rem, 7vw, 6.9rem); font-weight: 400; line-height: .94; letter-spacing: 0; }
+  .lede { max-width: 760px; margin: 2rem 0 0; color: #596056; font-size: 1.03rem; line-height: 1.85; }
+  .policy-meta { display: flex; align-items: stretch; gap: 0; margin-top: 3rem; border-block: 1px solid #d7dbd2; }
+  .policy-meta > span { display: flex; min-width: 180px; flex-direction: column; justify-content: center; padding: 1rem 1.25rem 1rem 0; color: #31352f; font-family: ui-monospace, 'SFMono-Regular', Consolas, monospace; font-size: .72rem; }
+  .policy-meta > span + span { padding-left: 1.25rem; border-left: 1px solid #d7dbd2; }
+  .policy-meta small { margin-bottom: .35rem; color: #858c82; font-size: .6rem; letter-spacing: .08em; text-transform: uppercase; }
+  .policy-meta .public-status { min-width: 0; flex-direction: row; gap: .55rem; align-items: center; margin-left: auto; padding-right: 0; color: #4f7025; }
+  .public-status b { font-size: .7rem; }
+  .legal-layout { display: grid; grid-template-columns: 220px minmax(0, 780px); gap: clamp(3rem, 8vw, 8.5rem); align-items: start; }
+  .legal-layout > aside { position: sticky; top: 1.5rem; }
+  .legal-layout > aside > p { margin: 0 0 1rem; color: #8a9187; font-family: ui-monospace, 'SFMono-Regular', Consolas, monospace; font-size: .62rem; letter-spacing: .1em; text-transform: uppercase; }
+  .legal-layout > aside nav { display: grid; border-top: 1px solid #d6dad1; }
+  .legal-layout > aside a { display: grid; grid-template-columns: 1.8rem 1fr; gap: .5rem; padding: .72rem 0; border-bottom: 1px solid #dfe2db; color: #687066; font-size: .72rem; line-height: 1.45; }
+  .legal-layout > aside a:hover { color: #3f5f18; }
+  .legal-layout > aside a span { color: #9da49a; font-family: ui-monospace, 'SFMono-Regular', Consolas, monospace; font-size: .58rem; }
+  .legal-document section { padding: 0 0 3.75rem; border-bottom: 1px solid #d9ddd4; }
+  .legal-document section + section { padding-top: 3.75rem; }
+  .legal-document h2 { margin: 0 0 1.2rem; color: #252924; font-family: Charter, 'Bitstream Charter', 'Sitka Text', Georgia, serif; font-size: clamp(1.65rem, 3vw, 2.25rem); font-weight: 400; line-height: 1.2; letter-spacing: 0; }
+  .legal-document h3 { margin: 2rem 0 .7rem; font-size: .92rem; line-height: 1.5; }
+  .legal-document p, .legal-document li { color: #50574e; font-size: .88rem; line-height: 1.9; }
+  .legal-document p { margin: 0 0 1rem; }
+  .legal-document ul, .legal-document ol { margin: 1rem 0; padding-left: 1.25rem; }
+  .legal-document li + li { margin-top: .5rem; }
+  .legal-document a { color: #42651a; font-weight: 650; text-decoration: underline; text-decoration-color: #aabe91; text-underline-offset: .2em; }
+  .legal-document strong { color: #282d27; }
+  .legal-table-wrap { margin: 1.5rem 0; overflow-x: auto; border-block: 1px solid #cfd5ca; }
+  .legal-document table { width: 100%; min-width: 620px; border-collapse: collapse; }
+  .legal-document th, .legal-document td { padding: .9rem .75rem; border-bottom: 1px solid #dde1d9; text-align: left; vertical-align: top; font-size: .77rem; line-height: 1.65; }
+  .legal-document th { color: #70786e; font-family: ui-monospace, 'SFMono-Regular', Consolas, monospace; font-size: .62rem; letter-spacing: .06em; text-transform: uppercase; }
+  .legal-document tr:last-child td { border-bottom: 0; }
+  .policy-callout { margin: 1.5rem 0; padding: 1.25rem 1.4rem; border-left: 3px solid #6f963d; color: #34432c; background: #e8ede2; }
+  .policy-callout p:last-child { margin-bottom: 0; }
+  .legal-footer { display: flex; align-items: center; justify-content: space-between; width: min(100% - 64px, 1320px); min-height: 126px; margin: 0 auto; border-top: 1px solid #d5dad0; }
+  .legal-footer > div { display: flex; align-items: center; gap: 1.25rem; }
+  .legal-footer p { margin: 0; color: #858d82; font-size: .72rem; }
+  .legal-footer nav a { display: inline-flex; align-items: center; gap: .35rem; }
+  .legal-brand--small > span { width: 25px; height: 25px; border-radius: 6px; }
+  .legal-brand--small strong { font-size: 1rem; }
+
+  @media (max-width: 760px) {
+    .legal-header, .legal-shell, .legal-footer { width: calc(100% - 36px); }
+    .legal-header { min-height: 66px; }
+    .legal-header nav a:first-child { display: none; }
+    .legal-shell { padding: 2.5rem 0 4.5rem; }
+    .legal-rail { margin-bottom: 2.75rem; }
+    .back-link { margin-bottom: 2.5rem; }
+    .legal-intro { padding-bottom: 3.5rem; }
+    .legal-intro h1 { font-size: clamp(3.1rem, 17vw, 5.2rem); }
+    .lede { font-size: .94rem; line-height: 1.75; }
+    .policy-meta { display: grid; grid-template-columns: 1fr 1fr; }
+    .policy-meta > span { min-width: 0; padding: .85rem 0; }
+    .policy-meta > span + span { padding-left: .85rem; }
+    .policy-meta .public-status { grid-column: 1 / -1; justify-content: flex-start; margin: 0; padding-left: 0; border-top: 1px solid #d7dbd2; border-left: 0; }
+    .legal-layout { grid-template-columns: 1fr; gap: 2.5rem; }
+    .legal-layout > aside { position: static; }
+    .legal-layout > aside nav { grid-template-columns: 1fr 1fr; column-gap: 1rem; }
+    .legal-document section { padding-bottom: 3rem; }
+    .legal-document section + section { padding-top: 3rem; }
+    .legal-footer { align-items: flex-start; flex-direction: column; gap: 1.5rem; padding: 2rem 0; }
+    .legal-footer > div { align-items: flex-start; flex-direction: column; gap: .65rem; }
+    .legal-footer nav { flex-wrap: wrap; gap: .85rem 1.15rem; }
+  }
+
+  @media print {
+    :root, body { background: #fff; }
+    .legal-header nav, .legal-rail, .back-link, .legal-layout > aside, .legal-footer { display: none; }
+    .legal-header, .legal-shell { width: 100%; }
+    .legal-shell { padding: 2rem 0; }
+    .legal-layout { display: block; }
+    .legal-intro h1 { font-size: 3.5rem; }
+    .legal-document section { break-inside: avoid; }
+  }
+
+  @media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } }
+</style>

@@ -399,7 +399,12 @@ h2 { max-width: 750px; margin: -6px 0 18px; font-size: clamp(3.3rem, 5.4vw, 5.9r
 
 .site-footer .brand-mark { width: 25px; height: 25px; }
 
+.footer-center { display: grid; gap: 8px; justify-items: center; }
 .site-footer p { margin: 0; font-family: 'DM Mono', monospace; font-size: 8px; letter-spacing: 0.35px; color: #788375; text-align: center; }
+.footer-legal { display: inline-flex; align-items: center; gap: 7px; font-family: 'DM Mono', monospace; font-size: 8px; letter-spacing: 0.45px; text-transform: uppercase; }
+.footer-legal a { color: #aeb9a8; transition: color 160ms ease; }
+.footer-legal a:hover { color: #d0ff86; }
+.footer-legal span { color: #677262; }
 
 .footer-github { display: inline-flex; align-items: center; justify-self: end; gap: 7px; font-family: 'DM Mono', monospace; font-size: 9px; letter-spacing: 0.6px; color: #aeb9a8; transition: color 160ms ease; }
 
@@ -472,6 +477,7 @@ h2 { max-width: 750px; margin: -6px 0 18px; font-size: clamp(3.3rem, 5.4vw, 5.9r
   .contact-panel__content h2 { font-size: clamp(3.15rem, 16vw, 4.65rem); }
   .contact-email { width: 100%; min-height: 108px; padding: 18px 0 18px 18px; }
   .site-footer { grid-template-columns: 1fr auto; gap: 16px; padding: 25px 0; }
+  .footer-center { justify-items: start; }
   .site-footer p { display: none; }
 }
 

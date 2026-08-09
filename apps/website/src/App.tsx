@@ -33,6 +33,9 @@ function App() {
   const [sceneReady, setSceneReady] = useState(false)
   const [sceneFailed, setSceneFailed] = useState(false)
   const t = copy[locale]
+  const legal = locale === 'zh'
+    ? { privacy: '隐私政策', terms: '服务条款', privacyHref: '/zh/privacy/', termsHref: '/zh/terms/' }
+    : { privacy: 'Privacy', terms: 'Terms', privacyHref: '/privacy/', termsHref: '/terms/' }
   const activeVideo = demoVideo && !videoFailed ? demoVideo : undefined
   const signals = useMemo(() => t.capabilities.items.map((item) => item.signal), [t.capabilities.items])
   const handleSceneProgress = useCallback((progress: number, phase: string) => {
@@ -255,7 +258,14 @@ function App() {
 
       <footer className="site-footer page-grid">
         <a className="brand" href="#top"><span className="brand-mark"><img src="/images/wordless.webp" alt="" /></span><span>Wordless</span></a>
-        <p>{t.footer}</p>
+        <div className="footer-center">
+          <p>{t.footer}</p>
+          <nav className="footer-legal" aria-label={locale === 'zh' ? '法律链接' : 'Legal links'}>
+            <a href={legal.privacyHref}>{legal.privacy}</a>
+            <span aria-hidden="true">·</span>
+            <a href={legal.termsHref}>{legal.terms}</a>
+          </nav>
+        </div>
         <a className="footer-github" href={githubUrl} target="_blank" rel="noreferrer"><GitBranch size={16} />GitHub <ArrowUpRight size={15} /></a>
       </footer>
     </main>

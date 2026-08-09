@@ -30,6 +30,7 @@ const zhSidebar = [
 
 export default defineConfig({
   output: 'static',
+  site: 'https://wordless.20250230.xyz',
   integrations: [
     react(),
     starlight({
@@ -42,7 +43,6 @@ export default defineConfig({
         Footer: './src/components/docs/DocsFooter.astro',
       },
       social: [{ icon: 'github', label: 'GitHub', href: 'https://github.com/Austin-Patrician/Wordless' }],
-      editLink: { baseUrl: 'https://github.com/Austin-Patrician/Wordless/edit/main/apps/website/' },
       lastUpdated: true,
       locales: {
         root: { label: '简体中文', lang: 'zh-CN' },
