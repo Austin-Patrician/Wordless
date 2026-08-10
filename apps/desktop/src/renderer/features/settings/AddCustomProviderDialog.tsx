@@ -19,6 +19,7 @@ export function AddCustomProviderDialog({ disabled, kind, onAdd, onOpenChange, o
   const { t } = usePreferences();
   const [avatarId, setAvatarId] = useState<ProviderAvatarId | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [providerIdError, setProviderIdError] = useState<string | null>(null);
   const [providerId, setProviderId] = useState("");
   const [saving, setSaving] = useState(false);
 
@@ -26,6 +27,7 @@ export function AddCustomProviderDialog({ disabled, kind, onAdd, onOpenChange, o
     if (open) return;
     setAvatarId(null);
     setError(null);
+    setProviderIdError(null);
     setProviderId("");
   }, [open]);
 
@@ -43,13 +45,14 @@ export function AddCustomProviderDialog({ disabled, kind, onAdd, onOpenChange, o
   const create = async () => {
     const normalizedId = providerId.trim();
     if (!/^[a-z0-9][a-z0-9._-]*$/i.test(normalizedId)) {
-      setError(t("customProviderIdHelp"));
+      setProviderIdError(t("customProviderIdHelp"));
       return;
     }
     if (providerIds.includes(normalizedId)) {
-      setError(t("customProviderIdExists"));
+      setProviderIdError(t("customProviderIdExists"));
       return;
     }
+    setProviderIdError(null);
     if (!avatarId) {
       setError(t("selectProviderAvatar"));
       return;
@@ -73,8 +76,8 @@ export function AddCustomProviderDialog({ disabled, kind, onAdd, onOpenChange, o
           <div><h2 className="text-[16px] font-bold" id="add-custom-provider-title">{t("addCustomProvider")}</h2><p className="mt-1 text-[11px] text-muted-foreground" id="add-custom-provider-description">{kind === "chat" ? "LLM" : "Image"}</p></div>
           <Button aria-label={t("cancel")} disabled={saving} onClick={() => onOpenChange(false)} size="icon" type="button" variant="ghost"><X className="h-4 w-4" /></Button>
         </div>
-        <label className="mt-5 block"><span className="mb-1.5 block text-[12px] font-medium">{t("providerId")}</span><input autoFocus className="h-9 w-full rounded-[7px] border border-[#deded8] bg-[#fafaf9] px-3 font-mono text-[12px] outline-none placeholder:text-[#a0a09a] focus:border-[#91a769] dark:border-border dark:bg-muted" disabled={saving} onChange={(event) => { setProviderId(event.target.value); setError(null); }} placeholder="company-ai" value={providerId} /></label>
-        <p className="mt-1.5 text-[10px] leading-4 text-muted-foreground">{t("customProviderIdHelp")}</p>
+        <label className="mt-5 block"><span className="mb-1.5 block text-[12px] font-medium">{t("providerId")}</span><input aria-describedby="custom-provider-id-help" aria-invalid={Boolean(providerIdError)} autoFocus className={`h-9 w-full rounded-[7px] border bg-[#fafaf9] px-3 font-mono text-[12px] outline-none placeholder:text-[#a0a09a] dark:bg-muted ${providerIdError ? "border-[#b42318] focus:border-[#b42318] dark:border-[#ffb4ab] dark:focus:border-[#ffb4ab]" : "border-[#deded8] focus:border-[#91a769] dark:border-border"}`} disabled={saving} onChange={(event) => { setProviderId(event.target.value); setError(null); setProviderIdError(null); }} placeholder="company-ai" value={providerId} /></label>
+        {providerIdError ? <p className="mt-1.5 text-[10px] leading-4 text-[#b42318] dark:text-[#ffb4ab]" id="custom-provider-id-help" role="alert">{providerIdError}</p> : <p className="mt-1.5 text-[10px] leading-4 text-muted-foreground" id="custom-provider-id-help">{t("customProviderIdHelp")}</p>}
         <section className="mt-5"><div className="mb-2 flex items-center justify-between gap-3"><h3 className="text-[12px] font-medium">{t("providerAvatar")}</h3><span className="text-[10px] text-muted-foreground">{t("providerAvatarHelp")}</span></div><ProviderAvatarPicker disabled={saving} onChange={(nextAvatarId) => { setAvatarId(nextAvatarId); setError(null); }} value={avatarId} /></section>
         {error ? <p className="mt-3 text-[11px] text-destructive" role="alert">{error}</p> : null}
         <div className="mt-6 flex justify-end gap-2"><Button disabled={saving} onClick={() => onOpenChange(false)} type="button" variant="outline">{t("cancel")}</Button><Button disabled={saving || !providerId.trim() || !avatarId} onClick={() => void create()} type="button">{t("create")}</Button></div>

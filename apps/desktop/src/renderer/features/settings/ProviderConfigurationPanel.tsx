@@ -1,11 +1,14 @@
 import type { ConfiguredModelKind, ConfiguredModelSummary, ConfiguredProviderSummary, ProviderAvatarId } from "@wordless/domain";
-import { Button } from "@wordless/ui-kit";
-import { Check, Eye, EyeOff, Trash2 } from "lucide-react";
+import { Button, Tooltip, TooltipContent, TooltipTrigger } from "@wordless/ui-kit";
+import { Check, CircleHelp, Eye, EyeOff, Trash2 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { DeleteCustomProviderDialog } from "./DeleteCustomProviderDialog";
 import { ProviderAvatarPicker } from "./ProviderAvatarPicker";
 import { ProviderIcon } from "./provider-icons";
 import { usePreferences } from "../../shared/preferences";
+import { useRuntimeClient } from "../../shared/runtime";
+
+const MODEL_CONFIGURATION_DOCS_URL = "https://wordless.20250230.xyz/docs/models/";
 
 type ProviderConfigurationPanelProps = {
   error: string | null;
@@ -19,6 +22,7 @@ type ProviderConfigurationPanelProps = {
 };
 
 export function ProviderConfigurationPanel({ error, models, onDelete, onLoginWithOAuth, onSave, onSetModelEnabled, provider, saving }: ProviderConfigurationPanelProps) {
+  const client = useRuntimeClient();
   const { t } = usePreferences();
   const [apiKey, setApiKey] = useState("");
   const [avatarId, setAvatarId] = useState<ProviderAvatarId | null>(null);
@@ -36,7 +40,12 @@ export function ProviderConfigurationPanel({ error, models, onDelete, onLoginWit
     setDeleteOpen(false);
     setShowApiKey(false);
     setCustomConfiguration(provider?.source === "custom" || Object.keys(advancedConfiguration).length > 0);
-    setRaw(Object.keys(advancedConfiguration).length > 0 ? JSON.stringify(advancedConfiguration, null, 2) : "");
+    const newCustomProvider = provider?.source === "custom"
+      && advancedConfiguration.baseUrl === "https://"
+      && advancedConfiguration.api === (provider.kind === "chat" ? "openai-completions" : "openrouter-images")
+      && Array.isArray(advancedConfiguration.models)
+      && advancedConfiguration.models.length === 0;
+    setRaw(newCustomProvider ? configurationExample(provider.kind, true) : Object.keys(advancedConfiguration).length > 0 ? JSON.stringify(advancedConfiguration, null, 2) : "");
   }, [provider?.id, provider?.kind]);
 
   if (!provider) return <main className="grid min-w-0 flex-1 place-items-center p-6 text-sm text-muted-foreground">{t("noModelsAvailable")}</main>;
@@ -70,7 +79,10 @@ export function ProviderConfigurationPanel({ error, models, onDelete, onLoginWit
         </section>
         {provider.source === "custom" ? <section className="mb-7"><div className="mb-2 flex items-center justify-between gap-4"><h2 className="text-[14px] font-medium">{t("providerAvatar")}</h2><span className="text-[10px] text-muted-foreground">{t("providerAvatarHelp")}</span></div><ProviderAvatarPicker disabled={saving} onChange={setAvatarId} value={avatarId} /></section> : null}
         <section className="mb-7">
-          <button aria-checked={customConfiguration} className="flex w-full items-center gap-3 rounded-xl border border-border px-3 py-3 text-left transition-colors hover:bg-[#f8f9f7] dark:hover:bg-[#232620]" onClick={() => setCustomConfiguration((current) => !current)} role="switch" type="button"><span className="min-w-0 flex-1"><span className="block text-[14px] font-medium">{t("customProviderConfiguration")}</span><span className="mt-1 block truncate text-[12px] text-muted-foreground">{provider.baseUrl ?? provider.id}</span></span><span aria-hidden="true" className={`grid size-5 shrink-0 place-items-center rounded-full border transition-colors ${customConfiguration ? "border-[#a8cf38] bg-[#c8ef59] text-[#24300f]" : "border-[#bfc2ba] bg-transparent text-transparent dark:border-[#585d53]"}`}><Check className="size-3.5 stroke-[3]" /></span></button>
+          <div className="flex items-start gap-1 rounded-xl border border-border px-3 py-3 transition-colors hover:bg-[#f8f9f7] dark:hover:bg-[#232620]">
+            <div className="min-w-0 flex-1"><div className="flex items-center"><h2 className="text-[14px] font-medium">{t("customProviderConfiguration")}</h2><Tooltip><TooltipTrigger asChild><Button aria-label={t("modelConfigurationDocs")} className="-my-1 ml-0.5 size-7 shrink-0 text-muted-foreground hover:text-foreground" onClick={() => void client.openExternalUrl(MODEL_CONFIGURATION_DOCS_URL)} size="icon" type="button" variant="ghost"><CircleHelp className="size-3.5" /></Button></TooltipTrigger><TooltipContent>{MODEL_CONFIGURATION_DOCS_URL}</TooltipContent></Tooltip></div><p className="mt-1 truncate text-[12px] text-muted-foreground">{provider.baseUrl ?? provider.id}</p></div>
+            <button aria-checked={customConfiguration} aria-label={t("customProviderConfiguration")} className="grid size-8 shrink-0 place-items-center rounded-md outline-none focus-visible:ring-2 focus-visible:ring-ring" onClick={() => setCustomConfiguration((current) => !current)} role="switch" type="button"><span aria-hidden="true" className={`grid size-5 place-items-center rounded-full border transition-colors ${customConfiguration ? "border-[#a8cf38] bg-[#c8ef59] text-[#24300f]" : "border-[#bfc2ba] bg-transparent text-transparent dark:border-[#585d53]"}`}><Check className="size-3.5 stroke-[3]" /></span></button>
+          </div>
           {customConfiguration ? <><textarea
             aria-label="Provider configuration"
             className="mt-3 w-full resize-y rounded-xl border border-border bg-[#f8f9fa] p-3 font-mono text-[10px] leading-[15px] outline-none placeholder:text-[#90938e] focus:ring-2 focus:ring-ring dark:bg-[#202328] dark:placeholder:text-[#747870]"
@@ -121,7 +133,7 @@ function configurationExample(kind: ConfiguredModelKind, customProvider: boolean
     return JSON.stringify({ name: "My image provider", baseUrl: "https://api.example.com/v1", api: "openrouter-images", models: [{ id: "image-model-id", name: "Image model" }] }, null, 2);
   }
   if (customProvider) {
-    return JSON.stringify({ name: "My provider", baseUrl: "https://api.example.com/v1", api: "openai-completions", headers: { "X-Client": "Wordless" }, models: [{ id: "model-id", name: "Model name", reasoning: true, input: ["text"], contextWindow: 128000, maxTokens: 16384, thinkingLevelMap: { off: "none", low: "low", medium: "medium", high: "high" } }] }, null, 2);
+    return JSON.stringify({ name: "Company AI", baseUrl: "https://model.example.com/v1", api: "openai-completions", headers: { "X-Client": "Wordless" }, models: [{ id: "chat-model-prod", name: "Company Chat", reasoning: true, input: ["text", "image"], contextWindow: 128000, maxTokens: 16384, thinkingLevelMap: { off: "none", low: "low", medium: "medium", high: "high" } }] }, null, 2);
   }
   return JSON.stringify({ baseUrl: "https://api.example.com/v1", headers: { "X-Client": "Wordless" }, modelOverrides: { "model-id": { reasoning: true, contextWindow: 128000, thinkingLevelMap: { off: null, minimal: null, low: "low", medium: null, high: "high" } } } }, null, 2);
 }
