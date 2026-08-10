@@ -1936,8 +1936,12 @@ export class WordlessRuntime {
     this.emitApp({ type: "preferences.changed" });
   }
 
-  async saveProviderConfiguration(kind: "chat" | "image", providerId: string, configuration: Record<string, unknown>): Promise<void> {
-    await this.modelConfiguration.saveProviderConfiguration(kind, providerId, configuration);
+  async discoverProviderModels(request: import("@wordless/domain").ProviderModelDiscoveryRequest): Promise<import("@wordless/domain").ProviderModelCandidate[]> {
+    return await this.modelConfiguration.discoverProviderModels(request);
+  }
+
+  async saveProviderConfiguration(kind: "chat" | "image", providerId: string, configuration: Record<string, unknown>, enabledModelIds?: string[]): Promise<void> {
+    await this.modelConfiguration.saveProviderConfiguration(kind, providerId, configuration, enabledModelIds);
   }
 
   async deleteCustomProvider(kind: "chat" | "image", providerId: string): Promise<void> {

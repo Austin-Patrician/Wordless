@@ -113,6 +113,25 @@ test("deletes only custom providers and clears their enabled models", async () =
   }
 });
 
+test("saves a provider model list and reconciles its enabled references", async () => {
+  const root = await mkdtemp(join(tmpdir(), "wordless-model-save-"));
+  const modelsPath = join(root, "models.json");
+  const settingsPath = join(root, "settings.json");
+  await writeFile(modelsPath, JSON.stringify({ version: 1, providers: { company: { baseUrl: "https://old.example/v1", api: "openai-completions", models: [{ id: "old" }] } }, imageProviders: {} }), "utf8");
+  await writeFile(settingsPath, JSON.stringify({ version: 1, enabledChatModels: ["company/old", "openai/gpt-5.4"], enabledImageModels: [] }), "utf8");
+  const configuration = new RuntimeModelConfiguration({ credentials, imageModels: createImagesModels({ credentials }), models: createModels({ credentials }), paths: { extensionsRoot: join(root, "extensions"), modelsPath, settingsPath } });
+  try {
+    await configuration.initialize();
+    await configuration.saveProviderConfiguration("chat", "company", { baseUrl: "https://new.example/v1", api: "openai-completions", models: [{ id: "new" }] }, ["new"]);
+    assert.deepEqual(JSON.parse(await readFile(settingsPath, "utf8")).enabledChatModels, ["openai/gpt-5.4", "company/new"]);
+    assert.equal(configuration.snapshot().models.some((model) => model.providerId === "company" && model.modelId === "old"), false);
+    assert.equal(configuration.snapshot().models.find((model) => model.providerId === "company" && model.modelId === "new")?.enabled, true);
+  } finally {
+    configuration.dispose();
+    await rm(root, { force: true, recursive: true });
+  }
+});
+
 test("normalizes custom image capabilities and validates generation options", async () => {
   const root = await mkdtemp(join(tmpdir(), "wordless-image-config-"));
   const modelsPath = join(root, "models.json");

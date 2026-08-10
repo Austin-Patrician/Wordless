@@ -16,6 +16,7 @@ import {
   CreateWorkspaceSchema,
   DeleteMediaAssetSchema,
   DeleteCustomProviderSchema,
+  DiscoverProviderModelsSchema,
   DeleteSessionSchema,
   DuplicateMediaAssetSchema,
   ImportSkillFileSchema,
@@ -540,9 +541,13 @@ export function registerRuntimeIpc(runtime: WordlessRuntime, appearanceAssets: A
     return await runtime.getConnectorPrompt(input.connectorId, input.name, input.arguments);
   });
   ipcMain.handle("wordless:model-config:save-provider", async (_event, payload: unknown) => {
-    const input = parsePayload<{ kind: "chat" | "image"; providerId: string; configuration: Record<string, unknown> }>(SaveProviderConfigurationSchema, payload);
-    await runtime.saveProviderConfiguration(input.kind, input.providerId, input.configuration);
+    const input = parsePayload<{ kind: "chat" | "image"; providerId: string; configuration: Record<string, unknown>; enabledModelIds?: string[] }>(SaveProviderConfigurationSchema, payload);
+    await runtime.saveProviderConfiguration(input.kind, input.providerId, input.configuration, input.enabledModelIds);
     options.cloudSync.markDirty();
+  });
+  ipcMain.handle("wordless:model-config:discover-models", async (_event, payload: unknown) => {
+    const input = parsePayload<import("@wordless/domain").ProviderModelDiscoveryRequest>(DiscoverProviderModelsSchema, payload);
+    return await runtime.discoverProviderModels(input);
   });
   ipcMain.handle("wordless:model-config:set-enabled", async (_event, payload: unknown) => {
     const input = parsePayload<{ kind: "chat" | "image"; providerId: string; modelId: string; enabled: boolean }>(SetConfiguredModelEnabledSchema, payload);

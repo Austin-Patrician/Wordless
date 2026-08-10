@@ -1,4 +1,5 @@
 import { Type, type Static } from "typebox";
+import { PROVIDER_MODEL_FETCHERS } from "@wordless/domain";
 import type { AgentExtensionEvent, AgentExtensionSessionState, AgentExtensionSnapshot } from "@wordless/agent-extension-sdk";
 import type {
   AppPreferences,
@@ -457,6 +458,18 @@ export const SaveProviderConfigurationSchema = Type.Object({
   kind: Type.Union([Type.Literal("chat"), Type.Literal("image")]),
   providerId: Type.String({ minLength: 1 }),
   configuration: Type.Object({}, { additionalProperties: true }),
+  enabledModelIds: Type.Optional(Type.Array(Type.String({ minLength: 1 }), { maxItems: 10_000 })),
+});
+
+export const DiscoverProviderModelsSchema = Type.Object({
+  providerId: Type.String({ minLength: 1, maxLength: 200 }),
+  providerFamily: Type.Union([Type.String({ minLength: 1, maxLength: 100 }), Type.Null()]),
+  baseUrl: Type.String({ minLength: 1, maxLength: 2_048 }),
+  apiKey: Type.Optional(Type.String({ minLength: 1, maxLength: 20_000 })),
+  api: Type.Optional(Type.String({ minLength: 1, maxLength: 100 })),
+  headers: Type.Optional(Type.Record(Type.String({ maxLength: 200 }), Type.String({ maxLength: 20_000 }))),
+  authHeader: Type.Optional(Type.Boolean()),
+  modelFetcher: Type.Optional(Type.Union(PROVIDER_MODEL_FETCHERS.map((fetcher) => Type.Literal(fetcher)))),
 });
 
 export const SetConfiguredModelEnabledSchema = Type.Object({
@@ -622,6 +635,7 @@ export type SaveCustomProviderDto = Static<typeof SaveCustomProviderSchema>;
 export type SetEnabledModelDto = Static<typeof SetEnabledModelSchema>;
 export type SaveBuiltinCredentialDto = Static<typeof SaveBuiltinCredentialSchema>;
 export type SaveProviderConfigurationDto = Static<typeof SaveProviderConfigurationSchema>;
+export type DiscoverProviderModelsDto = Static<typeof DiscoverProviderModelsSchema>;
 export type SetConfiguredModelEnabledDto = Static<typeof SetConfiguredModelEnabledSchema>;
 export type DeleteCustomProviderDto = Static<typeof DeleteCustomProviderSchema>;
 export type MediaProjectDto = Static<typeof MediaProjectSchema>;

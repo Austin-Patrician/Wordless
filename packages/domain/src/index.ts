@@ -507,6 +507,51 @@ export interface EnabledModelRecord {
 
 export type ConfiguredModelKind = "chat" | "image";
 
+export const PROVIDER_MODEL_FETCHERS = [
+  "aihubmix",
+  "ollama",
+  "gemini",
+  "vertex",
+  "github",
+  "copilot",
+  "ovms",
+  "together",
+  "new-api",
+  "openrouter",
+  "ppio",
+  "vercel-gateway",
+  "anthropic",
+  "jina",
+  "openai",
+  "openai-compatible",
+] as const;
+
+export type ProviderModelFetcherId = (typeof PROVIDER_MODEL_FETCHERS)[number];
+
+export interface ProviderModelDiscoveryRequest {
+  providerId: string;
+  providerFamily: ProviderAvatarId | null;
+  baseUrl: string;
+  apiKey?: string;
+  api?: string;
+  headers?: Record<string, string>;
+  authHeader?: boolean;
+  modelFetcher?: ProviderModelFetcherId;
+}
+
+export interface ProviderModelCandidate {
+  id: string;
+  name: string;
+  ownedBy?: string;
+  description?: string;
+  contextWindow?: number;
+  maxTokens?: number;
+  supportsVision?: boolean;
+  supportsReasoning?: boolean;
+  /** Safe model-definition fields copied from the built-in catalog when matched. */
+  configuration?: Record<string, unknown>;
+}
+
 export interface ConfiguredProviderSummary {
   id: string;
   displayName: string;

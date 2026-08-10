@@ -1,9 +1,9 @@
-import type { AgentInteractionModeId, AppearanceBackgroundAsset, AppPreferences, ConfiguredModelKind, ConnectorConfiguration, ConnectorPromptSummary, ConnectorResourceSummary, ConnectorSummary, MediaInlineImage, MediaLayoutUpdate, MediaOperationRequest, MediaProject, ModelReference, SessionAccessLevel, SessionDraft, SessionRecord, ThinkingLevel, UsageReport, UsageReportQuery, UserMessageSubmission, UserPromptPart, WorkspaceRecord } from "@wordless/domain";
+import type { AgentInteractionModeId, AppearanceBackgroundAsset, AppPreferences, ConfiguredModelKind, ConnectorConfiguration, ConnectorPromptSummary, ConnectorResourceSummary, ConnectorSummary, MediaInlineImage, MediaLayoutUpdate, MediaOperationRequest, MediaProject, ModelReference, ProviderModelCandidate, ProviderModelDiscoveryRequest, SessionAccessLevel, SessionDraft, SessionRecord, ThinkingLevel, UsageReport, UsageReportQuery, UserMessageSubmission, UserPromptPart, WorkspaceRecord } from "@wordless/domain";
 import type { AgentExtensionSnapshot, JsonObject } from "@wordless/agent-extension-sdk";
 import type { AccountSnapshot, AnalysisSessionSnapshot, AppSnapshot, ArtifactDescriptor, ArtifactIssue, ArtifactPreviewManifest, ArtifactSelection, CloudSyncConflictResolution, CloudSyncInitialStrategy, CloudSyncSnapshot, DataAnalysisCapabilitySnapshot, DesktopAppInfo, DesktopHostEvent, DesktopHostInfo, DesktopMenuId, DesktopRelease, DesktopUpdateSnapshot, OfficeEngineHealth, PresentationTemplate, RuntimeEventEnvelope, SessionArtifactDiff, SessionContextSnapshot, SessionHistoryPage, SessionHistoryPageRequest, SessionMessageSearchRequest, SessionMessageSearchResponse, SessionSnapshot, SessionViewSnapshot, SessionWorkspaceTextFile, SpreadsheetCapabilitySnapshot, SpreadsheetChangeRecord, SpreadsheetRangeProfile, SpreadsheetSelection, WorkspaceFileEntry } from "@wordless/protocol";
 import type { ToolApprovalMode } from "@wordless/domain";
 
-export const DESKTOP_BRIDGE_VERSION = 27;
+export const DESKTOP_BRIDGE_VERSION = 28;
 
 export interface DesktopBridge {
   readonly version: typeof DESKTOP_BRIDGE_VERSION;
@@ -122,7 +122,8 @@ export interface DesktopBridge {
   readConnectorResource(connectorId: string, uri: string): Promise<{ uri: string; content: string; mimeType: string | null }>;
   listConnectorPrompts(connectorId: string): Promise<ConnectorPromptSummary[]>;
   getConnectorPrompt(connectorId: string, name: string, argumentsValue: Record<string, string>): Promise<string>;
-  saveProviderConfiguration(kind: ConfiguredModelKind, providerId: string, configuration: Record<string, unknown>): Promise<void>;
+  discoverProviderModels(request: ProviderModelDiscoveryRequest): Promise<ProviderModelCandidate[]>;
+  saveProviderConfiguration(kind: ConfiguredModelKind, providerId: string, configuration: Record<string, unknown>, enabledModelIds?: string[]): Promise<void>;
   setConfiguredModelEnabled(kind: ConfiguredModelKind, providerId: string, modelId: string, enabled: boolean): Promise<void>;
   deleteCustomProvider(kind: ConfiguredModelKind, providerId: string): Promise<void>;
   loginProviderOAuth(providerId: string): Promise<void>;
@@ -231,6 +232,7 @@ const requiredMethods: Array<Exclude<keyof DesktopBridge, "version">> = [
   "importAppearanceBackground",
   "removeAppearanceBackground",
   "getModelConfiguration",
+  "discoverProviderModels",
   "refreshSkills",
   "importSkill",
   "importSkillFile",

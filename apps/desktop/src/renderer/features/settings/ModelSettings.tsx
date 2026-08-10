@@ -48,7 +48,7 @@ export function ModelSettings() {
     if (selectedProvider && selectedProvider.id !== selectedId) setSelectedId(selectedProvider.id);
   }, [selectedId, selectedProvider]);
 
-  const saveProviderConfiguration = async (provider: ConfiguredProviderSummary, apiKey: string, raw: string, customConfiguration: boolean, avatarId: ProviderAvatarId | null, connection?: ImageProviderConnection) => {
+  const saveProviderConfiguration = async (provider: ConfiguredProviderSummary, apiKey: string, baseUrl: string, raw: string, customConfiguration: boolean, avatarId: ProviderAvatarId | null, enabledModelIds?: string[], connection?: ImageProviderConnection) => {
     try {
       const parsed = customConfiguration && raw.trim() ? JSON.parse(raw) as unknown : {};
       if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
@@ -57,15 +57,20 @@ export function ModelSettings() {
       setSaving(true);
       setError(null);
       const advancedConfiguration = parsed as Record<string, unknown>;
-      const { apiKey: _apiKey, avatarId: _avatarId, ...configurationWithoutReservedFields } = advancedConfiguration;
+      const { apiKey: _apiKey, avatarId: _avatarId, baseUrl: _baseUrl, ...configurationWithoutReservedFields } = advancedConfiguration;
       const nextApiKey = apiKey.trim();
-      const nextConfiguration = {
+      const customChatBaseUrl = provider.kind === "chat" && provider.source === "custom" ? baseUrl.trim() : undefined;
+      const nextConfiguration: Record<string, unknown> = {
         ...configurationWithoutReservedFields,
+        ...(customChatBaseUrl ? { baseUrl: customChatBaseUrl } : typeof advancedConfiguration.baseUrl === "string" ? { baseUrl: advancedConfiguration.baseUrl } : {}),
         ...(connection ? { connection } : {}),
         ...(nextApiKey ? { apiKey: nextApiKey } : {}),
         ...(provider.source === "custom" && avatarId ? { avatarId } : {}),
       };
-      await client.saveProviderConfiguration(kind, provider.id, nextConfiguration);
+      const finalModelIds = Array.isArray(nextConfiguration.models)
+        ? nextConfiguration.models.flatMap((model: unknown) => typeof model === "object" && model !== null && !Array.isArray(model) && typeof (model as Record<string, unknown>).id === "string" ? [(model as Record<string, unknown>).id as string] : [])
+        : [];
+      await client.saveProviderConfiguration(kind, provider.id, nextConfiguration, enabledModelIds?.filter((modelId) => finalModelIds.includes(modelId)));
       await reload();
       await refresh();
     } catch (reason) {

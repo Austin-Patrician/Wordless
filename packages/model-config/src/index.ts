@@ -1,6 +1,6 @@
 import { Type, type Static } from "typebox";
 import { Value } from "typebox/value";
-import { PROVIDER_AVATARS } from "@wordless/domain";
+import { PROVIDER_AVATARS, PROVIDER_MODEL_FETCHERS } from "@wordless/domain";
 
 const HeaderSchema = Type.Record(Type.String(), Type.String());
 const JsonObjectSchema = Type.Record(Type.String(), Type.Unknown());
@@ -35,6 +35,7 @@ const ImageProviderConnectionSchema = Type.Object({
   workspaceId: Type.Optional(Type.String({ minLength: 1 })),
 });
 const ProviderAvatarIdSchema = Type.Union(PROVIDER_AVATARS.map((avatar) => Type.Literal(avatar.id)));
+const ProviderModelFetcherSchema = Type.Union(PROVIDER_MODEL_FETCHERS.map((fetcher) => Type.Literal(fetcher)));
 
 export const ChatModelDefinitionSchema = Type.Object({
   id: Type.String({ minLength: 1 }),
@@ -71,6 +72,7 @@ export const ProviderConfigurationSchema = Type.Object({
   api: Type.Optional(Type.String({ minLength: 1 })),
   headers: Type.Optional(HeaderSchema),
   authHeader: Type.Optional(Type.Boolean()),
+  modelFetcher: Type.Optional(ProviderModelFetcherSchema),
   compat: Type.Optional(JsonObjectSchema),
   models: Type.Optional(Type.Array(ChatModelDefinitionSchema)),
   modelOverrides: Type.Optional(Type.Record(Type.String(), ChatModelOverrideSchema)),

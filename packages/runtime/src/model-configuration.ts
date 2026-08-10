@@ -52,7 +52,8 @@ import {
   type ProviderStreams,
 } from "@wordless/ai";
 import { builtinImagesProviders, builtinProviders } from "@wordless/ai/providers/all";
-import type { ConfiguredModelSummary, ConfiguredProviderSummary, ModelConfigurationSnapshot, ProviderAvatarId } from "@wordless/domain";
+import type { ConfiguredModelSummary, ConfiguredProviderSummary, ModelConfigurationSnapshot, ProviderAvatarId, ProviderModelCandidate, ProviderModelDiscoveryRequest } from "@wordless/domain";
+import { discoverProviderModels as discoverRemoteProviderModels, enrichProviderModelCandidates } from "./provider-model-discovery.ts";
 
 type ModelKind = "chat" | "image";
 type RuntimeImageModel = ImagesModel<ImagesApi>;
@@ -467,7 +468,13 @@ export class RuntimeModelConfiguration {
     return await this.options.imageModels.generateImages(model, context, { signal: options?.signal });
   }
 
-  async saveProviderConfiguration(kind: ModelKind, providerId: string, configuration: Record<string, unknown>): Promise<void> {
+  async discoverProviderModels(request: ProviderModelDiscoveryRequest): Promise<ProviderModelCandidate[]> {
+    const candidates = await discoverRemoteProviderModels(request);
+    const catalog = [...this.chatBuiltins.values()].flatMap((provider) => provider.getModels().map((model) => ({ providerId: provider.id, model })));
+    return enrichProviderModelCandidates(candidates, catalog);
+  }
+
+  async saveProviderConfiguration(kind: ModelKind, providerId: string, configuration: Record<string, unknown>, enabledModelIds?: string[]): Promise<void> {
     if (kind === "chat") {
       const next = { ...this.modelsConfiguration, providers: { ...this.modelsConfiguration.providers, [providerId]: configuration } };
       this.modelsConfiguration = parseModelsConfiguration(next);
@@ -475,7 +482,19 @@ export class RuntimeModelConfiguration {
       const next = { ...this.modelsConfiguration, imageProviders: { ...(this.modelsConfiguration.imageProviders ?? {}), [providerId]: configuration } };
       this.modelsConfiguration = parseModelsConfiguration(next);
     }
+    if (enabledModelIds) {
+      const referencePrefix = `${providerId}/`;
+      const current = kind === "chat" ? this.settings.enabledChatModels : this.settings.enabledImageModels;
+      const enabled = [
+        ...current.filter((reference) => !reference.startsWith(referencePrefix)),
+        ...new Set(enabledModelIds.map((modelId) => modelReferenceKey(providerId, modelId))),
+      ];
+      this.settings = kind === "chat"
+        ? { ...this.settings, enabledChatModels: enabled }
+        : { ...this.settings, enabledImageModels: enabled };
+    }
     await this.writeJson(this.options.paths.modelsPath, this.modelsConfiguration);
+    if (enabledModelIds) await this.writeJson(this.options.paths.settingsPath, this.settings);
     await this.rebuild();
   }
 
