@@ -12,6 +12,8 @@ import { createPendingThreadTurn, createUserMessageSubmission, type PendingThrea
 import { ModelPicker, thinkingLevelForModelSelection } from "./ModelPicker";
 import { WorkspacePicker } from "./WorkspacePicker";
 import { AgentEntryIcon } from "./AgentEntryIcon";
+import { QuickModelSetup } from "./QuickModelSetup";
+import { hasEnabledChatModel } from "./quick-model-setup-model";
 
 type WelcomeViewProps = {
   onOpenModels: () => void;
@@ -107,6 +109,7 @@ export function WelcomeView({ onOpenModels, onOpenSkillImport, onOpenSkills, onS
   const [presentationTemplates, setPresentationTemplates] = useState<PresentationTemplate[]>([]);
   const [submitting, setSubmitting] = useState(false);
   const [submissionError, setSubmissionError] = useState<string | null>(null);
+  const [quickSetupDismissed, setQuickSetupDismissed] = useState(false);
 
   const entries = snapshot?.entries ?? [];
   const modeEntries = useMemo(() => entries.filter((entry) => entry.mode === mode), [entries, mode]);
@@ -117,6 +120,8 @@ export function WelcomeView({ onOpenModels, onOpenSkillImport, onOpenSkills, onS
   const selectedConnection = snapshot?.connections.find((connection) => connection.id === model?.connectionId);
   const workspaceRequired = entry?.workbenchId === "code" || entry?.workbenchId === "analysis";
   const canPlan = entry?.workbenchId === "code" && (snapshot?.extensions.configurations["wordless.plan-mode"]?.enabled ?? false);
+  const hasEnabledModels = snapshot ? hasEnabledChatModel(snapshot.modelConfiguration) : false;
+  const quickSetupOpen = Boolean(snapshot && !hasEnabledModels && !quickSetupDismissed);
 
   useEffect(() => {
     const candidate = defaultEntry(entries, mode);
@@ -297,7 +302,14 @@ export function WelcomeView({ onOpenModels, onOpenSkillImport, onOpenSkills, onS
                   connections={snapshot.connections}
                   entry={entry}
                   models={snapshot.models}
-                  onConfigure={onOpenModels}
+                  onConfigure={() => {
+                    if (!hasEnabledModels) {
+                      setModelOpen(false);
+                      setQuickSetupDismissed(false);
+                      return;
+                    }
+                    onOpenModels();
+                  }}
                   onOpenChange={setModelOpen}
                   onSelect={(connectionId, modelId, selectedThinkingLevel) => {
                     const next = snapshot.models.find((candidate) => candidate.connectionId === connectionId && candidate.modelId === modelId);
@@ -316,6 +328,23 @@ export function WelcomeView({ onOpenModels, onOpenSkillImport, onOpenSkills, onS
           <p className="mt-3 text-xs text-muted-foreground">{t("caution")}</p>
         </div>
       </div>
+      {snapshot ? (
+        <QuickModelSetup
+          configuration={snapshot.modelConfiguration}
+          onAdvanced={() => {
+            setQuickSetupDismissed(true);
+            onOpenModels();
+          }}
+          onConfigured={(providerId, modelId) => {
+            setModel({ connectionId: providerId, modelId });
+            setQuickSetupDismissed(true);
+          }}
+          onOpenChange={(open) => {
+            if (!open) setQuickSetupDismissed(true);
+          }}
+          open={quickSetupOpen}
+        />
+      ) : null}
     </div>
   );
 }
