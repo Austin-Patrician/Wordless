@@ -222,7 +222,7 @@ export function MediaCanvas({ leftOpen, onBackToLibrary, onOpenModels, onToggleL
     setError(null);
     if (draftId) setSubmittingDraftId(draftId);
     try {
-      const next = await client.startMediaOperation({ sessionId, action, parentAssetIds, referenceAssetIds, providerId: model.providerId, modelId: model.modelId, prompt: value.prompt, ratio: value.ratio, outputCount: value.outputCount, targetPosition: position });
+      const next = await client.startMediaOperation({ sessionId, action, parentAssetIds, referenceAssetIds, providerId: model.providerId, modelId: model.modelId, prompt: value.prompt, ratio: value.ratio, outputCount: value.outputCount, ...(value.imageParameters ? { imageParameters: value.imageParameters } : {}), targetPosition: position });
       setProject(next);
       if (draftId) setDraft((current) => current?.id === draftId ? null : current);
     } catch (cause) {

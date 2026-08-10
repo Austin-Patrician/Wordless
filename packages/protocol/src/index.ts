@@ -561,6 +561,17 @@ const MediaProviderRequestBase = {
   prompt: Type.String({ minLength: 1, maxLength: 8_000 }),
   ratio: Type.String({ minLength: 1, maxLength: 24 }),
   outputCount: Type.Number({ minimum: 1, maximum: 4 }),
+  imageParameters: Type.Optional(Type.Object({
+    aspectRatio: Type.Optional(Type.String({ minLength: 1, maxLength: 24 })),
+    resolution: Type.Optional(Type.String({ minLength: 1, maxLength: 24 })),
+    size: Type.Optional(Type.String({ minLength: 1, maxLength: 32 })),
+    quality: Type.Optional(Type.String({ minLength: 1, maxLength: 24 })),
+    outputFormat: Type.Optional(Type.String({ minLength: 1, maxLength: 16 })),
+    outputCompression: Type.Optional(Type.Number({ minimum: 0, maximum: 100 })),
+    seed: Type.Optional(Type.Number({ minimum: 0 })),
+    watermark: Type.Optional(Type.Boolean()),
+    promptEnhancement: Type.Optional(Type.Boolean()),
+  }, { additionalProperties: false })),
   targetPosition: MediaPositionSchema,
 };
 const MediaInlineImageSchema = Type.Object({ mimeType: Type.Literal("image/png"), data: Type.String({ minLength: 1, maxLength: 70_000_000 }) });

@@ -11,6 +11,9 @@ export function mistralConversationsApi(): unknown;
 export function openAICodexResponsesApi(): unknown;
 export function openrouterImagesApi(): unknown;
 export function openaiImagesApi(): unknown;
+export function googleInteractionsImagesApi(): unknown;
+export function dashscopeImagesApi(): unknown;
+export function volcengineImagesApi(): unknown;
 export function builtinProviders(): Provider[];
 export function builtinImagesProviders(): ImagesProvider[];
 

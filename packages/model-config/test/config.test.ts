@@ -93,3 +93,40 @@ test("accepts only built-in provider avatar identifiers", () => {
     imageProviders: {},
   }));
 });
+
+test("parses custom image protocols, connections, and capability declarations", () => {
+  const configuration = parseModelsConfiguration({
+    version: 1,
+    providers: {},
+    imageProviders: {
+      "studio-images": {
+        name: "Studio Images",
+        baseUrl: "https://images.example.com/v1",
+        api: "google-interactions-images",
+        connection: { region: "cn-beijing", workspaceId: "workspace-1" },
+        models: [{
+          id: "studio-image-v1",
+          input: ["text", "image"],
+          output: ["image"],
+          capabilities: {
+            supportsTextToImage: true,
+            supportsReferenceImageEditing: true,
+            supportsMaskEditing: false,
+            supportsTransparentBackground: false,
+            maxReferenceImages: 3,
+            maxOutputImages: 1,
+            aspectRatios: ["1:1", "16:9"],
+            resolutions: ["1K", "2K"],
+            outputFormats: ["png", "jpeg"],
+            qualityLevels: ["auto"],
+          },
+        }],
+      },
+    },
+  });
+
+  const provider = configuration.imageProviders?.["studio-images"];
+  assert.equal(provider?.connection?.workspaceId, "workspace-1");
+  assert.deepEqual(provider?.models?.[0]?.capabilities?.aspectRatios, ["1:1", "16:9"]);
+  assert.deepEqual(provider?.models?.[0]?.capabilities?.outputFormats, ["png", "jpeg"]);
+});

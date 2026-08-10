@@ -4,21 +4,46 @@
 import type { ImagesApi, ImagesModel } from "./types.ts";
 
 export const IMAGE_MODELS = {
-	openrouter: {
+	"openrouter": {
 		"black-forest-labs/flux.2-flex": {
 			id: "black-forest-labs/flux.2-flex",
 			name: "Black Forest Labs: FLUX.2 Flex",
 			api: "openrouter-images",
 			provider: "openrouter",
 			baseUrl: "https://openrouter.ai/api/v1",
-			input: ["text", "image"],
+			input: ["text","image"],
 			output: ["image"],
-			cost: {
-				input: 0,
-				output: 0,
-				cacheRead: 0,
-				cacheWrite: 0,
-			},
+			cost: 	{
+	  "input": 0,
+	  "output": 0,
+	  "cacheRead": 0,
+	  "cacheWrite": 0
+	},
+			capabilities: 	{
+	  "supportsTextToImage": true,
+	  "supportsReferenceImageEditing": true,
+	  "supportsMaskEditing": false,
+	  "supportsTransparentBackground": false,
+	  "maxReferenceImages": 8,
+	  "maxOutputImages": 1,
+	  "aspectRatios": [
+	    "1:1",
+	    "4:3",
+	    "3:4",
+	    "3:2",
+	    "2:3",
+	    "16:9",
+	    "9:16",
+	    "21:9",
+	    "auto"
+	  ],
+	  "outputFormats": [
+	    "png",
+	    "jpeg"
+	  ],
+	  "supportsSeed": true,
+	  "supportsWatermark": false
+	}
 		} satisfies ImagesModel<"openrouter-images">,
 		"black-forest-labs/flux.2-klein-4b": {
 			id: "black-forest-labs/flux.2-klein-4b",
@@ -26,14 +51,39 @@ export const IMAGE_MODELS = {
 			api: "openrouter-images",
 			provider: "openrouter",
 			baseUrl: "https://openrouter.ai/api/v1",
-			input: ["text", "image"],
+			input: ["text","image"],
 			output: ["image"],
-			cost: {
-				input: 0,
-				output: 0,
-				cacheRead: 0,
-				cacheWrite: 0,
-			},
+			cost: 	{
+	  "input": 0,
+	  "output": 0,
+	  "cacheRead": 0,
+	  "cacheWrite": 0
+	},
+			capabilities: 	{
+	  "supportsTextToImage": true,
+	  "supportsReferenceImageEditing": true,
+	  "supportsMaskEditing": false,
+	  "supportsTransparentBackground": false,
+	  "maxReferenceImages": 4,
+	  "maxOutputImages": 1,
+	  "aspectRatios": [
+	    "1:1",
+	    "4:3",
+	    "3:4",
+	    "3:2",
+	    "2:3",
+	    "16:9",
+	    "9:16",
+	    "21:9",
+	    "auto"
+	  ],
+	  "outputFormats": [
+	    "png",
+	    "jpeg"
+	  ],
+	  "supportsSeed": true,
+	  "supportsWatermark": false
+	}
 		} satisfies ImagesModel<"openrouter-images">,
 		"black-forest-labs/flux.2-max": {
 			id: "black-forest-labs/flux.2-max",
@@ -41,14 +91,39 @@ export const IMAGE_MODELS = {
 			api: "openrouter-images",
 			provider: "openrouter",
 			baseUrl: "https://openrouter.ai/api/v1",
-			input: ["text", "image"],
+			input: ["text","image"],
 			output: ["image"],
-			cost: {
-				input: 0,
-				output: 0,
-				cacheRead: 0,
-				cacheWrite: 0,
-			},
+			cost: 	{
+	  "input": 0,
+	  "output": 0,
+	  "cacheRead": 0,
+	  "cacheWrite": 0
+	},
+			capabilities: 	{
+	  "supportsTextToImage": true,
+	  "supportsReferenceImageEditing": true,
+	  "supportsMaskEditing": false,
+	  "supportsTransparentBackground": false,
+	  "maxReferenceImages": 8,
+	  "maxOutputImages": 1,
+	  "aspectRatios": [
+	    "1:1",
+	    "4:3",
+	    "3:4",
+	    "3:2",
+	    "2:3",
+	    "16:9",
+	    "9:16",
+	    "21:9",
+	    "auto"
+	  ],
+	  "outputFormats": [
+	    "png",
+	    "jpeg"
+	  ],
+	  "supportsSeed": true,
+	  "supportsWatermark": false
+	}
 		} satisfies ImagesModel<"openrouter-images">,
 		"black-forest-labs/flux.2-pro": {
 			id: "black-forest-labs/flux.2-pro",
@@ -56,14 +131,39 @@ export const IMAGE_MODELS = {
 			api: "openrouter-images",
 			provider: "openrouter",
 			baseUrl: "https://openrouter.ai/api/v1",
-			input: ["text", "image"],
+			input: ["text","image"],
 			output: ["image"],
-			cost: {
-				input: 0,
-				output: 0,
-				cacheRead: 0,
-				cacheWrite: 0,
-			},
+			cost: 	{
+	  "input": 0,
+	  "output": 0,
+	  "cacheRead": 0,
+	  "cacheWrite": 0
+	},
+			capabilities: 	{
+	  "supportsTextToImage": true,
+	  "supportsReferenceImageEditing": true,
+	  "supportsMaskEditing": false,
+	  "supportsTransparentBackground": false,
+	  "maxReferenceImages": 8,
+	  "maxOutputImages": 1,
+	  "aspectRatios": [
+	    "1:1",
+	    "4:3",
+	    "3:4",
+	    "3:2",
+	    "2:3",
+	    "16:9",
+	    "9:16",
+	    "21:9",
+	    "auto"
+	  ],
+	  "outputFormats": [
+	    "png",
+	    "jpeg"
+	  ],
+	  "supportsSeed": true,
+	  "supportsWatermark": false
+	}
 		} satisfies ImagesModel<"openrouter-images">,
 		"bytedance-seed/seedream-4.5": {
 			id: "bytedance-seed/seedream-4.5",
@@ -71,14 +171,49 @@ export const IMAGE_MODELS = {
 			api: "openrouter-images",
 			provider: "openrouter",
 			baseUrl: "https://openrouter.ai/api/v1",
-			input: ["image", "text"],
+			input: ["image","text"],
 			output: ["image"],
-			cost: {
-				input: 0,
-				output: 0,
-				cacheRead: 0,
-				cacheWrite: 0,
-			},
+			cost: 	{
+	  "input": 0,
+	  "output": 0,
+	  "cacheRead": 0,
+	  "cacheWrite": 0
+	},
+			capabilities: 	{
+	  "supportsTextToImage": true,
+	  "supportsReferenceImageEditing": true,
+	  "supportsMaskEditing": false,
+	  "supportsTransparentBackground": false,
+	  "maxReferenceImages": 14,
+	  "maxOutputImages": 10,
+	  "aspectRatios": [
+	    "1:1",
+	    "1:2",
+	    "2:1",
+	    "2:3",
+	    "3:2",
+	    "3:4",
+	    "4:3",
+	    "4:5",
+	    "5:4",
+	    "9:16",
+	    "16:9",
+	    "9:19.5",
+	    "19.5:9",
+	    "9:20",
+	    "20:9",
+	    "9:21",
+	    "21:9",
+	    "auto"
+	  ],
+	  "resolutions": [
+	    "1K",
+	    "2K",
+	    "4K"
+	  ],
+	  "supportsSeed": true,
+	  "supportsWatermark": false
+	}
 		} satisfies ImagesModel<"openrouter-images">,
 		"google/gemini-2.5-flash-image": {
 			id: "google/gemini-2.5-flash-image",
@@ -86,14 +221,36 @@ export const IMAGE_MODELS = {
 			api: "openrouter-images",
 			provider: "openrouter",
 			baseUrl: "https://openrouter.ai/api/v1",
-			input: ["image", "text"],
-			output: ["image", "text"],
-			cost: {
-				input: 0.3,
-				output: 2.5,
-				cacheRead: 0.03,
-				cacheWrite: 0.08333333333333334,
-			},
+			input: ["image","text"],
+			output: ["image","text"],
+			cost: 	{
+	  "input": 0.3,
+	  "output": 2.5,
+	  "cacheRead": 0.03,
+	  "cacheWrite": 0.0833333333333333
+	},
+			capabilities: 	{
+	  "supportsTextToImage": true,
+	  "supportsReferenceImageEditing": true,
+	  "supportsMaskEditing": false,
+	  "supportsTransparentBackground": false,
+	  "maxReferenceImages": 3,
+	  "maxOutputImages": 1,
+	  "aspectRatios": [
+	    "1:1",
+	    "2:3",
+	    "3:2",
+	    "3:4",
+	    "4:3",
+	    "4:5",
+	    "5:4",
+	    "9:16",
+	    "16:9",
+	    "21:9"
+	  ],
+	  "supportsSeed": false,
+	  "supportsWatermark": false
+	}
 		} satisfies ImagesModel<"openrouter-images">,
 		"google/gemini-3-pro-image": {
 			id: "google/gemini-3-pro-image",
@@ -101,14 +258,41 @@ export const IMAGE_MODELS = {
 			api: "openrouter-images",
 			provider: "openrouter",
 			baseUrl: "https://openrouter.ai/api/v1",
-			input: ["image", "text"],
-			output: ["image", "text"],
-			cost: {
-				input: 2,
-				output: 12,
-				cacheRead: 0.19999999999999998,
-				cacheWrite: 0.375,
-			},
+			input: ["image","text"],
+			output: ["image","text"],
+			cost: 	{
+	  "input": 2,
+	  "output": 12,
+	  "cacheRead": 0.19999999999999998,
+	  "cacheWrite": 0.375
+	},
+			capabilities: 	{
+	  "supportsTextToImage": true,
+	  "supportsReferenceImageEditing": true,
+	  "supportsMaskEditing": false,
+	  "supportsTransparentBackground": false,
+	  "maxReferenceImages": 14,
+	  "maxOutputImages": 1,
+	  "aspectRatios": [
+	    "1:1",
+	    "2:3",
+	    "3:2",
+	    "3:4",
+	    "4:3",
+	    "4:5",
+	    "5:4",
+	    "9:16",
+	    "16:9",
+	    "21:9"
+	  ],
+	  "resolutions": [
+	    "1K",
+	    "2K",
+	    "4K"
+	  ],
+	  "supportsSeed": false,
+	  "supportsWatermark": false
+	}
 		} satisfies ImagesModel<"openrouter-images">,
 		"google/gemini-3-pro-image-preview": {
 			id: "google/gemini-3-pro-image-preview",
@@ -116,14 +300,41 @@ export const IMAGE_MODELS = {
 			api: "openrouter-images",
 			provider: "openrouter",
 			baseUrl: "https://openrouter.ai/api/v1",
-			input: ["image", "text"],
-			output: ["image", "text"],
-			cost: {
-				input: 2,
-				output: 12,
-				cacheRead: 0.19999999999999998,
-				cacheWrite: 0.375,
-			},
+			input: ["image","text"],
+			output: ["image","text"],
+			cost: 	{
+	  "input": 2,
+	  "output": 12,
+	  "cacheRead": 0.19999999999999998,
+	  "cacheWrite": 0.375
+	},
+			capabilities: 	{
+	  "supportsTextToImage": true,
+	  "supportsReferenceImageEditing": true,
+	  "supportsMaskEditing": false,
+	  "supportsTransparentBackground": false,
+	  "maxReferenceImages": 14,
+	  "maxOutputImages": 1,
+	  "aspectRatios": [
+	    "1:1",
+	    "2:3",
+	    "3:2",
+	    "3:4",
+	    "4:3",
+	    "4:5",
+	    "5:4",
+	    "9:16",
+	    "16:9",
+	    "21:9"
+	  ],
+	  "resolutions": [
+	    "1K",
+	    "2K",
+	    "4K"
+	  ],
+	  "supportsSeed": false,
+	  "supportsWatermark": false
+	}
 		} satisfies ImagesModel<"openrouter-images">,
 		"google/gemini-3.1-flash-image": {
 			id: "google/gemini-3.1-flash-image",
@@ -131,14 +342,46 @@ export const IMAGE_MODELS = {
 			api: "openrouter-images",
 			provider: "openrouter",
 			baseUrl: "https://openrouter.ai/api/v1",
-			input: ["image", "text"],
-			output: ["image", "text"],
-			cost: {
-				input: 0.5,
-				output: 3,
-				cacheRead: 0,
-				cacheWrite: 0,
-			},
+			input: ["image","text"],
+			output: ["image","text"],
+			cost: 	{
+	  "input": 0.5,
+	  "output": 3,
+	  "cacheRead": 0,
+	  "cacheWrite": 0
+	},
+			capabilities: 	{
+	  "supportsTextToImage": true,
+	  "supportsReferenceImageEditing": true,
+	  "supportsMaskEditing": false,
+	  "supportsTransparentBackground": false,
+	  "maxReferenceImages": 14,
+	  "maxOutputImages": 1,
+	  "aspectRatios": [
+	    "1:1",
+	    "1:4",
+	    "1:8",
+	    "2:3",
+	    "3:2",
+	    "3:4",
+	    "4:1",
+	    "4:3",
+	    "4:5",
+	    "5:4",
+	    "8:1",
+	    "9:16",
+	    "16:9",
+	    "21:9"
+	  ],
+	  "resolutions": [
+	    "512",
+	    "1K",
+	    "2K",
+	    "4K"
+	  ],
+	  "supportsSeed": false,
+	  "supportsWatermark": false
+	}
 		} satisfies ImagesModel<"openrouter-images">,
 		"google/gemini-3.1-flash-image-preview": {
 			id: "google/gemini-3.1-flash-image-preview",
@@ -146,14 +389,46 @@ export const IMAGE_MODELS = {
 			api: "openrouter-images",
 			provider: "openrouter",
 			baseUrl: "https://openrouter.ai/api/v1",
-			input: ["image", "text"],
-			output: ["image", "text"],
-			cost: {
-				input: 0.5,
-				output: 3,
-				cacheRead: 0,
-				cacheWrite: 0,
-			},
+			input: ["image","text"],
+			output: ["image","text"],
+			cost: 	{
+	  "input": 0.5,
+	  "output": 3,
+	  "cacheRead": 0,
+	  "cacheWrite": 0
+	},
+			capabilities: 	{
+	  "supportsTextToImage": true,
+	  "supportsReferenceImageEditing": true,
+	  "supportsMaskEditing": false,
+	  "supportsTransparentBackground": false,
+	  "maxReferenceImages": 14,
+	  "maxOutputImages": 1,
+	  "aspectRatios": [
+	    "1:1",
+	    "1:4",
+	    "1:8",
+	    "2:3",
+	    "3:2",
+	    "3:4",
+	    "4:1",
+	    "4:3",
+	    "4:5",
+	    "5:4",
+	    "8:1",
+	    "9:16",
+	    "16:9",
+	    "21:9"
+	  ],
+	  "resolutions": [
+	    "512",
+	    "1K",
+	    "2K",
+	    "4K"
+	  ],
+	  "supportsSeed": false,
+	  "supportsWatermark": false
+	}
 		} satisfies ImagesModel<"openrouter-images">,
 		"google/gemini-3.1-flash-lite-image": {
 			id: "google/gemini-3.1-flash-lite-image",
@@ -161,14 +436,154 @@ export const IMAGE_MODELS = {
 			api: "openrouter-images",
 			provider: "openrouter",
 			baseUrl: "https://openrouter.ai/api/v1",
-			input: ["image", "text"],
-			output: ["image", "text"],
-			cost: {
-				input: 0.25,
-				output: 1.5,
-				cacheRead: 0,
-				cacheWrite: 0,
-			},
+			input: ["image","text"],
+			output: ["image","text"],
+			cost: 	{
+	  "input": 0.25,
+	  "output": 1.5,
+	  "cacheRead": 0,
+	  "cacheWrite": 0
+	},
+			capabilities: 	{
+	  "supportsTextToImage": true,
+	  "supportsReferenceImageEditing": true,
+	  "supportsMaskEditing": false,
+	  "supportsTransparentBackground": false,
+	  "maxReferenceImages": 14,
+	  "maxOutputImages": 1,
+	  "aspectRatios": [
+	    "1:1",
+	    "1:4",
+	    "1:8",
+	    "2:3",
+	    "3:2",
+	    "3:4",
+	    "4:1",
+	    "4:3",
+	    "4:5",
+	    "5:4",
+	    "8:1",
+	    "9:16",
+	    "16:9",
+	    "21:9"
+	  ],
+	  "resolutions": [
+	    "1K"
+	  ],
+	  "supportsSeed": false,
+	  "supportsWatermark": false
+	}
+		} satisfies ImagesModel<"openrouter-images">,
+		"krea/krea-2-large": {
+			id: "krea/krea-2-large",
+			name: "Krea: Krea 2 Large",
+			api: "openrouter-images",
+			provider: "openrouter",
+			baseUrl: "https://openrouter.ai/api/v1",
+			input: ["text","image"],
+			output: ["image"],
+			cost: 	{
+	  "input": 0,
+	  "output": 0,
+	  "cacheRead": 0,
+	  "cacheWrite": 0
+	},
+			capabilities: 	{
+	  "supportsTextToImage": true,
+	  "supportsReferenceImageEditing": true,
+	  "supportsMaskEditing": false,
+	  "supportsTransparentBackground": false,
+	  "maxReferenceImages": 1,
+	  "maxOutputImages": 1,
+	  "aspectRatios": [
+	    "1:1",
+	    "4:3",
+	    "3:2",
+	    "16:9",
+	    "4:5",
+	    "2:3",
+	    "9:16"
+	  ],
+	  "resolutions": [
+	    "1K"
+	  ],
+	  "supportsSeed": true,
+	  "supportsWatermark": false
+	}
+		} satisfies ImagesModel<"openrouter-images">,
+		"krea/krea-2-medium": {
+			id: "krea/krea-2-medium",
+			name: "Krea: Krea 2 Medium",
+			api: "openrouter-images",
+			provider: "openrouter",
+			baseUrl: "https://openrouter.ai/api/v1",
+			input: ["text","image"],
+			output: ["image"],
+			cost: 	{
+	  "input": 0,
+	  "output": 0,
+	  "cacheRead": 0,
+	  "cacheWrite": 0
+	},
+			capabilities: 	{
+	  "supportsTextToImage": true,
+	  "supportsReferenceImageEditing": true,
+	  "supportsMaskEditing": false,
+	  "supportsTransparentBackground": false,
+	  "maxReferenceImages": 1,
+	  "maxOutputImages": 1,
+	  "aspectRatios": [
+	    "1:1",
+	    "4:3",
+	    "3:2",
+	    "16:9",
+	    "4:5",
+	    "2:3",
+	    "9:16"
+	  ],
+	  "resolutions": [
+	    "1K"
+	  ],
+	  "supportsSeed": true,
+	  "supportsWatermark": false
+	}
+		} satisfies ImagesModel<"openrouter-images">,
+		"krea/krea-2-medium-turbo": {
+			id: "krea/krea-2-medium-turbo",
+			name: "Krea: Krea 2 Medium Turbo",
+			api: "openrouter-images",
+			provider: "openrouter",
+			baseUrl: "https://openrouter.ai/api/v1",
+			input: ["text","image"],
+			output: ["image"],
+			cost: 	{
+	  "input": 0,
+	  "output": 0,
+	  "cacheRead": 0,
+	  "cacheWrite": 0
+	},
+			capabilities: 	{
+	  "supportsTextToImage": true,
+	  "supportsReferenceImageEditing": true,
+	  "supportsMaskEditing": false,
+	  "supportsTransparentBackground": false,
+	  "maxReferenceImages": 1,
+	  "maxOutputImages": 1,
+	  "aspectRatios": [
+	    "1:1",
+	    "4:3",
+	    "3:2",
+	    "16:9",
+	    "4:5",
+	    "2:3",
+	    "9:16"
+	  ],
+	  "resolutions": [
+	    "1K"
+	  ],
+	  "supportsSeed": true,
+	  "supportsWatermark": false
+	}
 		} satisfies ImagesModel<"openrouter-images">,
 		"microsoft/mai-image-2.5": {
 			id: "microsoft/mai-image-2.5",
@@ -176,14 +591,69 @@ export const IMAGE_MODELS = {
 			api: "openrouter-images",
 			provider: "openrouter",
 			baseUrl: "https://openrouter.ai/api/v1",
-			input: ["text", "image"],
+			input: ["text","image"],
 			output: ["image"],
-			cost: {
-				input: 5,
-				output: 0,
-				cacheRead: 0,
-				cacheWrite: 0,
-			},
+			cost: 	{
+	  "input": 5,
+	  "output": 0,
+	  "cacheRead": 0,
+	  "cacheWrite": 0
+	},
+			capabilities: 	{
+	  "supportsTextToImage": true,
+	  "supportsReferenceImageEditing": true,
+	  "supportsMaskEditing": false,
+	  "supportsTransparentBackground": false,
+	  "maxReferenceImages": 1,
+	  "maxOutputImages": 1,
+	  "aspectRatios": [
+	    "1:1",
+	    "4:3",
+	    "3:4",
+	    "16:9",
+	    "9:16",
+	    "3:2",
+	    "2:3",
+	    "auto"
+	  ],
+	  "supportsSeed": false,
+	  "supportsWatermark": false
+	}
+		} satisfies ImagesModel<"openrouter-images">,
+		"microsoft/mai-image-2.5-pro": {
+			id: "microsoft/mai-image-2.5-pro",
+			name: "Microsoft: MAI-Image-2.5 Pro",
+			api: "openrouter-images",
+			provider: "openrouter",
+			baseUrl: "https://openrouter.ai/api/v1",
+			input: ["text","image"],
+			output: ["image"],
+			cost: 	{
+	  "input": 5,
+	  "output": 0,
+	  "cacheRead": 0,
+	  "cacheWrite": 0
+	},
+			capabilities: 	{
+	  "supportsTextToImage": true,
+	  "supportsReferenceImageEditing": true,
+	  "supportsMaskEditing": false,
+	  "supportsTransparentBackground": false,
+	  "maxReferenceImages": 1,
+	  "maxOutputImages": 1,
+	  "aspectRatios": [
+	    "1:1",
+	    "4:3",
+	    "3:4",
+	    "16:9",
+	    "9:16",
+	    "3:2",
+	    "2:3",
+	    "auto"
+	  ],
+	  "supportsSeed": false,
+	  "supportsWatermark": false
+	}
 		} satisfies ImagesModel<"openrouter-images">,
 		"openai/gpt-5-image": {
 			id: "openai/gpt-5-image",
@@ -191,14 +661,30 @@ export const IMAGE_MODELS = {
 			api: "openrouter-images",
 			provider: "openrouter",
 			baseUrl: "https://openrouter.ai/api/v1",
-			input: ["image", "text"],
-			output: ["image", "text"],
-			cost: {
-				input: 10,
-				output: 10,
-				cacheRead: 1.25,
-				cacheWrite: 0,
-			},
+			input: ["image","text"],
+			output: ["image","text"],
+			cost: 	{
+	  "input": 10,
+	  "output": 10,
+	  "cacheRead": 1.25,
+	  "cacheWrite": 0
+	},
+			capabilities: 	{
+	  "supportsTextToImage": true,
+	  "supportsReferenceImageEditing": true,
+	  "supportsMaskEditing": false,
+	  "supportsTransparentBackground": true,
+	  "maxReferenceImages": 16,
+	  "maxOutputImages": 10,
+	  "qualityLevels": [
+	    "auto",
+	    "low",
+	    "medium",
+	    "high"
+	  ],
+	  "supportsSeed": false,
+	  "supportsWatermark": false
+	}
 		} satisfies ImagesModel<"openrouter-images">,
 		"openai/gpt-5-image-mini": {
 			id: "openai/gpt-5-image-mini",
@@ -206,14 +692,30 @@ export const IMAGE_MODELS = {
 			api: "openrouter-images",
 			provider: "openrouter",
 			baseUrl: "https://openrouter.ai/api/v1",
-			input: ["image", "text"],
-			output: ["image", "text"],
-			cost: {
-				input: 2.5,
-				output: 2,
-				cacheRead: 0.25,
-				cacheWrite: 0,
-			},
+			input: ["image","text"],
+			output: ["image","text"],
+			cost: 	{
+	  "input": 2.5,
+	  "output": 2,
+	  "cacheRead": 0.25,
+	  "cacheWrite": 0
+	},
+			capabilities: 	{
+	  "supportsTextToImage": true,
+	  "supportsReferenceImageEditing": true,
+	  "supportsMaskEditing": false,
+	  "supportsTransparentBackground": true,
+	  "maxReferenceImages": 16,
+	  "maxOutputImages": 10,
+	  "qualityLevels": [
+	    "auto",
+	    "low",
+	    "medium",
+	    "high"
+	  ],
+	  "supportsSeed": false,
+	  "supportsWatermark": false
+	}
 		} satisfies ImagesModel<"openrouter-images">,
 		"openai/gpt-5.4-image-2": {
 			id: "openai/gpt-5.4-image-2",
@@ -221,14 +723,30 @@ export const IMAGE_MODELS = {
 			api: "openrouter-images",
 			provider: "openrouter",
 			baseUrl: "https://openrouter.ai/api/v1",
-			input: ["image", "text"],
-			output: ["image", "text"],
-			cost: {
-				input: 8,
-				output: 15,
-				cacheRead: 2,
-				cacheWrite: 0,
-			},
+			input: ["image","text"],
+			output: ["image","text"],
+			cost: 	{
+	  "input": 8,
+	  "output": 15,
+	  "cacheRead": 2,
+	  "cacheWrite": 0
+	},
+			capabilities: 	{
+	  "supportsTextToImage": true,
+	  "supportsReferenceImageEditing": true,
+	  "supportsMaskEditing": false,
+	  "supportsTransparentBackground": false,
+	  "maxReferenceImages": 16,
+	  "maxOutputImages": 10,
+	  "qualityLevels": [
+	    "auto",
+	    "low",
+	    "medium",
+	    "high"
+	  ],
+	  "supportsSeed": false,
+	  "supportsWatermark": false
+	}
 		} satisfies ImagesModel<"openrouter-images">,
 		"openai/gpt-image-1": {
 			id: "openai/gpt-image-1",
@@ -236,14 +754,36 @@ export const IMAGE_MODELS = {
 			api: "openrouter-images",
 			provider: "openrouter",
 			baseUrl: "https://openrouter.ai/api/v1",
-			input: ["text", "image"],
+			input: ["text","image"],
 			output: ["image"],
-			cost: {
-				input: 10,
-				output: 10,
-				cacheRead: 1.25,
-				cacheWrite: 0,
-			},
+			cost: 	{
+	  "input": 10,
+	  "output": 10,
+	  "cacheRead": 1.25,
+	  "cacheWrite": 0
+	},
+			capabilities: 	{
+	  "supportsTextToImage": true,
+	  "supportsReferenceImageEditing": true,
+	  "supportsMaskEditing": false,
+	  "supportsTransparentBackground": true,
+	  "maxReferenceImages": 16,
+	  "maxOutputImages": 10,
+	  "aspectRatios": [
+	    "1:1",
+	    "3:2",
+	    "2:3",
+	    "auto"
+	  ],
+	  "qualityLevels": [
+	    "auto",
+	    "low",
+	    "medium",
+	    "high"
+	  ],
+	  "supportsSeed": false,
+	  "supportsWatermark": false
+	}
 		} satisfies ImagesModel<"openrouter-images">,
 		"openai/gpt-image-1-mini": {
 			id: "openai/gpt-image-1-mini",
@@ -251,14 +791,36 @@ export const IMAGE_MODELS = {
 			api: "openrouter-images",
 			provider: "openrouter",
 			baseUrl: "https://openrouter.ai/api/v1",
-			input: ["text", "image"],
+			input: ["text","image"],
 			output: ["image"],
-			cost: {
-				input: 2.5,
-				output: 2.5,
-				cacheRead: 0.25,
-				cacheWrite: 0,
-			},
+			cost: 	{
+	  "input": 2.5,
+	  "output": 2.5,
+	  "cacheRead": 0.25,
+	  "cacheWrite": 0
+	},
+			capabilities: 	{
+	  "supportsTextToImage": true,
+	  "supportsReferenceImageEditing": true,
+	  "supportsMaskEditing": false,
+	  "supportsTransparentBackground": true,
+	  "maxReferenceImages": 16,
+	  "maxOutputImages": 10,
+	  "aspectRatios": [
+	    "1:1",
+	    "3:2",
+	    "2:3",
+	    "auto"
+	  ],
+	  "qualityLevels": [
+	    "auto",
+	    "low",
+	    "medium",
+	    "high"
+	  ],
+	  "supportsSeed": false,
+	  "supportsWatermark": false
+	}
 		} satisfies ImagesModel<"openrouter-images">,
 		"openai/gpt-image-2": {
 			id: "openai/gpt-image-2",
@@ -266,29 +828,129 @@ export const IMAGE_MODELS = {
 			api: "openrouter-images",
 			provider: "openrouter",
 			baseUrl: "https://openrouter.ai/api/v1",
-			input: ["text", "image"],
+			input: ["text","image"],
 			output: ["image"],
-			cost: {
-				input: 8,
-				output: 8,
-				cacheRead: 2,
-				cacheWrite: 0,
-			},
+			cost: 	{
+	  "input": 8,
+	  "output": 8,
+	  "cacheRead": 2,
+	  "cacheWrite": 0
+	},
+			capabilities: 	{
+	  "supportsTextToImage": true,
+	  "supportsReferenceImageEditing": true,
+	  "supportsMaskEditing": false,
+	  "supportsTransparentBackground": false,
+	  "maxReferenceImages": 16,
+	  "maxOutputImages": 10,
+	  "aspectRatios": [
+	    "1:1",
+	    "3:2",
+	    "2:3",
+	    "4:3",
+	    "3:4",
+	    "16:9",
+	    "9:16",
+	    "21:9",
+	    "auto"
+	  ],
+	  "qualityLevels": [
+	    "auto",
+	    "low",
+	    "medium",
+	    "high"
+	  ],
+	  "supportsSeed": false,
+	  "supportsWatermark": false
+	}
 		} satisfies ImagesModel<"openrouter-images">,
-		"openrouter/auto": {
-			id: "openrouter/auto",
-			name: "Auto Router",
+		"qwen/qwen-image-3": {
+			id: "qwen/qwen-image-3",
+			name: "Qwen: Qwen Image 3",
 			api: "openrouter-images",
 			provider: "openrouter",
 			baseUrl: "https://openrouter.ai/api/v1",
-			input: ["text", "image"],
-			output: ["text", "image"],
-			cost: {
-				input: -1000000,
-				output: -1000000,
-				cacheRead: 0,
-				cacheWrite: 0,
-			},
+			input: ["text","image"],
+			output: ["image"],
+			cost: 	{
+	  "input": 0,
+	  "output": 0,
+	  "cacheRead": 0,
+	  "cacheWrite": 0
+	},
+			capabilities: 	{
+	  "supportsTextToImage": true,
+	  "supportsReferenceImageEditing": true,
+	  "supportsMaskEditing": false,
+	  "supportsTransparentBackground": false,
+	  "maxReferenceImages": 4,
+	  "maxOutputImages": 6,
+	  "aspectRatios": [
+	    "1:1",
+	    "1:2",
+	    "1:4",
+	    "2:1",
+	    "2:3",
+	    "3:2",
+	    "3:4",
+	    "4:1",
+	    "4:3",
+	    "4:5",
+	    "5:4",
+	    "9:16",
+	    "16:9"
+	  ],
+	  "resolutions": [
+	    "1K",
+	    "2K"
+	  ],
+	  "supportsSeed": true,
+	  "supportsWatermark": false
+	}
+		} satisfies ImagesModel<"openrouter-images">,
+		"qwen/qwen-image-3-pro": {
+			id: "qwen/qwen-image-3-pro",
+			name: "Qwen: Qwen Image 3 Pro",
+			api: "openrouter-images",
+			provider: "openrouter",
+			baseUrl: "https://openrouter.ai/api/v1",
+			input: ["text","image"],
+			output: ["image"],
+			cost: 	{
+	  "input": 0,
+	  "output": 0,
+	  "cacheRead": 0,
+	  "cacheWrite": 0
+	},
+			capabilities: 	{
+	  "supportsTextToImage": true,
+	  "supportsReferenceImageEditing": true,
+	  "supportsMaskEditing": false,
+	  "supportsTransparentBackground": false,
+	  "maxReferenceImages": 4,
+	  "maxOutputImages": 6,
+	  "aspectRatios": [
+	    "1:1",
+	    "1:2",
+	    "1:4",
+	    "2:1",
+	    "2:3",
+	    "3:2",
+	    "3:4",
+	    "4:1",
+	    "4:3",
+	    "4:5",
+	    "5:4",
+	    "9:16",
+	    "16:9"
+	  ],
+	  "resolutions": [
+	    "1K",
+	    "2K"
+	  ],
+	  "supportsSeed": true,
+	  "supportsWatermark": false
+	}
 		} satisfies ImagesModel<"openrouter-images">,
 		"recraft/recraft-v3": {
 			id: "recraft/recraft-v3",
@@ -296,14 +958,32 @@ export const IMAGE_MODELS = {
 			api: "openrouter-images",
 			provider: "openrouter",
 			baseUrl: "https://openrouter.ai/api/v1",
-			input: ["text", "image"],
+			input: ["text","image"],
 			output: ["image"],
-			cost: {
-				input: 0,
-				output: 0,
-				cacheRead: 0,
-				cacheWrite: 0,
-			},
+			cost: 	{
+	  "input": 0,
+	  "output": 0,
+	  "cacheRead": 0,
+	  "cacheWrite": 0
+	},
+			capabilities: 	{
+	  "supportsTextToImage": true,
+	  "supportsReferenceImageEditing": true,
+	  "supportsMaskEditing": false,
+	  "supportsTransparentBackground": false,
+	  "maxReferenceImages": 1,
+	  "maxOutputImages": 6,
+	  "aspectRatios": [
+	    "1:1",
+	    "4:3",
+	    "3:4",
+	    "16:9",
+	    "9:16",
+	    "auto"
+	  ],
+	  "supportsSeed": false,
+	  "supportsWatermark": false
+	}
 		} satisfies ImagesModel<"openrouter-images">,
 		"recraft/recraft-v4": {
 			id: "recraft/recraft-v4",
@@ -311,14 +991,32 @@ export const IMAGE_MODELS = {
 			api: "openrouter-images",
 			provider: "openrouter",
 			baseUrl: "https://openrouter.ai/api/v1",
-			input: ["text", "image"],
+			input: ["text","image"],
 			output: ["image"],
-			cost: {
-				input: 0,
-				output: 0,
-				cacheRead: 0,
-				cacheWrite: 0,
-			},
+			cost: 	{
+	  "input": 0,
+	  "output": 0,
+	  "cacheRead": 0,
+	  "cacheWrite": 0
+	},
+			capabilities: 	{
+	  "supportsTextToImage": true,
+	  "supportsReferenceImageEditing": true,
+	  "supportsMaskEditing": false,
+	  "supportsTransparentBackground": false,
+	  "maxReferenceImages": 1,
+	  "maxOutputImages": 6,
+	  "aspectRatios": [
+	    "1:1",
+	    "4:3",
+	    "3:4",
+	    "16:9",
+	    "9:16",
+	    "auto"
+	  ],
+	  "supportsSeed": false,
+	  "supportsWatermark": false
+	}
 		} satisfies ImagesModel<"openrouter-images">,
 		"recraft/recraft-v4-pro": {
 			id: "recraft/recraft-v4-pro",
@@ -326,14 +1024,32 @@ export const IMAGE_MODELS = {
 			api: "openrouter-images",
 			provider: "openrouter",
 			baseUrl: "https://openrouter.ai/api/v1",
-			input: ["text", "image"],
+			input: ["text","image"],
 			output: ["image"],
-			cost: {
-				input: 0,
-				output: 0,
-				cacheRead: 0,
-				cacheWrite: 0,
-			},
+			cost: 	{
+	  "input": 0,
+	  "output": 0,
+	  "cacheRead": 0,
+	  "cacheWrite": 0
+	},
+			capabilities: 	{
+	  "supportsTextToImage": true,
+	  "supportsReferenceImageEditing": true,
+	  "supportsMaskEditing": false,
+	  "supportsTransparentBackground": false,
+	  "maxReferenceImages": 1,
+	  "maxOutputImages": 6,
+	  "aspectRatios": [
+	    "1:1",
+	    "4:3",
+	    "3:4",
+	    "16:9",
+	    "9:16",
+	    "auto"
+	  ],
+	  "supportsSeed": false,
+	  "supportsWatermark": false
+	}
 		} satisfies ImagesModel<"openrouter-images">,
 		"recraft/recraft-v4-pro-vector": {
 			id: "recraft/recraft-v4-pro-vector",
@@ -341,14 +1057,32 @@ export const IMAGE_MODELS = {
 			api: "openrouter-images",
 			provider: "openrouter",
 			baseUrl: "https://openrouter.ai/api/v1",
-			input: ["text", "image"],
+			input: ["text","image"],
 			output: ["image"],
-			cost: {
-				input: 0,
-				output: 0,
-				cacheRead: 0,
-				cacheWrite: 0,
-			},
+			cost: 	{
+	  "input": 0,
+	  "output": 0,
+	  "cacheRead": 0,
+	  "cacheWrite": 0
+	},
+			capabilities: 	{
+	  "supportsTextToImage": true,
+	  "supportsReferenceImageEditing": true,
+	  "supportsMaskEditing": false,
+	  "supportsTransparentBackground": false,
+	  "maxReferenceImages": 1,
+	  "maxOutputImages": 6,
+	  "aspectRatios": [
+	    "1:1",
+	    "4:3",
+	    "3:4",
+	    "16:9",
+	    "9:16",
+	    "auto"
+	  ],
+	  "supportsSeed": false,
+	  "supportsWatermark": false
+	}
 		} satisfies ImagesModel<"openrouter-images">,
 		"recraft/recraft-v4-vector": {
 			id: "recraft/recraft-v4-vector",
@@ -356,14 +1090,32 @@ export const IMAGE_MODELS = {
 			api: "openrouter-images",
 			provider: "openrouter",
 			baseUrl: "https://openrouter.ai/api/v1",
-			input: ["text", "image"],
+			input: ["text","image"],
 			output: ["image"],
-			cost: {
-				input: 0,
-				output: 0,
-				cacheRead: 0,
-				cacheWrite: 0,
-			},
+			cost: 	{
+	  "input": 0,
+	  "output": 0,
+	  "cacheRead": 0,
+	  "cacheWrite": 0
+	},
+			capabilities: 	{
+	  "supportsTextToImage": true,
+	  "supportsReferenceImageEditing": true,
+	  "supportsMaskEditing": false,
+	  "supportsTransparentBackground": false,
+	  "maxReferenceImages": 1,
+	  "maxOutputImages": 6,
+	  "aspectRatios": [
+	    "1:1",
+	    "4:3",
+	    "3:4",
+	    "16:9",
+	    "9:16",
+	    "auto"
+	  ],
+	  "supportsSeed": false,
+	  "supportsWatermark": false
+	}
 		} satisfies ImagesModel<"openrouter-images">,
 		"recraft/recraft-v4.1": {
 			id: "recraft/recraft-v4.1",
@@ -371,14 +1123,32 @@ export const IMAGE_MODELS = {
 			api: "openrouter-images",
 			provider: "openrouter",
 			baseUrl: "https://openrouter.ai/api/v1",
-			input: ["text", "image"],
+			input: ["text","image"],
 			output: ["image"],
-			cost: {
-				input: 0,
-				output: 0,
-				cacheRead: 0,
-				cacheWrite: 0,
-			},
+			cost: 	{
+	  "input": 0,
+	  "output": 0,
+	  "cacheRead": 0,
+	  "cacheWrite": 0
+	},
+			capabilities: 	{
+	  "supportsTextToImage": true,
+	  "supportsReferenceImageEditing": true,
+	  "supportsMaskEditing": false,
+	  "supportsTransparentBackground": false,
+	  "maxReferenceImages": 1,
+	  "maxOutputImages": 6,
+	  "aspectRatios": [
+	    "1:1",
+	    "4:3",
+	    "3:4",
+	    "16:9",
+	    "9:16",
+	    "auto"
+	  ],
+	  "supportsSeed": false,
+	  "supportsWatermark": false
+	}
 		} satisfies ImagesModel<"openrouter-images">,
 		"recraft/recraft-v4.1-pro": {
 			id: "recraft/recraft-v4.1-pro",
@@ -386,14 +1156,32 @@ export const IMAGE_MODELS = {
 			api: "openrouter-images",
 			provider: "openrouter",
 			baseUrl: "https://openrouter.ai/api/v1",
-			input: ["text", "image"],
+			input: ["text","image"],
 			output: ["image"],
-			cost: {
-				input: 0,
-				output: 0,
-				cacheRead: 0,
-				cacheWrite: 0,
-			},
+			cost: 	{
+	  "input": 0,
+	  "output": 0,
+	  "cacheRead": 0,
+	  "cacheWrite": 0
+	},
+			capabilities: 	{
+	  "supportsTextToImage": true,
+	  "supportsReferenceImageEditing": true,
+	  "supportsMaskEditing": false,
+	  "supportsTransparentBackground": false,
+	  "maxReferenceImages": 1,
+	  "maxOutputImages": 6,
+	  "aspectRatios": [
+	    "1:1",
+	    "4:3",
+	    "3:4",
+	    "16:9",
+	    "9:16",
+	    "auto"
+	  ],
+	  "supportsSeed": false,
+	  "supportsWatermark": false
+	}
 		} satisfies ImagesModel<"openrouter-images">,
 		"recraft/recraft-v4.1-pro-vector": {
 			id: "recraft/recraft-v4.1-pro-vector",
@@ -401,14 +1189,32 @@ export const IMAGE_MODELS = {
 			api: "openrouter-images",
 			provider: "openrouter",
 			baseUrl: "https://openrouter.ai/api/v1",
-			input: ["text", "image"],
+			input: ["text","image"],
 			output: ["image"],
-			cost: {
-				input: 0,
-				output: 0,
-				cacheRead: 0,
-				cacheWrite: 0,
-			},
+			cost: 	{
+	  "input": 0,
+	  "output": 0,
+	  "cacheRead": 0,
+	  "cacheWrite": 0
+	},
+			capabilities: 	{
+	  "supportsTextToImage": true,
+	  "supportsReferenceImageEditing": true,
+	  "supportsMaskEditing": false,
+	  "supportsTransparentBackground": false,
+	  "maxReferenceImages": 1,
+	  "maxOutputImages": 6,
+	  "aspectRatios": [
+	    "1:1",
+	    "4:3",
+	    "3:4",
+	    "16:9",
+	    "9:16",
+	    "auto"
+	  ],
+	  "supportsSeed": false,
+	  "supportsWatermark": false
+	}
 		} satisfies ImagesModel<"openrouter-images">,
 		"recraft/recraft-v4.1-utility": {
 			id: "recraft/recraft-v4.1-utility",
@@ -416,14 +1222,32 @@ export const IMAGE_MODELS = {
 			api: "openrouter-images",
 			provider: "openrouter",
 			baseUrl: "https://openrouter.ai/api/v1",
-			input: ["text", "image"],
+			input: ["text","image"],
 			output: ["image"],
-			cost: {
-				input: 0,
-				output: 0,
-				cacheRead: 0,
-				cacheWrite: 0,
-			},
+			cost: 	{
+	  "input": 0,
+	  "output": 0,
+	  "cacheRead": 0,
+	  "cacheWrite": 0
+	},
+			capabilities: 	{
+	  "supportsTextToImage": true,
+	  "supportsReferenceImageEditing": true,
+	  "supportsMaskEditing": false,
+	  "supportsTransparentBackground": false,
+	  "maxReferenceImages": 1,
+	  "maxOutputImages": 6,
+	  "aspectRatios": [
+	    "1:1",
+	    "4:3",
+	    "3:4",
+	    "16:9",
+	    "9:16",
+	    "auto"
+	  ],
+	  "supportsSeed": false,
+	  "supportsWatermark": false
+	}
 		} satisfies ImagesModel<"openrouter-images">,
 		"recraft/recraft-v4.1-utility-pro": {
 			id: "recraft/recraft-v4.1-utility-pro",
@@ -431,14 +1255,32 @@ export const IMAGE_MODELS = {
 			api: "openrouter-images",
 			provider: "openrouter",
 			baseUrl: "https://openrouter.ai/api/v1",
-			input: ["text", "image"],
+			input: ["text","image"],
 			output: ["image"],
-			cost: {
-				input: 0,
-				output: 0,
-				cacheRead: 0,
-				cacheWrite: 0,
-			},
+			cost: 	{
+	  "input": 0,
+	  "output": 0,
+	  "cacheRead": 0,
+	  "cacheWrite": 0
+	},
+			capabilities: 	{
+	  "supportsTextToImage": true,
+	  "supportsReferenceImageEditing": true,
+	  "supportsMaskEditing": false,
+	  "supportsTransparentBackground": false,
+	  "maxReferenceImages": 1,
+	  "maxOutputImages": 6,
+	  "aspectRatios": [
+	    "1:1",
+	    "4:3",
+	    "3:4",
+	    "16:9",
+	    "9:16",
+	    "auto"
+	  ],
+	  "supportsSeed": false,
+	  "supportsWatermark": false
+	}
 		} satisfies ImagesModel<"openrouter-images">,
 		"recraft/recraft-v4.1-vector": {
 			id: "recraft/recraft-v4.1-vector",
@@ -446,14 +1288,32 @@ export const IMAGE_MODELS = {
 			api: "openrouter-images",
 			provider: "openrouter",
 			baseUrl: "https://openrouter.ai/api/v1",
-			input: ["text", "image"],
+			input: ["text","image"],
 			output: ["image"],
-			cost: {
-				input: 0,
-				output: 0,
-				cacheRead: 0,
-				cacheWrite: 0,
-			},
+			cost: 	{
+	  "input": 0,
+	  "output": 0,
+	  "cacheRead": 0,
+	  "cacheWrite": 0
+	},
+			capabilities: 	{
+	  "supportsTextToImage": true,
+	  "supportsReferenceImageEditing": true,
+	  "supportsMaskEditing": false,
+	  "supportsTransparentBackground": false,
+	  "maxReferenceImages": 1,
+	  "maxOutputImages": 6,
+	  "aspectRatios": [
+	    "1:1",
+	    "4:3",
+	    "3:4",
+	    "16:9",
+	    "9:16",
+	    "auto"
+	  ],
+	  "supportsSeed": false,
+	  "supportsWatermark": false
+	}
 		} satisfies ImagesModel<"openrouter-images">,
 		"sourceful/riverflow-v2-fast": {
 			id: "sourceful/riverflow-v2-fast",
@@ -461,14 +1321,40 @@ export const IMAGE_MODELS = {
 			api: "openrouter-images",
 			provider: "openrouter",
 			baseUrl: "https://openrouter.ai/api/v1",
-			input: ["text", "image"],
+			input: ["text","image"],
 			output: ["image"],
-			cost: {
-				input: 0,
-				output: 0,
-				cacheRead: 0,
-				cacheWrite: 0,
-			},
+			cost: 	{
+	  "input": 0,
+	  "output": 0,
+	  "cacheRead": 0,
+	  "cacheWrite": 0
+	},
+			capabilities: 	{
+	  "supportsTextToImage": true,
+	  "supportsReferenceImageEditing": true,
+	  "supportsMaskEditing": false,
+	  "supportsTransparentBackground": false,
+	  "maxReferenceImages": 4,
+	  "maxOutputImages": 1,
+	  "aspectRatios": [
+	    "1:1",
+	    "4:3",
+	    "3:4",
+	    "3:2",
+	    "2:3",
+	    "16:9",
+	    "9:16",
+	    "21:9",
+	    "auto"
+	  ],
+	  "resolutions": [
+	    "1K",
+	    "2K",
+	    "4K"
+	  ],
+	  "supportsSeed": false,
+	  "supportsWatermark": false
+	}
 		} satisfies ImagesModel<"openrouter-images">,
 		"sourceful/riverflow-v2-pro": {
 			id: "sourceful/riverflow-v2-pro",
@@ -476,14 +1362,40 @@ export const IMAGE_MODELS = {
 			api: "openrouter-images",
 			provider: "openrouter",
 			baseUrl: "https://openrouter.ai/api/v1",
-			input: ["text", "image"],
+			input: ["text","image"],
 			output: ["image"],
-			cost: {
-				input: 0,
-				output: 0,
-				cacheRead: 0,
-				cacheWrite: 0,
-			},
+			cost: 	{
+	  "input": 0,
+	  "output": 0,
+	  "cacheRead": 0,
+	  "cacheWrite": 0
+	},
+			capabilities: 	{
+	  "supportsTextToImage": true,
+	  "supportsReferenceImageEditing": true,
+	  "supportsMaskEditing": false,
+	  "supportsTransparentBackground": false,
+	  "maxReferenceImages": 10,
+	  "maxOutputImages": 1,
+	  "aspectRatios": [
+	    "1:1",
+	    "4:3",
+	    "3:4",
+	    "3:2",
+	    "2:3",
+	    "16:9",
+	    "9:16",
+	    "21:9",
+	    "auto"
+	  ],
+	  "resolutions": [
+	    "1K",
+	    "2K",
+	    "4K"
+	  ],
+	  "supportsSeed": false,
+	  "supportsWatermark": false
+	}
 		} satisfies ImagesModel<"openrouter-images">,
 		"sourceful/riverflow-v2.5-fast": {
 			id: "sourceful/riverflow-v2.5-fast",
@@ -491,14 +1403,42 @@ export const IMAGE_MODELS = {
 			api: "openrouter-images",
 			provider: "openrouter",
 			baseUrl: "https://openrouter.ai/api/v1",
-			input: ["text", "image"],
+			input: ["text","image"],
 			output: ["image"],
-			cost: {
-				input: 0,
-				output: 0,
-				cacheRead: 0,
-				cacheWrite: 0,
-			},
+			cost: 	{
+	  "input": 0,
+	  "output": 0,
+	  "cacheRead": 0,
+	  "cacheWrite": 0
+	},
+			capabilities: 	{
+	  "supportsTextToImage": true,
+	  "supportsReferenceImageEditing": true,
+	  "supportsMaskEditing": false,
+	  "supportsTransparentBackground": true,
+	  "maxReferenceImages": 4,
+	  "maxOutputImages": 1,
+	  "aspectRatios": [
+	    "1:1",
+	    "4:3",
+	    "3:4",
+	    "3:2",
+	    "2:3",
+	    "16:9",
+	    "9:16",
+	    "21:9",
+	    "auto"
+	  ],
+	  "resolutions": [
+	    "1K",
+	    "2K"
+	  ],
+	  "outputFormats": [
+	    "jpeg"
+	  ],
+	  "supportsSeed": false,
+	  "supportsWatermark": false
+	}
 		} satisfies ImagesModel<"openrouter-images">,
 		"sourceful/riverflow-v2.5-pro": {
 			id: "sourceful/riverflow-v2.5-pro",
@@ -506,29 +1446,90 @@ export const IMAGE_MODELS = {
 			api: "openrouter-images",
 			provider: "openrouter",
 			baseUrl: "https://openrouter.ai/api/v1",
-			input: ["text", "image"],
+			input: ["text","image"],
 			output: ["image"],
-			cost: {
-				input: 0,
-				output: 0,
-				cacheRead: 0,
-				cacheWrite: 0,
-			},
+			cost: 	{
+	  "input": 0,
+	  "output": 0,
+	  "cacheRead": 0,
+	  "cacheWrite": 0
+	},
+			capabilities: 	{
+	  "supportsTextToImage": true,
+	  "supportsReferenceImageEditing": true,
+	  "supportsMaskEditing": false,
+	  "supportsTransparentBackground": true,
+	  "maxReferenceImages": 10,
+	  "maxOutputImages": 1,
+	  "aspectRatios": [
+	    "1:1",
+	    "4:3",
+	    "3:4",
+	    "3:2",
+	    "2:3",
+	    "16:9",
+	    "9:16",
+	    "21:9",
+	    "auto"
+	  ],
+	  "resolutions": [
+	    "1K",
+	    "2K",
+	    "4K"
+	  ],
+	  "outputFormats": [
+	    "png",
+	    "jpeg",
+	    "webp"
+	  ],
+	  "supportsSeed": false,
+	  "supportsWatermark": false
+	}
 		} satisfies ImagesModel<"openrouter-images">,
 		"x-ai/grok-imagine-image-quality": {
 			id: "x-ai/grok-imagine-image-quality",
-			name: "xAI: Grok Imagine Image Quality",
+			name: "SpaceXAI: Grok Imagine Image Quality",
 			api: "openrouter-images",
 			provider: "openrouter",
 			baseUrl: "https://openrouter.ai/api/v1",
-			input: ["text", "image"],
+			input: ["text","image"],
 			output: ["image"],
-			cost: {
-				input: 0,
-				output: 0,
-				cacheRead: 0,
-				cacheWrite: 0,
-			},
+			cost: 	{
+	  "input": 0,
+	  "output": 0,
+	  "cacheRead": 0,
+	  "cacheWrite": 0
+	},
+			capabilities: 	{
+	  "supportsTextToImage": true,
+	  "supportsReferenceImageEditing": true,
+	  "supportsMaskEditing": false,
+	  "supportsTransparentBackground": false,
+	  "maxReferenceImages": 3,
+	  "maxOutputImages": 1,
+	  "aspectRatios": [
+	    "1:1",
+	    "3:4",
+	    "4:3",
+	    "9:16",
+	    "16:9",
+	    "2:3",
+	    "3:2",
+	    "9:19.5",
+	    "19.5:9",
+	    "9:20",
+	    "20:9",
+	    "1:2",
+	    "2:1",
+	    "auto"
+	  ],
+	  "resolutions": [
+	    "1K",
+	    "2K"
+	  ],
+	  "supportsSeed": false,
+	  "supportsWatermark": false
+	}
 		} satisfies ImagesModel<"openrouter-images">,
 	},
 } as const satisfies Record<string, Record<string, ImagesModel<ImagesApi>>>;

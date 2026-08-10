@@ -400,7 +400,20 @@ interface MediaProviderOperationRequestBase {
   prompt: string;
   ratio: string;
   outputCount: number;
+  imageParameters?: MediaImageParameters;
   targetPosition: MediaPosition;
+}
+
+export interface MediaImageParameters {
+  aspectRatio?: string;
+  resolution?: string;
+  size?: string;
+  quality?: string;
+  outputFormat?: string;
+  outputCompression?: number;
+  seed?: number;
+  watermark?: boolean;
+  promptEnhancement?: boolean;
 }
 
 export interface MediaGenerationRequest extends MediaProviderOperationRequestBase {
@@ -442,6 +455,17 @@ export interface MediaLayoutUpdate {
 export interface ImageModelCapabilities {
   supportsMaskEditing: boolean;
   supportsTransparentBackground: boolean;
+  supportsTextToImage?: boolean;
+  supportsReferenceImageEditing?: boolean;
+  supportsSpatialAnnotation?: boolean;
+  maxReferenceImages?: number;
+  maxOutputImages?: number;
+  aspectRatios?: string[];
+  resolutions?: string[];
+  outputFormats?: string[];
+  qualityLevels?: string[];
+  supportsSeed?: boolean;
+  supportsWatermark?: boolean;
 }
 
 export interface ConfiguredModelSummary {

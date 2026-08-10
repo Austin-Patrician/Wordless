@@ -29,6 +29,8 @@ import ExpectedResult from '../../../components/docs/ExpectedResult.astro';
 | `maxTokens` | 单次最大输出 | 必须小于模型/接口允许值 |
 | `thinkingLevelMap` | Wordless 深度到服务商参数的映射 | 允许 `off`、`minimal`、`low`、`medium`、`high`、`xhigh`、`max`；不支持的级别不写 |
 
+图片模型配置在顶层使用 `imageProviders`，协议和能力分开声明。内置协议包括 `openrouter-images`、`openai-images`、`google-interactions-images`、`dashscope-images` 和 `volcengine-images`。能力字段决定图片工作台实际显示哪些比例、分辨率和高级参数，不能把供应商不支持的能力写成 `true`。
+
 ## 创建一个 OpenAI-compatible 配置
 
 <ScreenshotFrame src="/images/model%20setup.png" alt="Models 设置中的 Provider 与 Enabled models" caption="内置 Provider 页面：API Key、Custom provider configuration 与 Enabled models 分开管理。" />
@@ -69,6 +71,52 @@ import ExpectedResult from '../../../components/docs/ExpectedResult.astro';
   ]
 }
 ```
+
+## 配置图片模型
+
+内置的 OpenRouter、OpenAI、Google、阿里云百炼和火山引擎只需要在 **Settings → Models → Image** 中填写 API Key。百炼还需要选择地域并填写 Workspace ID。自定义网关或未收录模型可以使用下方结构：
+
+```json title="自定义图片 Provider 示例"
+{
+  "name": "Studio Images",
+  "baseUrl": "https://images.example.com/v1",
+  "api": "google-interactions-images",
+  "models": [
+    {
+      "id": "studio-image-v1",
+      "name": "Studio Image",
+      "input": ["text", "image"],
+      "output": ["image"],
+      "capabilities": {
+        "supportsTextToImage": true,
+        "supportsReferenceImageEditing": true,
+        "supportsMaskEditing": false,
+        "supportsTransparentBackground": false,
+        "maxReferenceImages": 3,
+        "maxOutputImages": 1,
+        "aspectRatios": ["1:1", "4:3", "3:4", "16:9", "9:16"],
+        "resolutions": ["1K", "2K"],
+        "outputFormats": ["png", "jpeg"],
+        "qualityLevels": ["auto"],
+        "supportsSeed": false,
+        "supportsWatermark": false
+      }
+    }
+  ]
+}
+```
+
+| 图片协议 | 用途 | 默认 Base URL |
+| --- | --- | --- |
+| `openrouter-images` | OpenRouter 专用 Images API，支持文生图与参考图 | `https://openrouter.ai/api/v1` |
+| `openai-images` | OpenAI GPT Image 的 generations/edits 接口 | `https://api.openai.com/v1` |
+| `google-interactions-images` | Google Nano Banana Interactions API | `https://generativelanguage.googleapis.com/v1beta` |
+| `dashscope-images` | 阿里云百炼通义万象 | 由地域和 Workspace ID 自动生成 |
+| `volcengine-images` | 火山方舟豆包 Seedream | `https://ark.cn-beijing.volces.com/api/v3` |
+
+百炼使用内置配置时不要把 Workspace ID 写进 Base URL。选择北京或新加坡地域后，Wordless 会根据 `connection.region` 和 `connection.workspaceId` 生成对应 endpoint；返回的临时图片地址会立即下载并保存，不会把短期 URL 留在项目中。
+
+`capabilities` 是运行时契约，不只是界面标签。比例、分辨率、输出数量、参考图数量、格式、质量、Seed 和水印都会在请求发出前校验。自定义配置中没有明确支持的能力，应保持 `false` 或省略。
 
 内置 Provider 需要调整 endpoint 或单个模型能力时，不要重建 Provider；打开 Custom provider configuration，使用 `modelOverrides` 覆盖已有模型。将某个思考级别设为 `null` 可以显式禁用继承级别。
 

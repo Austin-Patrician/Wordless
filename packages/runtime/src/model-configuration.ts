@@ -26,7 +26,10 @@ import { openAICodexResponsesApi } from "@wordless/ai/api/openai-codex-responses
 import { openAICompletionsApi } from "@wordless/ai/api/openai-completions.lazy";
 import { openAIResponsesApi } from "@wordless/ai/api/openai-responses.lazy";
 import { openrouterImagesApi } from "@wordless/ai/api/openrouter-images.lazy";
-import { openaiImagesApi } from "@wordless/ai/api/openai-images";
+import { openaiImagesApi } from "@wordless/ai/api/openai-images.lazy";
+import { googleInteractionsImagesApi } from "@wordless/ai/api/google-interactions-images";
+import { dashscopeImagesApi } from "@wordless/ai/api/dashscope-images";
+import { volcengineImagesApi } from "@wordless/ai/api/volcengine-images";
 import {
   createImagesProvider,
   createProvider,
@@ -35,6 +38,7 @@ import {
   type AssistantImages,
   type ApiKeyAuth,
   type CredentialStore,
+  type ImagesApi,
   type ImagesModel,
   type ImagesContext,
   type ImagesProvider,
@@ -51,6 +55,23 @@ import { builtinImagesProviders, builtinProviders } from "@wordless/ai/providers
 import type { ConfiguredModelSummary, ConfiguredProviderSummary, ModelConfigurationSnapshot, ProviderAvatarId } from "@wordless/domain";
 
 type ModelKind = "chat" | "image";
+type RuntimeImageModel = ImagesModel<ImagesApi>;
+type RuntimeImageCapabilities = {
+  supportsMaskEditing: boolean;
+  supportsTransparentBackground: boolean;
+  supportsTextToImage: boolean;
+  supportsReferenceImageEditing: boolean;
+  supportsSpatialAnnotation: boolean;
+  maxReferenceImages: number;
+  maxOutputImages: number;
+  aspectRatios: string[];
+  resolutions: string[];
+  outputFormats: string[];
+  qualityLevels: string[];
+  supportsSeed: boolean;
+  supportsWatermark: boolean;
+};
+type RuntimeImageCapabilityInput = Partial<RuntimeImageCapabilities>;
 
 export type ModelConfigurationPaths = {
   extensionsRoot: string;
@@ -82,6 +103,9 @@ const CHAT_PROTOCOLS = new Map<string, ProviderStreams>([
 const IMAGE_PROTOCOLS = new Map<string, ProviderImages>([
   ["openai-images", openaiImagesApi() as ProviderImages],
   ["openrouter-images", openrouterImagesApi() as ProviderImages],
+  ["google-interactions-images", googleInteractionsImagesApi() as ProviderImages],
+  ["dashscope-images", dashscopeImagesApi() as ProviderImages],
+  ["volcengine-images", volcengineImagesApi() as ProviderImages],
 ]);
 // The Electron main bundle is CommonJS, where Rolldown lowers import.meta.url to an empty
 // object. Prefer the native CommonJS filename and keep the ESM fallback for package consumers.
@@ -256,11 +280,15 @@ function customChatModel(providerId: string, configuration: ProviderConfiguratio
   };
 }
 
-function applyImageConfiguration(model: ImagesModel, configuration: ImageProviderConfiguration): ImagesModel {
-  return { ...model, baseUrl: configuration.baseUrl ?? model.baseUrl };
+function applyImageConfiguration(model: RuntimeImageModel, configuration: ImageProviderConfiguration): RuntimeImageModel {
+  return {
+    ...model,
+    baseUrl: configuration.baseUrl ?? model.baseUrl,
+    ...(configuration.connection ? { connection: configuration.connection } : {}),
+  };
 }
 
-function customImageModel(providerId: string, configuration: ImageProviderConfiguration, definition: ImageModelDefinition): ImagesModel | undefined {
+function customImageModel(providerId: string, configuration: ImageProviderConfiguration, definition: ImageModelDefinition): RuntimeImageModel | undefined {
   const api = definition.api ?? configuration.api;
   const baseUrl = definition.baseUrl ?? configuration.baseUrl;
   if (!api || !baseUrl) return undefined;
@@ -273,10 +301,41 @@ function customImageModel(providerId: string, configuration: ImageProviderConfig
     input: definition.input ?? ["text"],
     output: definition.output ?? ["image"],
     cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+    ...(configuration.connection ? { connection: configuration.connection } : {}),
     capabilities: {
+      supportsTextToImage: definition.capabilities?.supportsTextToImage ?? (definition.input ?? ["text"]).includes("text"),
+      supportsReferenceImageEditing: definition.capabilities?.supportsReferenceImageEditing ?? (definition.input ?? ["text"]).includes("image"),
       supportsMaskEditing: definition.capabilities?.supportsMaskEditing ?? false,
       supportsTransparentBackground: definition.capabilities?.supportsTransparentBackground ?? false,
+      supportsSpatialAnnotation: definition.capabilities?.supportsSpatialAnnotation ?? false,
+      maxReferenceImages: definition.capabilities?.maxReferenceImages,
+      maxOutputImages: definition.capabilities?.maxOutputImages,
+      aspectRatios: definition.capabilities?.aspectRatios,
+      resolutions: definition.capabilities?.resolutions,
+      outputFormats: definition.capabilities?.outputFormats,
+      qualityLevels: definition.capabilities?.qualityLevels,
+      supportsSeed: definition.capabilities?.supportsSeed,
+      supportsWatermark: definition.capabilities?.supportsWatermark,
     },
+  };
+}
+
+function normalizedImageCapabilities(model: RuntimeImageModel): RuntimeImageCapabilities {
+  const capabilities = (model.capabilities ?? {}) as RuntimeImageCapabilityInput;
+  return {
+    supportsMaskEditing: capabilities.supportsMaskEditing ?? false,
+    supportsTransparentBackground: capabilities.supportsTransparentBackground ?? false,
+    supportsTextToImage: capabilities.supportsTextToImage ?? model.input.includes("text"),
+    supportsReferenceImageEditing: capabilities.supportsReferenceImageEditing ?? model.input.includes("image"),
+    supportsSpatialAnnotation: capabilities.supportsSpatialAnnotation ?? false,
+    maxReferenceImages: capabilities.maxReferenceImages ?? (model.input.includes("image") ? 1 : 0),
+    maxOutputImages: capabilities.maxOutputImages ?? 1,
+    aspectRatios: capabilities.aspectRatios ?? ["1:1", "4:3", "3:4", "16:9", "9:16"],
+    resolutions: capabilities.resolutions ?? [],
+    outputFormats: capabilities.outputFormats ?? ["png"],
+    qualityLevels: capabilities.qualityLevels ?? [],
+    supportsSeed: capabilities.supportsSeed ?? false,
+    supportsWatermark: capabilities.supportsWatermark ?? false,
   };
 }
 
@@ -367,7 +426,7 @@ export class RuntimeModelConfiguration {
         supportsOAuth: provider.auth.oauth !== undefined,
         configuration,
       });
-      for (const model of providerModels) models.push({ providerId: provider.id, providerAvatarId: avatarId, modelId: model.id, displayName: model.name, kind: "image", enabled: imageEnabled.has(modelReferenceKey(provider.id, model.id)), supportsVision: model.input.includes("image"), supportsReasoning: false, supportedThinkingLevels: ["off"], contextWindow: null, api: model.api, imageCapabilities: { supportsMaskEditing: model.capabilities?.supportsMaskEditing ?? false, supportsTransparentBackground: model.capabilities?.supportsTransparentBackground ?? false } });
+      for (const model of providerModels) models.push({ providerId: provider.id, providerAvatarId: avatarId, modelId: model.id, displayName: model.name, kind: "image", enabled: imageEnabled.has(modelReferenceKey(provider.id, model.id)), supportsVision: model.input.includes("image"), supportsReasoning: false, supportedThinkingLevels: ["off"], contextWindow: null, api: model.api, imageCapabilities: normalizedImageCapabilities(model) });
     }
     for (const [id, configuration] of Object.entries(this.modelsConfiguration.providers)) {
       if (providers.some((provider) => provider.kind === "chat" && provider.id === id)) continue;
@@ -392,11 +451,19 @@ export class RuntimeModelConfiguration {
     }
     const model = this.options.imageModels.getModel(providerId, modelId);
     if (!model) throw new Error("The selected image model is no longer available");
-    if (context.input.some((item) => item.type === "image") && !model.input.includes("image")) {
+    const capabilities = normalizedImageCapabilities(model);
+    const references = context.input.filter((item) => item.type === "image");
+    if (context.input.some((item) => item.type === "text") && !capabilities.supportsTextToImage) {
+      throw new Error("The selected image model does not support text-to-image generation");
+    }
+    if (references.length > 0 && !capabilities.supportsReferenceImageEditing) {
       throw new Error("The selected image model does not support reference images");
     }
-    if (context.edit?.mask && !model.capabilities?.supportsMaskEditing) throw new Error("The selected image model does not support mask editing");
-    if (context.edit?.background === "transparent" && !model.capabilities?.supportsTransparentBackground) throw new Error("The selected image model does not support transparent backgrounds");
+    if (references.length > capabilities.maxReferenceImages) throw new Error(`The selected image model supports up to ${capabilities.maxReferenceImages} reference images`);
+    if ((context.outputCount ?? 1) > capabilities.maxOutputImages) throw new Error(`The selected image model supports up to ${capabilities.maxOutputImages} output images`);
+    if (context.edit?.mask && !capabilities.supportsMaskEditing) throw new Error("The selected image model does not support mask editing");
+    if (context.edit?.background === "transparent" && !capabilities.supportsTransparentBackground) throw new Error("The selected image model does not support transparent backgrounds");
+    validateImageGenerationOptions(context, capabilities);
     return await this.options.imageModels.generateImages(model, context, { signal: options?.signal });
   }
 
@@ -597,5 +664,33 @@ export class RuntimeModelConfiguration {
     const temporary = `${path}.tmp`;
     await writeFile(temporary, `${JSON.stringify(value, null, 2)}\n`, "utf8");
     await rename(temporary, path);
+  }
+}
+
+function validateImageGenerationOptions(context: ImagesContext, capabilities: RuntimeImageCapabilities): void {
+  const generation = context.generation;
+  if (!generation) return;
+  if (generation.aspectRatio && capabilities.aspectRatios.length > 0 && !capabilities.aspectRatios.includes(generation.aspectRatio)) {
+    throw new Error(`The selected image model does not support aspect ratio ${generation.aspectRatio}`);
+  }
+  if (generation.resolution && capabilities.resolutions.length > 0 && !capabilities.resolutions.includes(generation.resolution)) {
+    throw new Error(`The selected image model does not support resolution ${generation.resolution}`);
+  }
+  if (generation.outputFormat && capabilities.outputFormats.length > 0 && !capabilities.outputFormats.includes(generation.outputFormat)) {
+    throw new Error(`The selected image model does not support ${generation.outputFormat} output`);
+  }
+  if (generation.quality && capabilities.qualityLevels.length > 0 && !capabilities.qualityLevels.includes(generation.quality)) {
+    throw new Error(`The selected image model does not support quality level ${generation.quality}`);
+  }
+  if (generation.seed !== undefined && !capabilities.supportsSeed) {
+    throw new Error("The selected image model does not support seed control");
+  }
+  if (generation.watermark !== undefined && !capabilities.supportsWatermark) {
+    throw new Error("The selected image model does not support watermark control");
+  }
+  if (generation.outputCompression !== undefined && (
+    !Number.isInteger(generation.outputCompression) || generation.outputCompression < 0 || generation.outputCompression > 100
+  )) {
+    throw new Error("Image output compression must be an integer from 0 to 100");
   }
 }

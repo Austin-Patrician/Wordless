@@ -16,8 +16,23 @@ export const ThinkingLevelMapSchema = Type.Partial(Type.Object({
   max: ThinkingLevelValueSchema,
 }), { additionalProperties: false });
 const ImageModelCapabilitiesSchema = Type.Object({
+  supportsTextToImage: Type.Optional(Type.Boolean()),
+  supportsReferenceImageEditing: Type.Optional(Type.Boolean()),
   supportsMaskEditing: Type.Optional(Type.Boolean()),
   supportsTransparentBackground: Type.Optional(Type.Boolean()),
+  supportsSpatialAnnotation: Type.Optional(Type.Boolean()),
+  maxReferenceImages: Type.Optional(Type.Integer({ minimum: 0 })),
+  maxOutputImages: Type.Optional(Type.Integer({ minimum: 1 })),
+  aspectRatios: Type.Optional(Type.Array(Type.String({ minLength: 1 }))),
+  resolutions: Type.Optional(Type.Array(Type.String({ minLength: 1 }))),
+  outputFormats: Type.Optional(Type.Array(Type.Union([Type.Literal("png"), Type.Literal("jpeg"), Type.Literal("webp")]))),
+  qualityLevels: Type.Optional(Type.Array(Type.String({ minLength: 1 }))),
+  supportsSeed: Type.Optional(Type.Boolean()),
+  supportsWatermark: Type.Optional(Type.Boolean()),
+});
+const ImageProviderConnectionSchema = Type.Object({
+  region: Type.Optional(Type.String({ minLength: 1 })),
+  workspaceId: Type.Optional(Type.String({ minLength: 1 })),
 });
 const ProviderAvatarIdSchema = Type.Union(PROVIDER_AVATARS.map((avatar) => Type.Literal(avatar.id)));
 
@@ -69,6 +84,8 @@ export const ImageProviderConfigurationSchema = Type.Object({
   api: Type.Optional(Type.String({ minLength: 1 })),
   headers: Type.Optional(HeaderSchema),
   authHeader: Type.Optional(Type.Boolean()),
+  compat: Type.Optional(JsonObjectSchema),
+  connection: Type.Optional(ImageProviderConnectionSchema),
   models: Type.Optional(Type.Array(ImageModelDefinitionSchema)),
 });
 

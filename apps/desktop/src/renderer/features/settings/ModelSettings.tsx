@@ -1,6 +1,6 @@
 import type { ConfiguredModelKind, ConfiguredModelSummary, ConfiguredProviderSummary, ModelConfigurationSnapshot, ProviderAvatarId } from "@wordless/domain";
 import { useEffect, useMemo, useState } from "react";
-import { ProviderConfigurationPanel } from "./ProviderConfigurationPanel";
+import { ProviderConfigurationPanel, type ImageProviderConnection } from "./ProviderConfigurationPanel";
 import { ProviderSidebar } from "./ProviderSidebar";
 import { useRuntime, useRuntimeClient } from "../../shared/runtime";
 
@@ -48,7 +48,7 @@ export function ModelSettings() {
     if (selectedProvider && selectedProvider.id !== selectedId) setSelectedId(selectedProvider.id);
   }, [selectedId, selectedProvider]);
 
-  const saveProviderConfiguration = async (provider: ConfiguredProviderSummary, apiKey: string, raw: string, customConfiguration: boolean, avatarId: ProviderAvatarId | null) => {
+  const saveProviderConfiguration = async (provider: ConfiguredProviderSummary, apiKey: string, raw: string, customConfiguration: boolean, avatarId: ProviderAvatarId | null, connection?: ImageProviderConnection) => {
     try {
       const parsed = customConfiguration && raw.trim() ? JSON.parse(raw) as unknown : {};
       if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
@@ -61,6 +61,7 @@ export function ModelSettings() {
       const nextApiKey = apiKey.trim();
       const nextConfiguration = {
         ...configurationWithoutReservedFields,
+        ...(connection ? { connection } : {}),
         ...(nextApiKey ? { apiKey: nextApiKey } : {}),
         ...(provider.source === "custom" && avatarId ? { avatarId } : {}),
       };

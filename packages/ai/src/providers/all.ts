@@ -25,6 +25,9 @@ import { moonshotaiCnProvider } from "./moonshotai-cn.ts";
 import { nvidiaProvider } from "./nvidia.ts";
 import { openaiProvider } from "./openai.ts";
 import { openaiImagesProvider } from "./openai-images.ts";
+import { googleImagesProvider } from "./google-images.ts";
+import { bailianImagesProvider } from "./bailian-images.ts";
+import { volcengineImagesProvider } from "./volcengine-images.ts";
 import { openaiCodexProvider } from "./openai-codex.ts";
 import { opencodeProvider } from "./opencode.ts";
 import { opencodeGoProvider } from "./opencode-go.ts";
@@ -119,7 +122,7 @@ export function builtinModels(options?: CreateModelsOptions): MutableModels {
 
 /** All built-in image-generation providers, freshly constructed. */
 export function builtinImagesProviders(): ImagesProvider[] {
-	return [openaiImagesProvider(), openrouterImagesProvider()];
+	return [openaiImagesProvider(), openrouterImagesProvider(), googleImagesProvider(), bailianImagesProvider(), volcengineImagesProvider()];
 }
 
 /** An `ImagesModels` collection with every built-in image-generation provider registered. */

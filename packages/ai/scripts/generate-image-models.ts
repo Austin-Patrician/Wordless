@@ -24,13 +24,26 @@ interface OpenRouterModelRecord {
 		input_cache_read?: string;
 		input_cache_write?: string;
 	};
+	supported_parameters?: Record<string, OpenRouterCapabilityDescriptor>;
 }
+
+type OpenRouterCapabilityDescriptor =
+	| { type: "enum"; values?: unknown[] }
+	| { type: "range"; min?: number; max?: number }
+	| { type: "boolean" };
 
 async function fetchOpenRouterImageModels(): Promise<ImagesModel<"openrouter-images">[]> {
 	try {
 		console.log("Fetching image models from OpenRouter API...");
-		const response = await fetch(`${OPENROUTER_BASE_URL}/models?output_modalities=image`);
-		const data = (await response.json()) as { data?: OpenRouterModelRecord[] };
+		const [imagesResponse, modelsResponse] = await Promise.all([
+			fetch(`${OPENROUTER_BASE_URL}/images/models`),
+			fetch(`${OPENROUTER_BASE_URL}/models?output_modalities=image`),
+		]);
+		if (!imagesResponse.ok) throw new Error(`OpenRouter Images models request failed (${imagesResponse.status})`);
+		if (!modelsResponse.ok) throw new Error(`OpenRouter models request failed (${modelsResponse.status})`);
+		const data = (await imagesResponse.json()) as { data?: OpenRouterModelRecord[] };
+		const pricingData = (await modelsResponse.json()) as { data?: OpenRouterModelRecord[] };
+		const pricingById = new Map((pricingData.data ?? []).map((model) => [model.id, model.pricing]));
 		const models: ImagesModel<"openrouter-images">[] = [];
 
 		for (const model of data.data ?? []) {
@@ -51,6 +64,7 @@ async function fetchOpenRouterImageModels(): Promise<ImagesModel<"openrouter-ima
 			if (!output.includes("image")) continue;
 			if (input.length === 0) input.push("text");
 
+			const pricing = pricingById.get(model.id);
 			models.push({
 				id: model.id,
 				name: model.name,
@@ -60,11 +74,12 @@ async function fetchOpenRouterImageModels(): Promise<ImagesModel<"openrouter-ima
 				input,
 				output,
 				cost: {
-					input: parseFloat(model.pricing?.prompt || "0") * 1_000_000,
-					output: parseFloat(model.pricing?.completion || "0") * 1_000_000,
-					cacheRead: parseFloat(model.pricing?.input_cache_read || "0") * 1_000_000,
-					cacheWrite: parseFloat(model.pricing?.input_cache_write || "0") * 1_000_000,
+					input: parseFloat(pricing?.prompt || "0") * 1_000_000,
+					output: parseFloat(pricing?.completion || "0") * 1_000_000,
+					cacheRead: parseFloat(pricing?.input_cache_read || "0") * 1_000_000,
+					cacheWrite: parseFloat(pricing?.input_cache_write || "0") * 1_000_000,
 				},
+				capabilities: imageCapabilities(model),
 			});
 		}
 
@@ -74,6 +89,41 @@ async function fetchOpenRouterImageModels(): Promise<ImagesModel<"openrouter-ima
 		console.error("Failed to fetch OpenRouter image models:", error);
 		return [];
 	}
+}
+
+function imageCapabilities(model: OpenRouterModelRecord): NonNullable<ImagesModel<"openrouter-images">["capabilities"]> {
+	const parameters = model.supported_parameters ?? {};
+	const enumValues = (name: string): string[] | undefined => {
+		const descriptor = parameters[name];
+		if (descriptor?.type !== "enum") return undefined;
+		const values = (descriptor.values ?? []).filter((value): value is string => typeof value === "string");
+		return values.length > 0 ? values : undefined;
+	};
+	const rangeMax = (name: string): number | undefined => {
+		const descriptor = parameters[name];
+		return descriptor?.type === "range" && typeof descriptor.max === "number" ? descriptor.max : undefined;
+	};
+	const outputFormats = enumValues("output_format")?.filter((value): value is "png" | "jpeg" | "webp" =>
+		value === "png" || value === "jpeg" || value === "webp",
+	);
+	const qualityLevels = enumValues("quality")?.filter((value): value is "auto" | "low" | "medium" | "high" =>
+		value === "auto" || value === "low" || value === "medium" || value === "high",
+	);
+	const backgroundValues = enumValues("background") ?? [];
+	return {
+		supportsTextToImage: model.architecture?.input_modalities?.includes("text") ?? true,
+		supportsReferenceImageEditing: parameters.input_references !== undefined,
+		supportsMaskEditing: false,
+		supportsTransparentBackground: backgroundValues.includes("transparent"),
+		maxReferenceImages: rangeMax("input_references") ?? 0,
+		maxOutputImages: rangeMax("n") ?? 1,
+		...(enumValues("aspect_ratio") ? { aspectRatios: enumValues("aspect_ratio") } : {}),
+		...(enumValues("resolution") ? { resolutions: enumValues("resolution") } : {}),
+		...(outputFormats?.length ? { outputFormats } : {}),
+		...(qualityLevels?.length ? { qualityLevels } : {}),
+		supportsSeed: parameters.seed !== undefined,
+		supportsWatermark: false,
+	};
 }
 
 function generateImageModelsFile(models: ImagesModel<"openrouter-images">[]): string {
@@ -91,7 +141,8 @@ function generateImageModelsFile(models: ImagesModel<"openrouter-images">[]): st
 			baseUrl: ${JSON.stringify(model.baseUrl)},
 			input: ${JSON.stringify(model.input)},
 			output: ${JSON.stringify(model.output)},
-			cost: ${JSON.stringify(model.cost, null, 2).replace(/^/gm, "\t")}
+			cost: ${JSON.stringify(model.cost, null, 2).replace(/^/gm, "\t")},
+			capabilities: ${JSON.stringify(model.capabilities, null, 2).replace(/^/gm, "\t")}
 		} satisfies ImagesModel<${JSON.stringify(model.api)}>`,
 				]),
 		),

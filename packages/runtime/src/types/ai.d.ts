@@ -61,6 +61,17 @@ export interface ImagesContext {
     inputFidelity?: "low" | "high";
   };
   outputCount?: number;
+  generation?: {
+    aspectRatio?: string;
+    resolution?: string;
+    size?: string;
+    quality?: string;
+    outputFormat?: string;
+    outputCompression?: number;
+    seed?: number;
+    watermark?: boolean;
+    promptEnhancement?: boolean;
+  };
 }
 
 export interface ImagesOptions {
@@ -107,9 +118,21 @@ export interface ImagesModel<TApi extends ImagesApi = ImagesApi> {
   cost: { input: number; output: number; cacheRead: number; cacheWrite: number };
   headers?: ProviderHeaders;
   capabilities?: {
+    supportsTextToImage?: boolean;
+    supportsReferenceImageEditing?: boolean;
     supportsMaskEditing: boolean;
     supportsTransparentBackground: boolean;
+    supportsSpatialAnnotation?: boolean;
+    maxReferenceImages?: number;
+    maxOutputImages?: number;
+    aspectRatios?: string[];
+    resolutions?: string[];
+    outputFormats?: string[];
+    qualityLevels?: string[];
+    supportsSeed?: boolean;
+    supportsWatermark?: boolean;
   };
+  connection?: { region?: string; workspaceId?: string };
 }
 
 export interface ApiKeyCredential {

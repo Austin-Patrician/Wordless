@@ -112,3 +112,75 @@ test("deletes only custom providers and clears their enabled models", async () =
     await rm(root, { force: true, recursive: true });
   }
 });
+
+test("normalizes custom image capabilities and validates generation options", async () => {
+  const root = await mkdtemp(join(tmpdir(), "wordless-image-config-"));
+  const modelsPath = join(root, "models.json");
+  const settingsPath = join(root, "settings.json");
+  await writeFile(modelsPath, JSON.stringify({
+    version: 1,
+    providers: {},
+    imageProviders: {
+      "studio-images": {
+        name: "Studio Images",
+        baseUrl: "https://images.example.com/v1",
+        api: "google-interactions-images",
+        models: [{
+          id: "studio-image-v1",
+          name: "Studio Image",
+          input: ["text", "image"],
+          capabilities: {
+            supportsTextToImage: true,
+            supportsReferenceImageEditing: true,
+            supportsMaskEditing: false,
+            supportsTransparentBackground: false,
+            maxReferenceImages: 2,
+            maxOutputImages: 1,
+            aspectRatios: ["1:1", "16:9"],
+            resolutions: ["1K", "2K"],
+            outputFormats: ["png", "jpeg"],
+            qualityLevels: ["auto"],
+          },
+        }],
+      },
+    },
+  }), "utf8");
+  await writeFile(settingsPath, JSON.stringify({
+    version: 1,
+    enabledChatModels: [],
+    enabledImageModels: ["studio-images/studio-image-v1"],
+  }), "utf8");
+
+  const configuration = new RuntimeModelConfiguration({
+    credentials,
+    imageModels: createImagesModels({ credentials }),
+    models: createModels({ credentials }),
+    paths: { extensionsRoot: join(root, "extensions"), modelsPath, settingsPath },
+  });
+
+  try {
+    await configuration.initialize();
+    const model = configuration.snapshot().models.find((candidate) => candidate.providerId === "studio-images");
+    assert.equal(model?.api, "google-interactions-images");
+    assert.deepEqual(model?.imageCapabilities?.resolutions, ["1K", "2K"]);
+    assert.equal(model?.imageCapabilities?.maxReferenceImages, 2);
+
+    await assert.rejects(
+      configuration.generateImage("studio-images", "studio-image-v1", {
+        input: [{ type: "text", text: "A poster" }],
+        generation: { aspectRatio: "9:16" },
+      }),
+      /does not support aspect ratio 9:16/,
+    );
+    await assert.rejects(
+      configuration.generateImage("studio-images", "studio-image-v1", {
+        input: [{ type: "text", text: "A poster" }],
+        generation: { seed: 42 },
+      }),
+      /does not support seed control/,
+    );
+  } finally {
+    configuration.dispose();
+    await rm(root, { force: true, recursive: true });
+  }
+});

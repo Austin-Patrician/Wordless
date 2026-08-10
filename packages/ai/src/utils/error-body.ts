@@ -83,6 +83,7 @@ function extractBody(error: SdkErrorShape): string | undefined {
 
 function pickBodyText(error: SdkErrorShape): string | undefined {
 	if (typeof error.body === "string") return error.body;
+	if (isPlainNonEmptyObject(error.body)) return safeJsonStringify(error.body);
 	if (isPlainNonEmptyObject(error.error)) return safeJsonStringify(error.error);
 	const responseBody = error.$response?.body;
 	if (typeof responseBody === "string") return responseBody;

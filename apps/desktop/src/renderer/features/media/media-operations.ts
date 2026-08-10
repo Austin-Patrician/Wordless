@@ -28,7 +28,7 @@ export function mediaOperationDefinition(kind: Exclude<MediaOperationKind, "uplo
 
 export function mediaOperationUnavailableReason(definition: MediaOperationDefinition, model: ConfiguredModelSummary | undefined, locale: "zh-CN" | "en-US"): string | null {
   if (!model) return locale === "zh-CN" ? "请先配置图片模型" : "Configure an image model first";
-  if (definition.requiresReference && !model.supportsVision) return locale === "zh-CN" ? "此模型不支持参考图片" : "This model does not support reference images";
+  if (definition.requiresReference && !(model.imageCapabilities?.supportsReferenceImageEditing ?? model.supportsVision)) return locale === "zh-CN" ? "此模型不支持参考图片" : "This model does not support reference images";
   if (definition.capability === "mask" && !model.imageCapabilities?.supportsMaskEditing) return locale === "zh-CN" ? "此模型不支持蒙版编辑" : "This model does not support mask editing";
   if (definition.capability === "transparent" && !model.imageCapabilities?.supportsTransparentBackground) return locale === "zh-CN" ? "此模型不支持透明背景" : "This model does not support transparent backgrounds";
   return null;

@@ -303,7 +303,7 @@ export const BUILTIN_ENTRIES: WorkbenchEntryDefinition[] = [
     iconKey: "image",
     profile: { id: "general", version: "1" },
     workbenchId: "media-canvas",
-    availability: "unavailable",
+    availability: "available",
     modelRequirements: {},
   },
 ];
@@ -1498,6 +1498,7 @@ export class WordlessRuntime {
     await this.pathService.ensureSessionRoot(runtimeRootPath);
     const journalPath = join(this.options.paths.journalsRoot, `${id}.jsonl`);
     const model = this.defaultMediaAgentModel();
+    const runtimeModel = model.connectionId === "media-agent" ? undefined : this.requireRuntimeModel(model);
     const record: SessionRecord = {
       id,
       title: title?.trim() || "Untitled canvas",
@@ -1511,7 +1512,7 @@ export class WordlessRuntime {
       workbenchId: entry.workbenchId,
       accessLevel: "default",
       model,
-      thinkingLevel: thinkingLevelForModel(this.requireRuntimeModel(model)),
+      thinkingLevel: runtimeModel ? thinkingLevelForModel(runtimeModel) : "medium",
       journalPath,
       connectorIds: [],
       interactionMode: "default",
@@ -1698,12 +1699,12 @@ export class WordlessRuntime {
       providerId: request.providerId,
       modelId: request.modelId,
       parameters: request.action === "local-edit" || request.action === "remove-object"
-        ? { hasMask: true }
+        ? { hasMask: true, ...(request.imageParameters ? { imageParameters: request.imageParameters } : {}) }
         : request.action === "remove-background"
-          ? { preserveSubject: request.preserveSubject }
+          ? { preserveSubject: request.preserveSubject, ...(request.imageParameters ? { imageParameters: request.imageParameters } : {}) }
           : request.action === "multi-view"
-            ? { views: request.views }
-            : {},
+            ? { views: request.views, ...(request.imageParameters ? { imageParameters: request.imageParameters } : {}) }
+            : request.imageParameters ? { imageParameters: request.imageParameters } : {},
       status: "rendering",
       errorMessage: null,
       createdAt: now,
@@ -1789,11 +1790,15 @@ export class WordlessRuntime {
         const prompt = this.mediaOperationPrompt(request, batch.viewLabel);
         const input: ImagesContext["input"] = [
           ...await Promise.all(inputs.map((asset) => this.readMediaAssetInput(request.sessionId, asset))),
-          { type: "text", text: `${prompt}\n\nUse an output aspect ratio of ${request.ratio}.` },
+          { type: "text", text: prompt },
         ];
         const response = await this.modelConfiguration.generateImage(request.providerId, request.modelId, {
           input,
           outputCount: batch.targets.length,
+          generation: {
+            aspectRatio: request.imageParameters?.aspectRatio ?? request.ratio,
+            ...request.imageParameters,
+          },
           ...(request.action === "local-edit" || request.action === "remove-object" ? { edit: { mask: { type: "image" as const, mimeType: request.mask.mimeType, data: request.mask.data } } } : {}),
           ...(request.action === "remove-background" ? { edit: { background: "transparent" as const } } : {}),
         }, { signal });

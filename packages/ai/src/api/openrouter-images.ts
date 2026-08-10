@@ -1,191 +1,162 @@
-import OpenAI from "openai";
-import type {
-	ChatCompletion,
-	ChatCompletionContentPart,
-	ChatCompletionContentPartImage,
-	ChatCompletionContentPartText,
-	ChatCompletionCreateParamsNonStreaming,
-} from "openai/resources/chat/completions.js";
 import type {
 	AssistantImages,
-	ImageContent,
 	ImagesContext,
 	ImagesFunction,
 	ImagesModel,
 	ImagesOptions,
-	ProviderHeaders,
-	TextContent,
 } from "../types.ts";
-import { formatProviderError, normalizeProviderError } from "../utils/error-body.ts";
-import { headersToRecord, providerHeadersToRecord } from "../utils/headers.ts";
-import { sanitizeSurrogates } from "../utils/sanitize-unicode.ts";
+import {
+	appendEndpoint,
+	applyPayloadOverride,
+	createImageResult,
+	downloadImage,
+	finishImageError,
+	generationOptions,
+	imageDataUrl,
+	imagePrompt,
+	imageReferences,
+	notifyResponse,
+	outputCount,
+	readJsonResponse,
+	requestInit,
+} from "./native-images.ts";
 
-interface OpenRouterGeneratedImage {
-	image_url?: string | { url?: string };
+const OPENROUTER_IMAGES_PATH = "/images";
+
+interface OpenRouterImagePayload {
+	model: string;
+	prompt: string;
+	n?: number;
+	resolution?: string;
+	aspect_ratio?: string;
+	size?: string;
+	quality?: string;
+	output_format?: string;
+	output_compression?: number;
+	background?: "transparent" | "opaque" | "auto";
+	seed?: number;
+	input_references?: Array<{
+		type: "image_url";
+		image_url: { url: string };
+	}>;
 }
 
-type OpenRouterImageGenerationMessage = ChatCompletion["choices"][number]["message"] & {
-	images?: OpenRouterGeneratedImage[];
-};
+interface OpenRouterImageResponse {
+	id?: string;
+	data?: Array<{
+		b64_json?: string;
+		url?: string;
+		media_type?: string;
+	}>;
+	usage?: {
+		prompt_tokens?: number;
+		completion_tokens?: number;
+		total_tokens?: number;
+		cost?: number;
+	};
+}
 
-type OpenRouterImageGenerationChoice = ChatCompletion["choices"][number] & {
-	message: OpenRouterImageGenerationMessage;
-};
-
-type OpenRouterImageGenerationResponse = ChatCompletion & {
-	choices: OpenRouterImageGenerationChoice[];
-};
-
+/** OpenRouter's dedicated Images API. */
 export const generateImages: ImagesFunction<"openrouter-images", ImagesOptions> = async (
 	model: ImagesModel<"openrouter-images">,
 	context: ImagesContext,
 	options?: ImagesOptions,
-) => {
-	const output: AssistantImages = {
-		api: model.api,
-		provider: model.provider,
-		model: model.id,
-		output: [],
-		stopReason: "stop",
-		timestamp: Date.now(),
-	};
+): Promise<AssistantImages> => {
+	const output = createImageResult(model);
 
 	try {
 		const apiKey = options?.apiKey;
-		if (!apiKey) {
-			throw new Error(`No API key for provider: ${model.provider}`);
-		}
-		if (context.edit?.mask) {
-			throw new Error("The OpenRouter image adapter does not support mask editing");
-		}
-		if (context.edit?.background) {
-			throw new Error("The OpenRouter image adapter does not support transparent background output");
-		}
-		const client = createClient(model, apiKey, options?.headers);
-		let params = buildParams(model, context);
-		const nextParams = await options?.onPayload?.(params, model);
-		if (nextParams !== undefined) {
-			params = nextParams as typeof params;
-		}
-		const requestOptions = {
-			...(options?.signal ? { signal: options.signal } : {}),
-			...(options?.timeoutMs !== undefined ? { timeout: options.timeoutMs } : {}),
-			maxRetries: options?.maxRetries ?? 0,
-		};
-		const { data: response, response: rawResponse } = await client.chat.completions
-			.create(params as unknown as ChatCompletionCreateParamsNonStreaming, requestOptions)
-			.withResponse();
-		await options?.onResponse?.({ status: rawResponse.status, headers: headersToRecord(rawResponse.headers) }, model);
+		if (!apiKey) throw new Error(`No API key for provider: ${model.provider}`);
+		if (context.edit?.mask) throw new Error("The OpenRouter Images API does not support raster mask editing");
 
-		const imageResponse = response as OpenRouterImageGenerationResponse;
-		output.responseId = imageResponse.id;
-		if (imageResponse.usage) {
-			output.usage = parseUsage(imageResponse.usage, model);
-		}
+		const prompt = imagePrompt(context);
+		if (!prompt) throw new Error("An image prompt is required");
 
-		const choice = imageResponse.choices[0];
-		if (choice) {
-			const content = choice.message.content;
-			if (typeof content === "string" && content.length > 0) {
-				output.output.push({ type: "text", text: content } satisfies TextContent);
-			}
+		let payload = await applyPayloadOverride(buildPayload(model, context, prompt), model, options);
+		const response = await fetch(appendEndpoint(model.baseUrl, OPENROUTER_IMAGES_PATH, "https://openrouter.ai/api/v1"), {
+			...requestInit(model, apiKey, options),
+			body: JSON.stringify(payload),
+		});
+		await notifyResponse(response, model, options);
+		const parsed = await readJsonResponse<OpenRouterImageResponse>(response, "OpenRouter Images");
+		output.responseId = parsed.id ?? response.headers.get("x-request-id") ?? undefined;
 
-			for (const image of choice.message.images ?? []) {
-				const imageUrl = typeof image.image_url === "string" ? image.image_url : image.image_url?.url;
-				if (!imageUrl?.startsWith("data:")) continue;
-				const matches = imageUrl.match(/^data:([^;]+);base64,(.+)$/);
-				if (!matches) continue;
+		for (const image of parsed.data ?? []) {
+			if (image.b64_json) {
 				output.output.push({
 					type: "image",
-					mimeType: matches[1],
-					data: matches[2],
-				} satisfies ImageContent);
+					mimeType: image.media_type || mimeTypeForFormat(payload.output_format),
+					data: image.b64_json,
+				});
+			} else if (image.url) {
+				output.output.push(await downloadImage(image.url, options));
 			}
 		}
 
+		if (parsed.usage) output.usage = parseUsage(parsed.usage, model);
+		if (!output.output.some((item) => item.type === "image")) {
+			throw new Error("The OpenRouter Images API returned no image data");
+		}
 		return output;
 	} catch (error) {
-		output.stopReason = options?.signal?.aborted ? "aborted" : "error";
-		output.errorMessage = formatProviderError(normalizeProviderError(error));
-		return output;
+		return finishImageError(output, error, options);
 	}
 };
 
-function createClient(
+function buildPayload(
 	model: ImagesModel<"openrouter-images">,
-	apiKey: string,
-	optionsHeaders?: ProviderHeaders,
-): OpenAI {
-	return new OpenAI({
-		apiKey,
-		baseURL: model.baseUrl,
-		dangerouslyAllowBrowser: true,
-		defaultHeaders: providerHeadersToRecord({ ...model.headers, ...optionsHeaders }),
-	});
+	context: ImagesContext,
+	prompt: string,
+): OpenRouterImagePayload {
+	const generation = generationOptions(context);
+	const references = imageReferences(context);
+	const payload: OpenRouterImagePayload = { model: model.id, prompt };
+	const count = outputCount(context);
+	if (count !== 1) payload.n = count;
+	if (generation.resolution) payload.resolution = generation.resolution;
+	if (generation.aspectRatio) payload.aspect_ratio = generation.aspectRatio;
+	if (generation.size) payload.size = generation.size;
+	if (generation.quality) payload.quality = generation.quality;
+	if (generation.outputFormat) payload.output_format = generation.outputFormat;
+	if (generation.outputCompression !== undefined) payload.output_compression = generation.outputCompression;
+	if (generation.seed !== undefined) payload.seed = generation.seed;
+	if (context.edit?.background) payload.background = context.edit.background;
+	if (references.length > 0) {
+		payload.input_references = references.map((image) => ({
+			type: "image_url",
+			image_url: { url: imageDataUrl(image) },
+		}));
+	}
+	return payload;
 }
 
-type OpenRouterImagesCreateParams = Omit<ChatCompletionCreateParamsNonStreaming, "modalities"> & {
-	modalities: Array<"image" | "text">;
-};
-
-function buildParams(model: ImagesModel<"openrouter-images">, context: ImagesContext): OpenRouterImagesCreateParams {
-	const content: ChatCompletionContentPart[] = context.input.map((item): ChatCompletionContentPart => {
-		if (item.type === "text") {
-			return {
-				type: "text",
-				text: sanitizeSurrogates(item.text),
-			} satisfies ChatCompletionContentPartText;
-		}
-		return {
-			type: "image_url",
-			image_url: {
-				url: `data:${item.mimeType};base64,${item.data}`,
-			},
-		} satisfies ChatCompletionContentPartImage;
-	});
-
-	return {
-		model: model.id,
-		messages: [
-			{
-				role: "user" as const,
-				content,
-			},
-		],
-		stream: false,
-		modalities: model.output.includes("text") ? ["image", "text"] : ["image"],
-	};
+function mimeTypeForFormat(format: string | undefined): string {
+	if (format === "jpeg") return "image/jpeg";
+	if (format === "webp") return "image/webp";
+	return "image/png";
 }
 
 function parseUsage(
-	rawUsage: {
-		prompt_tokens?: number;
-		completion_tokens?: number;
-		prompt_tokens_details?: { cached_tokens?: number; cache_write_tokens?: number };
-	},
+	rawUsage: NonNullable<OpenRouterImageResponse["usage"]>,
 	model: ImagesModel<"openrouter-images">,
 ) {
-	const promptTokens = rawUsage.prompt_tokens || 0;
-	const reportedCachedTokens = rawUsage.prompt_tokens_details?.cached_tokens || 0;
-	const cacheWriteTokens = rawUsage.prompt_tokens_details?.cache_write_tokens || 0;
-	const cacheReadTokens =
-		cacheWriteTokens > 0 ? Math.max(0, reportedCachedTokens - cacheWriteTokens) : reportedCachedTokens;
-	const input = Math.max(0, promptTokens - cacheReadTokens - cacheWriteTokens);
-	const output = rawUsage.completion_tokens || 0;
-	const usage = {
+	const input = Math.max(0, rawUsage.prompt_tokens ?? 0);
+	const output = Math.max(0, rawUsage.completion_tokens ?? 0);
+	const reportedCost = typeof rawUsage.cost === "number" ? Math.max(0, rawUsage.cost) : undefined;
+	const inputCost = (model.cost.input / 1_000_000) * input;
+	const outputCost = (model.cost.output / 1_000_000) * output;
+	return {
 		input,
 		output,
-		cacheRead: cacheReadTokens,
-		cacheWrite: cacheWriteTokens,
-		totalTokens: input + output + cacheReadTokens + cacheWriteTokens,
+		cacheRead: 0,
+		cacheWrite: 0,
+		totalTokens: rawUsage.total_tokens ?? input + output,
 		cost: {
-			input: (model.cost.input / 1000000) * input,
-			output: (model.cost.output / 1000000) * output,
-			cacheRead: (model.cost.cacheRead / 1000000) * cacheReadTokens,
-			cacheWrite: (model.cost.cacheWrite / 1000000) * cacheWriteTokens,
-			total: 0,
+			input: inputCost,
+			output: outputCost,
+			cacheRead: 0,
+			cacheWrite: 0,
+			total: reportedCost ?? inputCost + outputCost,
 		},
 	};
-	usage.cost.total = usage.cost.input + usage.cost.output + usage.cost.cacheRead + usage.cost.cacheWrite;
-	return usage;
 }

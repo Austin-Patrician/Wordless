@@ -52,14 +52,49 @@ describe.sequential("OpenAI Images adapter", () => {
 		expect(requests).toHaveLength(1);
 		expect(requests[0].url).toBe("https://images.example.test/v1/images/generations");
 		expect(await requests[0].json()).toMatchObject({
-		model: "gpt-image-1.5",
-		prompt: "A clean product photograph",
-		n: 3,
-		response_format: "b64_json",
-	});
+			model: "gpt-image-1.5",
+			prompt: "A clean product photograph",
+			n: 3,
+		});
 	});
 
-	it("sends references and edit controls as multipart form data", async () => {
+	it("maps canonical generation controls to native OpenAI fields", async () => {
+		const requests: Request[] = [];
+		vi.stubGlobal("fetch", async (input: unknown, init?: RequestInit): Promise<Response> => {
+			const request = new Request(input as string | URL | Request, init);
+			requests.push(request);
+			return jsonResponse({ created: 1, output_format: "webp", data: [{ b64_json: "d2VicA==" }] });
+		});
+
+		const response = await generateImages(
+			createModel(),
+			{
+				input: [{ type: "text", text: "A landscape illustration" }],
+				outputCount: 2,
+				generation: {
+					aspectRatio: "16:9",
+					quality: "high",
+					outputFormat: "webp",
+					outputCompression: 72,
+				},
+			},
+			{ apiKey: "test-key" },
+		);
+
+		expect(response.stopReason).toBe("stop");
+		expect(response.output).toEqual([{ type: "image", mimeType: "image/webp", data: "d2VicA==" }]);
+		expect(await requests[0]?.json()).toMatchObject({
+			model: "gpt-image-1.5",
+			prompt: "A landscape illustration",
+			n: 2,
+			size: "1536x1024",
+			quality: "high",
+			output_format: "webp",
+			output_compression: 72,
+		});
+		});
+
+		it("sends references and edit controls as multipart form data", async () => {
 		const requests: Request[] = [];
 		const fetchMock = vi.fn(async (input: unknown, init?: RequestInit): Promise<Response> => {
 			const request = new Request(input as string | URL | Request, init);
@@ -89,5 +124,57 @@ describe.sequential("OpenAI Images adapter", () => {
 		expect(form.get("input_fidelity")).toBe("high");
 		expect(form.get("image[]")).toBeInstanceOf(Blob);
 		expect(form.get("mask")).toBeInstanceOf(Blob);
+	});
+
+	it("maps generation controls on edit requests", async () => {
+		const requests: Request[] = [];
+		vi.stubGlobal("fetch", async (input: unknown, init?: RequestInit): Promise<Response> => {
+			const request = new Request(input as string | URL | Request, init);
+			if (request.url !== "data:,") requests.push(request);
+			return jsonResponse({ created: 1, output_format: "jpeg", data: [{ b64_json: "ZWRpdA==" }] });
+		});
+
+		const response = await generateImages(
+			createModel(),
+			{
+				input: [
+					{ type: "text", text: "Make the subject cinematic" },
+					imageContent("cmVmZXJlbmNl"),
+				],
+				generation: { size: "1024x1024", quality: "medium", outputFormat: "jpeg" },
+			},
+			{ apiKey: "test-key" },
+		);
+
+		expect(response.stopReason).toBe("stop");
+		expect(response.output[0]).toMatchObject({ type: "image", mimeType: "image/jpeg" });
+		expect(requests).toHaveLength(1);
+		const form = await requests[0]!.formData();
+		expect(form.get("size")).toBe("1024x1024");
+		expect(form.get("quality")).toBe("medium");
+		expect(form.get("output_format")).toBe("jpeg");
+	});
+
+	it("maps GPT Image 2 resolution tiers to valid flexible dimensions", async () => {
+		const requests: Request[] = [];
+		vi.stubGlobal("fetch", async (input: unknown, init?: RequestInit): Promise<Response> => {
+			const request = new Request(input as string | URL | Request, init);
+			requests.push(request);
+			return jsonResponse({ created: 1, data: [{ b64_json: "MmstaW1hZ2U=" }] });
+		});
+
+		const model = { ...createModel(), id: "gpt-image-2" };
+		const response = await generateImages(model, {
+			input: [{ type: "text", text: "A wide editorial photograph" }],
+			generation: { resolution: "2K", aspectRatio: "16:9" },
+		}, { apiKey: "test-key" });
+
+		expect(response.stopReason).toBe("stop");
+		const body = await requests[0]?.json() as { size?: string };
+		expect(body.size).toMatch(/^\d+x\d+$/);
+		const [width, height] = body.size!.split("x").map(Number);
+		expect(width % 16).toBe(0);
+		expect(height % 16).toBe(0);
+		expect(width / height).toBeCloseTo(16 / 9, 1);
 	});
 });

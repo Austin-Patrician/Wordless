@@ -25,7 +25,12 @@ export type KnownApi =
 
 export type Api = KnownApi | (string & {});
 
-export type KnownImagesApi = "openai-images" | "openrouter-images";
+export type KnownImagesApi =
+	| "openai-images"
+	| "openrouter-images"
+	| "google-interactions-images"
+	| "dashscope-images"
+	| "volcengine-images";
 
 export type ImagesApi = KnownImagesApi | (string & {});
 
@@ -67,7 +72,7 @@ export type KnownProvider =
 	| "xiaomi-token-plan-sgp";
 export type ProviderId = KnownProvider | string;
 
-export type KnownImagesProvider = "openai" | "openrouter";
+export type KnownImagesProvider = "openai" | "openrouter" | "google" | "bailian" | "volcengine";
 
 export type ImagesProviderId = KnownImagesProvider | string;
 
@@ -423,10 +428,32 @@ export interface ImagesEditContext {
 	inputFidelity?: "low" | "high";
 }
 
+export type ImageOutputFormat = "png" | "jpeg" | "webp";
+export type ImageQuality = "auto" | "low" | "medium" | "high";
+
+/** Provider-neutral image controls. Adapters translate these to vendor fields. */
+export interface ImagesGenerationOptions {
+	aspectRatio?: string;
+	resolution?: string;
+	size?: string;
+	quality?: ImageQuality | string;
+	outputFormat?: ImageOutputFormat | string;
+	outputCompression?: number;
+	seed?: number;
+	watermark?: boolean;
+	promptEnhancement?: boolean;
+}
+
+export interface ImagesProviderConnection {
+	region?: "cn-beijing" | "ap-southeast-1" | string;
+	workspaceId?: string;
+}
+
 export interface ImagesContext {
 	input: ImagesInputContent[];
 	edit?: ImagesEditContext;
 	outputCount?: number;
+	generation?: ImagesGenerationOptions;
 }
 
 export type ImagesStopReason = "stop" | "error" | "aborted";
@@ -737,8 +764,20 @@ export interface ImagesModel<TApi extends ImagesApi>
 	api: TApi;
 	provider: ImagesProviderId;
 	output: ("text" | "image")[];
+	connection?: ImagesProviderConnection;
 	capabilities?: {
+		supportsTextToImage?: boolean;
+		supportsReferenceImageEditing?: boolean;
 		supportsMaskEditing: boolean;
 		supportsTransparentBackground: boolean;
+		supportsSpatialAnnotation?: boolean;
+		maxReferenceImages?: number;
+		maxOutputImages?: number;
+		aspectRatios?: string[];
+		resolutions?: string[];
+		outputFormats?: ImageOutputFormat[];
+		qualityLevels?: ImageQuality[];
+		supportsSeed?: boolean;
+		supportsWatermark?: boolean;
 	};
 }
