@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -35,6 +35,24 @@ test("default access rejects an absolute write path outside the workspace", asyn
 
     assert.equal(result.ok, false);
     if (!result.ok) assert.match(result.error.message, /inside the workspace/);
+  });
+});
+
+test("default access canonicalizes paths inside a configured read-only root", async () => {
+  await withWorkspace(async (rootPath) => {
+    const readOnlyRoot = await mkdtemp(path.join(os.tmpdir(), "wordless-read-only-"));
+    try {
+      const filePath = path.join(readOnlyRoot, "SKILL.md");
+      await writeFile(filePath, "# Skill\n");
+      const env = new WorkspacePathService().createExecutionEnv(rootPath, "default", { readOnlyRoots: [readOnlyRoot] });
+
+      const result = await env.canonicalPath(filePath);
+
+      assert.equal(result.ok, true);
+      if (result.ok) assert.equal(result.value, await realpath(filePath));
+    } finally {
+      await rm(readOnlyRoot, { force: true, recursive: true });
+    }
   });
 });
 

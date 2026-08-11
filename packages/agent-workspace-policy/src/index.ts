@@ -40,23 +40,46 @@ function isWithinWorkspace(rootPath: string, candidatePath: string): boolean {
 
 const PATH_INPUT_KEYS = new Set(["path", "paths", "sourcePath", "outputPath", "filePath", "directoryPath", "cwd"]);
 
-function externalPaths(context: AgentDriverSessionContext, input: Record<string, unknown>): string[] {
+const TRUSTED_SKILL_READ_TOOLS = new Set(["read", "ls", "find", "grep"]);
+
+async function isTrustedSkillReadPath(context: AgentDriverSessionContext, candidatePath: string): Promise<boolean> {
+  if (!context.trustedSkillReadRoots || context.trustedSkillReadRoots.size === 0) return false;
+  if (typeof context.env.canonicalPath !== "function") return false;
+  const candidate = await context.env.canonicalPath(candidatePath);
+  if (!candidate.ok) return false;
+  for (const rootPath of context.trustedSkillReadRoots) {
+    const root = await context.env.canonicalPath(rootPath);
+    if (root.ok && isWithinWorkspace(root.value, candidate.value)) return true;
+  }
+  return false;
+}
+
+async function externalPaths(
+  context: AgentDriverSessionContext,
+  input: Record<string, unknown>,
+  trustedRead: boolean,
+): Promise<string[]> {
   const paths = new Set<string>();
-  const visit = (value: unknown, key?: string): void => {
+  const visit = async (value: unknown, key?: string): Promise<void> => {
     if (typeof value === "string" && key && PATH_INPUT_KEYS.has(key) && value.trim()) {
       const absolute = isAbsolute(value) ? resolve(value) : resolve(context.record.runtimeRootPath, value);
-      if (!isWithinWorkspace(context.record.runtimeRootPath, absolute)) paths.add(absolute);
+      if (!isWithinWorkspace(context.record.runtimeRootPath, absolute) && !(trustedRead && await isTrustedSkillReadPath(context, absolute))) {
+        paths.add(absolute);
+      }
       return;
     }
     if (Array.isArray(value)) {
-      if (key === "paths") value.forEach((entry) => visit(entry, "path"));
-      else value.forEach((entry) => visit(entry));
+      if (key === "paths") {
+        for (const entry of value) await visit(entry, "path");
+      } else {
+        for (const entry of value) await visit(entry);
+      }
       return;
     }
     if (!value || typeof value !== "object") return;
-    for (const [childKey, child] of Object.entries(value as Record<string, unknown>)) visit(child, childKey);
+    for (const [childKey, child] of Object.entries(value as Record<string, unknown>)) await visit(child, childKey);
   };
-  visit(input);
+  await visit(input);
   return [...paths];
 }
 
@@ -173,7 +196,7 @@ export async function preflightWorkspaceOperation(
 ): Promise<OperationPreflightDecision> {
   if (request.toolName === "bash") return commandApproval(context, request);
   if (context.record.accessLevel === "default") {
-    const paths = externalPaths(context, request.input);
+    const paths = await externalPaths(context, request.input, TRUSTED_SKILL_READ_TOOLS.has(request.toolName));
     if (paths.length > 0) return externalAccessApproval(context, request, paths);
   }
   if (request.toolName === "data_materialize" || request.toolName === "data_publish") {

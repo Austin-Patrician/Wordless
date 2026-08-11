@@ -1,4 +1,4 @@
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { InMemorySessionStorage, Session } from "@wordless/agent";
@@ -21,7 +21,7 @@ afterEach(async () => {
   await rm(rootPath, { force: true, recursive: true });
 });
 
-function createContext(accessLevel: SessionAccessLevel): AgentDriverSessionContext {
+function createContext(accessLevel: SessionAccessLevel, trustedSkillReadRoots: Set<string> = new Set()): AgentDriverSessionContext {
   const models = createModels();
   const provider = fauxProvider({ provider: `workspace-policy-${crypto.randomUUID()}` });
   models.setProvider(provider.provider);
@@ -75,6 +75,7 @@ function createContext(accessLevel: SessionAccessLevel): AgentDriverSessionConte
     session: new Session(new InMemorySessionStorage()),
     env: new NodeExecutionEnv({ cwd: rootPath }),
     skills: [],
+    trustedSkillReadRoots,
     connectorTools: [],
     connectorToolPolicies: [],
     security: {
@@ -157,6 +158,65 @@ describe("workspace operation policy", () => {
     if (decision.type === "approval" && decision.approval.preview.type === "external-access") {
       expect(decision.approval.preview.paths).toEqual([externalPath]);
       expect(decision.approval.requiresElevation).toBe(true);
+    }
+  });
+
+  it("allows read-only tools inside a loaded skill directory outside the workspace", async () => {
+    const skillRoot = await mkdtemp(join(tmpdir(), "wordless-skill-"));
+    try {
+      await mkdir(join(skillRoot, "references"));
+      await writeFile(join(skillRoot, "references", "guide.md"), "guide", "utf8");
+      const context = createContext("default", new Set([skillRoot]));
+      for (const toolName of ["read", "ls", "find", "grep"]) {
+        const input = toolName === "read"
+          ? { path: join(skillRoot, "references", "guide.md") }
+          : { path: join(skillRoot, "references") };
+        await expect(preflightWorkspaceOperation(context, { toolName, input })).resolves.toEqual({ type: "allow" });
+      }
+    } finally {
+      await rm(skillRoot, { force: true, recursive: true });
+    }
+  });
+
+  it("does not extend skill trust to writes or commands", async () => {
+    const skillRoot = await mkdtemp(join(tmpdir(), "wordless-skill-"));
+    try {
+      const context = createContext("default", new Set([skillRoot]));
+      const writeDecision = await preflightWorkspaceOperation(context, {
+        toolName: "write",
+        input: { path: join(skillRoot, "notes.md"), content: "no" },
+      });
+      expect(writeDecision.type).toBe("approval");
+      if (writeDecision.type === "approval") expect(writeDecision.approval.risk).toBe("workspace-access");
+      const bashDecision = await preflightWorkspaceOperation(context, {
+        toolName: "bash",
+        input: { command: `cat "${join(skillRoot, "notes.md")}"` },
+      });
+      expect(bashDecision.type).toBe("approval");
+    } finally {
+      await rm(skillRoot, { force: true, recursive: true });
+    }
+  });
+
+  it("does not trust a symlink that resolves outside the loaded skill directory", async () => {
+    const skillRoot = await mkdtemp(join(tmpdir(), "wordless-skill-"));
+    const outsideRoot = await mkdtemp(join(tmpdir(), "wordless-outside-"));
+    try {
+      await writeFile(join(outsideRoot, "secret.md"), "secret", "utf8");
+      const linkPath = join(skillRoot, "secret.md");
+      try {
+        await (await import("node:fs/promises")).symlink(join(outsideRoot, "secret.md"), linkPath);
+      } catch {
+        return;
+      }
+      const decision = await preflightWorkspaceOperation(createContext("default", new Set([skillRoot])), {
+        toolName: "read",
+        input: { path: linkPath },
+      });
+      expect(decision.type).toBe("approval");
+    } finally {
+      await rm(skillRoot, { force: true, recursive: true });
+      await rm(outsideRoot, { force: true, recursive: true });
     }
   });
 

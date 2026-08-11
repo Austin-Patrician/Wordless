@@ -281,6 +281,11 @@ class WorkspaceExecutionEnv implements ToolCallAccessController {
     return guarded.ok ? await this.base.listDir(guarded.value, abortSignal) : guarded;
   }
 
+  async canonicalPath(path: string, abortSignal?: AbortSignal) {
+    const guarded = await this.guardReadPath(path, abortSignal);
+    return guarded.ok ? await this.base.canonicalPath(guarded.value) : guarded;
+  }
+
   async exec(command: string, options?: Parameters<NodeExecutionEnv["exec"]>[1]) {
     return await this.base.exec(command, options);
   }

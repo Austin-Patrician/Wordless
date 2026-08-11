@@ -467,6 +467,8 @@ export interface AgentDriverSessionContext {
   env: ExecutionEnv;
   workspaceSearch?: WorkspaceSearchProvider;
   skills: AgentRuntimeSkill[];
+  /** Skill directories that the current session may inspect with read-only tools. */
+  trustedSkillReadRoots?: Set<string>;
   connectorTools: AgentTool[];
   connectorToolPolicies: ConnectorToolPolicy[];
   security: SecurityPolicySnapshot;

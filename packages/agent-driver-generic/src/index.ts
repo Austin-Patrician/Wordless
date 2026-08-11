@@ -394,7 +394,10 @@ function createUserRequestTool(
   };
 }
 
-function createLoadSkillTool(skills: readonly AgentRuntimeSkill[]): AgentTool<typeof LoadSkillParamsSchema> {
+function createLoadSkillTool(
+  skills: readonly AgentRuntimeSkill[],
+  onLoaded: (skill: AgentRuntimeSkill) => void,
+): AgentTool<typeof LoadSkillParamsSchema> {
   return {
     name: "load_skill",
     label: "Load skill",
@@ -405,6 +408,7 @@ function createLoadSkillTool(skills: readonly AgentRuntimeSkill[]): AgentTool<ty
       if (!skill) {
         return { content: [{ type: "text", text: `Unknown skill: ${params.name}` }], details: { found: false } };
       }
+      onLoaded(skill);
       return {
         content: [{ type: "text", text: `<skill name="${skill.name}" location="${skill.filePath}">\nReferences are relative to ${skill.baseDir}.\n\n${skill.content}\n</skill>` }],
         details: { found: true, skillId: skill.id, source: skill.source },
@@ -658,6 +662,7 @@ class AgentHarnessDriverSession implements AgentDriverSession {
     this.toolApprovalMode = context.toolApprovalMode ?? "manual";
     this.features = features;
     this.persistedFileBaselinePaths = persistedFileBaselinePaths;
+    context.trustedSkillReadRoots ??= new Set<string>();
     this.clarificationMode = isClarificationMode(context);
     const clarificationMode = this.clarificationMode;
     const supportsToolUse = context.modelCapabilities.supportsToolUse !== false;
@@ -673,7 +678,9 @@ class AgentHarnessDriverSession implements AgentDriverSession {
         : context.executionKind === "subagent"
           ? `${profileSystemPrompt}${skillPrompt ? `\n\n${skillPrompt}` : ""}\n\nComplete the delegated task without asking the user for input. If required information is missing, return a concise blocker to the parent agent.`
         : `${profileSystemPrompt}${skillPrompt ? `\n\n${skillPrompt}` : ""}\n\nThis model cannot call tools. When you need a user decision, ask a concise question in normal response text instead.`;
-    const skillTools = context.skills.length > 0 ? [createLoadSkillTool(context.skills)] : [];
+    const skillTools = context.skills.length > 0
+      ? [createLoadSkillTool(context.skills, (skill) => context.trustedSkillReadRoots?.add(skill.baseDir))]
+      : [];
     const clarificationTools = clarificationMode && supportsToolUse ? [createClarificationQuestionTool(), createClarificationBriefTool()] : [];
     const userRequestTools = canRequestUserInput ? [createUserRequestTool((callId, params, signal) => this.requestUserInput(callId, params, signal))] : [];
     const accessController = this.accessController;

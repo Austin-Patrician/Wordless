@@ -40,6 +40,7 @@ export interface ExecutionEnv {
   writeFile(path: string, content: string | Uint8Array, signal?: AbortSignal): Promise<{ ok: true; value: void } | { ok: false; error: Error }>;
   fileInfo(path: string, signal?: AbortSignal): Promise<{ ok: true; value: { name: string; path: string; kind: "file" | "directory" | "symlink"; size: number } } | { ok: false; error: Error }>;
   listDir(path: string, signal?: AbortSignal): Promise<{ ok: true; value: Array<{ name: string; path: string; kind: "file" | "directory" | "symlink"; size: number }> } | { ok: false; error: Error }>;
+  canonicalPath(path: string, signal?: AbortSignal): Promise<{ ok: true; value: string } | { ok: false; error: Error }>;
   exec(command: string, options?: { abortSignal?: AbortSignal; timeout?: number; onStdout?: (chunk: string) => void; onStderr?: (chunk: string) => void }): Promise<{ ok: true; value: { stdout: string; stderr: string; exitCode: number } } | { ok: false; error: Error }>;
 }
 
@@ -122,5 +123,6 @@ export class NodeExecutionEnv implements ExecutionEnv {
   writeFile(path: string, content: string | Uint8Array, signal?: AbortSignal): ReturnType<ExecutionEnv["writeFile"]>;
   fileInfo(path: string, signal?: AbortSignal): ReturnType<ExecutionEnv["fileInfo"]>;
   listDir(path: string, signal?: AbortSignal): ReturnType<ExecutionEnv["listDir"]>;
+  canonicalPath(path: string, signal?: AbortSignal): ReturnType<ExecutionEnv["canonicalPath"]>;
   exec(command: string, options?: { abortSignal?: AbortSignal; timeout?: number; onStdout?: (chunk: string) => void; onStderr?: (chunk: string) => void }): ReturnType<ExecutionEnv["exec"]>;
 }
