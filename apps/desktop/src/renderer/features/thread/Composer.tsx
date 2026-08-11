@@ -62,9 +62,11 @@ type ComposerProps = {
   artifactSelection?: ArtifactSelection | null;
   onArtifactSelectionConsumed?: () => void;
   userMessageHistory?: Array<{ id: string; parts: UserPromptPart[] }>;
+  initialDraft?: InlineSkillComposerValue;
+  onDraftChange?: (draft: InlineSkillComposerValue) => void;
 };
 
-const EMPTY_INLINE_SKILL_COMPOSER_VALUE: InlineSkillComposerValue = { parts: [], skillIds: [], skillTokenCounts: {}, skillQuery: null, text: "", workspaceReferenceCount: 0, workspaceQuery: null };
+export const EMPTY_INLINE_SKILL_COMPOSER_VALUE: InlineSkillComposerValue = { parts: [], skillIds: [], skillTokenCounts: {}, skillQuery: null, text: "", workspaceReferenceCount: 0, workspaceQuery: null };
 
 type SkillsSubmenuProps = {
   availableSkills: SkillSummary[];
@@ -192,8 +194,10 @@ export function Composer({
   artifactSelection,
   onArtifactSelectionConsumed,
   userMessageHistory = [],
+  initialDraft,
+  onDraftChange,
 }: ComposerProps) {
-  const [draft, setDraft] = useState<InlineSkillComposerValue>(EMPTY_INLINE_SKILL_COMPOSER_VALUE);
+  const [draft, setDraft] = useState<InlineSkillComposerValue>(initialDraft ?? EMPTY_INLINE_SKILL_COMPOSER_VALUE);
   const [menuOpen, setMenuOpen] = useState(false);
   const [modeOpen, setModeOpen] = useState(false);
   const [skillsOpen, setSkillsOpen] = useState(false);
@@ -228,7 +232,7 @@ export function Composer({
   const connectorDockRef = useRef<HTMLDivElement>(null);
   const workspacePickerListRef = useRef<HTMLDivElement>(null);
   const resizeStart = useRef<{ height: number; y: number } | null>(null);
-  const draftRef = useRef<InlineSkillComposerValue>(EMPTY_INLINE_SKILL_COMPOSER_VALUE);
+  const draftRef = useRef<InlineSkillComposerValue>(initialDraft ?? EMPTY_INLINE_SKILL_COMPOSER_VALUE);
   const draftFrameRef = useRef<number | undefined>(undefined);
   const workspaceSearchReferencesRef = useRef(searchWorkspaceReferences);
   const workspaceSearchCacheRef = useRef(new Map<string, { expiresAt: number; results?: WorkspaceFileEntry[]; promise?: Promise<WorkspaceFileEntry[]> }>());
@@ -335,7 +339,8 @@ export function Composer({
 
   useEffect(() => () => {
     if (draftFrameRef.current !== undefined) cancelAnimationFrame(draftFrameRef.current);
-  }, []);
+    onDraftChange?.(draftRef.current);
+  }, [onDraftChange]);
 
   const userMessageHistoryKey = userMessageHistory.map((message) => message.id).join("\u0000");
   useEffect(() => {
@@ -376,6 +381,13 @@ export function Composer({
   }, [disabled, onPendingWorkspaceReferencesConsumed, pendingWorkspaceReferences]);
 
   useEffect(() => {
+    if (!initialDraft || initialDraft.parts.length === 0) return;
+    inputRef.current?.setValue(initialDraft.parts);
+    draftRef.current = initialDraft;
+    setDraft(initialDraft);
+  }, []);
+
+  useEffect(() => {
     if (!workspacePickerOpen && !skillPickerOpen) return;
     const selectedOption = workspacePickerListRef.current?.querySelector<HTMLElement>(
       `[data-reference-picker-index="${skillPickerOpen ? skillPickerIndex : workspacePickerIndex}"]`,
@@ -390,6 +402,7 @@ export function Composer({
       historyDraftRef.current = EMPTY_INLINE_SKILL_COMPOSER_VALUE;
     }
     draftRef.current = nextDraft;
+    onDraftChange?.(nextDraft);
     if (nextDraft.parts.length > 0) setSendError(null);
     const cursor = inputRef.current?.getCursorRect();
     const container = composerRef.current?.getBoundingClientRect();
@@ -404,7 +417,7 @@ export function Composer({
       draftFrameRef.current = undefined;
       setDraft(draftRef.current);
     });
-  }, []);
+  }, [onDraftChange]);
 
   async function searchWorkspace(query: string): Promise<WorkspaceFileEntry[]> {
     const normalizedQuery = query.trim().toLocaleLowerCase();
@@ -439,6 +452,7 @@ export function Composer({
       if (draftFrameRef.current !== undefined) cancelAnimationFrame(draftFrameRef.current);
       draftFrameRef.current = undefined;
       draftRef.current = EMPTY_INLINE_SKILL_COMPOSER_VALUE;
+      onDraftChange?.(EMPTY_INLINE_SKILL_COMPOSER_VALUE);
       setDraft(EMPTY_INLINE_SKILL_COMPOSER_VALUE);
       historyIndexRef.current = null;
       historyDraftRef.current = EMPTY_INLINE_SKILL_COMPOSER_VALUE;

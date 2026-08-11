@@ -40,6 +40,10 @@ dmg:
   title: Wordless
   sign: false
 win:
+  # The internal release certificate is not installed in end-user trust stores.
+  # Keep signing the binaries, but do not emit a publisher check that would block updates.
+  verifyUpdateCodeSignature: false
+  icon: build/icon.ico
   signtoolOptions:
     signingHashAlgorithms:
       - sha256

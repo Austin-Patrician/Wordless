@@ -12,7 +12,7 @@ import { workbenchRendererRegistry } from "../workbench/renderer-registry";
 import { groupResearchDelegationBlocks } from "../workbench/research-delegation";
 import { Composer } from "./Composer";
 import { completeContextCompaction } from "./context-compaction-state";
-import type { InlineWorkspaceReferenceToken } from "./InlineSkillComposer";
+import type { InlineSkillComposerValue, InlineWorkspaceReferenceToken } from "./InlineSkillComposer";
 import { ConversationDensityRail } from "./ConversationDensityRail";
 import { createPendingThreadTurn, createUserMessageSubmission, type PendingThreadTurn } from "./pending-thread-turn";
 import { createThreadTimeline, dataIndexFromReportedIndex, firstItemIndexAfterPrepend, threadTimelineItemCount, type ThreadTimelineItem } from "./thread-virtual-list";
@@ -28,8 +28,10 @@ import { skillIconText } from "../../shared/skill-icon";
 
 type ThreadViewProps = {
   artifactSelection?: ArtifactSelection | null;
+  composerDraft?: InlineSkillComposerValue;
   messageNavigationTarget?: ThreadMessageNavigationTarget | null;
   onArtifactSelectionConsumed?: () => void;
+  onComposerDraftChange: (sessionId: string, draft: InlineSkillComposerValue) => void;
   onMessageNavigationConsumed?: (requestId: number) => void;
   pendingWorkspaceReferences: InlineWorkspaceReferenceToken[];
   onPendingWorkspaceReferencesConsumed: () => void;
@@ -761,7 +763,7 @@ function waitForScrollSettled(element: HTMLElement, reduceMotion: boolean, onSet
   };
 }
 
-export function ThreadView({ artifactSelection, initialPendingTurn, messageNavigationTarget, onArtifactSelectionConsumed, onMessageNavigationConsumed, onOpenModels, onOpenResearchTask, onOpenSkillImport, onOpenSkills, pendingWorkspaceReferences, onPendingWorkspaceReferencesConsumed, sessionId }: ThreadViewProps) {
+export function ThreadView({ artifactSelection, composerDraft, initialPendingTurn, messageNavigationTarget, onArtifactSelectionConsumed, onComposerDraftChange, onMessageNavigationConsumed, onOpenModels, onOpenResearchTask, onOpenSkillImport, onOpenSkills, pendingWorkspaceReferences, onPendingWorkspaceReferencesConsumed, sessionId }: ThreadViewProps) {
   const client = useRuntimeClient();
   const { snapshot: appSnapshot } = useRuntime();
   const { reduceMotion, t } = usePreferences();
@@ -786,6 +788,7 @@ export function ThreadView({ artifactSelection, initialPendingTurn, messageNavig
   const navigationSequenceRef = useRef(0);
   const searchHighlightCleanupRef = useRef<(() => void) | null>(null);
   const searchHighlightTimerRef = useRef<number | null>(null);
+  const updateComposerDraft = useCallback((draft: InlineSkillComposerValue) => onComposerDraftChange(sessionId, draft), [onComposerDraftChange, sessionId]);
 
   const scrollToBottom = useCallback((behavior: "auto" | "smooth" = "smooth") => {
     followLatestRef.current = true;
@@ -1283,6 +1286,7 @@ export function ThreadView({ artifactSelection, initialPendingTurn, messageNavig
         <ThreadContentFrame densityRail={showDensityRail}>
           <div className="relative">
             <Composer
+              key={sessionId}
               accessLevel={snapshot.session.accessLevel}
               compact
               compacting={snapshot.isCompacting}
@@ -1327,6 +1331,8 @@ export function ThreadView({ artifactSelection, initialPendingTurn, messageNavig
               showWorkspacePicker={false}
               showAccessControl={snapshot.session.workbenchId === "code"}
               userMessageHistory={composerUserMessageHistory}
+              initialDraft={composerDraft}
+              onDraftChange={updateComposerDraft}
             />
             <ModelPicker connections={appSnapshot.connections} disabled={snapshot.isRunning} entry={entry} models={appSnapshot.models} onConfigure={onOpenModels} onOpenChange={setModelOpen} onSelect={(connectionId, modelId, thinkingLevel) => selectModel({ connectionId, modelId }, thinkingLevel)} open={modelOpen} selected={currentModel} thinkingLevel={snapshot.session.thinkingLevel} />
           </div>

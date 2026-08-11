@@ -7,6 +7,7 @@ import anthropicIcon from "../../../icons/provider-icons/anthropic.svg";
 import azureIcon from "../../../icons/provider-icons/azure-color.svg";
 import baaiIcon from "../../../icons/provider-icons/baai.svg";
 import bailianIcon from "../../../icons/provider-icons/bailian-color.svg";
+import bytedanceIcon from "../../../icons/provider-icons/bytedance-color.svg";
 import cerebrasIcon from "../../../icons/provider-icons/cerebras-color.svg";
 import cloudflareIcon from "../../../icons/provider-icons/cloudflare-color.svg";
 import copilotIcon from "../../../icons/provider-icons/copilot-color.svg";
@@ -19,6 +20,7 @@ import hunyuanIcon from "../../../icons/provider-icons/hunyuan-color.svg";
 import jimengIcon from "../../../icons/provider-icons/jimeng-color.svg";
 import kimiIcon from "../../../icons/provider-icons/kimi-color.svg";
 import klingIcon from "../../../icons/provider-icons/kling-color.svg";
+import longcatIcon from "../../../icons/provider-icons/longcat-color.svg";
 import minimaxIcon from "../../../icons/provider-icons/minimax-color.svg";
 import mistralIcon from "../../../icons/provider-icons/mistral-color.svg";
 import moonshotIcon from "../../../icons/provider-icons/moonshot.svg";
@@ -28,6 +30,7 @@ import openaiIcon from "../../../icons/provider-icons/openai.svg";
 import opencodeIcon from "../../../icons/provider-icons/opencode.svg";
 import openrouterIcon from "../../../icons/provider-icons/openrouter.svg";
 import qwenIcon from "../../../icons/provider-icons/qwen-color.svg";
+import stepfunIcon from "../../../icons/provider-icons/stepfun.svg";
 import togetherIcon from "../../../icons/provider-icons/together-color.svg";
 import vercelIcon from "../../../icons/provider-icons/vercel.svg";
 import volcengineIcon from "../../../icons/provider-icons/volcengine-color.svg";
@@ -44,6 +47,7 @@ const AVATAR_ICONS: Record<ProviderAvatarId, string> = {
   azure: azureIcon,
   baai: baaiIcon,
   bailian: bailianIcon,
+  bytedance: bytedanceIcon,
   cerebras: cerebrasIcon,
   cloudflare: cloudflareIcon,
   copilot: copilotIcon,
@@ -56,6 +60,7 @@ const AVATAR_ICONS: Record<ProviderAvatarId, string> = {
   jimeng: jimengIcon,
   kimi: kimiIcon,
   kling: klingIcon,
+  longcat: longcatIcon,
   minimax: minimaxIcon,
   mistral: mistralIcon,
   moonshot: moonshotIcon,
@@ -65,6 +70,7 @@ const AVATAR_ICONS: Record<ProviderAvatarId, string> = {
   opencode: opencodeIcon,
   openrouter: openrouterIcon,
   qwen: qwenIcon,
+  stepfun: stepfunIcon,
   together: togetherIcon,
   vercel: vercelIcon,
   volcengine: volcengineIcon,
@@ -82,6 +88,8 @@ const PROVIDER_AVATAR_BY_ID: Record<string, ProviderAvatarId> = {
   "azure-openai-responses": "azure",
   baai: "baai",
   bailian: "bailian",
+  bytedance: "bytedance",
+  byteplus: "bytedance",
   cerebras: "cerebras",
   "cloudflare-ai-gateway": "cloudflare",
   "cloudflare-workers-ai": "workersai",
@@ -94,8 +102,10 @@ const PROVIDER_AVATAR_BY_ID: Record<string, ProviderAvatarId> = {
   huggingface: "huggingface",
   hunyuan: "hunyuan",
   jimeng: "jimeng",
-  "kimi-coding": "kimi",
+  kimi: "moonshot",
+  "kimi-coding": "moonshot",
   kling: "kling",
+  longcat: "longcat",
   minimax: "minimax",
   "minimax-cn": "minimax",
   mistral: "mistral",
@@ -110,6 +120,7 @@ const PROVIDER_AVATAR_BY_ID: Record<string, ProviderAvatarId> = {
   openrouter: "openrouter",
   "openrouter-images": "openrouter",
   qwen: "qwen",
+  stepfun: "stepfun",
   together: "together",
   "vercel-ai-gateway": "vercel",
   volcengine: "volcengine",

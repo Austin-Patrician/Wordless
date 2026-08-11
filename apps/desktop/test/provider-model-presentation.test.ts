@@ -7,6 +7,11 @@ test("maps common model families to their provider icons", () => {
   assert.equal(modelPresentation({ id: "openai/gpt-5.4", name: "GPT 5.4" }).avatarId, "openai");
   assert.equal(modelPresentation({ id: "google/gemini-3.5-flash", name: "Gemini" }).avatarId, "gemini");
   assert.equal(modelPresentation({ id: "deepseek-ai/DeepSeek-V4", name: "DeepSeek V4" }).avatarId, "deepseek");
+  assert.equal(modelPresentation({ id: "baai/bge-m3", name: "BAAI BGE M3" }).avatarId, "baai");
+  assert.equal(modelPresentation({ id: "moonshotai/kimi-k2.6", name: "Kimi K2.6" }).avatarId, "moonshot");
+  assert.equal(modelPresentation({ id: "longcat/LongCat-Flash-Chat", name: "LongCat Flash Chat" }).avatarId, "longcat");
+  assert.equal(modelPresentation({ id: "stepfun/step-3.5-flash", name: "Step-3.5 Flash" }).avatarId, "stepfun");
+  assert.equal(modelPresentation({ id: "bytedance/seed-1.6", name: "Seed 1.6" }).avatarId, "bytedance");
 });
 
 test("groups and sorts discovered models by family", () => {
