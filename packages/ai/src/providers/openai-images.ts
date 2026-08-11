@@ -97,7 +97,7 @@ const OPENAI_IMAGE_MODELS: readonly ImagesModel<"openai-images">[] = [
 export function openaiImagesProvider(): ImagesProvider {
 	return createImagesProvider({
 		id: "openai",
-		name: "OpenAI",
+		name: "OpenAI Images",
 		auth: { apiKey: envApiKeyAuth("OpenAI API key", ["OPENAI_API_KEY"]) },
 		models: OPENAI_IMAGE_MODELS,
 		api: openaiImagesApi(),

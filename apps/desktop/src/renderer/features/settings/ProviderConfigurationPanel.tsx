@@ -58,7 +58,7 @@ export function ProviderConfigurationPanel({ error, models, onDelete, onLoginWit
   const [discoveredModels, setDiscoveredModels] = useState<ProviderModelCandidate[]>([]);
   const [draftEnabledModelIds, setDraftEnabledModelIds] = useState<string[]>([]);
   const discoverySequence = useRef(0);
-  const placeholder = useMemo(() => provider ? configurationExample(provider.kind, provider.source === "custom") : "", [provider]);
+  const placeholder = useMemo(() => provider ? configurationExample(provider.kind, provider.source === "custom", provider.id) : "", [provider]);
   const rawSyntaxIssue = useMemo(() => jsonSyntaxIssue(raw), [raw]);
   const isCustomChat = provider?.kind === "chat" && provider.source === "custom";
   const displayModels = useMemo(() => {
@@ -230,15 +230,16 @@ function imageCapabilityLabels(capabilities: ConfiguredModelSummary["imageCapabi
   return labels;
 }
 
-function configurationExample(kind: ConfiguredModelKind, customProvider: boolean): string {
+function configurationExample(kind: ConfiguredModelKind, customProvider: boolean, providerId: string): string {
   if (kind === "image") {
+    const isOpenAI = providerId === "openai";
     return JSON.stringify({
-      name: "Studio Images",
-      baseUrl: "https://api.example.com/v1",
-      api: "openrouter-images",
+      name: isOpenAI ? "OpenAI Images" : "Image Provider",
+      baseUrl: isOpenAI ? "https://api.openai.com/v1" : "https://api.example.com/v1",
+      api: isOpenAI ? "openai-images" : "openrouter-images",
       models: [{
         id: "image-model-id",
-        name: "Studio Image",
+        name: isOpenAI ? "GPT Image" : "Image Model",
         input: ["text", "image"],
         output: ["image"],
         capabilities: {

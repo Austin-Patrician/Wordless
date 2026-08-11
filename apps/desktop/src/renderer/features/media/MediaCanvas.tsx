@@ -18,35 +18,21 @@ import {
   useNodesState,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger, Tooltip, TooltipContent, TooltipTrigger } from "@wordless/ui-kit";
-import type { ConfiguredModelSummary, MediaAsset, MediaCropRect, MediaInlineImage, MediaOperation, MediaOperationKind, MediaProject, MediaViewAngle } from "@wordless/domain";
-import { ArrowLeft, Check, ChevronLeft, Copy, Crop, Download, Eraser, Expand, Eye, Hand, ImagePlus, Images, Layers, LoaderCircle, MousePointer2, Plus, RefreshCw, Rotate3D, Scan, Sparkles, Trash2, Upload, Video, X } from "lucide-react";
-import { type ChangeEvent, type DragEvent, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger, Select, SelectContent, SelectItem, SelectTrigger, SelectValue, Tooltip, TooltipContent, TooltipTrigger } from "@wordless/ui-kit";
+import type { ConfiguredModelSummary, MediaAsset, MediaCropRect, MediaImageParameters, MediaInlineImage, MediaOperation, MediaOperationKind, MediaProject, MediaViewAngle } from "@wordless/domain";
+import { ArrowLeft, Check, ChevronLeft, Copy, Download, Expand, Eye, Hand, ImagePlus, LoaderCircle, MousePointer2, Plus, RefreshCw, Trash2, Upload, Video, X } from "lucide-react";
+import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { usePreferences } from "../../shared/preferences";
 import { useRuntime } from "../../shared/runtime";
 import { ImageCropEditor, ImageMaskEditor, ImagePreviewDialog, MultiViewPanel } from "./MediaEditors";
 import { MediaAssetDock } from "./MediaAssetDock";
 import { MediaComposer, type ComposerValue } from "./MediaComposer";
 import { mediaOperationDefinition, mediaOperationDefinitions, mediaOperationUnavailableReason, type MediaOperationDefinition } from "./media-operations";
+import { ProviderIcon } from "../settings/provider-icons";
 
 type Locale = "zh-CN" | "en-US";
-type ComposerAction = Exclude<MediaOperationKind, "upload" | "crop" | "remove-background" | "remove-object" | "local-edit" | "multi-view">;
 type AssetAction = Exclude<MediaOperationKind, "upload" | "generate">;
 const assetOperationDefinitions = mediaOperationDefinitions.filter((definition): definition is MediaOperationDefinition & { id: AssetAction } => definition.id !== "generate");
-
-type DraftNodeData = {
-  action: ComposerAction;
-  busy: boolean;
-  initialValue: ComposerValue;
-  locale: Locale;
-  models: ConfiguredModelSummary[];
-  onAddReferences: () => void;
-  onCancel: () => void;
-  onOpenModels: () => void;
-  onRemoveReference: (assetId: string) => void;
-  onSubmit: (value: ComposerValue) => void;
-  references: MediaAsset[];
-};
 
 type AssetNodeData = {
   asset: MediaAsset;
@@ -54,40 +40,35 @@ type AssetNodeData = {
   locale: Locale;
   multiViewOpen: boolean;
   operation: MediaOperation;
-  selectedModel: ConfiguredModelSummary | undefined;
-  onAction: (action: Exclude<MediaOperationKind, "upload" | "generate">) => void;
-  onCreateChild: () => void;
+  models: ConfiguredModelSummary[];
+  initialPromptValue: ComposerValue;
+  pendingAction: AssetAction | null;
+  promptBusy: boolean;
+  onAction: (action: AssetAction) => void;
+  onCancelAction: () => void;
+  onCreateFromReference: () => void;
+  onModelChange: (modelKey: string) => void;
+  onOpenModels: () => void;
+  onSelectActionModel: (modelKey: string) => void;
+  onSubmitPrompt: (value: ComposerValue) => void;
   onDownload: () => void;
   onCloseMultiView: () => void;
   onConfirmMultiView: (views: MediaViewAngle[], prompt: string) => void;
   onPreview: () => void;
-  onRemoveBackground: (preserveSubject: "object" | "person") => void;
   onSetCover: () => void;
 };
 
 type AssetFlowNode = Node<AssetNodeData, "asset">;
-type DraftFlowNode = Node<DraftNodeData, "draft">;
-type CanvasNode = AssetFlowNode | DraftFlowNode;
+type ReferenceComposerData = { asset: MediaAsset; busy: boolean; initialValue: ComposerValue; locale: Locale; models: ConfiguredModelSummary[]; onCancel: () => void; onModelChange: (modelKey: string) => void; onOpenModels: () => void; onSubmit: (value: ComposerValue) => void };
+type ReferenceComposerFlowNode = Node<ReferenceComposerData, "reference-composer">;
+type CanvasNode = AssetFlowNode | ReferenceComposerFlowNode;
 type RelationEdge = Edge<{ kind: MediaOperationKind; label: string }>;
-
-type DraftState = {
-  action: ComposerAction;
-  id: string;
-  parentAssetIds: string[];
-  referenceAssetIds: string[];
-  position: { x: number; y: number };
-};
 
 type MediaNodeContextMenu = {
   asset: MediaAsset;
   x: number;
   y: number;
 };
-
-type ImageImportTarget =
-  | { kind: "canvas" }
-  | { draftId: string; kind: "draft-reference"; position: { x: number; y: number } }
-  | null;
 
 type EditorState =
   | { type: "crop"; asset: MediaAsset }
@@ -97,7 +78,7 @@ type EditorState =
 
 type MediaCanvasProps = { leftOpen: boolean; onBackToLibrary: () => void; onOpenModels: () => void; onToggleLeft: () => void; sessionId: string };
 
-const nodeTypes = { asset: ImageAssetNode, draft: DraftImageNode };
+const nodeTypes = { asset: ImageAssetNode, "reference-composer": ReferenceImageComposerNode };
 const edgeTypes = { relation: MediaRelationEdge };
 const emptyComposerValue: ComposerValue = { prompt: "", modelKey: "", ratio: "16:9", outputCount: 1 };
 
@@ -107,14 +88,15 @@ export function MediaCanvas({ leftOpen, onBackToLibrary, onOpenModels, onToggleL
   const [project, setProject] = useState<MediaProject | null>(null);
   const [selectedAssetId, setSelectedAssetId] = useState<string | null>(null);
   const [selectedModelKey, setSelectedModelKey] = useState("");
-  const [draft, setDraft] = useState<DraftState | null>(null);
-  const [submittingDraftId, setSubmittingDraftId] = useState<string | null>(null);
+  const [pendingAction, setPendingAction] = useState<{ assetId: string; action: AssetAction } | null>(null);
+  const [referenceComposer, setReferenceComposer] = useState<{ assetId: string; id: string; position: { x: number; y: number } } | null>(null);
+  const [promptSubmittingAssetId, setPromptSubmittingAssetId] = useState<string | null>(null);
+  const [standaloneComposerOpen, setStandaloneComposerOpen] = useState(false);
   const [editor, setEditor] = useState<EditorState>(null);
   const [cropSource, setCropSource] = useState<MediaInlineImage | null>(null);
   const [previewAsset, setPreviewAsset] = useState<MediaAsset | null>(null);
   const [mediaContextMenu, setMediaContextMenu] = useState<MediaNodeContextMenu | null>(null);
   const [copiedAssetId, setCopiedAssetId] = useState<string | null>(null);
-  const [imageImportTarget, setImageImportTarget] = useState<ImageImportTarget>(null);
   const [renamingProjectTitle, setRenamingProjectTitle] = useState(false);
   const [projectTitle, setProjectTitle] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -128,11 +110,7 @@ export function MediaCanvas({ leftOpen, onBackToLibrary, onOpenModels, onToggleL
   const lastCanvasPositionRef = useRef<{ x: number; y: number } | null>(null);
   const viewportRef = useRef<Viewport>({ x: 0, y: 0, zoom: 0.78 });
   const imageModels = useMemo(() => snapshot?.modelConfiguration.models.filter((model) => model.kind === "image" && model.enabled) ?? [], [snapshot?.modelConfiguration.models]);
-  const selectedModel = imageModels.find((model) => `${model.providerId}:${model.modelId}` === selectedModelKey) ?? imageModels[0];
-
-  useEffect(() => {
-    if (!selectedModelKey && imageModels[0]) setSelectedModelKey(`${imageModels[0].providerId}:${imageModels[0].modelId}`);
-  }, [imageModels, selectedModelKey]);
+  const selectedModel = imageModels.find((model) => `${model.providerId}:${model.modelId}` === selectedModelKey);
 
   const loadProject = useCallback(async () => {
     if (!client) return;
@@ -177,19 +155,6 @@ export function MediaCanvas({ leftOpen, onBackToLibrary, onOpenModels, onToggleL
     return () => { disposed = true; };
   }, [client, editor, sessionId]);
 
-  const referencesForDraft = useMemo(() => {
-    if (!project || !draft) return [];
-    const ids = [...new Set([...draft.parentAssetIds, ...draft.referenceAssetIds])];
-    return ids.map((id) => project.assets.find((asset) => asset.id === id)).filter((asset): asset is MediaAsset => asset !== undefined);
-  }, [draft, project]);
-
-  const openDraft = useCallback((action: ComposerAction, parentAssetIds: string[], referenceAssetIds: string[], position?: { x: number; y: number }) => {
-    const parent = project?.assets.find((asset) => asset.id === parentAssetIds[0]);
-    const target = position ?? (parent ? { x: parent.x + parent.width + 160, y: parent.y } : { x: 80, y: 80 });
-    setDraft({ id: crypto.randomUUID(), action, parentAssetIds, referenceAssetIds, position: target });
-    setError(null);
-  }, [project]);
-
   const beginProjectRename = useCallback(() => {
     if (!project) return;
     setProjectTitle(project.title);
@@ -212,35 +177,60 @@ export function MediaCanvas({ leftOpen, onBackToLibrary, onOpenModels, onToggleL
     }
   }, [client, loadProject, locale, projectTitle, sessionId]);
 
-  const submitOperation = useCallback(async (action: ComposerAction, parentAssetIds: string[], referenceAssetIds: string[], position: { x: number; y: number }, value: ComposerValue, draftId?: string) => {
+  const submitIndependentPrompt = useCallback(async (asset: MediaAsset, value: ComposerValue) => {
     if (!client) return;
-    const model = imageModels.find((candidate) => `${candidate.providerId}:${candidate.modelId}` === value.modelKey) ?? imageModels[0];
+    const model = imageModels.find((candidate) => `${candidate.providerId}:${candidate.modelId}` === value.modelKey);
     if (!model) { onOpenModels(); return; }
-    const unavailable = mediaOperationUnavailableReason(mediaOperationDefinition(action), model, locale);
+    const unavailable = mediaOperationUnavailableReason(mediaOperationDefinition("generate"), model, locale);
     if (unavailable) { setError(unavailable); return; }
     setSelectedModelKey(`${model.providerId}:${model.modelId}`);
     setError(null);
-    if (draftId) setSubmittingDraftId(draftId);
+    setPromptSubmittingAssetId(asset.id);
     try {
-      const next = await client.startMediaOperation({ sessionId, action, parentAssetIds, referenceAssetIds, providerId: model.providerId, modelId: model.modelId, prompt: value.prompt, ratio: value.ratio, outputCount: value.outputCount, ...(value.imageParameters ? { imageParameters: value.imageParameters } : {}), targetPosition: position });
+      const next = await client.startMediaOperation({ sessionId, action: "generate", parentAssetIds: [], referenceAssetIds: [], providerId: model.providerId, modelId: model.modelId, prompt: value.prompt, ratio: value.ratio, outputCount: value.outputCount, ...(value.imageParameters ? { imageParameters: value.imageParameters } : {}), targetPosition: independentPosition(asset) });
       setProject(next);
-      if (draftId) setDraft((current) => current?.id === draftId ? null : current);
     } catch (cause) {
       setError(errorMessage(cause));
     } finally {
-      if (draftId) setSubmittingDraftId((current) => current === draftId ? null : current);
+      setPromptSubmittingAssetId((current) => current === asset.id ? null : current);
     }
   }, [client, imageModels, locale, onOpenModels, sessionId]);
 
-  const runSpecialOperation = useCallback(async (action: "remove-background", asset: MediaAsset, preserveSubject: "object" | "person") => {
-    if (!client || !selectedModel) { onOpenModels(); return; }
-    const unavailable = mediaOperationUnavailableReason(mediaOperationDefinition(action), selectedModel, locale);
+  const submitReferencedPrompt = useCallback(async (asset: MediaAsset, value: ComposerValue) => {
+    if (!client) return;
+    const model = imageModels.find((candidate) => `${candidate.providerId}:${candidate.modelId}` === value.modelKey);
+    if (!model) { onOpenModels(); return; }
+    const unavailable = mediaOperationUnavailableReason(mediaOperationDefinition("generate"), model, locale);
     if (unavailable) { setError(unavailable); return; }
-    const prompt = mediaOperationDefinition(action).defaultPrompt[locale];
+    setSelectedModelKey(`${model.providerId}:${model.modelId}`);
+    setError(null);
+    setPromptSubmittingAssetId(asset.id);
     try {
-      await client.startMediaOperation({ sessionId, action, parentAssetIds: [asset.id], referenceAssetIds: [], providerId: selectedModel.providerId, modelId: selectedModel.modelId, prompt, ratio: ratioForAsset(asset), outputCount: 1, targetPosition: childPosition(asset), preserveSubject });
+      const next = await client.startMediaOperation({ sessionId, action: "generate", parentAssetIds: [], referenceAssetIds: [asset.id], providerId: model.providerId, modelId: model.modelId, prompt: value.prompt, ratio: value.ratio, outputCount: value.outputCount, ...(value.imageParameters ? { imageParameters: value.imageParameters } : {}), targetPosition: childPosition(asset) });
+      setProject(next);
+      setReferenceComposer(null);
+    } catch (cause) {
+      setError(errorMessage(cause));
+    } finally {
+      setPromptSubmittingAssetId((current) => current === asset.id ? null : current);
+    }
+  }, [client, imageModels, locale, onOpenModels, sessionId]);
+
+  const submitStandalonePrompt = useCallback(async (value: ComposerValue) => {
+    if (!client) return;
+    const model = imageModels.find((candidate) => `${candidate.providerId}:${candidate.modelId}` === value.modelKey);
+    if (!model) { onOpenModels(); return; }
+    const unavailable = mediaOperationUnavailableReason(mediaOperationDefinition("generate"), model, locale);
+    if (unavailable) { setError(unavailable); return; }
+    const target = flow?.screenToFlowPosition({ x: window.innerWidth / 2, y: window.innerHeight / 2 }) ?? { x: 120, y: 110 };
+    setSelectedModelKey(`${model.providerId}:${model.modelId}`);
+    setError(null);
+    try {
+      const next = await client.startMediaOperation({ sessionId, action: "generate", parentAssetIds: [], referenceAssetIds: [], providerId: model.providerId, modelId: model.modelId, prompt: value.prompt, ratio: value.ratio, outputCount: value.outputCount, ...(value.imageParameters ? { imageParameters: value.imageParameters } : {}), targetPosition: target });
+      setProject(next);
+      setStandaloneComposerOpen(false);
     } catch (cause) { setError(errorMessage(cause)); }
-  }, [client, locale, onOpenModels, selectedModel, sessionId]);
+  }, [client, flow, imageModels, locale, onOpenModels, sessionId]);
 
   const runMaskOperation = useCallback(async (action: "local-edit" | "remove-object", asset: MediaAsset, mask: MediaInlineImage, prompt: string) => {
     if (!client || !selectedModel) { onOpenModels(); return; }
@@ -270,13 +260,31 @@ export function MediaCanvas({ leftOpen, onBackToLibrary, onOpenModels, onToggleL
     } catch (cause) { setError(errorMessage(cause)); }
   }, [client, sessionId]);
 
-  const handleAssetAction = useCallback((asset: MediaAsset, action: Exclude<MediaOperationKind, "upload" | "generate">) => {
+  const handleAssetAction = useCallback((asset: MediaAsset, action: AssetAction) => {
     if (action === "crop") { setCropSource(null); setEditor({ type: "crop", asset }); return; }
+    setPendingAction({ assetId: asset.id, action });
+    setReferenceComposer(null);
+    setError(null);
+  }, []);
+
+  const selectActionModel = useCallback(async (asset: MediaAsset, action: AssetAction, modelKey: string) => {
+    const model = imageModels.find((candidate) => `${candidate.providerId}:${candidate.modelId}` === modelKey);
+    if (!model || !client) return;
+    const unavailable = mediaOperationUnavailableReason(mediaOperationDefinition(action), model, locale);
+    if (unavailable) { setError(unavailable); return; }
+    setSelectedModelKey(modelKey);
+    setPendingAction(null);
+    setReferenceComposer(null);
     if (action === "local-edit" || action === "remove-object") { setEditor({ type: action, asset }); return; }
     if (action === "multi-view") { setEditor({ type: "multi-view", asset }); return; }
-    if (action === "remove-background") return;
-    openDraft(action, [asset.id], [], childPosition(asset));
-  }, [openDraft]);
+    if (action === "crop") return;
+    try {
+      const next = action === "remove-background"
+        ? await client.startMediaOperation({ sessionId, action, parentAssetIds: [asset.id], referenceAssetIds: [], providerId: model.providerId, modelId: model.modelId, prompt: mediaOperationDefinition(action).defaultPrompt[locale], ratio: ratioForAsset(asset), outputCount: 1, targetPosition: childPosition(asset), preserveSubject: "object" })
+        : await client.startMediaOperation({ sessionId, action, parentAssetIds: [asset.id], referenceAssetIds: [], providerId: model.providerId, modelId: model.modelId, prompt: mediaOperationDefinition(action).defaultPrompt[locale], ratio: ratioForAsset(asset), outputCount: 1, targetPosition: childPosition(asset) });
+      setProject(next);
+    } catch (cause) { setError(errorMessage(cause)); }
+  }, [client, imageModels, locale, sessionId]);
 
   const importFiles = useCallback(async (files: File[], position?: { x: number; y: number }) => {
     if (!client || files.length === 0) return;
@@ -284,29 +292,13 @@ export function MediaCanvas({ leftOpen, onBackToLibrary, onOpenModels, onToggleL
     try {
       const next = await client.importMediaImages(sessionId, files, target);
       setProject(next);
-      const newIds = next.assets.slice(-files.length).map((asset) => asset.id);
-      openDraft("generate", [], newIds, { x: target.x + 380, y: target.y });
+      setSelectedAssetId(next.assets[next.assets.length - 1]?.id ?? null);
+      setPendingAction(null);
+      setReferenceComposer(null);
     } catch (cause) { setError(errorMessage(cause)); }
-  }, [client, flow, openDraft, sessionId]);
-
-  const addDraftReferences = useCallback(async (files: File[], target: Extract<ImageImportTarget, { kind: "draft-reference" }>) => {
-    if (!client || files.length === 0) return;
-    const referencePosition = { x: target.position.x - 210, y: target.position.y + 180 };
-    try {
-      const next = await client.importMediaImages(sessionId, files, referencePosition);
-      const newIds = next.assets.slice(-files.length).map((asset) => asset.id);
-      setProject(next);
-      setDraft((current) => current?.id === target.draftId ? { ...current, referenceAssetIds: [...new Set([...current.referenceAssetIds, ...newIds])] } : current);
-    } catch (cause) { setError(errorMessage(cause)); }
-  }, [client, sessionId]);
+  }, [client, flow, sessionId]);
 
   const openCanvasImportPicker = useCallback(() => {
-    setImageImportTarget({ kind: "canvas" });
-    fileInputRef.current?.click();
-  }, []);
-
-  const openDraftReferencePicker = useCallback((currentDraft: DraftState) => {
-    setImageImportTarget({ draftId: currentDraft.id, kind: "draft-reference", position: currentDraft.position });
     fileInputRef.current?.click();
   }, []);
 
@@ -339,7 +331,8 @@ export function MediaCanvas({ leftOpen, onBackToLibrary, onOpenModels, onToggleL
       setCopiedAssetId((current) => current === assetId ? null : current);
       setEditor((current) => current?.asset.id === assetId ? null : current);
       setPreviewAsset((current) => current?.id === assetId ? null : current);
-      setDraft((current) => current ? { ...current, parentAssetIds: current.parentAssetIds.filter((id) => id !== assetId), referenceAssetIds: current.referenceAssetIds.filter((id) => id !== assetId) } : null);
+      setPendingAction((current) => current?.assetId === assetId ? null : current);
+      setReferenceComposer((current) => current?.assetId === assetId ? null : current);
     } catch (cause) { setError(errorMessage(cause)); }
   }, [client, sessionId]);
 
@@ -365,10 +358,16 @@ export function MediaCanvas({ leftOpen, onBackToLibrary, onOpenModels, onToggleL
   const buildFlow = useCallback((value: MediaProject): { nodes: CanvasNode[]; edges: RelationEdge[] } => {
     const flowNodes: CanvasNode[] = value.assets.map((asset): AssetFlowNode => {
       const operation = value.operations.find((candidate) => candidate.id === asset.operationId) ?? fallbackOperation(asset);
-      return { id: asset.id, type: "asset", position: { x: asset.x, y: asset.y }, selected: selectedAssetId === asset.id, style: { width: asset.width, height: asset.height + 23 }, data: { asset, isCover: value.coverAssetId === asset.id, locale, multiViewOpen: editor?.type === "multi-view" && editor.asset.id === asset.id, operation, selectedModel, onAction: (action) => handleAssetAction(asset, action), onCreateChild: () => openDraft("generate", [asset.id], [], childPosition(asset)), onDownload: () => { if (client) void client.downloadMediaAsset(sessionId, asset.id).catch((cause) => setError(errorMessage(cause))); }, onCloseMultiView: () => setEditor(null), onConfirmMultiView: (views, prompt) => void runMultiView(asset, views, prompt), onPreview: () => setPreviewAsset(asset), onRemoveBackground: (preserveSubject) => void runSpecialOperation("remove-background", asset, preserveSubject), onSetCover: () => { if (client) void client.setMediaCoverAsset(sessionId, asset.id).catch((cause) => setError(errorMessage(cause))); } } };
+      const storedPromptValue = promptValueForAsset(operation, imageModels, selectedModelKey, asset.origin === "uploaded");
+      return { id: asset.id, type: "asset", position: { x: asset.x, y: asset.y }, selected: selectedAssetId === asset.id, style: { width: asset.width, height: asset.height + 23 }, data: { asset, isCover: value.coverAssetId === asset.id, locale, multiViewOpen: editor?.type === "multi-view" && editor.asset.id === asset.id, operation, models: imageModels, initialPromptValue: storedPromptValue, pendingAction: pendingAction?.assetId === asset.id ? pendingAction.action : null, promptBusy: promptSubmittingAssetId === asset.id, onAction: (action) => handleAssetAction(asset, action), onCancelAction: () => setPendingAction(null), onCreateFromReference: () => { setPendingAction(null); setReferenceComposer({ assetId: asset.id, id: crypto.randomUUID(), position: childPosition(asset) }); }, onModelChange: setSelectedModelKey, onOpenModels, onSelectActionModel: (modelKey) => void selectActionModel(asset, pendingAction?.assetId === asset.id ? pendingAction.action : "regenerate", modelKey), onSubmitPrompt: (value_) => void submitIndependentPrompt(asset, value_), onDownload: () => { if (client) void client.downloadMediaAsset(sessionId, asset.id).catch((cause) => setError(errorMessage(cause))); }, onCloseMultiView: () => setEditor(null), onConfirmMultiView: (views, prompt) => void runMultiView(asset, views, prompt), onPreview: () => setPreviewAsset(asset), onSetCover: () => { if (client) void client.setMediaCoverAsset(sessionId, asset.id).catch((cause) => setError(errorMessage(cause))); } } };
     });
-    if (draft) {
-      flowNodes.push({ id: draft.id, type: "draft", position: draft.position, style: { width: 390, height: referencesForDraft.length > 0 ? 241 : 181 }, data: { action: draft.action, busy: submittingDraftId === draft.id, initialValue: { ...emptyComposerValue, modelKey: selectedModel ? `${selectedModel.providerId}:${selectedModel.modelId}` : "", prompt: mediaOperationDefinition(draft.action).defaultPrompt[locale], ratio: referencesForDraft[0] ? ratioForAsset(referencesForDraft[0]) : "16:9", outputCount: draft.action === "variation" ? 3 : 1 }, locale, models: imageModels, onAddReferences: () => openDraftReferencePicker(draft), onCancel: () => setDraft(null), onOpenModels, onRemoveReference: (assetId) => setDraft((current) => current ? { ...current, parentAssetIds: current.parentAssetIds.filter((id) => id !== assetId), referenceAssetIds: current.referenceAssetIds.filter((id) => id !== assetId) } : null), onSubmit: (value_) => void submitOperation(draft.action, draft.parentAssetIds, draft.referenceAssetIds, draft.position, value_, draft.id), references: referencesForDraft } });
+    if (referenceComposer) {
+      const sourceAsset = value.assets.find((asset) => asset.id === referenceComposer.assetId);
+      if (sourceAsset) {
+        const sourceOperation = value.operations.find((operation) => operation.id === sourceAsset.operationId) ?? fallbackOperation(sourceAsset);
+        const sourceValue = promptValueForAsset(sourceOperation, imageModels, selectedModelKey, sourceAsset.origin === "uploaded");
+        flowNodes.push({ id: referenceComposer.id, type: "reference-composer", position: referenceComposer.position, style: { width: 800, height: 250 }, data: { asset: sourceAsset, busy: promptSubmittingAssetId === sourceAsset.id, initialValue: { ...sourceValue, prompt: "", ratio: ratioForAsset(sourceAsset), outputCount: 1, imageParameters: undefined }, locale, models: imageModels, onCancel: () => setReferenceComposer(null), onModelChange: setSelectedModelKey, onOpenModels, onSubmit: (value_) => void submitReferencedPrompt(sourceAsset, value_) } });
+      }
     }
     const flowEdges: RelationEdge[] = [];
     for (const operation of value.operations) {
@@ -379,9 +378,8 @@ export function MediaCanvas({ leftOpen, onBackToLibrary, onOpenModels, onToggleL
         }
       }
     }
-    if (draft) for (const source of [...draft.parentAssetIds, ...draft.referenceAssetIds]) flowEdges.push({ id: `draft:${source}:${draft.id}`, source, target: draft.id, type: "relation", animated: false, data: { kind: draft.action, label: operationLabel(draft.action, locale) }, style: { stroke: "#9aaa6b", strokeWidth: 1.3, strokeDasharray: "5 5" } });
     return { nodes: flowNodes, edges: flowEdges };
-  }, [client, draft, editor, handleAssetAction, imageModels, locale, onOpenModels, openDraft, openDraftReferencePicker, referencesForDraft, runMultiView, runSpecialOperation, selectedAssetId, selectedModel, sessionId, submittingDraftId, submitOperation]);
+  }, [client, editor, handleAssetAction, imageModels, locale, pendingAction, promptSubmittingAssetId, referenceComposer, runMultiView, selectedAssetId, selectedModelKey, selectActionModel, sessionId, submitIndependentPrompt, submitReferencedPrompt]);
 
   useEffect(() => {
     if (!project) return;
@@ -397,8 +395,7 @@ export function MediaCanvas({ leftOpen, onBackToLibrary, onOpenModels, onToggleL
   }, [client, project, sessionId]);
 
   const handleNodeDragStop: OnNodeDrag<CanvasNode> = useCallback((_event, node, nextNodes) => {
-    if (node.type === "draft") setDraft((current) => current?.id === node.id ? { ...current, position: node.position } : current);
-    else void persistLayout(nextNodes);
+    void persistLayout(nextNodes);
   }, [persistLayout]);
 
   if (!project) return <div className="grid min-h-0 flex-1 place-items-center bg-background"><LoaderCircle className="h-5 w-5 animate-spin text-muted-foreground" /></div>;
@@ -409,14 +406,15 @@ export function MediaCanvas({ leftOpen, onBackToLibrary, onOpenModels, onToggleL
       <div className="flex items-center gap-1"><CanvasButton icon={<RefreshCw className="h-3.5 w-3.5" />} label={locale === "zh-CN" ? "刷新" : "Refresh"} onClick={() => void loadProject()} /><CanvasButton icon={<Expand className="h-3.5 w-3.5" />} label={locale === "zh-CN" ? "适应画布" : "Fit canvas"} onClick={() => void flow?.fitView({ duration: 180, padding: 0.18 })} /></div>
     </header>
     <div className="relative min-w-0 flex-1 pt-11" onDragOver={(event) => { event.preventDefault(); event.dataTransfer.dropEffect = "copy"; }} onDrop={(event) => { event.preventDefault(); const position = flow?.screenToFlowPosition({ x: event.clientX, y: event.clientY }); void importFiles([...event.dataTransfer.files], position); }} onMouseMove={(event) => { const position = flow?.screenToFlowPosition({ x: event.clientX, y: event.clientY }); if (position) lastCanvasPositionRef.current = position; }}>
-      <ReactFlow className="media-flow bg-[#f3f3ef] dark:bg-[#11120f]" defaultViewport={project.viewport} edgeTypes={edgeTypes} edges={edges} elementsSelectable={interactionMode === "select"} maxZoom={2.2} minZoom={0.24} nodeTypes={nodeTypes} nodes={nodes} nodesDraggable={interactionMode === "select"} onInit={setFlow} onMove={(_event, viewport) => setZoomPercent(Math.round(viewport.zoom * 100))} onMoveEnd={(_event, viewport) => { viewportRef.current = viewport; setZoomPercent(Math.round(viewport.zoom * 100)); void persistLayout(nodes, viewport); }} onNodeClick={(_event, node) => { if (node.type === "asset") setSelectedAssetId(node.id); }} onNodeContextMenu={(event, node) => { event.preventDefault(); if (node.type === "asset") { setSelectedAssetId(node.id); setMediaContextMenu({ asset: node.data.asset, x: event.clientX, y: event.clientY }); } }} onNodeDragStop={handleNodeDragStop} onNodesChange={onNodesChange} onPaneClick={() => { setSelectedAssetId(null); setMediaContextMenu(null); }} panOnDrag={interactionMode === "pan" ? true : [1]} proOptions={{ hideAttribution: true }}>
+      <ReactFlow className="media-flow bg-[#f3f3ef] dark:bg-[#11120f]" defaultViewport={project.viewport} edgeTypes={edgeTypes} edges={edges} elementsSelectable={interactionMode === "select"} maxZoom={2.2} minZoom={0.24} nodeTypes={nodeTypes} nodes={nodes} nodesDraggable={interactionMode === "select"} onInit={setFlow} onMove={(_event, viewport) => setZoomPercent(Math.round(viewport.zoom * 100))} onMoveEnd={(_event, viewport) => { viewportRef.current = viewport; setZoomPercent(Math.round(viewport.zoom * 100)); void persistLayout(nodes, viewport); }} onNodeClick={(_event, node) => { if (node.type === "asset") { setSelectedAssetId(node.id); setPendingAction(null); setReferenceComposer(null); } }} onNodeContextMenu={(event, node) => { event.preventDefault(); if (node.type === "asset") { setSelectedAssetId(node.id); setPendingAction(null); setReferenceComposer(null); setMediaContextMenu({ asset: node.data.asset, x: event.clientX, y: event.clientY }); } }} onNodeDragStop={handleNodeDragStop} onNodesChange={onNodesChange} onPaneClick={() => { setSelectedAssetId(null); setPendingAction(null); setReferenceComposer(null); setMediaContextMenu(null); }} panOnDrag={interactionMode === "pan" ? true : [1]} proOptions={{ hideAttribution: true }}>
         <Background className="text-[#c7c7c0] dark:text-[#3d4037]" color="currentColor" gap={18} size={1.35} variant={BackgroundVariant.Dots} />
       </ReactFlow>
-      {empty && !draft ? <EmptyCanvas locale={locale} models={imageModels} onImport={openCanvasImportPicker} onOpenModels={onOpenModels} onSubmit={(value) => void submitOperation("generate", [], [], { x: 120, y: 110 }, value)} selectedModelKey={selectedModel ? `${selectedModel.providerId}:${selectedModel.modelId}` : ""} /> : null}
-      <CanvasActionRail interactionMode={interactionMode} locale={locale} onAddImage={() => openDraft("generate", [], [], flow?.screenToFlowPosition({ x: window.innerWidth / 2, y: window.innerHeight / 2 }))} onFit={() => void flow?.fitView({ duration: 180, padding: 0.18 })} onImport={openCanvasImportPicker} onInteractionMode={setInteractionMode} />
-      <MediaAssetDock assets={project.assets} locale={locale} onSelect={(assetId) => { setSelectedAssetId(assetId); const asset = project.assets.find((candidate) => candidate.id === assetId); if (asset && flow) void flow.setCenter(asset.x + asset.width / 2, asset.y + asset.height / 2, { duration: 180, zoom: Math.max(flow.getZoom(), 0.72) }); }} operations={project.operations} selectedAssetId={selectedAssetId} />
+      {empty ? <EmptyCanvas locale={locale} models={imageModels} onImport={openCanvasImportPicker} onModelChange={setSelectedModelKey} onOpenModels={onOpenModels} onSubmit={submitStandalonePrompt} selectedModelKey={selectedModelKey} /> : null}
+      {standaloneComposerOpen && !empty ? <div className="pointer-events-none absolute inset-0 z-40 grid place-items-center px-8"><div className="pointer-events-auto"><MediaComposer action="generate" initialValue={{ ...emptyComposerValue, modelKey: selectedModelKey }} locale={locale} models={imageModels} onCancel={() => setStandaloneComposerOpen(false)} onModelChange={setSelectedModelKey} onOpenModels={onOpenModels} onRemoveReference={() => undefined} onSubmit={submitStandalonePrompt} references={[]} variant="root" /></div></div> : null}
+      <CanvasActionRail interactionMode={interactionMode} locale={locale} onAddImage={() => setStandaloneComposerOpen(true)} onFit={() => void flow?.fitView({ duration: 180, padding: 0.18 })} onImport={openCanvasImportPicker} onInteractionMode={setInteractionMode} />
+      <MediaAssetDock assets={project.assets} locale={locale} onSelect={(assetId) => { setSelectedAssetId(assetId); setPendingAction(null); setReferenceComposer(null); const asset = project.assets.find((candidate) => candidate.id === assetId); if (asset && flow) void flow.setCenter(asset.x + asset.width / 2, asset.y + asset.height / 2, { duration: 180, zoom: Math.max(flow.getZoom(), 0.72) }); }} operations={project.operations} selectedAssetId={selectedAssetId} />
       <CanvasZoomControl locale={locale} percent={zoomPercent} onDecrease={() => void flow?.zoomOut({ duration: 120 })} onIncrease={() => void flow?.zoomIn({ duration: 120 })} />
-      <input accept="image/png,image/jpeg,image/webp" className="hidden" multiple onChange={(event) => { const target = imageImportTarget; const files = [...event.target.files ?? []]; setImageImportTarget(null); if (target?.kind === "draft-reference") void addDraftReferences(files, target); else void importFiles(files); event.target.value = ""; }} ref={fileInputRef} type="file" />
+      <input accept="image/png,image/jpeg,image/webp" className="hidden" multiple onChange={(event) => { void importFiles([...event.target.files ?? []]); event.target.value = ""; }} ref={fileInputRef} type="file" />
       {mediaContextMenu ? <div className="fixed z-[100] w-[136px] rounded-[7px] border border-border bg-card py-1 text-[11px] text-foreground shadow-[0_8px_18px_rgba(0,0,0,.16)]" onPointerDown={(event) => event.stopPropagation()} style={{ left: mediaContextMenu.x, top: mediaContextMenu.y }}><button className="flex h-7 w-full items-center gap-2 px-2.5 text-left hover:bg-muted disabled:cursor-not-allowed disabled:opacity-40" disabled={mediaContextMenu.asset.status !== "ready"} onClick={() => copyMediaNode(mediaContextMenu.asset.id)} type="button"><Copy className="h-3.5 w-3.5" />{locale === "zh-CN" ? "复制节点" : "Copy node"}</button><button className="flex h-7 w-full items-center gap-2 px-2.5 text-left text-red-600 hover:bg-red-500/10 disabled:cursor-not-allowed disabled:opacity-40 dark:text-red-300" disabled={mediaContextMenu.asset.status === "rendering"} onClick={() => void deleteMediaNode(mediaContextMenu.asset.id)} type="button"><Trash2 className="h-3.5 w-3.5" />{locale === "zh-CN" ? "删除节点" : "Delete node"}</button></div> : null}
       {error ? <div className="absolute bottom-4 left-4 z-50 flex max-w-[420px] items-start gap-2 rounded-[7px] border border-red-500/25 bg-card px-3 py-2 text-[10px] leading-4 text-red-600 shadow-lg dark:text-red-300"><span className="min-w-0 flex-1">{error}</span><button aria-label="Dismiss" onClick={() => setError(null)} type="button"><X className="h-3.5 w-3.5" /></button></div> : null}
       {editor?.type === "crop" && cropSource ? <ImageCropEditor asset={editor.asset} locale={locale} onCancel={() => { setCropSource(null); setEditor(null); }} onConfirm={(crop, image) => void runCrop(editor.asset, crop, image)} source={cropSource} /> : null}
@@ -430,19 +428,26 @@ export function MediaCanvas({ leftOpen, onBackToLibrary, onOpenModels, onToggleL
 function ImageAssetNode({ data, selected }: NodeProps<AssetFlowNode>) {
   const { asset, locale, operation } = data;
   const ready = asset.status === "ready";
+  const pendingDefinition = data.pendingAction ? mediaOperationDefinition(data.pendingAction) : null;
+  const compatibleModels = pendingDefinition ? data.models.filter((model) => mediaOperationUnavailableReason(pendingDefinition, model, locale) === null) : [];
   return <article className="group relative h-full w-full overflow-visible">
     <Handle className="!h-px !w-px !border-0 !bg-transparent" position={Position.Left} type="target" />
     <Handle className="!h-px !w-px !border-0 !bg-transparent" position={Position.Right} type="source" />
-    {selected && ready ? <div className="nodrag nopan absolute -top-11 left-1/2 z-30 flex -translate-x-1/2 items-center gap-0.5 rounded-[7px] border border-border bg-card p-1 shadow-[0_8px_22px_rgba(0,0,0,.16)]">{assetOperationDefinitions.map((definition) => { const unavailable = definition.id === "crop" ? null : mediaOperationUnavailableReason(definition, data.selectedModel, locale); const Icon = definition.icon; if (definition.id === "remove-background") return <DropdownMenu key={definition.id}><Tooltip><TooltipTrigger asChild><DropdownMenuTrigger asChild><button aria-label={definition.label[locale]} className="grid h-7 w-7 place-items-center rounded-[4px] text-muted-foreground hover:bg-muted hover:text-foreground" disabled={unavailable !== null} type="button"><Icon className="h-3.5 w-3.5" /></button></DropdownMenuTrigger></TooltipTrigger><TooltipContent>{unavailable ?? definition.label[locale]}</TooltipContent></Tooltip><DropdownMenuContent align="center" className="w-40"><DropdownMenuItem onClick={() => data.onRemoveBackground("object")}>{locale === "zh-CN" ? "保留物品" : "Keep object"}</DropdownMenuItem><DropdownMenuItem onClick={() => data.onRemoveBackground("person")}>{locale === "zh-CN" ? "保留人物" : "Keep person"}</DropdownMenuItem></DropdownMenuContent></DropdownMenu>; return <Tooltip key={definition.id}><TooltipTrigger asChild><button aria-label={definition.label[locale]} className="grid h-7 w-7 place-items-center rounded-[4px] text-muted-foreground hover:bg-muted hover:text-foreground disabled:cursor-not-allowed disabled:opacity-35" disabled={unavailable !== null} onClick={() => data.onAction(definition.id)} type="button"><Icon className="h-3.5 w-3.5" /></button></TooltipTrigger><TooltipContent>{unavailable ?? definition.label[locale]}</TooltipContent></Tooltip>; })}<span className="mx-0.5 h-3 w-px bg-border" /><NodeAction icon={<Eye className="h-3.5 w-3.5" />} label={locale === "zh-CN" ? "预览" : "Preview"} onClick={data.onPreview} /><NodeAction icon={<Download className="h-3.5 w-3.5" />} label={locale === "zh-CN" ? "下载" : "Download"} onClick={data.onDownload} /><NodeAction disabled={data.isCover} icon={<Check className="h-3.5 w-3.5" />} label={locale === "zh-CN" ? "设为封面" : "Set as cover"} onClick={data.onSetCover} /></div> : null}
+    {selected && ready ? <div className="nodrag nopan absolute -top-11 left-1/2 z-30 flex -translate-x-1/2 items-center gap-0.5 rounded-[7px] border border-border bg-card p-1 shadow-[0_8px_22px_rgba(0,0,0,.16)]">{assetOperationDefinitions.map((definition) => { const hasCompatibleModel = definition.id === "crop" || data.models.some((model) => mediaOperationUnavailableReason(definition, model, locale) === null); const disabled = !hasCompatibleModel; const label = disabled ? data.models.length ? (locale === "zh-CN" ? `没有已启用模型支持${definition.label[locale]}` : `No enabled model supports ${definition.label[locale].toLowerCase()}`) : (locale === "zh-CN" ? "请先配置图片模型" : "Configure an image model first") : definition.label[locale]; const Icon = definition.icon; return <Tooltip key={definition.id}><TooltipTrigger asChild><button aria-label={definition.label[locale]} className="grid h-7 w-7 place-items-center rounded-[4px] text-muted-foreground hover:bg-muted hover:text-foreground disabled:cursor-not-allowed disabled:opacity-35" disabled={disabled} onClick={() => data.onAction(definition.id)} type="button"><Icon className="h-3.5 w-3.5" /></button></TooltipTrigger><TooltipContent>{label}</TooltipContent></Tooltip>; })}<span className="mx-0.5 h-3 w-px bg-border" /><NodeAction icon={<Eye className="h-3.5 w-3.5" />} label={locale === "zh-CN" ? "预览" : "Preview"} onClick={data.onPreview} /><NodeAction icon={<Download className="h-3.5 w-3.5" />} label={locale === "zh-CN" ? "下载" : "Download"} onClick={data.onDownload} /><NodeAction disabled={data.isCover} icon={<Check className="h-3.5 w-3.5" />} label={locale === "zh-CN" ? "设为封面" : "Set as cover"} onClick={data.onSetCover} /></div> : null}
     <div className={`relative h-[calc(100%-23px)] overflow-hidden rounded-[8px] border bg-muted transition-[border-color,box-shadow] ${selected ? "border-[#a7bd68] shadow-[0_0_0_2px_rgba(188,218,107,.2),0_12px_32px_rgba(0,0,0,.12)]" : "border-border hover:border-muted-foreground/55"}`}>{asset.url && ready ? <img alt={asset.name} className="h-full w-full object-cover" draggable={false} src={asset.url} /> : asset.status === "rendering" ? <GeneratingNode asset={asset} operation={operation} /> : <FailedNode message={asset.errorMessage} />}{data.isCover ? <span className="absolute left-2 top-2 rounded-[4px] bg-black/75 px-1.5 py-0.5 font-mono text-[8px] tracking-[.08em] text-[#d8f478]">COVER</span> : null}<button aria-label={asset.name} className="absolute inset-0" type="button" /></div>
     <div className="mt-1.5 flex items-center justify-between gap-2 px-0.5 font-mono text-[8px] text-muted-foreground"><span className="min-w-0 truncate">{asset.name}</span><span className="shrink-0">{operation.modelId ?? (asset.origin === "uploaded" ? "UPLOAD" : "LOCAL")}</span></div>
-    {selected && ready ? <DropdownMenu><DropdownMenuTrigger asChild><button aria-label={locale === "zh-CN" ? "从此图片生成" : "Generate from this image"} className="nodrag nopan absolute -right-12 top-[calc(50%-22px)] grid h-8 w-8 place-items-center rounded-full border border-border bg-card text-muted-foreground shadow-md hover:border-[#a8bd69] hover:text-foreground" type="button"><Plus className="h-4 w-4" /></button></DropdownMenuTrigger><DropdownMenuContent align="start" side="right" className="w-36"><DropdownMenuItem onClick={data.onCreateChild}><ImagePlus className="h-3.5 w-3.5" />{locale === "zh-CN" ? "生成图片" : "Generate image"}</DropdownMenuItem><DropdownMenuItem disabled><Video className="h-3.5 w-3.5" />{locale === "zh-CN" ? "生成视频" : "Generate video"}</DropdownMenuItem></DropdownMenuContent></DropdownMenu> : null}
-    {data.multiViewOpen ? <div className="nodrag nopan absolute left-1/2 top-[calc(100%+16px)] z-[90] -translate-x-1/2"><MultiViewPanel asset={asset} locale={locale} onCancel={data.onCloseMultiView} onConfirm={data.onConfirmMultiView} /></div> : null}
+    {selected && ready ? <Tooltip><TooltipTrigger asChild><button aria-label={locale === "zh-CN" ? "以此图片作为参考生成" : "Generate with this image as reference"} className="nodrag nopan absolute -right-12 top-[calc(50%-22px)] grid h-8 w-8 place-items-center rounded-full border border-border bg-card text-muted-foreground shadow-md hover:border-[#a8bd69] hover:text-foreground" onClick={(event) => { event.stopPropagation(); data.onCreateFromReference(); }} type="button"><Plus className="h-4 w-4" /></button></TooltipTrigger><TooltipContent>{locale === "zh-CN" ? "以此图片作为参考生成" : "Generate with this image as reference"}</TooltipContent></Tooltip> : null}
+    {selected && ready && data.multiViewOpen ? <div className="nodrag nopan absolute left-1/2 top-[calc(100%+10px)] z-[90] -translate-x-1/2"><MultiViewPanel asset={asset} locale={locale} onCancel={data.onCloseMultiView} onConfirm={data.onConfirmMultiView} /></div> : selected && ready && data.pendingAction && pendingDefinition ? <div className="nodrag nopan absolute left-1/2 top-[calc(100%+10px)] z-[90] -translate-x-1/2"><NodeActionModelPicker definition={pendingDefinition} locale={locale} models={compatibleModels} onCancel={data.onCancelAction} onSelect={data.onSelectActionModel} /></div> : selected && ready ? <div className="nodrag nopan absolute left-1/2 top-[calc(100%+10px)] z-[90] -translate-x-1/2"><MediaComposer action="generate" busy={data.promptBusy} initialValue={data.initialPromptValue} key={`${asset.id}:${operation.id}`} locale={locale} models={data.models} onModelChange={data.onModelChange} onOpenModels={data.onOpenModels} onRemoveReference={() => undefined} onSubmit={data.onSubmitPrompt} references={[]} variant="inline" /></div> : null}
   </article>;
 }
 
-function DraftImageNode({ data }: NodeProps<DraftFlowNode>) {
-  return <div className="relative"><Handle className="!h-px !w-px !border-0 !bg-transparent" position={Position.Left} type="target" /><MediaComposer action={data.action} busy={data.busy} initialValue={data.initialValue} locale={data.locale} models={data.models} onAddReferences={data.onAddReferences} onCancel={data.onCancel} onOpenModels={data.onOpenModels} onRemoveReference={data.onRemoveReference} onSubmit={data.onSubmit} references={data.references} /></div>;
+function ReferenceImageComposerNode({ data }: NodeProps<ReferenceComposerFlowNode>) {
+  return <MediaComposer action="generate" busy={data.busy} initialValue={data.initialValue} locale={data.locale} models={data.models} onCancel={data.onCancel} onModelChange={data.onModelChange} onOpenModels={data.onOpenModels} onRemoveReference={data.onCancel} onSubmit={data.onSubmit} references={[data.asset]} variant="inline" />;
+}
+
+function NodeActionModelPicker({ definition, locale, models, onCancel, onSelect }: { definition: MediaOperationDefinition; locale: Locale; models: ConfiguredModelSummary[]; onCancel: () => void; onSelect: (modelKey: string) => void }) {
+  const Icon = definition.icon;
+  return <section className="w-[310px] rounded-[8px] border border-[#575b51] bg-card p-2.5 text-card-foreground shadow-[0_16px_42px_rgba(0,0,0,.18)] dark:border-[#54584e]" onClick={(event) => event.stopPropagation()}><div className="mb-2 flex items-center justify-between gap-3"><span className="flex min-w-0 items-center gap-2 text-[12px] font-medium"><Icon className="h-3.5 w-3.5 text-muted-foreground" /><span className="truncate">{definition.label[locale]}</span></span><button aria-label={locale === "zh-CN" ? "取消" : "Cancel"} className="grid h-6 w-6 place-items-center rounded-[4px] text-muted-foreground hover:bg-muted hover:text-foreground" onClick={onCancel} type="button"><X className="h-3.5 w-3.5" /></button></div>{models.length ? <Select onValueChange={onSelect}><SelectTrigger aria-label={locale === "zh-CN" ? "选择兼容模型" : "Select a compatible model"} className="h-8 w-full border-input bg-background px-2 text-[11px] shadow-none"><SelectValue placeholder={locale === "zh-CN" ? "选择兼容模型" : "Select a compatible model"} /></SelectTrigger><SelectContent className="max-h-64">{models.map((model) => <SelectItem key={`${model.providerId}:${model.modelId}`} value={`${model.providerId}:${model.modelId}`}><span className="flex min-w-0 items-center gap-2"><ProviderIcon avatarId={model.providerAvatarId} className="h-3.5 w-3.5 shrink-0 object-contain" providerId={model.providerId} /><span className="min-w-0 truncate">{model.displayName}</span></span></SelectItem>)}</SelectContent></Select> : <p className="rounded-[5px] bg-muted px-2.5 py-2 text-[10px] leading-4 text-muted-foreground">{locale === "zh-CN" ? "没有已启用的兼容图片模型。" : "No enabled image model supports this action."}</p>}</section>;
 }
 
 function MediaRelationEdge(props: EdgeProps<RelationEdge>) {
@@ -450,8 +455,8 @@ function MediaRelationEdge(props: EdgeProps<RelationEdge>) {
   return <><BaseEdge id={props.id} path={path} style={props.style} />{props.data?.kind !== "generate" ? <EdgeLabelRenderer><span className="pointer-events-none absolute -translate-x-1/2 -translate-y-1/2 rounded-[4px] border border-border bg-card/92 px-1.5 py-0.5 font-mono text-[8px] text-muted-foreground shadow-sm" style={{ transform: `translate(-50%, -50%) translate(${labelX}px,${labelY}px)` }}>{props.data?.label}</span></EdgeLabelRenderer> : null}</>;
 }
 
-function EmptyCanvas({ locale, models, onImport, onOpenModels, onSubmit, selectedModelKey }: { locale: Locale; models: ConfiguredModelSummary[]; onImport: () => void; onOpenModels: () => void; onSubmit: (value: ComposerValue) => void; selectedModelKey: string }) {
-  return <div className="pointer-events-none absolute inset-0 z-20 flex flex-col items-center justify-center gap-5 px-8 pb-8"><button className="pointer-events-auto flex h-[180px] w-[min(560px,calc(100vw-7rem))] flex-col items-center justify-center rounded-[10px] border border-dashed border-muted-foreground/45 bg-card/45 text-center transition-colors hover:border-[#a9bf67] hover:bg-card/70" onClick={onImport} type="button"><span className="grid h-10 w-10 place-items-center rounded-[8px] border border-border bg-card text-[#7e9048]"><Upload className="h-4 w-4" /></span><p className="mt-4 text-[13px] font-semibold">{locale === "zh-CN" ? "上传参考图片" : "Upload reference images"}</p><p className="mt-1.5 text-[10px] text-muted-foreground">PNG, JPEG, WEBP · {locale === "zh-CN" ? "也可以拖放到画布" : "or drop them anywhere on the canvas"}</p></button><div className="pointer-events-auto"><MediaComposer action="generate" initialValue={{ ...emptyComposerValue, modelKey: selectedModelKey }} locale={locale} models={models} onOpenModels={onOpenModels} onRemoveReference={() => undefined} onSubmit={onSubmit} references={[]} variant="root" /></div></div>;
+function EmptyCanvas({ locale, models, onImport, onModelChange, onOpenModels, onSubmit, selectedModelKey }: { locale: Locale; models: ConfiguredModelSummary[]; onImport: () => void; onModelChange: (modelKey: string) => void; onOpenModels: () => void; onSubmit: (value: ComposerValue) => void; selectedModelKey: string }) {
+  return <div className="pointer-events-none absolute inset-0 z-20 flex flex-col items-center justify-center gap-5 px-8 pb-8"><button className="pointer-events-auto flex h-[180px] w-[min(560px,calc(100vw-7rem))] flex-col items-center justify-center rounded-[10px] border border-dashed border-muted-foreground/45 bg-card/45 text-center transition-colors hover:border-[#a9bf67] hover:bg-card/70" onClick={onImport} type="button"><span className="grid h-10 w-10 place-items-center rounded-[8px] border border-border bg-card text-[#7e9048]"><Upload className="h-4 w-4" /></span><p className="mt-4 text-[13px] font-semibold">{locale === "zh-CN" ? "上传参考图片" : "Upload reference images"}</p><p className="mt-1.5 text-[10px] text-muted-foreground">PNG, JPEG, WEBP · {locale === "zh-CN" ? "也可以拖放到画布" : "or drop them anywhere on the canvas"}</p></button><div className="pointer-events-auto"><MediaComposer action="generate" initialValue={{ ...emptyComposerValue, modelKey: selectedModelKey }} locale={locale} models={models} onModelChange={onModelChange} onOpenModels={onOpenModels} onRemoveReference={() => undefined} onSubmit={onSubmit} references={[]} variant="root" /></div></div>;
 }
 
 function CanvasActionRail({ interactionMode, locale, onAddImage, onFit, onImport, onInteractionMode }: { interactionMode: "select" | "pan"; locale: Locale; onAddImage: () => void; onFit: () => void; onImport: () => void; onInteractionMode: (mode: "select" | "pan") => void }) {
@@ -468,6 +473,10 @@ function GeneratingNode({ asset, operation }: { asset: MediaAsset; operation: Me
 function FailedNode({ message }: { message: string | null }) { return <div className="grid h-full place-items-center p-5 text-center text-red-500"><span><X className="mx-auto h-5 w-5" /><span className="mt-2 block line-clamp-3 font-mono text-[9px] leading-4">{message ?? "Generation failed"}</span></span></div>; }
 function ratioForAsset(asset: MediaAsset): string { const ratio = asset.width / asset.height; if (ratio > 1.6) return "16:9"; if (ratio > 1.15) return "4:3"; if (ratio < 0.78) return "9:16"; return "1:1"; }
 function childPosition(asset: MediaAsset) { return { x: asset.x + asset.width + 160, y: asset.y }; }
+function independentPosition(asset: MediaAsset) { return { x: asset.x + asset.width + 72, y: asset.y + asset.height + 72 }; }
+function modelKeyForOperation(operation: MediaOperation, models: ConfiguredModelSummary[], fallbackKey: string) { const modelKey = operation.providerId && operation.modelId ? `${operation.providerId}:${operation.modelId}` : ""; return models.some((model) => `${model.providerId}:${model.modelId}` === modelKey) ? modelKey : fallbackKey; }
+function imageParametersFromOperation(operation: MediaOperation): MediaImageParameters | undefined { const value = operation.parameters.imageParameters; return value && typeof value === "object" && !Array.isArray(value) ? value as MediaImageParameters : undefined; }
+function promptValueForAsset(operation: MediaOperation, models: ConfiguredModelSummary[], selectedModelKey: string, useFirstModelFallback = false): ComposerValue { const fallbackModelKey = selectedModelKey || (useFirstModelFallback && models[0] ? `${models[0].providerId}:${models[0].modelId}` : ""); return { prompt: operation.prompt ?? "", modelKey: modelKeyForOperation(operation, models, fallbackModelKey), ratio: operation.ratio === "source" ? "16:9" : operation.ratio, outputCount: Math.max(1, operation.outputTotal || operation.outputCount || 1), imageParameters: imageParametersFromOperation(operation) }; }
 function errorMessage(cause: unknown): string { return cause instanceof Error ? cause.message : String(cause); }
 function operationLabel(kind: MediaOperationKind, locale: Locale): string { return kind === "upload" ? (locale === "zh-CN" ? "上传" : "Upload") : mediaOperationDefinition(kind).label[locale]; }
 function fallbackOperation(asset: MediaAsset): MediaOperation { return { id: asset.operationId, kind: asset.origin === "uploaded" ? "upload" : "generate", inputs: [], outputAssetIds: [asset.id], prompt: null, ratio: "source", outputCount: asset.status === "ready" ? 1 : 0, outputTotal: 1, providerId: null, modelId: null, parameters: {}, status: asset.status === "ready" ? "ready" : asset.status === "rendering" ? "rendering" : "failed", errorMessage: asset.errorMessage, createdAt: asset.createdAt, updatedAt: asset.updatedAt }; }
