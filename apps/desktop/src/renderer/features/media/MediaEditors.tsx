@@ -1,4 +1,4 @@
-import { Dialog, DialogContent, DialogTitle, Slider } from "@wordless/ui-kit";
+import { Dialog, DialogClose, DialogContent, DialogTitle, Slider } from "@wordless/ui-kit";
 import type { MediaAsset, MediaCropRect, MediaInlineImage, MediaViewAngle } from "@wordless/domain";
 import eyeLevelPreview from "../../../icons/multi-insight/01-eye-level.webp";
 import highAnglePreview from "../../../icons/multi-insight/02-high-angle.webp";
@@ -16,7 +16,7 @@ import { type PointerEvent, type ReactNode, useCallback, useEffect, useRef, useS
 type Locale = "zh-CN" | "en-US";
 
 export function ImagePreviewDialog({ asset, onOpenChange, open }: { asset: MediaAsset | null; onOpenChange: (open: boolean) => void; open: boolean }) {
-  return <Dialog onOpenChange={onOpenChange} open={open}><DialogContent className="h-[min(86vh,820px)] w-[min(92vw,1160px)] border-white/10 bg-[#10110e] p-0" showCloseButton><DialogTitle className="sr-only">Image preview</DialogTitle>{asset?.url ? <div className="grid h-full place-items-center overflow-hidden p-12"><img alt={asset.name} className="max-h-full max-w-full object-contain" src={asset.url} /></div> : null}</DialogContent></Dialog>;
+  return <Dialog onOpenChange={onOpenChange} open={open}><DialogContent className="h-[min(86vh,820px)] w-[min(92vw,1160px)] rounded-none border-0 bg-transparent p-0 shadow-none" showCloseButton={false}><DialogTitle className="sr-only">Image preview</DialogTitle>{asset?.url ? <div className="grid h-full w-full place-items-center"><div className="relative inline-block max-h-full max-w-full"><img alt={asset.name} className="block max-h-[min(86vh,820px)] max-w-[min(92vw,1160px)] object-contain" src={asset.url} /><DialogClose asChild><button aria-label="Close image preview" className="absolute right-3 top-3 z-10 grid h-8 w-8 place-items-center rounded-full bg-white/90 text-[#1b1c18] shadow-[0_2px_10px_rgba(0,0,0,.28)] transition-colors hover:bg-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/80" type="button"><X className="h-4 w-4" /></button></DialogClose></div></div> : null}</DialogContent></Dialog>;
 }
 
 export function ImageCropEditor({ asset, locale, onCancel, onConfirm, source }: { asset: MediaAsset; locale: Locale; onCancel: () => void; onConfirm: (crop: MediaCropRect, image: MediaInlineImage) => void; source: MediaInlineImage }) {
@@ -132,27 +132,52 @@ function clamp(value: number, min: number, max: number): number { return Math.mi
 function fitCropToRatio(outputRatio: number, imageRatio: number): MediaCropRect { const normalizedRatio = outputRatio / Math.max(0.01, imageRatio); let width = 0.88; let height = width / normalizedRatio; if (height > 0.88) { height = 0.88; width = height * normalizedRatio; } return { x: (1 - width) / 2, y: (1 - height) / 2, width, height }; }
 function cropPresetLabel(id: string, locale: Locale): string { return cropPresets.find((preset) => preset.id === id)?.label[locale] ?? cropPresets[1].label[locale]; }
 
-export function ImageMaskEditor({ asset, initialPrompt, locale, onCancel, onConfirm, title }: { asset: MediaAsset; initialPrompt: string; locale: Locale; onCancel: () => void; onConfirm: (image: MediaInlineImage, prompt: string) => void; title: string }) {
+export function ImageMaskEditor({ action, asset, initialPrompt, locale, onCancel, onConfirm, title }: { action: "local-edit" | "remove-object"; asset: MediaAsset; initialPrompt: string; locale: Locale; onCancel: () => void; onConfirm: (image: MediaInlineImage, prompt: string) => void; title: string }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const drawingPointRef = useRef<{ x: number; y: number } | null>(null);
   const [brushSize, setBrushSize] = useState(44);
   const [mode, setMode] = useState<"brush" | "erase">("brush");
   const [history, setHistory] = useState<ImageData[]>([]);
   const [historyIndex, setHistoryIndex] = useState(-1);
+  const [maskError, setMaskError] = useState("");
   const [prompt, setPrompt] = useState(initialPrompt);
   const draw = useCallback((event: PointerEvent<HTMLCanvasElement>) => {
-    if (event.buttons !== 1) return;
     const canvas = canvasRef.current;
     if (!canvas) return;
+    if (event.type === "pointerdown") {
+      if (event.button !== 0) return;
+      event.currentTarget.setPointerCapture(event.pointerId);
+    } else if (!drawingPointRef.current) return;
     const rect = canvas.getBoundingClientRect();
     const context = canvas.getContext("2d");
-    if (!context) return;
+    if (!context || rect.width === 0 || rect.height === 0) return;
+    const point = {
+      x: ((event.clientX - rect.left) / rect.width) * canvas.width,
+      y: ((event.clientY - rect.top) / rect.height) * canvas.height,
+    };
+    const sourceScale = ((canvas.width / rect.width) + (canvas.height / rect.height)) / 2;
+    const lineWidth = brushSize * sourceScale;
     context.globalCompositeOperation = mode === "brush" ? "source-over" : "destination-out";
+    context.strokeStyle = "rgba(204,242,87,.72)";
     context.fillStyle = "rgba(204,242,87,.72)";
+    context.lineCap = "round";
+    context.lineJoin = "round";
+    context.lineWidth = lineWidth;
     context.beginPath();
-    context.arc(((event.clientX - rect.left) / rect.width) * canvas.width, ((event.clientY - rect.top) / rect.height) * canvas.height, brushSize, 0, Math.PI * 2);
-    context.fill();
+    const previous = drawingPointRef.current;
+    if (previous) {
+      context.moveTo(previous.x, previous.y);
+      context.lineTo(point.x, point.y);
+      context.stroke();
+    } else {
+      context.arc(point.x, point.y, lineWidth / 2, 0, Math.PI * 2);
+      context.fill();
+    }
+    drawingPointRef.current = point;
+    setMaskError("");
   }, [brushSize, mode]);
   const commit = useCallback(() => {
+    drawingPointRef.current = null;
     const canvas = canvasRef.current;
     const context = canvas?.getContext("2d");
     if (!canvas || !context) return;
@@ -180,17 +205,57 @@ export function ImageMaskEditor({ asset, initialPrompt, locale, onCancel, onConf
     if (!sourceContext || !maskContext) return;
     const sourceData = sourceContext.getImageData(0, 0, source.width, source.height);
     const output = maskContext.createImageData(source.width, source.height);
+    let selectedPixels = 0;
     for (let index = 0; index < sourceData.data.length; index += 4) {
       const selected = (sourceData.data[index + 3] ?? 0) > 0;
+      if (selected) selectedPixels += 1;
       output.data[index] = 255;
       output.data[index + 1] = 255;
       output.data[index + 2] = 255;
       output.data[index + 3] = selected ? 0 : 255;
     }
+    if (selectedPixels === 0) {
+      setMaskError(locale === "zh-CN" ? "请先涂抹需要编辑的区域。" : "Paint the area you want to edit first.");
+      return;
+    }
     maskContext.putImageData(output, 0, 0);
     onConfirm({ mimeType: "image/png", data: mask.toDataURL("image/png").split(",")[1] ?? "" }, prompt.trim());
-  }, [onConfirm, prompt]);
-  return <EditorFrame icon={Brush} locale={locale} onCancel={onCancel} onConfirm={confirm} title={title}><div className="mx-auto flex w-fit items-start gap-3"><div className="relative overflow-hidden rounded-[8px] border border-white/10"><img alt={asset.name} className="block max-h-[55vh] max-w-[72vw] object-contain" onLoad={(event) => { const image = event.currentTarget; const canvas = canvasRef.current; if (!canvas) return; canvas.width = image.naturalWidth; canvas.height = image.naturalHeight; }} src={asset.url ?? ""} /><canvas className="absolute inset-0 h-full w-full cursor-crosshair touch-none" onPointerDown={draw} onPointerMove={draw} onPointerUp={commit} ref={canvasRef} /></div><div className="flex flex-col gap-1 rounded-[8px] border border-white/10 bg-[#1b1c18] p-1"><EditorTool active={mode === "brush"} icon={Brush} label="Brush" onClick={() => setMode("brush")} /><EditorTool active={mode === "erase"} icon={Eraser} label="Erase" onClick={() => setMode("erase")} /><span className="my-1 h-px bg-white/10" /><EditorTool disabled={historyIndex < 0} icon={Undo2} label="Undo" onClick={() => restore(historyIndex - 1)} /><EditorTool disabled={historyIndex >= history.length - 1} icon={Redo2} label="Redo" onClick={() => restore(historyIndex + 1)} /></div></div><div className="mx-auto mt-4 flex max-w-[640px] items-center gap-4"><label className="flex w-[250px] items-center gap-3 font-mono text-[10px] text-white/60"><span>{locale === "zh-CN" ? "画笔" : "Brush"}</span><Slider max={96} min={8} onValueChange={(value) => setBrushSize(value[0] ?? 44)} step={2} value={[brushSize]} /><span>{brushSize}px</span></label><input className="h-9 min-w-0 flex-1 rounded-[6px] border border-white/10 bg-white/[.05] px-3 text-[11px] text-white outline-none placeholder:text-white/35 focus:border-[#a8c554]" onChange={(event) => setPrompt(event.target.value)} placeholder={locale === "zh-CN" ? "描述选中区域需要如何修改" : "Describe how the selected area should change"} value={prompt} /></div></EditorFrame>;
+  }, [locale, onConfirm, prompt]);
+  return <EditorFrame icon={Brush} locale={locale} onCancel={onCancel} onConfirm={confirm} title={title}>
+    <div className="grid h-full min-h-0 grid-cols-[minmax(0,1fr)_300px] gap-4 max-lg:grid-cols-1 max-lg:overflow-y-auto">
+      <section className="flex min-h-0 flex-col">
+        <div className="flex min-h-10 flex-wrap items-center gap-1.5 border-b border-white/10 pb-2">
+          <div className="flex items-center gap-1 rounded-[7px] border border-white/10 bg-[#1b1c18] p-1 shadow-[0_4px_12px_rgba(0,0,0,.14)]">
+            <EditorTool active={mode === "brush"} icon={Brush} label={locale === "zh-CN" ? "画笔" : "Brush"} onClick={() => setMode("brush")} />
+            <EditorTool active={mode === "erase"} icon={Eraser} label={locale === "zh-CN" ? "橡皮擦" : "Eraser"} onClick={() => setMode("erase")} />
+          </div>
+          <span className="hidden h-6 w-px bg-white/10 sm:block" />
+          <div className="flex items-center gap-1 rounded-[7px] border border-white/10 bg-[#1b1c18] p-1 shadow-[0_4px_12px_rgba(0,0,0,.14)]">
+            <EditorTool disabled={historyIndex < 0} icon={Undo2} label={locale === "zh-CN" ? "撤销" : "Undo"} onClick={() => restore(historyIndex - 1)} />
+            <EditorTool disabled={historyIndex >= history.length - 1} icon={Redo2} label={locale === "zh-CN" ? "重做" : "Redo"} onClick={() => restore(historyIndex + 1)} />
+          </div>
+          <label className="ml-auto flex h-10 min-w-[210px] flex-1 items-center gap-2.5 rounded-[7px] border border-white/10 bg-[#1b1c18] px-3 text-[10px] text-white/60 sm:max-w-[290px]">
+            <span className="shrink-0 font-medium">{locale === "zh-CN" ? "画笔大小" : "Brush size"}</span>
+            <Slider max={96} min={8} onValueChange={(value) => setBrushSize(value[0] ?? 44)} step={2} value={[brushSize]} />
+            <span className="w-9 shrink-0 text-right font-mono text-[#d8f478]">{brushSize}px</span>
+          </label>
+        </div>
+        <div className="mt-3 grid min-h-0 flex-1 place-items-center overflow-hidden rounded-[9px] border border-white/10 bg-black/20 p-2 max-lg:min-h-[min(52vh,520px)]">
+          <div className="relative max-h-full max-w-full overflow-hidden rounded-[6px] shadow-[0_16px_36px_rgba(0,0,0,.26)]">
+            <img alt={asset.name} className="block max-h-[calc(100vh-190px)] max-w-full object-contain max-lg:max-h-[min(48vh,480px)]" onLoad={(event) => { const image = event.currentTarget; const canvas = canvasRef.current; if (!canvas) return; canvas.width = image.naturalWidth; canvas.height = image.naturalHeight; }} src={asset.url ?? ""} />
+            <canvas className="absolute inset-0 h-full w-full cursor-crosshair touch-none" onPointerCancel={commit} onPointerDown={draw} onPointerMove={draw} onPointerUp={commit} ref={canvasRef} />
+          </div>
+        </div>
+      </section>
+      <aside className="flex min-h-0 flex-col rounded-[9px] border border-white/10 bg-[#1b1c18] p-3 shadow-[0_10px_28px_rgba(0,0,0,.16)] max-lg:min-h-[164px]">
+        <label className="flex min-h-0 flex-1 flex-col gap-2">
+          <span className="text-[11px] font-semibold text-white/82">{locale === "zh-CN" ? "修改描述" : "Edit description"}</span>
+          <textarea aria-label={locale === "zh-CN" ? "描述选中区域需要如何修改" : "Describe how the selected area should change"} className="min-h-[150px] w-full flex-1 resize-none rounded-[7px] border border-white/10 bg-black/15 px-3 py-2.5 text-[11px] leading-5 text-white outline-none transition-colors placeholder:text-white/35 focus:border-[#a8c554] focus:bg-white/[.05] focus:ring-1 focus:ring-[#a8c554]/25 max-lg:min-h-[110px]" onChange={(event) => setPrompt(event.target.value)} placeholder={action === "remove-object" ? (locale === "zh-CN" ? "可选：例如“只移除裤子，保留人物其他部分”" : "Optional: e.g. remove only the trousers and preserve the rest of the person") : (locale === "zh-CN" ? "描述选中区域需要如何修改" : "Describe how the selected area should change")} value={prompt} />
+        </label>
+        <p className={`mt-2 text-[10px] leading-4 ${maskError ? "text-red-300" : "text-white/42"}`}>{maskError || (locale === "zh-CN" ? "绿色区域是唯一允许重绘的范围，未涂抹区域应保持不变。" : "Only the green area may be regenerated; unpainted areas should remain unchanged.")}</p>
+      </aside>
+    </div>
+  </EditorFrame>;
 }
 
 export function MultiViewPanel({ asset, locale, onCancel, onConfirm }: { asset: MediaAsset; locale: Locale; onCancel: () => void; onConfirm: (views: MediaViewAngle[], prompt: string) => void }) {

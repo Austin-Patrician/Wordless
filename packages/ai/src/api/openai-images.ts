@@ -145,8 +145,8 @@ type OpenAIImageParams = Record<string, unknown>;
 
 /**
  * Translate Wordless's provider-neutral image controls to the OpenAI image
- * request fields. OpenAI only exposes three native GPT-image dimensions, so
- * arbitrary ratios are reduced to the closest supported orientation.
+ * request fields. GPT Image 2 accepts flexible dimensions, while earlier
+ * GPT Image models accept the three documented fixed dimensions or `auto`.
  */
 function buildCommonParams(
 	model: ImagesModel<"openai-images">,
@@ -174,12 +174,14 @@ function resolveOpenAISize(modelId: string, generation: ImageGenerationOptions |
 	const ratio = generation?.aspectRatio?.trim();
 	if (isGptImage2(modelId)) {
 		if (explicit === "auto") return "auto";
+		if (ratio === "auto") return "auto";
 		if (explicit && isValidGptImage2Size(explicit)) return explicit;
 		if (explicit && /^(?:1K|2K|4K)$/i.test(explicit)) return sizeForResolutionTier(explicit, ratio);
 		if (ratio) return sizeForResolutionTier("1K", ratio);
 		return undefined;
 	}
 	if (explicit && isOpenAILegacySize(explicit)) return explicit;
+	if (ratio === "auto") return "auto";
 	if (!ratio) return undefined;
 	if (ratio === "1:1") return "1024x1024";
 	const [width, height] = ratio.split(":").map(Number);
@@ -246,7 +248,7 @@ function mimeTypeForFormat(format: string): string {
 }
 
 function supportsInputFidelity(modelId: string): boolean {
-	return /gpt-image-1(?:\.5)?$/.test(modelId);
+	return isGptImage2(modelId) || /gpt-image-1(?:\.5)?$/.test(modelId);
 }
 
 async function resolveImagesResponse(

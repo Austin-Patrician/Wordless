@@ -1,10 +1,11 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { generateImages } from "../src/api/openai-images.ts";
+import { openaiImagesProvider } from "../src/providers/openai-images.ts";
 import type { ImageContent, ImagesContext, ImagesModel } from "../src/types.ts";
 
-function createModel(): ImagesModel<"openai-images"> {
+function createModel(id = "gpt-image-1.5"): ImagesModel<"openai-images"> {
 	return {
-		id: "gpt-image-1.5",
+		id,
 		name: "GPT Image 1.5",
 		api: "openai-images",
 		provider: "openai",
@@ -30,6 +31,13 @@ function imageContent(data: string, mimeType = "image/png"): ImageContent {
 describe.sequential("OpenAI Images adapter", () => {
 	afterEach(() => {
 		vi.unstubAllGlobals();
+	});
+
+	it("advertises the documented GPT Image aspect ratios", () => {
+		const model = openaiImagesProvider().getModels().find((item) => item.id === "gpt-image-2");
+		expect(model?.capabilities?.aspectRatios).toEqual(["1:1", "3:2", "2:3", "4:3", "3:4", "16:9", "9:16", "21:9", "auto"]);
+		expect(openaiImagesProvider().getModels().find((item) => item.id === "gpt-image-1.5")?.capabilities?.aspectRatios)
+			.toEqual(["1:1", "3:2", "2:3", "auto"]);
 	});
 
 	it("sends a generation request with the requested output count", async () => {
@@ -94,7 +102,7 @@ describe.sequential("OpenAI Images adapter", () => {
 		});
 		});
 
-		it("sends references and edit controls as multipart form data", async () => {
+	it("sends references and edit controls as multipart form data", async () => {
 		const requests: Request[] = [];
 		const fetchMock = vi.fn(async (input: unknown, init?: RequestInit): Promise<Response> => {
 			const request = new Request(input as string | URL | Request, init);
@@ -124,6 +132,29 @@ describe.sequential("OpenAI Images adapter", () => {
 		expect(form.get("input_fidelity")).toBe("high");
 		expect(form.get("image[]")).toBeInstanceOf(Blob);
 		expect(form.get("mask")).toBeInstanceOf(Blob);
+	});
+
+	it("sends high input fidelity for GPT Image 2 masked edits", async () => {
+		const requests: Request[] = [];
+		vi.stubGlobal("fetch", async (input: unknown, init?: RequestInit): Promise<Response> => {
+			const request = new Request(input as string | URL | Request, init);
+			if (request.url !== "data:,") requests.push(request);
+			return jsonResponse({ created: 1, data: [{ b64_json: "ZWRpdGVk" }] });
+		});
+
+		const response = await generateImages(
+			createModel("gpt-image-2"),
+			{
+				input: [{ type: "text", text: "Remove only the masked garment" }, imageContent("cmVm")],
+				edit: { mask: imageContent("bWFzaw=="), inputFidelity: "high" },
+			},
+			{ apiKey: "test-key" },
+		);
+
+		expect(response.stopReason).toBe("stop");
+		const form = await requests[0].formData();
+		expect(form.get("model")).toBe("gpt-image-2");
+		expect(form.get("input_fidelity")).toBe("high");
 	});
 
 	it("maps generation controls on edit requests", async () => {
@@ -176,5 +207,22 @@ describe.sequential("OpenAI Images adapter", () => {
 		expect(width % 16).toBe(0);
 		expect(height % 16).toBe(0);
 		expect(width / height).toBeCloseTo(16 / 9, 1);
+	});
+
+	it("forwards automatic sizing for GPT Image models", async () => {
+		const requests: Request[] = [];
+		vi.stubGlobal("fetch", async (input: unknown, init?: RequestInit): Promise<Response> => {
+			const request = new Request(input as string | URL | Request, init);
+			requests.push(request);
+			return jsonResponse({ created: 1, data: [{ b64_json: "YXV0bw==" }] });
+		});
+
+		await generateImages(
+			{ ...createModel(), id: "gpt-image-2" },
+			{ input: [{ type: "text", text: "Choose the best composition" }], generation: { aspectRatio: "auto" } },
+			{ apiKey: "test-key" },
+		);
+
+		expect(await requests[0]?.json()).toMatchObject({ size: "auto" });
 	});
 });

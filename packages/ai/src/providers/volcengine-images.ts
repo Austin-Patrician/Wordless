@@ -3,6 +3,8 @@ import { envApiKeyAuth } from "../auth/helpers.ts";
 import { createImagesProvider, type ImagesProvider } from "../images-models.ts";
 import type { ImageOutputFormat, ImagesModel } from "../types.ts";
 
+const SEEDREAM_ASPECT_RATIOS = ["1:1", "4:3", "3:4", "16:9", "9:16", "3:2", "2:3", "21:9"];
+
 const SEEDREAM_BASE_CAPABILITIES = {
 	supportsTextToImage: true,
 	supportsReferenceImageEditing: true,
@@ -10,8 +12,8 @@ const SEEDREAM_BASE_CAPABILITIES = {
 	supportsTransparentBackground: false,
 	supportsSpatialAnnotation: true,
 	maxReferenceImages: 14,
-	maxOutputImages: 4,
-	aspectRatios: ["16:9", "4:3", "1:1", "3:4", "9:16"],
+	maxOutputImages: 15,
+	aspectRatios: SEEDREAM_ASPECT_RATIOS,
 	resolutions: ["2K", "3K", "4K"],
 	outputFormats: ["png", "jpeg"] as ImageOutputFormat[],
 	supportsWatermark: true,

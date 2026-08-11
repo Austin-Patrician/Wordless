@@ -11,7 +11,7 @@ const BAILIAN_IMAGE_CAPABILITIES = {
 	supportsSpatialAnnotation: true,
 	maxReferenceImages: 9,
 	maxOutputImages: 4,
-	aspectRatios: ["16:9", "4:3", "1:1", "3:4", "9:16"],
+	aspectRatios: ["1:8", "1:4", "1:2", "2:3", "3:4", "9:16", "1:1", "16:9", "4:3", "3:2", "2:1", "4:1", "8:1"],
 	resolutions: ["1K", "2K"],
 	outputFormats: ["png"] as ImageOutputFormat[],
 	supportsSeed: true,

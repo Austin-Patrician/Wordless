@@ -110,17 +110,18 @@ export const generateImages: ImagesFunction<"volcengine-images", ImagesOptions> 
 function buildPayload(model: VolcengineImagesModel, context: ImagesContext): VolcengineImagePayload {
 	const generation = generationOptions(context);
 	const count = outputCount(context);
+	const supportsSequentialOutput = !isSeedreamPro(model.id);
 	const payload: VolcengineImagePayload = {
 		model: model.id,
 		prompt: imagePrompt(context),
 		response_format: "b64_json",
-		sequential_image_generation: count === 1 ? "disabled" : "auto",
-		...(count > 1 ? { sequential_image_generation_options: { max_images: count } } : {}),
+		sequential_image_generation: supportsSequentialOutput && count > 1 ? "auto" : "disabled",
+		...(supportsSequentialOutput && count > 1 ? { sequential_image_generation_options: { max_images: count } } : {}),
 	};
 	const references = imageReferences(context).map(imageDataUrl);
 	if (references.length > 0) payload.image = references.length === 1 ? references[0] : references;
 
-	const size = resolveVolcengineSize(generation);
+	const size = resolveVolcengineSize(model.id, generation);
 	if (size) payload.size = size;
 	if (typeof generation.quality === "string" && generation.quality.length > 0) payload.quality = generation.quality;
 	if (typeof generation.seed === "number" && Number.isFinite(generation.seed)) payload.seed = generation.seed;
@@ -138,29 +139,47 @@ function buildPayload(model: VolcengineImagesModel, context: ImagesContext): Vol
 	return payload;
 }
 
-function resolveVolcengineSize(generation: ReturnType<typeof generationOptions>): string | undefined {
+function resolveVolcengineSize(modelId: string, generation: ReturnType<typeof generationOptions>): string | undefined {
 	const candidate = asString(generation.resolution) ?? asString(generation.size);
 	const aspectRatio = asString(generation.aspectRatio);
 	if (candidate && candidate !== "auto") {
 		if (/^\d+x\d+$/i.test(candidate)) return candidate;
 		if (/^\d+\*\d+$/.test(candidate)) return candidate.replace("*", "x");
 		if (/^(?:1K|2K|3K|4K)$/i.test(candidate)) {
-			return aspectRatio ? sizeForAspectRatio(aspectRatio, candidate) : candidate.toUpperCase();
+			return aspectRatio ? sizeForAspectRatio(modelId, aspectRatio, candidate) : candidate.toUpperCase();
 		}
 	}
-	return sizeForAspectRatio(aspectRatio);
+	return sizeForAspectRatio(modelId, aspectRatio);
 }
 
-function sizeForAspectRatio(aspectRatio: string | undefined, resolution?: string): string | undefined {
+const SEEDREAM_SIZES: Record<string, Record<string, Record<string, string>>> = {
+	pro: {
+		"1K": { "1:1": "1024x1024", "4:3": "1152x864", "3:4": "864x1152", "16:9": "1424x800", "9:16": "800x1424", "3:2": "1248x832", "2:3": "832x1248", "21:9": "1568x672" },
+		"2K": { "1:1": "2048x2048", "4:3": "2368x1776", "3:4": "1776x2368", "16:9": "2816x1584", "9:16": "1584x2816", "3:2": "2496x1664", "2:3": "1664x2496", "21:9": "3136x1344" },
+	},
+	lite: {
+		"2K": { "1:1": "2048x2048", "4:3": "2304x1728", "3:4": "1728x2304", "16:9": "2848x1600", "9:16": "1600x2848", "3:2": "2496x1664", "2:3": "1664x2496", "21:9": "3136x1344" },
+		"3K": { "1:1": "3072x3072", "4:3": "3456x2592", "3:4": "2592x3456", "16:9": "4096x2304", "9:16": "2304x4096", "3:2": "3744x2496", "2:3": "2496x3744", "21:9": "4704x2016" },
+		"4K": { "1:1": "4096x4096", "4:3": "4704x3520", "3:4": "3520x4704", "16:9": "5504x3040", "9:16": "3040x5504", "3:2": "4992x3328", "2:3": "3328x4992", "21:9": "6240x2656" },
+	},
+};
+
+function sizeForAspectRatio(modelId: string, aspectRatio: string | undefined, resolution?: string): string | undefined {
 	if (!aspectRatio) return undefined;
+	const tier = resolution?.toUpperCase();
+	const documented = tier ? SEEDREAM_SIZES[isSeedreamPro(modelId) ? "pro" : "lite"]?.[tier]?.[aspectRatio] : undefined;
+	if (documented) return documented;
 	const [width, height] = aspectRatio.split(":").map(Number);
 	if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) return undefined;
-	const tier = resolution?.toUpperCase();
 	const longestSide = tier === "4K" ? 4096 : tier === "3K" ? 3072 : tier === "2K" ? 2048 : 1536;
 	const scale = longestSide / Math.max(width, height);
 	const scaledWidth = Math.max(512, Math.round((width * scale) / 16) * 16);
 	const scaledHeight = Math.max(512, Math.round((height * scale) / 16) * 16);
 	return `${scaledWidth}x${scaledHeight}`;
+}
+
+function isSeedreamPro(modelId: string): boolean {
+	return /seedream-5-0-pro(?:-|$)/.test(modelId);
 }
 
 function resolveVolcengineEndpoint(model: VolcengineImagesModel): string {

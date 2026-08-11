@@ -135,11 +135,11 @@ function sizeForAspectRatio(aspectRatio: string | undefined, resolution?: string
 	if (!aspectRatio) return undefined;
 	const [width, height] = aspectRatio.split(":").map(Number);
 	if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) return undefined;
-	const longestSide = resolution?.toUpperCase() === "4K" ? 4096 : resolution?.toUpperCase() === "2K" ? 2048 : 1376;
-	const scale = longestSide / Math.max(width, height);
-	const minimumSide = resolution?.toUpperCase() === "4K" ? 1024 : 768;
-	const scaledWidth = Math.max(minimumSide, Math.round((width * scale) / 16) * 16);
-	const scaledHeight = Math.max(minimumSide, Math.round((height * scale) / 16) * 16);
+	const tier = resolution?.toUpperCase();
+	const squareSide = tier === "4K" ? 4096 : tier === "2K" ? 2048 : 1024;
+	const scale = squareSide / Math.sqrt(width * height);
+	const scaledWidth = Math.round(width * scale);
+	const scaledHeight = Math.round(height * scale);
 	return `${scaledWidth}*${scaledHeight}`;
 }
 

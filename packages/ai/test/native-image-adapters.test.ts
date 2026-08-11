@@ -134,7 +134,7 @@ describe.sequential("native image adapters", () => {
 			{ apiKey: "bailian-key" },
 		);
 
-		expect(requestBody).toMatchObject({ parameters: { size: "1152*2048" } });
+		expect(requestBody).toMatchObject({ parameters: { size: "1536*2731" } });
 	});
 
 	it("uses Seedream generations for both text and reference-image input", async () => {
@@ -184,7 +184,7 @@ describe.sequential("native image adapters", () => {
 		);
 
 		const response = await generateVolcengineImages(
-			volcengineModel(),
+			{ ...volcengineModel(), id: "doubao-seedream-5-0-lite-260128" },
 			{ input: [{ type: "text", text: "Two variations" }], outputCount: 2 },
 			{ apiKey: "volc-key" },
 		);
@@ -210,7 +210,23 @@ describe.sequential("native image adapters", () => {
 			{ apiKey: "volc-key" },
 		);
 
-		expect(requestBody).toMatchObject({ size: "3072x1728" });
+		expect(requestBody).toMatchObject({ size: "4096x2304" });
+	});
+
+	it("uses the documented Seedream Pro 2K dimensions", async () => {
+		let requestBody: Record<string, unknown> | undefined;
+		vi.stubGlobal("fetch", vi.fn(async (input: unknown, init?: RequestInit): Promise<Response> => {
+			requestBody = await new Request(input as string | URL | Request, init).json() as Record<string, unknown>;
+			return jsonResponse({ data: [{ b64_json: "cHJv" }] });
+		}));
+
+		await generateVolcengineImages(
+			volcengineModel(),
+			{ input: [{ type: "text", text: "A cinematic banner" }], generation: { resolution: "2K", aspectRatio: "21:9" } },
+			{ apiKey: "volc-key" },
+		);
+
+		expect(requestBody).toMatchObject({ size: "3136x1344" });
 	});
 
 	it("returns a clear error for unsupported mask editing", async () => {

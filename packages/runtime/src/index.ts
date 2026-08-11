@@ -1799,7 +1799,7 @@ export class WordlessRuntime {
             aspectRatio: request.imageParameters?.aspectRatio ?? request.ratio,
             ...request.imageParameters,
           },
-          ...(request.action === "local-edit" || request.action === "remove-object" ? { edit: { mask: { type: "image" as const, mimeType: request.mask.mimeType, data: request.mask.data } } } : {}),
+          ...(request.action === "local-edit" || request.action === "remove-object" ? { edit: { mask: { type: "image" as const, mimeType: request.mask.mimeType, data: request.mask.data }, inputFidelity: "high" as const } } : {}),
           ...(request.action === "remove-background" ? { edit: { background: "transparent" as const } } : {}),
         }, { signal });
         const usage = conversationUsageFromAiUsage(response.usage);
@@ -1851,7 +1851,7 @@ export class WordlessRuntime {
 
   private mediaOperationPrompt(request: Exclude<MediaOperationRequest, MediaCropRequest>, viewLabel?: string): string {
     if (request.action === "remove-background") return `${request.prompt}\nRemove the background and preserve only the ${request.preserveSubject}. Return a transparent background.`;
-    if (request.action === "remove-object") return `${request.prompt}\nRemove the selected object from the image and reconstruct the surrounding area naturally.`;
+    if (request.action === "remove-object") return `${request.prompt}\nUse the provided raster mask as a strict spatial constraint. Transparent mask pixels are the only editable area. Remove only the image content inside that area and inpaint it from the immediate surroundings. Preserve every unmasked region exactly, especially connected body parts, the person's face, identity, pose, and clothing outside the mask. Never remove the whole subject unless the whole subject is masked.`;
     if (request.action === "multi-view" && viewLabel) return `${request.prompt}\nGenerate the same subject from the ${viewLabel} view while preserving identity, materials, lighting, and proportions.`;
     return request.prompt;
   }
