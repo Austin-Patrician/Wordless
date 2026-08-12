@@ -541,6 +541,10 @@ export function registerRuntimeIpc(runtime: WordlessRuntime, appearanceAssets: A
     const input = parsePayload<{ connectorId: string }>(ConnectorIdSchema, payload);
     await runtime.authorizeConnector(input.connectorId, {
       openExternal: async (url) => { await shell.openExternal(url); },
+      showDeviceCode: async ({ verificationUri, userCode }) => {
+        await shell.openExternal(verificationUri);
+        await dialog.showMessageBox({ message: `Enter code ${userCode} in your browser to connect GitHub.` });
+      },
     });
   });
   ipcMain.handle("wordless:connectors:trust", async (_event, payload: unknown) => {

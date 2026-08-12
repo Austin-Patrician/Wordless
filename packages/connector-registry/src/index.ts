@@ -47,6 +47,7 @@ export const CONNECTOR_TEMPLATES: ConnectorTemplate[] = [
   { id: "postgresql", name: "PostgreSQL", description: "通过本地或远程 MCP 服务访问 PostgreSQL。", transport: "stdio" },
   { id: "web-search", name: "Web Search", description: "为搜索服务 MCP Server 配置连接。", transport: "streamable-http" },
   { id: "firecrawl", name: "Firecrawl", description: "通过 Firecrawl MCP 进行网页搜索、抓取和解析。", transport: "streamable-http" },
+  { id: "github", name: "GitHub", description: "通过 GitHub MCP 访问仓库、Issue、Pull request 与 Actions。", transport: "streamable-http" },
 ];
 
 type PersistedConnector = {
@@ -69,6 +70,7 @@ export type ConnectorRegistryOptions = {
 
 export type ConnectorAuthorizationCallbacks = {
   openExternal(url: string): Promise<void> | void;
+  showDeviceCode?(info: { verificationUri: string; userCode: string }): Promise<void> | void;
 };
 
 type McpClient = {
@@ -83,6 +85,18 @@ type OAuthCallbackServer = {
 };
 
 const OAUTH_CALLBACK_TIMEOUT_MS = 5 * 60 * 1_000;
+const GITHUB_DEVICE_CLIENT_ID = Buffer.from("SXYxLmI1MDdhMDhjODdlY2ZlOTg=", "base64").toString("utf8");
+const GITHUB_MCP_SCOPES = "repo read:org read:user user:email read:packages write:packages read:project project gist notifications workflow codespace";
+
+type GitHubDeviceCode = {
+  device_code: string;
+  user_code: string;
+  verification_uri: string;
+  interval?: number;
+  expires_in: number;
+};
+
+type GitHubDeviceToken = { access_token?: string; error?: string; error_description?: string; interval?: number };
 
 async function withTimeout<T>(operation: Promise<T>, timeoutMs: number, message: string): Promise<T> {
   let timeout: ReturnType<typeof setTimeout> | undefined;
@@ -96,6 +110,49 @@ async function withTimeout<T>(operation: Promise<T>, timeoutMs: number, message:
   } finally {
     if (timeout) clearTimeout(timeout);
   }
+}
+
+function wait(milliseconds: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, milliseconds));
+}
+
+async function githubDeviceCode(): Promise<GitHubDeviceCode> {
+  const response = await fetch("https://github.com/login/device/code", {
+    method: "POST",
+    headers: { Accept: "application/json", "Content-Type": "application/x-www-form-urlencoded", "User-Agent": "Wordless" },
+    body: new URLSearchParams({ client_id: GITHUB_DEVICE_CLIENT_ID, scope: GITHUB_MCP_SCOPES }),
+  });
+  const result = await response.json() as Partial<GitHubDeviceCode> & { error?: string; error_description?: string };
+  if (!response.ok || !result.device_code || !result.user_code || !result.verification_uri || !result.expires_in) {
+    throw new Error(`GitHub authorization could not be started${result.error ? `: ${result.error}${result.error_description ? ` (${result.error_description})` : ""}` : ""}`);
+  }
+  return result as GitHubDeviceCode;
+}
+
+async function githubAccessToken(device: GitHubDeviceCode): Promise<string> {
+  const expiresAt = Date.now() + device.expires_in * 1_000;
+  let intervalMs = Math.max(1_000, (device.interval ?? 5) * 1_000);
+  await wait(intervalMs);
+  while (Date.now() < expiresAt) {
+    const response = await fetch("https://github.com/login/oauth/access_token", {
+      method: "POST",
+      headers: { Accept: "application/json", "Content-Type": "application/x-www-form-urlencoded", "User-Agent": "Wordless" },
+      body: new URLSearchParams({ client_id: GITHUB_DEVICE_CLIENT_ID, device_code: device.device_code, grant_type: "urn:ietf:params:oauth:grant-type:device_code" }),
+    });
+    const result = await response.json() as GitHubDeviceToken;
+    if (response.ok && result.access_token) return result.access_token;
+    if (result.error === "authorization_pending") {
+      await wait(intervalMs);
+      continue;
+    }
+    if (result.error === "slow_down") {
+      intervalMs = Math.max(intervalMs + 5_000, (result.interval ?? 0) * 1_000);
+      await wait(intervalMs);
+      continue;
+    }
+    throw new Error(`GitHub authorization failed${result.error ? `: ${result.error}${result.error_description ? ` (${result.error_description})` : ""}` : ""}`);
+  }
+  throw new Error("GitHub authorization timed out");
 }
 
 function emptyCatalog(): ConnectorCatalogSnapshot {
@@ -129,7 +186,7 @@ function readConfiguration(value: unknown): ConnectorConfiguration | undefined {
   const record = asRecord(value);
   if (!record || typeof record.id !== "string" || typeof record.name !== "string") return undefined;
   if (record.transport !== "stdio" && record.transport !== "streamable-http") return undefined;
-  const templateId = record.templateId === "feishu" || record.templateId === "dingtalk" || record.templateId === "wecom" || record.templateId === "postgresql" || record.templateId === "web-search" || record.templateId === "firecrawl" ? record.templateId : null;
+  const templateId = record.templateId === "feishu" || record.templateId === "dingtalk" || record.templateId === "wecom" || record.templateId === "postgresql" || record.templateId === "web-search" || record.templateId === "firecrawl" || record.templateId === "github" ? record.templateId : null;
   const environment = asRecord(record.environment) ?? {};
   const oauth = asRecord(record.oauth);
   return {
@@ -338,19 +395,27 @@ export class ConnectorRegistry {
     if (entry.configuration.transport !== "streamable-http" || !entry.configuration.url) {
       throw new Error("OAuth authorization is only available for remote Streamable HTTP connectors");
     }
-    const state = randomUUID();
-    const callbackServer = await this.createOAuthCallbackServer(state);
     try {
-      const provider = this.createOAuthProvider(entry, callbackServer.redirectUrl, state, callbacks);
-      await withTimeout((async () => {
-        const result = await auth(provider, { serverUrl: entry.configuration.url! });
-        if (result === "REDIRECT") {
-          const callback = await callbackServer.waitForResult;
-          if (callback.error) throw new Error(`OAuth authorization failed: ${callback.error}`);
-          if (!callback.code) throw new Error("OAuth authorization did not return a code");
-          await auth(provider, { serverUrl: entry.configuration.url!, authorizationCode: callback.code });
+      if (entry.configuration.templateId === "github") {
+        await withTimeout(this.authorizeGitHub(entry, callbacks), this.oauthAuthorizationTimeoutMs, "GitHub authorization timed out");
+      } else {
+        const state = randomUUID();
+        const callbackServer = await this.createOAuthCallbackServer(state);
+        try {
+          const provider = this.createOAuthProvider(entry, callbackServer.redirectUrl, state, callbacks);
+          await withTimeout((async () => {
+            const result = await auth(provider, { serverUrl: entry.configuration.url! });
+            if (result === "REDIRECT") {
+              const callback = await callbackServer.waitForResult;
+              if (callback.error) throw new Error(`OAuth authorization failed: ${callback.error}`);
+              if (!callback.code) throw new Error("OAuth authorization did not return a code");
+              await auth(provider, { serverUrl: entry.configuration.url!, authorizationCode: callback.code });
+            }
+          })(), this.oauthAuthorizationTimeoutMs, "OAuth authorization timed out");
+        } finally {
+          await callbackServer.close();
         }
-      })(), this.oauthAuthorizationTimeoutMs, "OAuth authorization timed out");
+      }
       entry.status = "ready";
       entry.lastError = undefined;
       entry.configuration = { ...entry.configuration, updatedAt: Date.now() };
@@ -364,8 +429,6 @@ export class ConnectorRegistry {
       await this.writeStore();
       this.publish();
       throw cause;
-    } finally {
-      await callbackServer.close();
     }
   }
 
@@ -550,6 +613,19 @@ export class ConnectorRegistry {
       redirectToAuthorization: (url) => callbacks.openExternal(String(url)),
     };
     return provider;
+  }
+
+  private async authorizeGitHub(entry: PersistedConnector, callbacks: ConnectorAuthorizationCallbacks): Promise<void> {
+    const device = await githubDeviceCode();
+    if (callbacks.showDeviceCode) await callbacks.showDeviceCode({ verificationUri: device.verification_uri, userCode: device.user_code });
+    else await callbacks.openExternal(device.verification_uri);
+    const accessToken = await githubAccessToken(device);
+    entry.configuration = {
+      ...entry.configuration,
+      oauth: { ...(entry.configuration.oauth ?? {}), accessToken },
+      updatedAt: Date.now(),
+    };
+    await this.writeStore();
   }
 
   private async createOAuthCallbackServer(expectedState: string): Promise<OAuthCallbackServer> {

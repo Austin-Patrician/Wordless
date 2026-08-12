@@ -15,6 +15,7 @@ let temporaryDirectory: string | undefined;
 
 afterEach(async () => {
   authMock.mockReset();
+  vi.unstubAllGlobals();
   if (temporaryDirectory) await rm(temporaryDirectory, { force: true, recursive: true });
   temporaryDirectory = undefined;
 });
@@ -132,5 +133,46 @@ describe("connector OAuth authorization", () => {
     });
     await expect(retry.authorize(retryConnector.id, { openExternal: async () => {} }))
       .rejects.toThrow("OAuth authorization timed out");
+  });
+
+  it("uses GitHub device authorization instead of dynamic client registration", async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        device_code: "device-code",
+        user_code: "ABCD-EFGH",
+        verification_uri: "https://github.com/login/device",
+        expires_in: 60,
+        interval: 0,
+      }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ access_token: "github-access-token" }), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    temporaryDirectory = await mkdtemp(join(tmpdir(), "wordless-connector-oauth-"));
+    const registry = new ConnectorRegistry({ configPath: join(temporaryDirectory, "connectors.json") });
+    await registry.initialize();
+    const connector = await registry.upsert({
+      name: "GitHub",
+      templateId: "github",
+      transport: "streamable-http",
+      enabled: false,
+      trustedAt: null,
+      command: null,
+      args: [],
+      cwd: null,
+      environment: {},
+      url: "https://api.githubcopilot.com/mcp/",
+      headers: [],
+      oauth: null,
+    });
+
+    let deviceCode: { verificationUri: string; userCode: string } | undefined;
+    await registry.authorize(connector.id, {
+      openExternal: async () => { throw new Error("GitHub authorization should display the device code"); },
+      showDeviceCode: async (info) => { deviceCode = info; },
+    });
+
+    expect(authMock).not.toHaveBeenCalled();
+    expect(deviceCode).toEqual({ verificationUri: "https://github.com/login/device", userCode: "ABCD-EFGH" });
+    expect(registry.configuration(connector.id)?.oauth).toMatchObject({ accessToken: "github-access-token" });
   });
 });

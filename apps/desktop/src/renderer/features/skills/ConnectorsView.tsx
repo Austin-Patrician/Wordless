@@ -88,6 +88,12 @@ const templates: Array<{
     detail: "网页搜索、抓取与解析服务",
     transport: "streamable-http",
   },
+  {
+    id: "github",
+    label: "GitHub",
+    detail: "仓库、Issue、Pull request 与 Actions",
+    transport: "streamable-http",
+  },
 ];
 
 const templateDefaults: Partial<Record<Exclude<ConnectorTemplateId, null>, Pick<ConnectorDraft, "url" | "oauth">>> = {
@@ -95,7 +101,15 @@ const templateDefaults: Partial<Record<Exclude<ConnectorTemplateId, null>, Pick<
     url: "https://mcp.firecrawl.dev/v2/mcp-oauth",
     oauth: null,
   },
+  github: {
+    url: "https://api.githubcopilot.com/mcp/",
+    oauth: null,
+  },
 };
+
+function requiresTemplateAuthorization(templateId: Exclude<ConnectorTemplateId, null>): boolean {
+  return templateId === "firecrawl" || templateId === "github";
+}
 
 function newDraft(): ConnectorDraft {
   return {
@@ -178,6 +192,7 @@ type ConnectorsViewProps = {
 };
 
 type ConnectorUiError = { detail: string; kind: ConnectorErrorKind };
+type TemplateUiError = ConnectorUiError & { templateId: Exclude<ConnectorTemplateId, null> };
 
 const connectorErrorMessages: Record<ConnectorErrorKind, MessageKey> = {
   "authorization-busy": "connectorAuthorizationBusy",
@@ -201,7 +216,7 @@ export function ConnectorsView({
   const [operations, setOperations] = useState<Record<string, ConnectorOperation>>({});
   const [connectorErrors, setConnectorErrors] = useState<Record<string, ConnectorUiError>>({});
   const [dialogError, setDialogError] = useState<ConnectorUiError | null>(null);
-  const [templateError, setTemplateError] = useState<ConnectorUiError | null>(null);
+  const [templateError, setTemplateError] = useState<TemplateUiError | null>(null);
   const [startingTemplateId, setStartingTemplateId] = useState<Exclude<ConnectorTemplateId, null> | null>(null);
   const [saving, setSaving] = useState(false);
   const connectors = snapshot?.connectors.connectors ?? [];
@@ -248,7 +263,7 @@ export function ConnectorsView({
   const startTemplate = async (template: (typeof templates)[number]) => {
     if (!client || startingTemplateId !== null) return;
     const defaults = templateDefaults[template.id];
-    if (template.id !== "firecrawl") {
+    if (!requiresTemplateAuthorization(template.id)) {
       setDraft({
         ...newDraft(),
         templateId: template.id,
@@ -275,7 +290,7 @@ export function ConnectorsView({
       });
     } catch (cause) {
       const detail = connectorErrorDetail(cause);
-      setTemplateError({ detail, kind: connectorErrorKind(detail, "authorize") });
+      setTemplateError({ templateId: template.id, detail, kind: connectorErrorKind(detail, "authorize") });
     } finally {
       setStartingTemplateId(null);
     }
@@ -474,8 +489,8 @@ export function ConnectorsView({
           <button
             className="group flex min-w-0 flex-col rounded-[8px] border border-[#e3e3de] bg-white p-3.5 text-left transition-colors hover:border-[#cfcfc8] hover:bg-[#fdfdfc] dark:border-border dark:bg-card dark:hover:bg-muted"
             key={template.id}
-            aria-busy={startingTemplateId === template.id || (template.id === "firecrawl" && authorizationActive)}
-            disabled={startingTemplateId !== null || (template.id === "firecrawl" && authorizationActive)}
+            aria-busy={startingTemplateId === template.id || (requiresTemplateAuthorization(template.id) && authorizationActive)}
+            disabled={startingTemplateId !== null || (requiresTemplateAuthorization(template.id) && authorizationActive)}
             onClick={() => void startTemplate(template)}
             type="button"
           >
@@ -506,7 +521,7 @@ export function ConnectorsView({
                 {startingTemplateId === template.id ? <LoaderCircle className="h-3.5 w-3.5 animate-spin" /> : <Plus className="h-3.5 w-3.5" />}
               </span>
             </span>
-            {template.id === "firecrawl" && templateError ? (
+            {requiresTemplateAuthorization(template.id) && templateError?.templateId === template.id ? (
               <span className="mt-2 flex items-start gap-1.5 border-t border-[#eee4df] pt-2 text-[10px] leading-4 text-[#9a5749] dark:border-[#513a34] dark:text-[#efb0a3]">
                 <CircleAlert className="mt-px h-3.5 w-3.5 shrink-0" />
                 <span>{t(connectorErrorMessages[templateError.kind])}</span>
