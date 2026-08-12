@@ -1,5 +1,5 @@
 import { Button, DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger, Tooltip, TooltipContent, TooltipTrigger } from "@wordless/ui-kit";
-import { Bell, ChevronDown, ChevronLeft, Cloud, Command, Ellipsis, Folder, FolderOpen, Images, LoaderCircle, LogIn, LogOut, Pin, PinOff, Search, Settings, Trash2, Pencil, X } from "lucide-react";
+import { Bell, CalendarClock, ChevronDown, ChevronLeft, Cloud, Command, Ellipsis, Folder, FolderOpen, Images, LoaderCircle, LogIn, LogOut, Pin, PinOff, Search, Settings, Trash2, Pencil, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import type { SessionRecord } from "@wordless/domain";
@@ -13,14 +13,17 @@ import { useDesktopAccount } from "../../shared/account";
 import type { SettingsPage } from "../settings/SettingsDialog";
 
 type SidebarProps = {
+  automationActive: boolean;
   collapsed: boolean;
   onNewThread: () => void;
   onOpenMedia: () => void;
+  onOpenAutomation: () => void;
   onOpenSettings: (page?: SettingsPage) => void;
   onOpenSkills: () => void;
   onOpenSession: (sessionId: string) => void;
   onSessionDeleted: (sessionId: string) => void;
   onToggle: () => void;
+  runningSessionIds: ReadonlySet<string>;
   selectedSessionId: string | null;
   mediaActive: boolean;
   skillsActive: boolean;
@@ -56,12 +59,13 @@ type SessionRowProps = {
   onOpenFolder: (session: SessionRecord) => void;
   onRename: (session: SessionRecord) => void;
   onSetPinned: (session: SessionRecord, pinned: boolean) => void;
+  running: boolean;
   session: SessionRecord;
   timeLabel: string;
   t: ReturnType<typeof usePreferences>["t"];
 };
 
-function SessionRow({ active, editingTitle, entryIconKey, onDelete, onEditCancel, onEditSave, onEditTitleChange, onOpen, onOpenFolder, onRename, onSetPinned, session, timeLabel, t }: SessionRowProps) {
+function SessionRow({ active, editingTitle, entryIconKey, onDelete, onEditCancel, onEditSave, onEditTitleChange, onOpen, onOpenFolder, onRename, onSetPinned, running, session, timeLabel, t }: SessionRowProps) {
   const editing = editingTitle !== null;
   const renameInputRef = useRef<HTMLInputElement>(null);
   const rowClassName = editing
@@ -91,7 +95,7 @@ function SessionRow({ active, editingTitle, entryIconKey, onDelete, onEditCancel
         <AgentEntryIcon className={active ? "opacity-100" : "opacity-70 transition-opacity group-hover:opacity-100"} iconKey={entryIconKey} />
         {editing ? <input className="h-5 min-w-0 flex-1 rounded-[3px] border border-[#6f6f6a] bg-white px-1 text-[12px] text-[#242421] outline-none dark:bg-card dark:text-foreground" maxLength={120} onBlur={onEditCancel} onChange={(event) => onEditTitleChange(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); onEditSave(); } if (event.key === "Escape") { event.preventDefault(); onEditCancel(); } }} ref={renameInputRef} value={editingTitle} /> : <button className="min-w-0 flex-1 truncate text-left outline-none focus-visible:ring-2 focus-visible:ring-ring" onClick={() => onOpen(session)} type="button">{session.title}</button>}
         {session.pinnedAt !== null && !editing ? <Pin aria-label={t("pinSession")} className="h-2.5 w-2.5 shrink-0 text-[#738847] dark:text-[#bad47a]" /> : null}
-        <span className={`shrink-0 pr-1 font-mono text-[10px] ${timeClassName} ${editing ? "opacity-100" : "group-hover:opacity-0"}`}>{timeLabel}</span>
+        {running && !editing ? <span aria-label={t("assistantGeneratingResponse")} className={`grid h-4 w-4 shrink-0 place-items-center pr-1 ${timeClassName}`} role="status" title={t("assistantGeneratingResponse")}><LoaderCircle className="h-3 w-3 animate-spin" /></span> : <span className={`shrink-0 pr-1 font-mono text-[10px] ${timeClassName} ${editing ? "opacity-100" : "group-hover:opacity-0"}`}>{timeLabel}</span>}
       </div>
       {!editing ? <DropdownMenu>
         <DropdownMenuTrigger asChild>
@@ -143,7 +147,7 @@ function SidebarActionNotice({ message, onDismiss }: { message: string | null; o
   );
 }
 
-export function Sidebar({ collapsed, mediaActive, onNewThread, onOpenMedia, onOpenSettings, onOpenSession, onSessionDeleted, onOpenSkills, onToggle, selectedSessionId, skillsActive }: SidebarProps) {
+export function Sidebar({ automationActive, collapsed, mediaActive, onNewThread, onOpenAutomation, onOpenMedia, onOpenSettings, onOpenSession, onSessionDeleted, onOpenSkills, onToggle, runningSessionIds, selectedSessionId, skillsActive }: SidebarProps) {
   const client = useRuntimeClient();
   const { refresh, snapshot } = useRuntime();
   const { locale, t } = usePreferences();
@@ -230,10 +234,11 @@ export function Sidebar({ collapsed, mediaActive, onNewThread, onOpenMedia, onOp
   const navItems = [
     { id: "new", label: t("newThread"), icon: Folder, onClick: onNewThread },
     { id: "media", label: t("imageVideoGeneration"), icon: Images, onClick: onOpenMedia },
+    { id: "automation", label: t("automations"), icon: CalendarClock, onClick: onOpenAutomation },
     { id: "skills", label: "Skills & MCP", icon: Command, onClick: onOpenSkills },
   ];
 
-  const sessionRow = (session: SessionRecord) => <SessionRow active={selectedSessionId === session.id} editingTitle={renaming?.id === session.id ? title : null} entryIconKey={entryIconKeys.get(session.entryId)} key={session.id} onDelete={(candidate) => { setDeleteError(null); setDeleting(candidate); }} onEditCancel={() => setRenaming(null)} onEditSave={() => void saveRename()} onEditTitleChange={setTitle} onOpen={openSession} onOpenFolder={(candidate) => void run(async () => await client.openSessionFolder(candidate.id))} onRename={beginRename} onSetPinned={(candidate, pinned) => void run(async () => await client.setSessionPinned(candidate.id, pinned))} session={session} t={t} timeLabel={relativeTime(session.updatedAt, locale)} />;
+  const sessionRow = (session: SessionRecord) => <SessionRow active={selectedSessionId === session.id} editingTitle={renaming?.id === session.id ? title : null} entryIconKey={entryIconKeys.get(session.entryId)} key={session.id} onDelete={(candidate) => { setDeleteError(null); setDeleting(candidate); }} onEditCancel={() => setRenaming(null)} onEditSave={() => void saveRename()} onEditTitleChange={setTitle} onOpen={openSession} onOpenFolder={(candidate) => void run(async () => await client.openSessionFolder(candidate.id))} onRename={beginRename} onSetPinned={(candidate, pinned) => void run(async () => await client.setSessionPinned(candidate.id, pinned))} running={runningSessionIds.has(session.id)} session={session} t={t} timeLabel={relativeTime(session.updatedAt, locale)} />;
 
   return (
     <aside className={`hidden h-full min-h-0 shrink-0 flex-col border-r border-border bg-[var(--wordless-shell-sidebar)] py-4 transition-[width] duration-200 lg:flex ${collapsed ? "w-[58px] px-2" : "w-[238px] px-3"}`}>
@@ -248,13 +253,13 @@ export function Sidebar({ collapsed, mediaActive, onNewThread, onOpenMedia, onOp
       <nav aria-label="Primary navigation" className="mt-7 shrink-0 space-y-1">
         {navItems.map((item) => {
           const Icon = item.icon;
-          const active = (item.id === "new" && selectedSessionId === null && !skillsActive && !mediaActive) || (item.id === "skills" && skillsActive) || (item.id === "media" && mediaActive);
+          const active = (item.id === "new" && selectedSessionId === null && !skillsActive && !mediaActive && !automationActive) || (item.id === "skills" && skillsActive) || (item.id === "media" && mediaActive) || (item.id === "automation" && automationActive);
           const button = <button className={`flex w-full items-center gap-3 rounded-xl px-3 py-2 text-left text-[13px] font-medium transition-colors ${collapsed ? "justify-center" : ""} ${active ? "bg-[#e3e3df] text-foreground dark:bg-[#2a2c22]" : "text-[#4c4c47] hover:bg-[#e7e7e3] dark:text-muted-foreground dark:hover:bg-[#282a21] dark:hover:text-foreground"}`} onClick={item.onClick} type="button"><Icon className="h-[17px] w-[17px] shrink-0" />{!collapsed ? <span className="truncate">{item.label}</span> : null}</button>;
           return collapsed ? <Tooltip key={item.id}><TooltipTrigger asChild>{button}</TooltipTrigger><TooltipContent side="right">{item.label}</TooltipContent></Tooltip> : <div key={item.id}>{button}</div>;
         })}
       </nav>
 
-      {!collapsed ? <div className="mt-7 min-h-0 flex-1 overflow-y-auto pr-1"><section><div className="mb-2 flex items-center justify-between px-3"><p className="font-mono text-[10px] uppercase tracking-[0.14em] text-muted-foreground">{t("recentThreads")}</p><span className="font-mono text-[10px] text-muted-foreground">{recentSessions.length.toString().padStart(2, "0")}</span></div><div className="space-y-1">{recentSessions.map(sessionRow)}</div></section><section className="mt-6"><div className="mb-2 flex items-center justify-between px-3"><p className="font-mono text-[10px] uppercase tracking-[0.14em] text-muted-foreground">{t("yourSpace")}</p><span className="font-mono text-[10px] text-muted-foreground">{workspaceGroups.length.toString().padStart(2, "0")}</span></div><div className="space-y-2">{workspaceGroups.map(({ workspace, sessions: workspaceSessions }) => {
+      {!collapsed ? <div className="wordless-sidebar-session-scroll mt-7 min-h-0 flex-1 overflow-y-auto pr-1"><section><div className="mb-2 flex items-center justify-between px-3"><p className="font-mono text-[10px] uppercase tracking-[0.14em] text-muted-foreground">{t("recentThreads")}</p><span className="font-mono text-[10px] text-muted-foreground">{recentSessions.length.toString().padStart(2, "0")}</span></div><div className="space-y-1">{recentSessions.map(sessionRow)}</div></section><section className="mt-6"><div className="mb-2 flex items-center justify-between px-3"><p className="font-mono text-[10px] uppercase tracking-[0.14em] text-muted-foreground">{t("yourSpace")}</p><span className="font-mono text-[10px] text-muted-foreground">{workspaceGroups.length.toString().padStart(2, "0")}</span></div><div className="space-y-2">{workspaceGroups.map(({ workspace, sessions: workspaceSessions }) => {
         const expanded = expandedWorkspaceIds.has(workspace.id);
         return <section key={workspace.id}><button aria-expanded={expanded} className="flex h-8 w-full items-center gap-2 rounded-[7px] px-2 text-left text-[11px] text-[#4f4f4a] outline-none hover:bg-[#e7e7e3] focus-visible:ring-2 focus-visible:ring-ring dark:text-muted-foreground dark:hover:bg-[#282a21]" onClick={() => setExpandedWorkspaceIds((current) => { const next = new Set(current); if (next.has(workspace.id)) next.delete(workspace.id); else next.add(workspace.id); return next; })} type="button"><img alt="" className="h-3.5 w-3.5 shrink-0 opacity-75 dark:invert" src={folderIcon} /><span className="min-w-0 flex-1 truncate font-medium">{workspace.name}</span><ChevronDown className={`h-3.5 w-3.5 transition-transform ${expanded ? "" : "-rotate-90"}`} /></button>{expanded ? <div className="mt-0.5 space-y-1 pl-2">{workspaceSessions.map(sessionRow)}</div> : null}</section>;
       })}</div></section></div> : null}

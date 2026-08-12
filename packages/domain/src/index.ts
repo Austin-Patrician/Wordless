@@ -667,6 +667,58 @@ export interface SessionDraft {
   presentation?: PresentationLaunchOptions;
 }
 
+export type AutomationSchedule =
+  | { kind: "recurring"; cadence: "daily" | "weekdays" | "weekly" | "monthly"; time: string; weekdays?: number[]; dayOfMonth?: number }
+  | { kind: "interval"; every: number; unit: "minutes" | "hours" | "days" }
+  | { kind: "once"; at: number };
+
+export interface AutomationConfiguration {
+  prompt: string;
+  entryId: string;
+  workspaceId: string | null;
+  accessLevel: SessionAccessLevel;
+  model: ModelReference | null;
+  thinkingLevel: ThinkingLevel;
+  skillIds: string[];
+  connectorIds: string[];
+}
+
+export interface AutomationTask extends AutomationConfiguration {
+  id: string;
+  name: string;
+  schedule: AutomationSchedule;
+  activeFrom: number | null;
+  activeUntil: number | null;
+  enabled: boolean;
+  nextRunAt: number | null;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export type AutomationRunStatus = "queued" | "running" | "waiting" | "completed" | "failed" | "cancelled" | "configuration-error" | "interrupted";
+
+export interface AutomationRun {
+  id: string;
+  automationId: string | null;
+  automationName: string;
+  configuration: AutomationConfiguration;
+  scheduledFor: number;
+  sessionId: string | null;
+  status: AutomationRunStatus;
+  error: string | null;
+  createdAt: number;
+  startedAt: number | null;
+  completedAt: number | null;
+}
+
+export interface AutomationTaskInput extends AutomationConfiguration {
+  name: string;
+  schedule: AutomationSchedule;
+  activeFrom: number | null;
+  activeUntil: number | null;
+  enabled: boolean;
+}
+
 export type ClarificationQuestionAnswerType = "choice" | "text" | "confirm";
 
 export interface ClarificationQuestionOption {

@@ -3,6 +3,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue, Switch }
 import type { ConfiguredModelSummary, MediaAsset, MediaImageParameters, MediaOperationKind } from "@wordless/domain";
 import { ChevronDown, GripHorizontal, ImagePlus, LoaderCircle, Send, SlidersHorizontal, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
+import autoIcon from "../../../icons/common-icons/auto.svg";
 import { ProviderIcon } from "../settings/provider-icons";
 import { mediaOperationDefinition } from "./media-operations";
 
@@ -34,6 +35,7 @@ export function MediaComposer({ action, busy, error, initialValue, locale, model
   const selectedModel = models.find((model) => `${model.providerId}:${model.modelId}` === value.modelKey);
   const capabilities = selectedModel?.imageCapabilities;
   const ratios = useMemo(() => capabilities?.aspectRatios?.length ? capabilities.aspectRatios : ["16:9", "4:3", "1:1", "3:4", "9:16"], [capabilities?.aspectRatios]);
+  const resolutions = useMemo(() => capabilities?.resolutions?.filter((resolution) => resolution.toLowerCase() !== "auto") ?? [], [capabilities?.resolutions]);
   const maxOutputCount = Math.max(1, Math.min(4, capabilities?.maxOutputImages ?? 4));
   const referenceLimit = capabilities?.maxReferenceImages ?? (selectedModel?.supportsVision ? 1 : 0);
   const outputCounts = useMemo(() => Array.from({ length: maxOutputCount }, (_, index) => index + 1), [maxOutputCount]);
@@ -51,14 +53,18 @@ export function MediaComposer({ action, busy, error, initialValue, locale, model
       const nextRatio = ratios.includes(current.ratio) ? current.ratio : ratios[0] ?? current.ratio;
       const nextOutputCount = Math.min(current.outputCount, maxOutputCount);
       const parameters = { ...(current.imageParameters ?? {}) };
-      if (!capabilities?.resolutions?.includes(parameters.resolution ?? "")) delete parameters.resolution;
+      if (resolutions.length) {
+        if (!resolutions.includes(parameters.resolution ?? "")) parameters.resolution = resolutions[0];
+      } else {
+        delete parameters.resolution;
+      }
       if (!capabilities?.qualityLevels?.includes(parameters.quality ?? "")) delete parameters.quality;
       if (!capabilities?.outputFormats?.includes(parameters.outputFormat ?? "")) delete parameters.outputFormat;
       if (!capabilities?.supportsSeed) delete parameters.seed;
       if (!capabilities?.supportsWatermark) delete parameters.watermark;
       return { ...current, ratio: nextRatio, outputCount: nextOutputCount, imageParameters: Object.keys(parameters).length > 0 ? parameters : undefined };
     });
-  }, [capabilities, hasAdvancedControls, maxOutputCount, ratios, selectedModel]);
+  }, [capabilities, hasAdvancedControls, maxOutputCount, ratios, resolutions, selectedModel]);
   function updateImageParameter<Key extends keyof MediaImageParameters>(key: Key, parameter: MediaImageParameters[Key] | undefined) {
     setValue((current) => {
       const imageParameters: MediaImageParameters = { ...(current.imageParameters ?? {}) };
@@ -99,7 +105,7 @@ export function MediaComposer({ action, busy, error, initialValue, locale, model
         <div className="flex min-w-0 flex-1 items-center gap-1.5 font-mono text-[10px] text-muted-foreground">
           {models.length ? <Select onOpenChange={(open) => { setModelPickerOpen(open); if (open) setSettingsOpen(false); }} onValueChange={(modelKey) => { setValue((current) => ({ ...current, modelKey })); onModelChange?.(modelKey); }} open={modelPickerOpen} value={value.modelKey || undefined}><SelectTrigger className={`h-7 min-w-0 max-w-[150px] flex-1 overflow-hidden rounded-[5px] border px-1.5 shadow-none transition-colors focus:ring-0 ${modelPickerOpen ? "border-border bg-muted text-foreground" : "border-transparent bg-transparent text-muted-foreground hover:border-border hover:bg-muted hover:text-foreground focus-visible:border-[#9bb554] focus-visible:bg-muted focus-visible:text-foreground"}`}><SelectValue asChild><span className="flex min-w-0 items-center gap-1.5 overflow-hidden">{selectedModel ? <><ProviderMark avatarId={selectedModel.providerAvatarId} providerId={selectedModel.providerId} /><span className="min-w-0 truncate" title={selectedModel.displayName}>{selectedModel.displayName}</span></> : <span className="truncate text-muted-foreground">{locale === "zh-CN" ? "选择模型" : "Select model"}</span>}</span></SelectValue></SelectTrigger><SelectContent align="start" className="max-h-64" onPointerDownOutside={() => setModelPickerOpen(false)} style={{ width: "min(360px, calc(100vw - 4rem))" }}>{models.map((model) => <SelectItem className="py-2" key={`${model.providerId}:${model.modelId}`} value={`${model.providerId}:${model.modelId}`}><span className="flex min-w-0 items-start gap-2"><ProviderMark avatarId={model.providerAvatarId} providerId={model.providerId} /><span className="min-w-0 whitespace-normal break-words leading-4">{model.displayName}</span></span></SelectItem>)}</SelectContent></Select> : <button className="flex items-center gap-1.5 text-[#74883b] hover:underline dark:text-[#c8e976]" onClick={onOpenModels} type="button"><ImagePlus className="h-3.5 w-3.5" />{locale === "zh-CN" ? "配置模型" : "Configure model"}</button>}
         </div>
-        <div className="flex shrink-0 items-center gap-1.5">{onCancel ? <button aria-label={locale === "zh-CN" ? "取消" : "Cancel"} className="grid h-7 w-7 place-items-center rounded-[5px] text-muted-foreground hover:bg-muted" onClick={onCancel} type="button"><X className="h-3.5 w-3.5" /></button> : null}<GenerationSettings capabilities={capabilities} hasAdvancedControls={hasAdvancedControls} locale={locale} onChangeOutputCount={(outputCount) => setValue((current) => ({ ...current, outputCount }))} onChangeRatio={(ratio) => setValue((current) => ({ ...current, ratio }))} onChangeParameter={updateImageParameter} onResetParameters={() => setValue((current) => ({ ...current, imageParameters: undefined }))} open={settingsOpen} outputCounts={outputCounts} ratios={ratios} setOpen={(open) => { setSettingsOpen(open); if (open) setModelPickerOpen(false); }} value={value} /><button aria-label={definition.label[locale]} className="grid h-8 w-8 place-items-center rounded-[6px] bg-accent text-accent-foreground shadow-sm disabled:cursor-not-allowed disabled:opacity-40" disabled={!canSubmit} onClick={submit} title={`${definition.label[locale]} (Ctrl+Enter)`} type="button">{busy ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}</button></div>
+        <div className="flex shrink-0 items-center gap-1.5">{onCancel ? <button aria-label={locale === "zh-CN" ? "取消" : "Cancel"} className="grid h-7 w-7 place-items-center rounded-[5px] text-muted-foreground hover:bg-muted" onClick={onCancel} type="button"><X className="h-3.5 w-3.5" /></button> : null}<GenerationSettings capabilities={capabilities} hasAdvancedControls={hasAdvancedControls} locale={locale} onChangeOutputCount={(outputCount) => setValue((current) => ({ ...current, outputCount }))} onChangeRatio={(ratio) => setValue((current) => ({ ...current, ratio }))} onChangeParameter={updateImageParameter} onResetParameters={() => setValue((current) => ({ ...current, imageParameters: resolutions.length ? { resolution: resolutions[0] } : undefined }))} open={settingsOpen} outputCounts={outputCounts} ratios={ratios} setOpen={(open) => { setSettingsOpen(open); if (open) setModelPickerOpen(false); }} value={value} /><button aria-label={definition.label[locale]} className="grid h-8 w-8 place-items-center rounded-[6px] bg-accent text-accent-foreground shadow-sm disabled:cursor-not-allowed disabled:opacity-40" disabled={!canSubmit} onClick={submit} title={`${definition.label[locale]} (Ctrl+Enter)`} type="button">{busy ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}</button></div>
       </footer>
     </section>
   );
@@ -123,14 +129,18 @@ function GenerationSettings({ capabilities, hasAdvancedControls, locale, onChang
   setOpen: (open: boolean) => void;
   value: ComposerValue;
 }) {
-  const resolution = value.imageParameters?.resolution;
-  const summary = [value.ratio, capabilities?.resolutions?.length ? resolution ?? "Auto" : null, `${value.outputCount}×`].filter((item): item is string => Boolean(item)).join(" · ");
-  return <Popover.Root onOpenChange={setOpen} open={open}><Popover.Trigger asChild><button aria-expanded={open} aria-label={locale === "zh-CN" ? "图片生成设置" : "Image generation settings"} className={`flex h-7 shrink-0 items-center gap-1.5 rounded-[5px] px-1.5 text-[10px] transition-colors ${open || value.imageParameters ? "bg-muted text-foreground" : "text-muted-foreground hover:bg-muted hover:text-foreground"}`} type="button"><SlidersHorizontal className="h-3.5 w-3.5" /><span className="whitespace-nowrap">{summary}</span><ChevronDown className={`h-3 w-3 transition-transform ${open ? "rotate-180" : ""}`} /></button></Popover.Trigger><Popover.Portal><Popover.Content align="start" className="z-[100] max-h-[min(620px,calc(100vh-2rem))] w-[min(520px,calc(100vw-2rem))] overflow-y-auto rounded-[14px] border border-border bg-card p-4 shadow-[0_18px_46px_rgba(0,0,0,.24)] outline-none" onPointerDownOutside={() => setOpen(false)} side="top" sideOffset={10}>
-    <div className="flex items-center justify-between"><p className="text-[13px] font-semibold">{locale === "zh-CN" ? "图片生成设置" : "Image settings"}</p>{value.imageParameters ? <button className="text-[10px] text-muted-foreground hover:text-foreground" onClick={onResetParameters} type="button">{locale === "zh-CN" ? "重置高级参数" : "Reset advanced"}</button> : null}</div>
-    <section className="mt-3"><p className="text-[11px] font-semibold text-muted-foreground">{locale === "zh-CN" ? "比例" : "Scale"}</p><div className="mt-1.5 grid grid-cols-4 gap-1 sm:grid-cols-7">{ratios.map((ratio) => <RatioOption key={ratio} onClick={() => onChangeRatio(ratio)} ratio={ratio} selected={value.ratio === ratio} />)}</div></section>
-    {capabilities?.resolutions?.length ? <section className="mt-3"><p className="text-[11px] font-semibold text-muted-foreground">{locale === "zh-CN" ? "分辨率" : "Resolution"}</p><div className="mt-1.5 grid grid-cols-[repeat(auto-fit,minmax(84px,1fr))] gap-1"><SegmentOption label="Auto" onClick={() => onChangeParameter("resolution", undefined)} selected={!resolution} />{capabilities.resolutions.map((option) => <SegmentOption key={option} label={option} onClick={() => onChangeParameter("resolution", option)} selected={resolution === option} />)}</div></section> : null}
-    <section className="mt-3"><p className="text-[11px] font-semibold text-muted-foreground">{locale === "zh-CN" ? "生成张数" : "Generation count"}</p><div className="mt-1.5 grid grid-cols-[repeat(auto-fit,minmax(84px,1fr))] gap-1">{outputCounts.map((count) => <SegmentOption key={count} label={String(count)} onClick={() => onChangeOutputCount(count)} selected={value.outputCount === count} />)}</div></section>
-    {hasAdvancedControls ? <section className="mt-3"><div className="space-y-2.5">
+  const resolutions = capabilities?.resolutions?.filter((option) => option.toLowerCase() !== "auto") ?? [];
+  const resolution = value.imageParameters?.resolution ?? resolutions[0];
+  const quality = capabilities?.qualityLevels?.length
+    ? (value.imageParameters?.quality?.toLowerCase() === "auto" ? "Auto" : value.imageParameters?.quality ?? "Auto")
+    : null;
+  const summary = [value.ratio, resolution, quality].filter((item): item is string => Boolean(item)).join(" · ");
+  return <Popover.Root onOpenChange={setOpen} open={open}><Popover.Trigger asChild><button aria-expanded={open} aria-label={locale === "zh-CN" ? "图片生成设置" : "Image generation settings"} className={`flex h-7 shrink-0 items-center gap-1.5 rounded-[5px] px-1.5 text-[10px] transition-colors ${open || value.imageParameters ? "bg-muted text-foreground" : "text-muted-foreground hover:bg-muted hover:text-foreground"}`} type="button"><SlidersHorizontal className="h-3.5 w-3.5" /><span className="whitespace-nowrap">{summary}</span><ChevronDown className={`h-3 w-3 transition-transform ${open ? "rotate-180" : ""}`} /></button></Popover.Trigger><Popover.Portal><Popover.Content align="start" className="z-[100] max-h-[min(560px,calc(100vh-2rem))] w-[min(400px,calc(100vw-2rem))] overflow-y-auto rounded-[8px] border border-border bg-card p-3 shadow-[0_14px_34px_rgba(0,0,0,.2)] outline-none" onPointerDownOutside={() => setOpen(false)} side="top" sideOffset={8}>
+    <div className="flex items-center justify-between"><p className="text-[12px] font-semibold">{locale === "zh-CN" ? "图片生成设置" : "Image settings"}</p>{value.imageParameters ? <button className="text-[10px] text-muted-foreground hover:text-foreground" onClick={onResetParameters} type="button">{locale === "zh-CN" ? "重置高级参数" : "Reset advanced"}</button> : null}</div>
+    <section className="mt-2.5"><p className="text-[10px] font-semibold text-muted-foreground">{locale === "zh-CN" ? "比例" : "Scale"}</p><div className="mt-1 grid grid-cols-[repeat(auto-fit,minmax(44px,1fr))] gap-1">{ratios.map((ratio) => <RatioOption key={ratio} onClick={() => onChangeRatio(ratio)} ratio={ratio} selected={value.ratio === ratio} />)}</div></section>
+    {resolutions.length ? <section className="mt-2.5"><p className="text-[10px] font-semibold text-muted-foreground">{locale === "zh-CN" ? "分辨率" : "Resolution"}</p><div className="mt-1 grid grid-cols-[repeat(auto-fit,minmax(64px,1fr))] gap-1">{resolutions.map((option) => <SegmentOption key={option} label={option} onClick={() => onChangeParameter("resolution", option)} selected={resolution === option} />)}</div></section> : null}
+    <section className="mt-2.5"><p className="text-[10px] font-semibold text-muted-foreground">{locale === "zh-CN" ? "生成张数" : "Generation count"}</p><div className="mt-1 grid grid-cols-[repeat(auto-fit,minmax(64px,1fr))] gap-1">{outputCounts.map((count) => <SegmentOption key={count} label={String(count)} onClick={() => onChangeOutputCount(count)} selected={value.outputCount === count} />)}</div></section>
+    {hasAdvancedControls ? <section className="mt-2.5"><div className="space-y-2">
       {capabilities?.qualityLevels?.length ? <ParameterOptions label={locale === "zh-CN" ? "质量" : "Quality"} onChange={(next) => onChangeParameter("quality", next)} options={capabilities.qualityLevels} value={value.imageParameters?.quality} /> : null}
       {capabilities?.outputFormats?.length ? <ParameterOptions label={locale === "zh-CN" ? "输出格式" : "Output format"} onChange={(next) => onChangeParameter("outputFormat", next)} options={capabilities.outputFormats} value={value.imageParameters?.outputFormat} /> : null}
       {capabilities?.supportsSeed ? <label className="block w-40 max-w-full"><span className="mb-1 block text-[10px] font-medium text-muted-foreground">Seed</span><input className="h-8 w-full rounded-[5px] border border-input bg-background px-2 text-[11px] outline-none focus:border-[#83965a] dark:bg-[#181912]" min="0" onChange={(event) => { const next = event.target.value.trim(); onChangeParameter("seed", next ? Math.max(0, Math.floor(Number(next) || 0)) : undefined); }} placeholder={locale === "zh-CN" ? "随机" : "Random"} type="number" value={value.imageParameters?.seed ?? ""} /></label> : null}
@@ -140,7 +150,7 @@ function GenerationSettings({ capabilities, hasAdvancedControls, locale, onChang
 }
 
 function RatioOption({ onClick, ratio, selected }: { onClick: () => void; ratio: string; selected: boolean }) {
-  return <button aria-pressed={selected} className={`relative h-14 rounded-[6px] border text-[6px] font-medium transition-colors ${selected ? "border-[#9bb554] bg-[#9bb554]/15 text-foreground" : "border-transparent bg-muted/60 text-muted-foreground hover:bg-muted hover:text-foreground"}`} onClick={onClick} type="button"><span aria-hidden="true" className="absolute inset-x-0 top-2 grid h-7 place-items-center"><RatioGlyph ratio={ratio} /></span><span className="absolute inset-x-0 bottom-0.5 leading-none">{ratio}</span></button>;
+  return <button aria-pressed={selected} className={`flex h-11 flex-col items-center justify-center gap-1 rounded-[5px] border text-[7px] font-medium leading-none transition-colors ${selected ? "border-[#9bb554] bg-[#9bb554]/15 text-foreground" : "border-transparent bg-muted/60 text-muted-foreground hover:bg-muted hover:text-foreground"}`} onClick={onClick} type="button"><span aria-hidden="true" className="grid h-3.5 place-items-center"><RatioGlyph ratio={ratio} /></span><span>{ratio}</span></button>;
 }
 
 function SegmentOption({ label, onClick, selected }: { label: string; onClick: () => void; selected: boolean }) {
@@ -148,9 +158,10 @@ function SegmentOption({ label, onClick, selected }: { label: string; onClick: (
 }
 
 function RatioGlyph({ ratio }: { ratio: string }) {
+  if (ratio.toLowerCase() === "auto") return <img alt="" className="h-3.5 w-3.5 object-contain" src={autoIcon} />;
   const [widthValue, heightValue] = ratio.split(":").map(Number);
   const largest = Math.max(widthValue || 1, heightValue || 1);
-  return <span aria-hidden="true" className="block border-[1.5px] border-current rounded-[2px]" style={{ width: `${Math.max(8, Math.round(((widthValue || 1) / largest) * 22))}px`, height: `${Math.max(8, Math.round(((heightValue || 1) / largest) * 22))}px` }} />;
+  return <span aria-hidden="true" className="block border-[1.5px] border-current rounded-[2px]" style={{ width: `${Math.max(6, Math.round(((widthValue || 1) / largest) * 14))}px`, height: `${Math.max(6, Math.round(((heightValue || 1) / largest) * 14))}px` }} />;
 }
 
 function ParameterOptions({ label, onChange, options, value }: { label: string; onChange: (value: string | undefined) => void; options: string[]; value: string | undefined }) {

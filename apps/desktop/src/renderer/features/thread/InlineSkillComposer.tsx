@@ -67,9 +67,9 @@ export type InlineSkillComposerHandle = {
   focus(): void;
   getCursorRect(): DOMRect | null;
   getValue(): InlineSkillComposerValue;
-  insertSkill(skill: InlineSkillToken): void;
+  insertSkill(skill: InlineSkillToken, options?: { atEnd?: boolean }): void;
   insertWorkspaceReference(reference: InlineWorkspaceReferenceToken): void;
-  setValue(parts: readonly UserPromptPart[]): void;
+  setValue(parts: readonly UserPromptPart[], options?: { focus?: boolean }): void;
 };
 
 type InlineSkillComposerProps = {
@@ -84,6 +84,7 @@ type InlineSkillComposerProps = {
   stopEnabled?: boolean;
   submitDisabled?: boolean;
   onReferencePickerKeyDown?(event: ReactKeyboardEvent<HTMLDivElement>): boolean;
+  placeholderClassName?: string;
 };
 
 type SerializedSkillTokenNode = Spread<
@@ -224,6 +225,18 @@ function $removeTokenAndSelect(node: LexicalNode): void {
   const offset = node.getIndexWithinParent();
   node.remove();
   parent.select(offset, offset);
+}
+
+function $canRestoreSelection(selection: RangeSelection): boolean {
+  const pointIsValid = (point: RangeSelection["anchor"]): boolean => {
+    const node = $getNodeByKey(point.key);
+    if (!node) return false;
+    if (point.type === "text") {
+      return $isTextNode(node) && point.offset <= node.getTextContentSize();
+    }
+    return $isElementNode(node) && point.offset <= node.getChildrenSize();
+  };
+  return pointIsValid(selection.anchor) && pointIsValid(selection.focus);
 }
 
 function removeToken(editor: LexicalEditor, nodeKey: NodeKey): void {
@@ -417,7 +430,7 @@ const initialConfig = {
 };
 
 export const InlineSkillComposer = forwardRef<InlineSkillComposerHandle, InlineSkillComposerProps>(function InlineSkillComposer(
-  { ariaLabel, className, disabled = false, onChange, onStop, onSubmit, placeholder, readOnly = false, stopEnabled = false, submitDisabled = false, onReferencePickerKeyDown },
+  { ariaLabel, className, disabled = false, onChange, onStop, onSubmit, placeholder, placeholderClassName, readOnly = false, stopEnabled = false, submitDisabled = false, onReferencePickerKeyDown },
   ref,
 ) {
   const editorRef = useRef<LexicalEditor | null>(null);
@@ -464,17 +477,27 @@ export const InlineSkillComposer = forwardRef<InlineSkillComposerHandle, InlineS
       const editor = editorRef.current;
       return editor ? editorValue(editor.getEditorState()) : { parts: [], skillIds: [], skillTokenCounts: {}, skillQuery: null, text: "", workspaceReferenceCount: 0, workspaceQuery: null };
     },
-    insertSkill(skill) {
+    insertSkill(skill, options) {
       const editor = editorRef.current;
       if (!editor || disabled || readOnly) return;
       editor.update(() => {
+        const token = $createSkillTokenNode(skill.id, skill.name, skill.source);
+        if (options?.atEnd) {
+          const root = $getRoot();
+          const lastChild = root.getLastChild();
+          const paragraph = lastChild && $isElementNode(lastChild)
+            ? lastChild
+            : root.append($createParagraphNode());
+          paragraph.append(token);
+          token.selectNext();
+          return;
+        }
         const savedSelection = selectionRef.current;
-        if (savedSelection && $getNodeByKey(savedSelection.anchor.key) && $getNodeByKey(savedSelection.focus.key)) {
+        if (!options?.atEnd && savedSelection && $canRestoreSelection(savedSelection)) {
           $setSelection(savedSelection.clone());
         } else {
           $getRoot().selectEnd();
         }
-        const token = $createSkillTokenNode(skill.id, skill.name, skill.source);
         const selection = $getSelection();
         if ($isRangeSelection(selection)) {
           const node = selection.anchor.getNode();
@@ -505,7 +528,7 @@ export const InlineSkillComposer = forwardRef<InlineSkillComposerHandle, InlineS
       if (!editor || disabled || readOnly) return;
       editor.update(() => {
         const savedSelection = selectionRef.current;
-        if (savedSelection && $getNodeByKey(savedSelection.anchor.key) && $getNodeByKey(savedSelection.focus.key)) $setSelection(savedSelection.clone());
+        if (savedSelection && $canRestoreSelection(savedSelection)) $setSelection(savedSelection.clone());
         else $getRoot().selectEnd();
         const selection = $getSelection();
         if ($isRangeSelection(selection)) {
@@ -527,9 +550,14 @@ export const InlineSkillComposer = forwardRef<InlineSkillComposerHandle, InlineS
       });
       editor.focus();
     },
-    setValue(parts) {
+    setValue(parts, options) {
       const editor = editorRef.current;
       if (!editor || disabled || readOnly) return;
+      const nextHasContent = parts.some(
+        (part) => part.type !== "text" || part.text.length > 0,
+      );
+      hasContentRef.current = nextHasContent;
+      setHasContent(nextHasContent);
       editor.update(() => {
         const root = $getRoot();
         root.clear();
@@ -553,13 +581,13 @@ export const InlineSkillComposer = forwardRef<InlineSkillComposerHandle, InlineS
         }
         root.selectEnd();
       });
-      editor.focus();
+      if (options?.focus !== false) editor.focus();
     },
   }), [disabled, readOnly]);
 
   return (
     <LexicalComposer initialConfig={initialConfig}>
-      <div className="relative flex min-h-0 flex-1 flex-col">
+      <div className="relative min-h-0 flex-1">
         <PlainTextPlugin
           ErrorBoundary={LexicalErrorBoundary}
           contentEditable={(
@@ -583,7 +611,7 @@ export const InlineSkillComposer = forwardRef<InlineSkillComposerHandle, InlineS
           )}
           placeholder={null}
         />
-        {!hasContent ? <span aria-hidden className="pointer-events-none absolute left-0.5 top-0 text-[16px] font-normal leading-7 text-[#a2a29b] dark:text-muted-foreground">{placeholder}</span> : null}
+        {!hasContent ? <span aria-hidden className={`pointer-events-none absolute left-0.5 top-0 text-[16px] font-normal leading-7 text-[#a2a29b] dark:text-muted-foreground ${placeholderClassName ?? ""}`}>{placeholder}</span> : null}
       </div>
       <EditorRefPlugin editorRef={editorRef} />
       <HistoryPlugin />

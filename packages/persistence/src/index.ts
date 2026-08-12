@@ -11,6 +11,9 @@ import {
 } from "@wordless/agent";
 import type {
   AppPreferences,
+  AutomationRun,
+  AutomationRunStatus,
+  AutomationTask,
   EnabledModelRecord,
   MediaProject,
   ProviderConnectionRecord,
@@ -412,9 +415,71 @@ export class WordlessDatabase {
     return connections;
   }
 
+  listAutomations(): AutomationTask[] {
+    return this.database.prepare("SELECT document FROM automations ORDER BY updated_at DESC").all().flatMap((row): AutomationTask[] => {
+      try { return [parseJson<AutomationTask>(asString((row as SqlRow).document))]; } catch { return []; }
+    });
+  }
+
+  getAutomation(id: string): AutomationTask | undefined {
+    const row = this.database.prepare("SELECT document FROM automations WHERE id = ?").get(id) as SqlRow | undefined;
+    if (!row) return undefined;
+    try { return parseJson<AutomationTask>(asString(row.document)); } catch { return undefined; }
+  }
+
+  upsertAutomation(task: AutomationTask): void {
+    this.database.prepare(`INSERT INTO automations(id, name, enabled, next_run_at, document, created_at, updated_at)
+      VALUES(?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET name=excluded.name, enabled=excluded.enabled,
+      next_run_at=excluded.next_run_at, document=excluded.document, updated_at=excluded.updated_at`)
+      .run(task.id, task.name, task.enabled ? 1 : 0, task.nextRunAt, JSON.stringify(task), task.createdAt, task.updatedAt);
+  }
+
+  deleteAutomation(id: string): boolean {
+    return this.database.prepare("DELETE FROM automations WHERE id = ?").run(id).changes > 0;
+  }
+
+  listAutomationRuns(limit = 200): AutomationRun[] {
+    return this.database.prepare("SELECT * FROM automation_runs ORDER BY created_at DESC LIMIT ?").all(Math.max(1, Math.min(limit, 1000))).flatMap((row): AutomationRun[] => {
+      try { return [this.readAutomationRun(row as SqlRow)]; } catch { return []; }
+    });
+  }
+
+  getAutomationRun(id: string): AutomationRun | undefined {
+    const row = this.database.prepare("SELECT * FROM automation_runs WHERE id = ?").get(id) as SqlRow | undefined;
+    if (!row) return undefined;
+    try { return this.readAutomationRun(row); } catch { return undefined; }
+  }
+
+  insertAutomationRun(run: AutomationRun): boolean {
+    return this.database.prepare(`INSERT OR IGNORE INTO automation_runs(id, automation_id, session_id, status, scheduled_for, document, created_at, updated_at)
+      VALUES(?, ?, ?, ?, ?, ?, ?, ?)`)
+      .run(run.id, run.automationId, run.sessionId, run.status, run.scheduledFor, JSON.stringify(run), run.createdAt, Date.now()).changes > 0;
+  }
+
+  updateAutomationRun(run: AutomationRun): void {
+    this.database.prepare("UPDATE automation_runs SET session_id=?, status=?, document=?, updated_at=? WHERE id=?")
+      .run(run.sessionId, run.status, JSON.stringify(run), Date.now(), run.id);
+  }
+
+  updateUnfinishedAutomationRuns(status: AutomationRunStatus): void {
+    const rows = this.listAutomationRuns(1000).filter((run) => run.status === "queued" || run.status === "running" || run.status === "waiting");
+    for (const run of rows) this.updateAutomationRun({ ...run, status, error: "Wordless exited before this run finished", completedAt: Date.now() });
+  }
+
+  deleteAutomationRun(id: string): AutomationRun | undefined {
+    const run = this.getAutomationRun(id);
+    if (run) this.database.prepare("DELETE FROM automation_runs WHERE id = ?").run(id);
+    return run;
+  }
+
+  deleteAutomationRunsForSession(sessionId: string): void {
+    this.database.prepare("DELETE FROM automation_runs WHERE session_id = ?").run(sessionId);
+  }
+
   private migrate(): void {
     this.database.exec(`
       PRAGMA journal_mode = WAL;
+      PRAGMA busy_timeout = 5000;
       CREATE TABLE IF NOT EXISTS migrations(version INTEGER PRIMARY KEY);
       CREATE TABLE IF NOT EXISTS preferences(key TEXT PRIMARY KEY, value TEXT NOT NULL, updated_at INTEGER NOT NULL);
       CREATE TABLE IF NOT EXISTS workspaces(
@@ -516,6 +581,22 @@ export class WordlessDatabase {
     if (this.claimMigration(8)) this.database.exec("ALTER TABLE sessions ADD COLUMN interaction_mode TEXT NOT NULL DEFAULT 'default';");
     if (this.claimMigration(9)) this.database.exec("ALTER TABLE sessions ADD COLUMN tool_approval_mode TEXT NOT NULL DEFAULT 'manual';");
     if (this.claimMigration(10)) this.database.exec("ALTER TABLE sessions ADD COLUMN thinking_level TEXT NOT NULL DEFAULT 'medium';");
+    if (this.claimMigration(11)) this.database.exec(`
+      CREATE TABLE automations(
+        id TEXT PRIMARY KEY, name TEXT NOT NULL, enabled INTEGER NOT NULL, next_run_at INTEGER,
+        document TEXT NOT NULL, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL
+      );
+      CREATE INDEX automations_due ON automations(enabled, next_run_at);
+      CREATE TABLE automation_runs(
+        id TEXT PRIMARY KEY, automation_id TEXT REFERENCES automations(id) ON DELETE SET NULL,
+        session_id TEXT REFERENCES sessions(id) ON DELETE CASCADE, status TEXT NOT NULL,
+        scheduled_for INTEGER NOT NULL, document TEXT NOT NULL, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL,
+        UNIQUE(automation_id, scheduled_for)
+      );
+      CREATE INDEX automation_runs_task_time ON automation_runs(automation_id, created_at DESC);
+      CREATE INDEX automation_runs_status ON automation_runs(status, created_at);
+      CREATE INDEX automation_runs_session ON automation_runs(session_id);
+    `);
   }
 
   private readWorkspace(row: SqlRow): WorkspaceRecord {
@@ -618,6 +699,18 @@ export class WordlessDatabase {
       requestCount: asNumber(row.request_count),
       usageAvailable: asNumber(row.usage_available) === 1,
       unmeteredOperationCount: asNumber(row.unmetered_operation_count),
+    };
+  }
+
+  private readAutomationRun(row: SqlRow): AutomationRun {
+    const document = parseJson<AutomationRun>(asString(row.document));
+    return {
+      ...document,
+      automationId: row.automation_id === null ? null : asString(row.automation_id),
+      sessionId: row.session_id === null ? null : asString(row.session_id),
+      status: asString(row.status) as AutomationRun["status"],
+      scheduledFor: asNumber(row.scheduled_for),
+      createdAt: asNumber(row.created_at),
     };
   }
 }

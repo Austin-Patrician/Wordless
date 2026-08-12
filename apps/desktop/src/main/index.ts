@@ -1,5 +1,5 @@
 import path from "node:path";
-import { app, BrowserWindow, dialog, nativeTheme, session, shell } from "electron";
+import { app, BrowserWindow, dialog, Menu, nativeTheme, session, shell, Tray } from "electron";
 import { createDesktopRuntime } from "./bootstrap/create-runtime";
 import { prepareUserDataPath } from "./bootstrap/user-data";
 import { registerRuntimeIpc } from "./ipc/register-runtime-ipc";
@@ -21,6 +21,7 @@ import { CloudSyncService } from "./cloud-sync/cloud-sync-service";
 import { GoogleDriveAppData } from "./cloud-sync/google-drive-app-data";
 import { DesktopDataAnalysisService } from "./data-analysis/data-analysis-service";
 import { configureHttpDispatcher } from "./network/http-dispatcher";
+import { AutomationService } from "./automation/automation-service";
 
 declare const __WORDLESS_GOOGLE_CLIENT_ID__: string;
 declare const __WORDLESS_GOOGLE_CLIENT_SECRET__: string;
@@ -34,7 +35,10 @@ let runtime: ReturnType<typeof createDesktopRuntime> | undefined;
 let office: OfficeCliService | undefined;
 let account: GoogleAccountService | undefined;
 let cloudSync: CloudSyncService | undefined;
+let automation: AutomationService | undefined;
+let tray: Tray | undefined;
 let disposing = false;
+let quitting = false;
 const hostInfo = createDesktopHostInfo();
 let mainWindow: BrowserWindow | undefined;
 const hasSingleInstance = app.requestSingleInstanceLock();
@@ -91,6 +95,16 @@ app.whenReady().then(async () => {
   await account.initialize();
   runtime = createDesktopRuntime(userData.path, office, credentialVault, dataAnalysis);
   await runtime.initialize();
+  automation = new AutomationService({
+    databasePath: path.join(userData.path, "wordless.db"),
+    runtime,
+    deleteSession: async (sessionId) => await runtime!.deleteSession(sessionId, async (record) => await office!.releaseSession(record.id, record.runtimeRootPath)),
+    emit: (event) => {
+      const envelope: import("@wordless/protocol").RuntimeEventEnvelope = { protocolVersion: 1, runtimeInstanceId: "desktop-automation", eventId: crypto.randomUUID(), sessionId: null, sequence: Date.now(), timestamp: Date.now(), event };
+      for (const window of BrowserWindow.getAllWindows()) window.webContents.send("wordless:event", envelope);
+    },
+  });
+  automation.initialize();
   cloudSync = new CloudSyncService({
     statePath: path.join(userData.path, "cloud-sync", "state.json"),
     runtime,
@@ -126,28 +140,46 @@ app.whenReady().then(async () => {
     cloudSync,
     office,
     dataAnalysis,
+    automation,
   });
   mainWindow = createMainWindow(path.join(__dirname, "preload.cjs"), runtime.getSnapshot().preferences);
+  mainWindow.on("close", (event) => { if (!quitting) { event.preventDefault(); mainWindow?.hide(); } });
   mainWindow.on("focus", () => notifications.clearBadge());
+  tray = new Tray(path.join(__dirname, process.platform === "win32" ? "wordless.ico" : "wordless.png"));
+  tray.setToolTip("Wordless");
+  const showWindow = () => { if (!mainWindow || mainWindow.isDestroyed()) return; if (mainWindow.isMinimized()) mainWindow.restore(); mainWindow.show(); mainWindow.focus(); };
+  tray.on("click", showWindow);
+  tray.setContextMenu(Menu.buildFromTemplate([
+    { label: "Show Wordless", click: showWindow },
+    { type: "separator" },
+    { label: "Quit Wordless", click: () => { quitting = true; app.quit(); } },
+  ]));
   setTimeout(() => void updateService.check(), 12_000);
   if (userData.notice) await dialog.showMessageBox({ type: "warning", message: userData.notice });
 
   app.on("activate", () => {
-    if (BrowserWindow.getAllWindows().length === 0 && runtime) {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.show();
+      mainWindow.focus();
+    } else if (runtime) {
       mainWindow = createMainWindow(path.join(__dirname, "preload.cjs"), runtime.getSnapshot().preferences);
+      mainWindow.on("close", (event) => { if (!quitting) { event.preventDefault(); mainWindow?.hide(); } });
       mainWindow.on("focus", () => notifications.clearBadge());
     }
   });
 });
 
 app.on("window-all-closed", () => {
-  if (process.platform !== "darwin") app.quit();
+  // Automations continue while the main window is hidden in the tray.
 });
 
 app.on("before-quit", (event) => {
   if (disposing) return;
   event.preventDefault();
   disposing = true;
+  quitting = true;
+  automation?.dispose();
+  tray?.destroy();
   cloudSync?.dispose();
   runtime?.dispose();
   account?.dispose();

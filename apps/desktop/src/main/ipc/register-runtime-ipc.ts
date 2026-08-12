@@ -4,10 +4,11 @@ import { app, BrowserWindow, dialog, ipcMain, shell } from "electron";
 import { Type } from "typebox";
 import { Value } from "typebox/value";
 import type { TSchema } from "typebox";
-import type { AppearancePreferences, AppPreferences, SessionAccessLevel, ThinkingLevel, ToolApprovalMode, UserMessageSubmission, UserPromptPart } from "@wordless/domain";
+import type { AppearancePreferences, AppPreferences, AutomationTaskInput, SessionAccessLevel, ThinkingLevel, ToolApprovalMode, UserMessageSubmission, UserPromptPart } from "@wordless/domain";
 import { formatPromptWithSkillReferences, selectedSkillIdsFromPromptParts } from "@wordless/agent-driver-sdk";
 import {
   CreateAndPromptSchema,
+  AutomationTaskInputSchema,
   CompactSessionSchema,
   ConnectorConfigurationSchema,
   ConnectorIdSchema,
@@ -75,6 +76,7 @@ import { GoogleAccountService } from "../account/google-account-service";
 import { CloudSyncService } from "../cloud-sync/cloud-sync-service";
 import { updateTitleBarOverlays } from "../windows/main-window";
 import type { DesktopDataAnalysisService } from "../data-analysis/data-analysis-service";
+import type { AutomationService } from "../automation/automation-service";
 
 function parsePayload<T>(schema: TSchema, payload: unknown): T {
   if (!Value.Check(schema, payload)) throw new Error("Invalid request payload");
@@ -123,6 +125,7 @@ type DesktopIpcOptions = {
   cloudSync: CloudSyncService;
   office: OfficeCliService;
   dataAnalysis: DesktopDataAnalysisService;
+  automation: AutomationService;
 };
 
 function isDesktopMenuId(value: unknown): value is DesktopMenuId {
@@ -164,6 +167,37 @@ export function registerRuntimeIpc(runtime: WordlessRuntime, appearanceAssets: A
   });
   ipcMain.handle("wordless:cloud-sync:resolve-conflict", (_event, resolution: unknown) => options.cloudSync.resolveConflicts(resolution === "remote" ? "remote" : "local"));
   ipcMain.handle("wordless:cloud-sync:delete-remote", () => options.cloudSync.deleteRemote());
+  const IdSchema = Type.Object({ id: Type.String({ minLength: 1 }) });
+  const IdsSchema = Type.Object({ ids: Type.Array(Type.String({ minLength: 1 }), { minItems: 1, maxItems: 500 }) });
+  ipcMain.handle("wordless:automation:list", () => options.automation.listTasks());
+  ipcMain.handle("wordless:automation:create", (_event, payload: unknown) => {
+    const input = parsePayload<{ input: AutomationTaskInput }>(Type.Object({ input: AutomationTaskInputSchema }), payload);
+    return options.automation.createTask(input.input);
+  });
+  ipcMain.handle("wordless:automation:update", (_event, payload: unknown) => {
+    const input = parsePayload<{ id: string; input: AutomationTaskInput }>(Type.Object({ id: Type.String({ minLength: 1 }), input: AutomationTaskInputSchema }), payload);
+    return options.automation.updateTask(input.id, input.input);
+  });
+  ipcMain.handle("wordless:automation:set-enabled", (_event, payload: unknown) => {
+    const input = parsePayload<{ ids: string[]; enabled: boolean }>(Type.Intersect([IdsSchema, Type.Object({ enabled: Type.Boolean() })]), payload);
+    options.automation.setEnabled(input.ids, input.enabled);
+  });
+  ipcMain.handle("wordless:automation:delete", (_event, payload: unknown) => {
+    const input = parsePayload<{ ids: string[] }>(IdsSchema, payload);
+    options.automation.deleteTasks(input.ids);
+  });
+  ipcMain.handle("wordless:automation:run", (_event, payload: unknown) => {
+    const input = parsePayload<{ id: string }>(IdSchema, payload);
+    return options.automation.runNow(input.id);
+  });
+  ipcMain.handle("wordless:automation:runs", (_event, payload: unknown) => {
+    const input = parsePayload<{ limit?: number }>(Type.Object({ limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 1000 })) }), payload);
+    return options.automation.listRuns(input.limit);
+  });
+  ipcMain.handle("wordless:automation:run-delete", async (_event, payload: unknown) => {
+    const input = parsePayload<{ id: string }>(IdSchema, payload);
+    await options.automation.deleteRun(input.id);
+  });
   ipcMain.handle("wordless:external:open", async (_event, payload: unknown) => {
     const input = parsePayload<{ url: string }>(OpenExternalUrlSchema, payload);
     const url = new URL(input.url);
@@ -200,6 +234,7 @@ export function registerRuntimeIpc(runtime: WordlessRuntime, appearanceAssets: A
   ipcMain.handle("wordless:session:delete", async (_event, payload: unknown) => {
     const input = parsePayload<{ sessionId: string }>(DeleteSessionSchema, payload);
     await runtime.deleteSession(input.sessionId, async (session) => await options.office.releaseSession(session.id, session.runtimeRootPath));
+    options.automation.onSessionDeleted(input.sessionId);
   });
   ipcMain.handle("wordless:media:create", async (_event, payload: unknown) => {
     const input = parsePayload<{ title?: string }>(CreateMediaProjectSchema, payload);

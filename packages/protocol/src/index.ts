@@ -3,6 +3,7 @@ import { PROVIDER_MODEL_FETCHERS } from "@wordless/domain";
 import type { AgentExtensionEvent, AgentExtensionSessionState, AgentExtensionSnapshot } from "@wordless/agent-extension-sdk";
 import type {
   AppPreferences,
+  AutomationTaskInput,
   ContextCompactionRecord,
   ConversationMessage,
   ConversationUsage,
@@ -144,6 +145,22 @@ export const ThinkingLevelSchema = Type.Union([
 ]);
 
 export const SessionAccessLevelSchema = Type.Union([Type.Literal("default"), Type.Literal("full")]);
+
+export const AutomationScheduleSchema = Type.Union([
+  Type.Object({ kind: Type.Literal("recurring"), cadence: Type.Union([Type.Literal("daily"), Type.Literal("weekdays"), Type.Literal("weekly"), Type.Literal("monthly")]), time: Type.String({ pattern: "^[0-2][0-9]:[0-5][0-9]$" }), weekdays: Type.Optional(Type.Array(Type.Integer({ minimum: 0, maximum: 6 }), { maxItems: 7 })), dayOfMonth: Type.Optional(Type.Integer({ minimum: 1, maximum: 31 })) }),
+  Type.Object({ kind: Type.Literal("interval"), every: Type.Integer({ minimum: 1, maximum: 100000 }), unit: Type.Union([Type.Literal("minutes"), Type.Literal("hours"), Type.Literal("days")]) }),
+  Type.Object({ kind: Type.Literal("once"), at: Type.Number({ minimum: 0 }) }),
+]);
+
+export const AutomationTaskInputSchema = Type.Object({
+  name: Type.String({ minLength: 1, maxLength: 120 }), prompt: Type.String({ minLength: 1, maxLength: 100000 }),
+  entryId: Type.String({ minLength: 1 }), workspaceId: Type.Union([Type.String({ minLength: 1 }), Type.Null()]),
+  accessLevel: SessionAccessLevelSchema, model: Type.Union([ModelReferenceSchema, Type.Null()]), thinkingLevel: ThinkingLevelSchema,
+  skillIds: Type.Array(Type.String({ minLength: 1 }), { maxItems: 100 }), connectorIds: Type.Array(Type.String({ minLength: 1 }), { maxItems: 100 }),
+  schedule: AutomationScheduleSchema, activeFrom: Type.Union([Type.Number({ minimum: 0 }), Type.Null()]), activeUntil: Type.Union([Type.Number({ minimum: 0 }), Type.Null()]), enabled: Type.Boolean(),
+});
+
+export type AutomationTaskInputDto = AutomationTaskInput;
 
 export const AgentInteractionModeSchema = Type.Union([
   Type.Literal("default"),
@@ -1039,6 +1056,8 @@ export type RuntimeEvent =
   | { type: "connectors.changed" }
   | { type: "model-configuration.changed" }
   | { type: "media.project.changed"; sessionId: string }
+  | { type: "automation.changed"; id?: string }
+  | { type: "automation-run.changed"; id?: string }
   | { type: "artifact.changed"; artifactId: string; kind: ArtifactKind; revision: number; affectedLocators: string[] }
   | { type: "run.started"; runId: string }
   | { type: "run.completed"; runId: string }

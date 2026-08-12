@@ -49,7 +49,7 @@ export function PresentationContextPanel({ onArtifactSelection, onViewChange, se
   const [selectionLoading, setSelectionLoading] = useState(false);
   const [selectionMode, setSelectionMode] = useState(false);
   const [previewZoom, setPreviewZoom] = useState(100);
-  const [previewViewport, setPreviewViewport] = useState({ width: 480, height: 360 });
+  const [previewViewport, setPreviewViewport] = useState({ width: 0, height: 0 });
   const [previewImage, setPreviewImage] = useState({ width: 16, height: 9 });
   const [error, setError] = useState<string | null>(null);
   const presentationCalls = useRef(new Map<string, string>());
@@ -122,7 +122,7 @@ export function PresentationContextPanel({ onArtifactSelection, onViewChange, se
       observer.disconnect();
       viewport.removeEventListener("wheel", zoomWithWheel);
     };
-  }, [view]);
+  }, [selectedArtifactId, view]);
 
   useEffect(() => client.subscribe((event) => {
     if (event.sessionId !== sessionId) return;
@@ -208,10 +208,9 @@ export function PresentationContextPanel({ onArtifactSelection, onViewChange, se
   const activeSurfaceIndex = Math.max(0, preview.surfaces.findIndex((surface) => surface.id === selectedSurfaceId));
   const activeSurface = preview.surfaces[activeSurfaceIndex];
   const previewPadding = 24;
-  const fitScale = Math.min(
-    Math.max(1, previewViewport.width - previewPadding) / previewImage.width,
-    Math.max(1, previewViewport.height - previewPadding) / previewImage.height,
-  );
+  const availablePreviewWidth = Math.max(1, previewViewport.width - previewPadding);
+  // Presentation slides are horizontal; fit their base size to the panel width.
+  const fitScale = availablePreviewWidth / previewImage.width;
   const renderedPreviewWidth = Math.max(1, Math.round(previewImage.width * fitScale * previewZoom / 100));
   const renderedPreviewHeight = Math.max(1, Math.round(previewImage.height * fitScale * previewZoom / 100));
   const previewViewportReady = previewViewport.width > 0 && previewViewport.height > 0;
