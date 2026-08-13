@@ -1,5 +1,7 @@
 import type { AutomationSchedule } from "@wordless/domain";
 
+export const AUTOMATION_CATCH_UP_WINDOW_MS = 7 * 24 * 60 * 60 * 1_000;
+
 function parseClock(value: string): [number, number] {
   const match = /^(\d{2}):(\d{2})$/.exec(value);
   if (!match) throw new Error("Time must use HH:mm format");
@@ -43,4 +45,23 @@ export function nextAutomationRun(schedule: AutomationSchedule, after: number, a
   }
   if (candidate < lowerBound || (activeUntil !== null && candidate > activeUntil)) return null;
   return candidate;
+}
+
+export function latestMissedAutomationRun(
+  schedule: AutomationSchedule,
+  nextRunAt: number,
+  now: number,
+  activeFrom: number | null,
+  activeUntil: number | null,
+): number | null {
+  if (nextRunAt > now || now - nextRunAt > AUTOMATION_CATCH_UP_WINDOW_MS)
+    return null;
+  if (schedule.kind === "once") return nextRunAt;
+  let latest = nextRunAt;
+  let candidate = nextAutomationRun(schedule, latest, activeFrom, activeUntil);
+  while (candidate !== null && candidate <= now) {
+    latest = candidate;
+    candidate = nextAutomationRun(schedule, latest, activeFrom, activeUntil);
+  }
+  return latest;
 }

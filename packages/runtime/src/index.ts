@@ -1285,7 +1285,7 @@ export class WordlessRuntime {
     const defaultConnectorIds = availableConnectors.filter((connector) => connector.templateId && defaultConnectorTemplates.has(connector.templateId)).map((connector) => connector.id);
     const record: SessionRecord = {
       id,
-      title: sessionTitleFromPrompt(prompt),
+      title: draft.title?.trim() || sessionTitleFromPrompt(prompt),
       workspaceId: workspace?.id ?? null,
       runtimeRootPath,
       mode: draft.mode,

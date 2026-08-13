@@ -11,12 +11,18 @@ import type { RuntimeEventEnvelope } from "@wordless/protocol";
 import { WordlessDatabase } from "@wordless/persistence";
 import type { WordlessRuntime } from "@wordless/runtime";
 import {
+  latestMissedAutomationRun,
   nextAutomationRun,
   validateAutomationClock,
 } from "./automation-schedule";
 
 const MAX_CONCURRENT_RUNS = 3;
 const MAX_TIMER_DELAY = 2_147_000_000;
+const AUTOMATION_SESSION_TITLE_PREFIX = "自动化 - ";
+
+function automationSessionTitle(name: string): string {
+  return `${AUTOMATION_SESSION_TITLE_PREFIX}${name}`.slice(0, 120);
+}
 
 type AutomationServiceOptions = {
   databasePath: string;
@@ -49,10 +55,8 @@ export class AutomationService {
   }
 
   initialize(): void {
-    for (const task of this.database.listAutomations())
-      this.recalculate(task, Date.now());
+    void this.restoreSchedules();
     powerMonitor.on("resume", this.handleResume);
-    this.scheduleTimer();
   }
 
   dispose(): void {
@@ -182,10 +186,42 @@ export class AutomationService {
   private readonly handleResume = () => {
     const nextZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
     if (nextZone !== this.zone) this.zone = nextZone;
-    for (const task of this.database.listAutomations())
-      this.recalculate(task, Date.now());
-    void this.collectDue();
+    void this.restoreSchedules();
   };
+
+  private async restoreSchedules(): Promise<void> {
+    const now = Date.now();
+    for (const task of this.database.listAutomations()) {
+      if (!task.enabled || task.nextRunAt === null) continue;
+      const missedAt = latestMissedAutomationRun(
+        task.schedule,
+        task.nextRunAt,
+        now,
+        task.activeFrom,
+        task.activeUntil,
+      );
+      if (missedAt !== null) this.enqueue(task, missedAt, false);
+      const nextRunAt =
+        task.schedule.kind === "once"
+          ? null
+          : nextAutomationRun(
+              task.schedule,
+              now,
+              task.activeFrom,
+              task.activeUntil,
+            );
+      if (nextRunAt !== task.nextRunAt || missedAt !== null)
+        this.database.upsertAutomation({
+          ...task,
+          enabled: task.schedule.kind === "once" ? false : task.enabled,
+          nextRunAt,
+          updatedAt: now,
+        });
+    }
+    this.changed();
+    this.scheduleTimer();
+    await this.drain();
+  }
 
   private validateInput(input: AutomationTaskInput): void {
     if (!input.name.trim() || input.name.length > 120)
@@ -417,6 +453,7 @@ export class AutomationService {
       const draft: SessionDraft = {
         mode: entry.mode,
         entryId: entry.id,
+        title: automationSessionTitle(run.automationName),
         workspaceId: run.configuration.workspaceId,
         accessLevel: run.configuration.accessLevel,
         model: run.configuration.model,

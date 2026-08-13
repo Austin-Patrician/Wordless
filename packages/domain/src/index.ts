@@ -657,6 +657,7 @@ export interface AppPreferences {
 export interface SessionDraft {
   mode: WorkbenchMode;
   entryId: string;
+  title?: string;
   workspaceId: string | null;
   accessLevel: SessionAccessLevel;
   model: ModelReference | null;

@@ -1,6 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { nextAutomationRun } from "../src/main/automation/automation-schedule.ts";
+import {
+  AUTOMATION_CATCH_UP_WINDOW_MS,
+  latestMissedAutomationRun,
+  nextAutomationRun,
+} from "../src/main/automation/automation-schedule.ts";
 
 function local(year: number, month: number, day: number, hour = 0, minute = 0): number {
   return new Date(year, month - 1, day, hour, minute).getTime();
@@ -31,4 +35,54 @@ test("interval and once schedules respect absolute time", () => {
 
 test("active end date suppresses later runs", () => {
   assert.equal(nextAutomationRun({ kind: "recurring", cadence: "daily", time: "09:00" }, local(2026, 8, 12, 10), null, local(2026, 8, 12, 23)), null);
+});
+
+test("catch-up uses only the most recent missed recurring run", () => {
+  const now = local(2026, 8, 13, 12);
+  assert.equal(
+    latestMissedAutomationRun(
+      { kind: "recurring", cadence: "daily", time: "09:00" },
+      local(2026, 8, 10, 9),
+      now,
+      null,
+      null,
+    ),
+    local(2026, 8, 13, 9),
+  );
+});
+
+test("catch-up uses one missed interval and one missed once schedule", () => {
+  assert.equal(
+    latestMissedAutomationRun(
+      { kind: "interval", every: 2, unit: "hours" },
+      1_000,
+      7_500_000,
+      null,
+      null,
+    ),
+    7_201_000,
+  );
+  assert.equal(
+    latestMissedAutomationRun(
+      { kind: "once", at: 10_000 },
+      10_000,
+      20_000,
+      null,
+      null,
+    ),
+    10_000,
+  );
+});
+
+test("catch-up skips runs outside the recovery window", () => {
+  assert.equal(
+    latestMissedAutomationRun(
+      { kind: "once", at: 0 },
+      0,
+      AUTOMATION_CATCH_UP_WINDOW_MS + 1,
+      null,
+      null,
+    ),
+    null,
+  );
 });

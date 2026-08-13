@@ -220,6 +220,7 @@ export const UserMessageSubmissionSchema = Type.Object({
 export const SessionDraftSchema = Type.Object({
   mode: Type.Union([Type.Literal("everyday"), Type.Literal("code"), Type.Literal("create")]),
   entryId: Type.String({ minLength: 1 }),
+  title: Type.Optional(Type.String({ minLength: 1, maxLength: 120 })),
   workspaceId: Type.Union([Type.String({ minLength: 1 }), Type.Null()]),
   accessLevel: SessionAccessLevelSchema,
   model: Type.Union([ModelReferenceSchema, Type.Null()]),

@@ -18,6 +18,7 @@ import {
   Play,
   Plus,
   Search,
+  ShieldAlert,
   Trash2,
   X,
 } from "lucide-react";
@@ -1048,6 +1049,8 @@ function AutomationForm({
   );
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [fullAccessConfirmOpen, setFullAccessConfirmOpen] = useState(false);
+  const [fullAccessAcknowledged, setFullAccessAcknowledged] = useState(false);
   const availableSkills =
     snapshot?.skills.skills.filter(
       (item) => item.enabled && item.state === "active",
@@ -1115,11 +1118,15 @@ function AutomationForm({
     activeUntil,
     enabled,
   };
-  const save = async () => {
+  const hasRequiredFields = () => {
     if (!name.trim() || !promptValue.text.trim() || !entryId || !model) {
       setError(t("automationRequiredFields"));
-      return;
+      return false;
     }
+    return true;
+  };
+  const save = async () => {
+    if (!hasRequiredFields()) return;
     setSaving(true);
     setError(null);
     try {
@@ -1132,6 +1139,19 @@ function AutomationForm({
     } finally {
       setSaving(false);
     }
+  };
+  const requestSave = () => {
+    if (!hasRequiredFields()) return;
+    if (accessLevel === "full") {
+      setFullAccessConfirmOpen(true);
+      return;
+    }
+    void save();
+  };
+  const confirmFullAccessSave = () => {
+    if (!fullAccessAcknowledged) return;
+    setFullAccessConfirmOpen(false);
+    void save();
   };
   return (
     <section className="flex min-h-0 flex-1 flex-col overflow-hidden bg-[var(--wordless-shell-workspace)]">
@@ -1160,7 +1180,7 @@ function AutomationForm({
           <Button
             className="h-8 whitespace-nowrap text-[11px]"
             disabled={saving}
-            onClick={() => void save()}
+            onClick={requestSave}
           >
             {saving ? (
               <LoaderCircle className="h-3.5 w-3.5 animate-spin" />
@@ -1174,7 +1194,7 @@ function AutomationForm({
           className="mx-auto w-full max-w-[920px] space-y-5 pb-12"
           onSubmit={(event) => {
             event.preventDefault();
-            void save();
+            requestSave();
           }}
         >
           <Field label={t("automationName")}>
@@ -1364,7 +1384,119 @@ function AutomationForm({
           ) : null}
         </form>
       </div>
+      <AutomationFullAccessConfirmDialog
+        acknowledged={fullAccessAcknowledged}
+        isEditing={Boolean(initial)}
+        onCancel={() => {
+          if (saving) return;
+          setFullAccessConfirmOpen(false);
+          setFullAccessAcknowledged(false);
+        }}
+        onConfirm={confirmFullAccessSave}
+        onUseDefault={() => {
+          if (saving) return;
+          setAccessLevel("default");
+          setFullAccessConfirmOpen(false);
+          setFullAccessAcknowledged(false);
+        }}
+        onAcknowledgedChange={setFullAccessAcknowledged}
+        open={fullAccessConfirmOpen}
+        saving={saving}
+      />
     </section>
+  );
+}
+
+function AutomationFullAccessConfirmDialog({
+  acknowledged,
+  isEditing,
+  onAcknowledgedChange,
+  onCancel,
+  onConfirm,
+  onUseDefault,
+  open,
+  saving,
+}: {
+  acknowledged: boolean;
+  isEditing: boolean;
+  onAcknowledgedChange: (acknowledged: boolean) => void;
+  onCancel: () => void;
+  onConfirm: () => void;
+  onUseDefault: () => void;
+  open: boolean;
+  saving: boolean;
+}) {
+  const { t } = usePreferences();
+  useEffect(() => {
+    if (!open) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape" && !saving) onCancel();
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [onCancel, open, saving]);
+
+  if (!open) return null;
+  return (
+    <div
+      className="fixed inset-0 z-[90] grid place-items-center bg-[#21211f]/45 px-4 backdrop-blur-[2px]"
+      onMouseDown={(event) => {
+        if (event.currentTarget === event.target && !saving) onCancel();
+      }}
+    >
+      <section
+        aria-describedby="automation-full-access-description"
+        aria-labelledby="automation-full-access-title"
+        aria-modal="true"
+        className="w-full max-w-[440px] rounded-[18px] border border-white/60 bg-white p-5 text-[#242421] shadow-[0_24px_64px_rgba(0,0,0,0.22)] dark:border-border dark:bg-card dark:text-foreground"
+        role="alertdialog"
+      >
+        <div className="flex items-start gap-3">
+          <ShieldAlert className="mt-0.5 h-5 w-5 shrink-0 text-[#b34b42]" />
+          <h2 className="text-[15px] font-semibold" id="automation-full-access-title">
+            {t("automationFullAccessConfirmTitle")}
+          </h2>
+        </div>
+        <p
+          className="mt-4 text-[12px] leading-5 text-[#5c5c56] dark:text-muted-foreground"
+          id="automation-full-access-description"
+        >
+          {t("automationFullAccessConfirmIntro")}
+        </p>
+        <ul className="mt-3 list-disc space-y-1.5 pl-5 text-[12px] leading-5 text-[#3f3f3a] dark:text-foreground">
+          <li>{t("automationFullAccessConfirmFile")}</li>
+          <li>{t("automationFullAccessConfirmConnector")}</li>
+          <li>{t("automationFullAccessConfirmCommand")}</li>
+        </ul>
+        <label className="mt-5 flex cursor-pointer items-center gap-2 text-[12px] text-[#4e4e49] dark:text-muted-foreground">
+          <input
+            checked={acknowledged}
+            className="h-4 w-4 accent-[#b34b42]"
+            disabled={saving}
+            onChange={(event) => onAcknowledgedChange(event.target.checked)}
+            type="checkbox"
+          />
+          <span>{t("fullAccessAcknowledgement")}</span>
+        </label>
+        <div className="mt-5 flex flex-wrap items-center justify-end gap-2">
+          <Button className="mr-auto h-8 whitespace-nowrap text-[11px]" disabled={saving} onClick={onUseDefault} type="button" variant="ghost">
+            {t("automationUseDefaultAccess")}
+          </Button>
+          <Button className="h-8 text-[11px]" disabled={saving} onClick={onCancel} type="button" variant="outline">
+            {t("cancel")}
+          </Button>
+          <Button
+            className="h-8 bg-[#b34b42] text-[11px] text-white hover:bg-[#963d35] disabled:bg-[#d5a29c]"
+            disabled={!acknowledged || saving}
+            onClick={onConfirm}
+            type="button"
+          >
+            {saving ? <LoaderCircle className="h-3.5 w-3.5 animate-spin" /> : null}
+            {isEditing ? t("automationConfirmSave") : t("automationConfirmCreate")}
+          </Button>
+        </div>
+      </section>
+    </div>
   );
 }
 
