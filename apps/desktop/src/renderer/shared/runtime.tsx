@@ -40,7 +40,7 @@ export function RuntimeProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     if (!client) return;
     return client.subscribe((event) => {
-      if (event.event.type === "preferences.changed" || event.event.type === "skills.changed" || event.event.type === "connectors.changed" || event.event.type === "model-configuration.changed" || event.event.type === "media.project.changed") void refresh();
+      if (event.event.type === "preferences.changed" || event.event.type === "skills.changed" || event.event.type === "experts.changed" || event.event.type === "connectors.changed" || event.event.type === "model-configuration.changed" || event.event.type === "media.project.changed") void refresh();
     });
   }, [client, refresh]);
 

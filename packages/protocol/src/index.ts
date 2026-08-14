@@ -1,6 +1,10 @@
 import { Type, type Static } from "typebox";
 import { PROVIDER_MODEL_FETCHERS } from "@wordless/domain";
-import type { AgentExtensionEvent, AgentExtensionSessionState, AgentExtensionSnapshot } from "@wordless/agent-extension-sdk";
+import type {
+  AgentExtensionEvent,
+  AgentExtensionSessionState,
+  AgentExtensionSnapshot,
+} from "@wordless/agent-extension-sdk";
 import type {
   AppPreferences,
   AutomationTaskInput,
@@ -30,6 +34,12 @@ import type {
   WorkspaceRecord,
   ConnectorCatalogSnapshot,
   ToolApprovalMode,
+  ExpertSelection,
+  ExpertSummary,
+  ExpertDefinitionInput,
+  ExpertTeamDefinitionInput,
+  ExpertPortrait,
+  SessionExpertTeamMemberSnapshot,
 } from "@wordless/domain";
 
 export type { ConversationMessage } from "@wordless/domain";
@@ -37,12 +47,32 @@ export type { ConversationMessage } from "@wordless/domain";
 export const PROTOCOL_VERSION = 1;
 
 export const DesktopHostInfoSchema = Type.Object({
-  platform: Type.Union([Type.Literal("darwin"), Type.Literal("win32"), Type.Literal("linux")]),
-  arch: Type.Union([Type.Literal("arm64"), Type.Literal("x64"), Type.Literal("ia32")]),
-  windowChrome: Type.Union([Type.Literal("mac-hidden-inset"), Type.Literal("overlay"), Type.Literal("framed")]),
-  menuPresentation: Type.Union([Type.Literal("system"), Type.Literal("in-window")]),
+  platform: Type.Union([
+    Type.Literal("darwin"),
+    Type.Literal("win32"),
+    Type.Literal("linux"),
+  ]),
+  arch: Type.Union([
+    Type.Literal("arm64"),
+    Type.Literal("x64"),
+    Type.Literal("ia32"),
+  ]),
+  windowChrome: Type.Union([
+    Type.Literal("mac-hidden-inset"),
+    Type.Literal("overlay"),
+    Type.Literal("framed"),
+  ]),
+  menuPresentation: Type.Union([
+    Type.Literal("system"),
+    Type.Literal("in-window"),
+  ]),
   modifier: Type.Union([Type.Literal("meta"), Type.Literal("control")]),
-  shellFamily: Type.Union([Type.Literal("zsh"), Type.Literal("bash"), Type.Literal("powershell"), Type.Literal("sh")]),
+  shellFamily: Type.Union([
+    Type.Literal("zsh"),
+    Type.Literal("bash"),
+    Type.Literal("powershell"),
+    Type.Literal("sh"),
+  ]),
   capabilities: Type.Object({
     dockBadge: Type.Boolean(),
     nativeNotifications: Type.Boolean(),
@@ -54,7 +84,8 @@ export type DesktopHostInfo = Static<typeof DesktopHostInfoSchema>;
 
 export type DesktopMenuId = "file" | "edit" | "window" | "help";
 
-export type DesktopCommand = "new-thread" | "open-settings" | "search" | "show-about";
+export type DesktopCommand =
+  "new-thread" | "open-settings" | "search" | "show-about";
 
 export type DesktopAppInfo = {
   name: string;
@@ -77,7 +108,15 @@ export interface AccountSnapshot {
   signedInAt: number | null;
 }
 
-export type CloudSyncStatus = "disabled" | "idle" | "syncing" | "synced" | "offline" | "error" | "needs-reconnect" | "conflict";
+export type CloudSyncStatus =
+  | "disabled"
+  | "idle"
+  | "syncing"
+  | "synced"
+  | "offline"
+  | "error"
+  | "needs-reconnect"
+  | "conflict";
 
 export interface CloudSyncSnapshot {
   enabled: boolean;
@@ -102,7 +141,14 @@ export type DesktopRelease = {
 };
 
 export type DesktopUpdateSnapshot = {
-  state: "idle" | "checking" | "up-to-date" | "available" | "downloading" | "ready" | "error";
+  state:
+    | "idle"
+    | "checking"
+    | "up-to-date"
+    | "available"
+    | "downloading"
+    | "ready"
+    | "error";
   currentVersion: string;
   availableVersion?: string;
   releaseNotes?: string;
@@ -127,7 +173,8 @@ export interface ProtocolFailure {
   retryable: boolean;
 }
 
-export type ProtocolResult<T> = { ok: true; value: T } | { ok: false; error: ProtocolFailure };
+export type ProtocolResult<T> =
+  { ok: true; value: T } | { ok: false; error: ProtocolFailure };
 
 export const ModelReferenceSchema = Type.Object({
   connectionId: Type.String({ minLength: 1 }),
@@ -144,20 +191,52 @@ export const ThinkingLevelSchema = Type.Union([
   Type.Literal("max"),
 ]);
 
-export const SessionAccessLevelSchema = Type.Union([Type.Literal("default"), Type.Literal("full")]);
+export const SessionAccessLevelSchema = Type.Union([
+  Type.Literal("default"),
+  Type.Literal("full"),
+]);
 
 export const AutomationScheduleSchema = Type.Union([
-  Type.Object({ kind: Type.Literal("recurring"), cadence: Type.Union([Type.Literal("daily"), Type.Literal("weekdays"), Type.Literal("weekly"), Type.Literal("monthly")]), time: Type.String({ pattern: "^[0-2][0-9]:[0-5][0-9]$" }), weekdays: Type.Optional(Type.Array(Type.Integer({ minimum: 0, maximum: 6 }), { maxItems: 7 })), dayOfMonth: Type.Optional(Type.Integer({ minimum: 1, maximum: 31 })) }),
-  Type.Object({ kind: Type.Literal("interval"), every: Type.Integer({ minimum: 1, maximum: 100000 }), unit: Type.Union([Type.Literal("minutes"), Type.Literal("hours"), Type.Literal("days")]) }),
+  Type.Object({
+    kind: Type.Literal("recurring"),
+    cadence: Type.Union([
+      Type.Literal("daily"),
+      Type.Literal("weekdays"),
+      Type.Literal("weekly"),
+      Type.Literal("monthly"),
+    ]),
+    time: Type.String({ pattern: "^[0-2][0-9]:[0-5][0-9]$" }),
+    weekdays: Type.Optional(
+      Type.Array(Type.Integer({ minimum: 0, maximum: 6 }), { maxItems: 7 }),
+    ),
+    dayOfMonth: Type.Optional(Type.Integer({ minimum: 1, maximum: 31 })),
+  }),
+  Type.Object({
+    kind: Type.Literal("interval"),
+    every: Type.Integer({ minimum: 1, maximum: 100000 }),
+    unit: Type.Union([
+      Type.Literal("minutes"),
+      Type.Literal("hours"),
+      Type.Literal("days"),
+    ]),
+  }),
   Type.Object({ kind: Type.Literal("once"), at: Type.Number({ minimum: 0 }) }),
 ]);
 
 export const AutomationTaskInputSchema = Type.Object({
-  name: Type.String({ minLength: 1, maxLength: 120 }), prompt: Type.String({ minLength: 1, maxLength: 100000 }),
-  entryId: Type.String({ minLength: 1 }), workspaceId: Type.Union([Type.String({ minLength: 1 }), Type.Null()]),
-  accessLevel: SessionAccessLevelSchema, model: Type.Union([ModelReferenceSchema, Type.Null()]), thinkingLevel: ThinkingLevelSchema,
-  skillIds: Type.Array(Type.String({ minLength: 1 }), { maxItems: 100 }), connectorIds: Type.Array(Type.String({ minLength: 1 }), { maxItems: 100 }),
-  schedule: AutomationScheduleSchema, activeFrom: Type.Union([Type.Number({ minimum: 0 }), Type.Null()]), activeUntil: Type.Union([Type.Number({ minimum: 0 }), Type.Null()]), enabled: Type.Boolean(),
+  name: Type.String({ minLength: 1, maxLength: 120 }),
+  prompt: Type.String({ minLength: 1, maxLength: 100000 }),
+  entryId: Type.String({ minLength: 1 }),
+  workspaceId: Type.Union([Type.String({ minLength: 1 }), Type.Null()]),
+  accessLevel: SessionAccessLevelSchema,
+  model: Type.Union([ModelReferenceSchema, Type.Null()]),
+  thinkingLevel: ThinkingLevelSchema,
+  skillIds: Type.Array(Type.String({ minLength: 1 }), { maxItems: 100 }),
+  connectorIds: Type.Array(Type.String({ minLength: 1 }), { maxItems: 100 }),
+  schedule: AutomationScheduleSchema,
+  activeFrom: Type.Union([Type.Number({ minimum: 0 }), Type.Null()]),
+  activeUntil: Type.Union([Type.Number({ minimum: 0 }), Type.Null()]),
+  enabled: Type.Boolean(),
 });
 
 export type AutomationTaskInputDto = AutomationTaskInput;
@@ -168,7 +247,11 @@ export const AgentInteractionModeSchema = Type.Union([
   Type.Literal("plan"),
 ]);
 
-export const ToolApprovalModeSchema = Type.Union([Type.Literal("manual"), Type.Literal("auto"), Type.Literal("bypass")]);
+export const ToolApprovalModeSchema = Type.Union([
+  Type.Literal("manual"),
+  Type.Literal("auto"),
+  Type.Literal("bypass"),
+]);
 
 const SkillSourceSchema = Type.Union([
   Type.Literal("built-in"),
@@ -183,7 +266,10 @@ const SkillSourceSchema = Type.Union([
 ]);
 
 export const UserPromptPartSchema = Type.Union([
-  Type.Object({ type: Type.Literal("text"), text: Type.String({ maxLength: 100_000 }) }),
+  Type.Object({
+    type: Type.Literal("text"),
+    text: Type.String({ maxLength: 100_000 }),
+  }),
   Type.Object({
     type: Type.Literal("skill-reference"),
     skillId: Type.String({ minLength: 1, maxLength: 128 }),
@@ -199,18 +285,40 @@ export const UserPromptPartSchema = Type.Union([
   Type.Object({
     type: Type.Literal("artifact-reference"),
     artifactId: Type.String({ minLength: 1, maxLength: 128 }),
-    kind: Type.Union([Type.Literal("presentation"), Type.Literal("document"), Type.Literal("spreadsheet"), Type.Literal("browser")]),
+    kind: Type.Union([
+      Type.Literal("presentation"),
+      Type.Literal("document"),
+      Type.Literal("spreadsheet"),
+      Type.Literal("browser"),
+    ]),
     name: Type.String({ minLength: 1, maxLength: 256 }),
     revision: Type.Integer({ minimum: 1 }),
     surfaceId: Type.String({ minLength: 1, maxLength: 512 }),
     locator: Type.String({ minLength: 1, maxLength: 2_048 }),
-    locators: Type.Optional(Type.Array(Type.String({ minLength: 1, maxLength: 2_048 }), { minItems: 1, maxItems: 10_000 })),
-    intent: Type.Optional(Type.Union([Type.Literal("reference"), Type.Literal("analyze"), Type.Literal("formula"), Type.Literal("chart"), Type.Literal("pivot")])),
+    locators: Type.Optional(
+      Type.Array(Type.String({ minLength: 1, maxLength: 2_048 }), {
+        minItems: 1,
+        maxItems: 10_000,
+      }),
+    ),
+    intent: Type.Optional(
+      Type.Union([
+        Type.Literal("reference"),
+        Type.Literal("analyze"),
+        Type.Literal("formula"),
+        Type.Literal("chart"),
+        Type.Literal("pivot"),
+      ]),
+    ),
   }),
 ]);
 
-export const UserPromptPartsSchema = Type.Array(UserPromptPartSchema, { minItems: 1, maxItems: 1_024 });
-export type ProtocolUserPromptPart = Static<typeof UserPromptPartSchema> & UserPromptPart;
+export const UserPromptPartsSchema = Type.Array(UserPromptPartSchema, {
+  minItems: 1,
+  maxItems: 1_024,
+});
+export type ProtocolUserPromptPart = Static<typeof UserPromptPartSchema> &
+  UserPromptPart;
 
 export const UserMessageSubmissionSchema = Type.Object({
   messageId: Type.String({ minLength: 1, maxLength: 128 }),
@@ -218,20 +326,41 @@ export const UserMessageSubmissionSchema = Type.Object({
 });
 
 export const SessionDraftSchema = Type.Object({
-  mode: Type.Union([Type.Literal("everyday"), Type.Literal("code"), Type.Literal("create")]),
+  mode: Type.Union([
+    Type.Literal("everyday"),
+    Type.Literal("code"),
+    Type.Literal("create"),
+  ]),
   entryId: Type.String({ minLength: 1 }),
   title: Type.Optional(Type.String({ minLength: 1, maxLength: 120 })),
   workspaceId: Type.Union([Type.String({ minLength: 1 }), Type.Null()]),
   accessLevel: SessionAccessLevelSchema,
   model: Type.Union([ModelReferenceSchema, Type.Null()]),
   thinkingLevel: Type.Optional(ThinkingLevelSchema),
-  connectorIds: Type.Optional(Type.Array(Type.String({ minLength: 1 }), { maxItems: 64 })),
+  connectorIds: Type.Optional(
+    Type.Array(Type.String({ minLength: 1 }), { maxItems: 64 }),
+  ),
   interactionMode: Type.Optional(AgentInteractionModeSchema),
   toolApprovalMode: Type.Optional(ToolApprovalModeSchema),
-  presentation: Type.Optional(Type.Object({
-    generationMode: Type.Union([Type.Literal("guided"), Type.Literal("quick")]),
-    templateId: Type.Union([Type.String({ minLength: 1, maxLength: 128 }), Type.Null()]),
-  })),
+  expertSelection: Type.Optional(
+    Type.Object({
+      kind: Type.Union([Type.Literal("expert"), Type.Literal("team")]),
+      id: Type.String({ minLength: 1, maxLength: 128 }),
+      version: Type.String({ minLength: 1, maxLength: 32 }),
+    }),
+  ),
+  presentation: Type.Optional(
+    Type.Object({
+      generationMode: Type.Union([
+        Type.Literal("guided"),
+        Type.Literal("quick"),
+      ]),
+      templateId: Type.Union([
+        Type.String({ minLength: 1, maxLength: 128 }),
+        Type.Null(),
+      ]),
+    }),
+  ),
 });
 
 export const CreateWorkspaceSchema = Type.Object({
@@ -250,6 +379,97 @@ export const CreateAndPromptSchema = Type.Object({
   draft: SessionDraftSchema,
   parts: UserPromptPartsSchema,
   submission: UserMessageSubmissionSchema,
+});
+
+const ExpertMetadataSchema = {
+  tags: Type.Optional(
+    Type.Array(Type.String({ minLength: 1, maxLength: 80 }), { maxItems: 32 }),
+  ),
+  categories: Type.Optional(
+    Type.Array(Type.String({ minLength: 1, maxLength: 80 }), { maxItems: 16 }),
+  ),
+  roleLabel: Type.Optional(Type.String({ maxLength: 120 })),
+};
+const expertPortraitChoice = (values: readonly string[]) =>
+  Type.Union(values.map((value) => Type.Literal(value)));
+const ExpertPortraitColorSchema = Type.String({
+  pattern: "^(transparent|[a-fA-F0-9]{6})$",
+});
+export const ExpertPortraitSchema = Type.Union([
+  Type.Object({
+    kind: Type.Literal("builtin"),
+    key: Type.String({ minLength: 1, maxLength: 128 }),
+  }),
+  Type.Object({
+    kind: Type.Literal("avataaars"),
+    schemaVersion: Type.Literal(1),
+    options: Type.Object({
+      backgroundColor: ExpertPortraitColorSchema,
+      skinColor: ExpertPortraitColorSchema,
+      top: expertPortraitChoice(["hat", "hijab", "turban", "winterHat1", "winterHat02", "winterHat03", "winterHat04", "bob", "bun", "curly", "curvy", "dreads", "frida", "fro", "froBand", "longButNotTooLong", "miaWallace", "shavedSides", "straight02", "straight01", "straightAndStrand", "dreads01", "dreads02", "frizzle", "shaggy", "shaggyMullet", "shortCurly", "shortFlat", "shortRound", "shortWaved", "sides", "theCaesar", "theCaesarAndSidePart", "bigHair"]),
+      hairColor: ExpertPortraitColorSchema,
+      hatColor: ExpertPortraitColorSchema,
+      eyes: expertPortraitChoice(["closed", "cry", "default", "eyeRoll", "happy", "hearts", "side", "squint", "surprised", "winkWacky", "wink", "xDizzy"]),
+      eyebrows: expertPortraitChoice(["angryNatural", "defaultNatural", "flatNatural", "frownNatural", "raisedExcitedNatural", "sadConcernedNatural", "unibrowNatural", "upDownNatural", "angry", "default", "raisedExcited", "sadConcerned", "upDown"]),
+      mouth: expertPortraitChoice(["concerned", "default", "disbelief", "eating", "grimace", "sad", "screamOpen", "serious", "smile", "tongue", "twinkle", "vomit"]),
+      facialHair: expertPortraitChoice(["none", "beardLight", "beardMajestic", "beardMedium", "moustacheFancy", "moustacheMagnum"]),
+      facialHairColor: ExpertPortraitColorSchema,
+      clothing: expertPortraitChoice(["blazerAndShirt", "blazerAndSweater", "collarAndSweater", "graphicShirt", "hoodie", "overall", "shirtCrewNeck", "shirtScoopNeck", "shirtVNeck"]),
+      clothesColor: ExpertPortraitColorSchema,
+      accessories: expertPortraitChoice(["none", "kurt", "prescription01", "prescription02", "round", "sunglasses", "wayfarers", "eyepatch"]),
+      accessoriesColor: ExpertPortraitColorSchema,
+    }),
+  }),
+]);
+export const SaveExpertSchema = Type.Object({
+  id: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
+  input: Type.Object({
+    name: Type.String({ minLength: 1, maxLength: 80 }),
+    description: Type.String({ minLength: 1, maxLength: 500 }),
+    systemPrompt: Type.String({ minLength: 1, maxLength: 30000 }),
+    portrait: ExpertPortraitSchema,
+    skillIds: Type.Optional(
+      Type.Array(Type.String({ minLength: 1 }), { maxItems: 64 }),
+    ),
+    connectorIds: Type.Optional(
+      Type.Array(Type.String({ minLength: 1 }), { maxItems: 64 }),
+    ),
+    ...ExpertMetadataSchema,
+  }),
+});
+export const DeleteExpertSchema = Type.Object({
+  id: Type.String({ minLength: 1, maxLength: 128 }),
+});
+export type ExpertDefinitionInputDto = ExpertDefinitionInput;
+const ExpertExecutionProfileSchema = Type.Union([
+  Type.Literal("read-only"),
+  Type.Literal("review"),
+  Type.Literal("research"),
+  Type.Literal("workspace-write"),
+]);
+export const SaveExpertTeamSchema = Type.Object({
+  id: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
+  input: Type.Object({
+    name: Type.String({ minLength: 1, maxLength: 80 }),
+    description: Type.String({ minLength: 1, maxLength: 500 }),
+    portraitKey: Type.String({ minLength: 1, maxLength: 128 }),
+    leaderExpertId: Type.String({ minLength: 1, maxLength: 128 }),
+    members: Type.Array(
+      Type.Object({
+        expertId: Type.String({ minLength: 1, maxLength: 128 }),
+        executionProfile: ExpertExecutionProfileSchema,
+        responsibility: Type.String({ minLength: 1, maxLength: 1000 }),
+      }),
+      { minItems: 1, maxItems: 8 },
+    ),
+    systemPrompt: Type.String({ minLength: 1, maxLength: 30000 }),
+    ...ExpertMetadataSchema,
+  }),
+});
+export const DeleteExpertTeamSchema = DeleteExpertSchema;
+export type ExpertTeamDefinitionInputDto = ExpertTeamDefinitionInput;
+export const GetExpertTeamDetailSchema = Type.Object({
+  id: Type.String({ minLength: 1, maxLength: 128 }),
 });
 
 export const PromptSessionSchema = Type.Object({
@@ -289,8 +509,21 @@ export const ImportSkillFileSchema = Type.Object({
 export const ConnectorConfigurationSchema = Type.Object({
   id: Type.Optional(Type.String({ minLength: 1 })),
   name: Type.String({ minLength: 1, maxLength: 120 }),
-  templateId: Type.Union([Type.Literal("feishu"), Type.Literal("dingtalk"), Type.Literal("wecom"), Type.Literal("postgresql"), Type.Literal("web-search"), Type.Literal("firecrawl"), Type.Literal("github"), Type.Null()]),
-  transport: Type.Union([Type.Literal("stdio"), Type.Literal("streamable-http")]),
+  templateId: Type.Union([
+    Type.Literal("feishu"),
+    Type.Literal("dingtalk"),
+    Type.Literal("wecom"),
+    Type.Literal("postgresql"),
+    Type.Literal("web-search"),
+    Type.Literal("firecrawl"),
+    Type.Literal("github"),
+    Type.Literal("ai-hot"),
+    Type.Null(),
+  ]),
+  transport: Type.Union([
+    Type.Literal("stdio"),
+    Type.Literal("streamable-http"),
+  ]),
   enabled: Type.Boolean(),
   trustedAt: Type.Union([Type.Number(), Type.Null()]),
   command: Type.Union([Type.String(), Type.Null()]),
@@ -298,17 +531,52 @@ export const ConnectorConfigurationSchema = Type.Object({
   cwd: Type.Union([Type.String(), Type.Null()]),
   environment: Type.Record(Type.String(), Type.String()),
   url: Type.Union([Type.String(), Type.Null()]),
-  headers: Type.Array(Type.Object({ name: Type.String(), value: Type.String() })),
-  oauth: Type.Union([Type.Object({ clientId: Type.Optional(Type.String()), clientSecret: Type.Optional(Type.String()), scope: Type.Optional(Type.String()), accessToken: Type.Optional(Type.String()), refreshToken: Type.Optional(Type.String()), expiresAt: Type.Optional(Type.Number()) }), Type.Null()]),
+  headers: Type.Array(
+    Type.Object({ name: Type.String(), value: Type.String() }),
+  ),
+  oauth: Type.Union([
+    Type.Object({
+      clientId: Type.Optional(Type.String()),
+      clientSecret: Type.Optional(Type.String()),
+      scope: Type.Optional(Type.String()),
+      accessToken: Type.Optional(Type.String()),
+      refreshToken: Type.Optional(Type.String()),
+      expiresAt: Type.Optional(Type.Number()),
+    }),
+    Type.Null(),
+  ]),
 });
 
-export const ConnectorIdSchema = Type.Object({ connectorId: Type.String({ minLength: 1 }) });
+export const ConnectorIdSchema = Type.Object({
+  connectorId: Type.String({ minLength: 1 }),
+});
 
-export const SetConnectorEnabledSchema = Type.Object({ connectorId: Type.String({ minLength: 1 }), enabled: Type.Boolean() });
+export const SetConnectorEnabledSchema = Type.Object({
+  connectorId: Type.String({ minLength: 1 }),
+  enabled: Type.Boolean(),
+});
 
-export const SetSessionConnectorsSchema = Type.Object({ sessionId: Type.String({ minLength: 1 }), connectorIds: Type.Array(Type.String({ minLength: 1 })) });
+export const SetSessionConnectorsSchema = Type.Object({
+  sessionId: Type.String({ minLength: 1 }),
+  connectorIds: Type.Array(Type.String({ minLength: 1 })),
+});
+export const SetSessionExpertSchema = Type.Object({
+  sessionId: Type.String({ minLength: 1 }),
+  selection: Type.Union([
+    Type.Null(),
+    Type.Object({
+      kind: Type.Union([Type.Literal("expert"), Type.Literal("team")]),
+      id: Type.String({ minLength: 1, maxLength: 128 }),
+      version: Type.String({ minLength: 1, maxLength: 32 }),
+    }),
+  ]),
+});
 
-export const ConnectorPromptSchema = Type.Object({ connectorId: Type.String({ minLength: 1 }), name: Type.String({ minLength: 1 }), arguments: Type.Record(Type.String(), Type.String()) });
+export const ConnectorPromptSchema = Type.Object({
+  connectorId: Type.String({ minLength: 1 }),
+  name: Type.String({ minLength: 1 }),
+  arguments: Type.Record(Type.String(), Type.String()),
+});
 
 export const CompactSessionSchema = Type.Object({
   sessionId: Type.String({ minLength: 1 }),
@@ -322,10 +590,27 @@ export const SessionHistoryPageRequestSchema = Type.Object({
   limit: Type.Optional(Type.Number({ minimum: 1, maximum: 48 })),
 });
 
+export const ExpertMemberHistoryRequestSchema = Type.Object({
+  sessionId: Type.String({ minLength: 1 }),
+  memberId: Type.String({ minLength: 1, maxLength: 120 }),
+  after: Type.Optional(Type.String({ pattern: "^[0-9]+$" })),
+  before: Type.Optional(Type.String({ pattern: "^[0-9]+$" })),
+  aroundTurnId: Type.Optional(Type.String({ minLength: 1 })),
+  limit: Type.Optional(Type.Number({ minimum: 1, maximum: 48 })),
+});
+
+export const ExpertMemberToolOutputRequestSchema = Type.Object({
+  sessionId: Type.String({ minLength: 1 }),
+  memberId: Type.String({ minLength: 1, maxLength: 120 }),
+  callId: Type.String({ minLength: 1 }),
+});
+
 export const SessionMessageSearchRequestSchema = Type.Object({
   sessionId: Type.String({ minLength: 1 }),
   query: Type.String({ minLength: 1, maxLength: 500 }),
-  role: Type.Optional(Type.Union([Type.Literal("user"), Type.Literal("assistant")])),
+  role: Type.Optional(
+    Type.Union([Type.Literal("user"), Type.Literal("assistant")]),
+  ),
   limit: Type.Optional(Type.Number({ minimum: 1, maximum: 50 })),
 });
 
@@ -360,7 +645,16 @@ export const ResolveUserRequestSchema = Type.Object({
   sessionId: Type.String({ minLength: 1 }),
   requestId: Type.String({ minLength: 1 }),
   status: Type.Union([Type.Literal("submitted"), Type.Literal("cancelled")]),
-  answers: Type.Optional(Type.Record(Type.String({ minLength: 1, maxLength: 128 }), Type.Union([Type.String({ maxLength: 4_000 }), Type.Array(Type.String({ maxLength: 4_000 }), { maxItems: 32 }), Type.Boolean()]))),
+  answers: Type.Optional(
+    Type.Record(
+      Type.String({ minLength: 1, maxLength: 128 }),
+      Type.Union([
+        Type.String({ maxLength: 4_000 }),
+        Type.Array(Type.String({ maxLength: 4_000 }), { maxItems: 32 }),
+        Type.Boolean(),
+      ]),
+    ),
+  ),
   feedback: Type.Optional(Type.String({ maxLength: 4_000 })),
 });
 
@@ -407,7 +701,11 @@ export const ResolveClarificationQuestionSchema = Type.Object({
 
 export const HandoffClarificationSchema = Type.Object({
   sessionId: Type.String({ minLength: 1 }),
-  interactionMode: Type.Union([Type.Literal("default"), Type.Literal("clarify"), Type.Literal("plan")]),
+  interactionMode: Type.Union([
+    Type.Literal("default"),
+    Type.Literal("clarify"),
+    Type.Literal("plan"),
+  ]),
 });
 
 export const SetPreferenceSchema = Type.Object({
@@ -455,7 +753,10 @@ export const SetSessionExtensionStateSchema = Type.Object({
 export const SaveCustomProviderSchema = Type.Object({
   displayName: Type.String({ minLength: 1, maxLength: 96 }),
   baseUrl: Type.String({ minLength: 1 }),
-  api: Type.Union([Type.Literal("openai-completions"), Type.Literal("openai-responses")]),
+  api: Type.Union([
+    Type.Literal("openai-completions"),
+    Type.Literal("openai-responses"),
+  ]),
   modelId: Type.String({ minLength: 1 }),
   modelName: Type.String({ minLength: 1 }),
   apiKey: Type.Optional(Type.String()),
@@ -476,18 +777,30 @@ export const SaveProviderConfigurationSchema = Type.Object({
   kind: Type.Union([Type.Literal("chat"), Type.Literal("image")]),
   providerId: Type.String({ minLength: 1 }),
   configuration: Type.Object({}, { additionalProperties: true }),
-  enabledModelIds: Type.Optional(Type.Array(Type.String({ minLength: 1 }), { maxItems: 10_000 })),
+  enabledModelIds: Type.Optional(
+    Type.Array(Type.String({ minLength: 1 }), { maxItems: 10_000 }),
+  ),
 });
 
 export const DiscoverProviderModelsSchema = Type.Object({
   providerId: Type.String({ minLength: 1, maxLength: 200 }),
-  providerFamily: Type.Union([Type.String({ minLength: 1, maxLength: 100 }), Type.Null()]),
+  providerFamily: Type.Union([
+    Type.String({ minLength: 1, maxLength: 100 }),
+    Type.Null(),
+  ]),
   baseUrl: Type.String({ minLength: 1, maxLength: 2_048 }),
   apiKey: Type.Optional(Type.String({ minLength: 1, maxLength: 20_000 })),
   api: Type.Optional(Type.String({ minLength: 1, maxLength: 100 })),
-  headers: Type.Optional(Type.Record(Type.String({ maxLength: 200 }), Type.String({ maxLength: 20_000 }))),
+  headers: Type.Optional(
+    Type.Record(
+      Type.String({ maxLength: 200 }),
+      Type.String({ maxLength: 20_000 }),
+    ),
+  ),
   authHeader: Type.Optional(Type.Boolean()),
-  modelFetcher: Type.Optional(Type.Union(PROVIDER_MODEL_FETCHERS.map((fetcher) => Type.Literal(fetcher)))),
+  modelFetcher: Type.Optional(
+    Type.Union(PROVIDER_MODEL_FETCHERS.map((fetcher) => Type.Literal(fetcher))),
+  ),
 });
 
 export const SetConfiguredModelEnabledSchema = Type.Object({
@@ -507,13 +820,29 @@ export const MediaAssetSchema = Type.Object({
   operationId: Type.String({ minLength: 1 }),
   origin: Type.Union([Type.Literal("uploaded"), Type.Literal("generated")]),
   kind: Type.Union([Type.Literal("image"), Type.Literal("video")]),
-  status: Type.Union([Type.Literal("rendering"), Type.Literal("ready"), Type.Literal("failed")]),
+  status: Type.Union([
+    Type.Literal("rendering"),
+    Type.Literal("ready"),
+    Type.Literal("failed"),
+  ]),
   name: Type.String({ minLength: 1, maxLength: 255 }),
   mimeType: Type.String({ minLength: 1, maxLength: 128 }),
-  url: Type.Union([Type.String({ minLength: 1, maxLength: 16_384 }), Type.Null()]),
-  errorMessage: Type.Union([Type.String({ minLength: 1, maxLength: 4_000 }), Type.Null()]),
-  pixelWidth: Type.Union([Type.Number({ minimum: 1, maximum: 32_768 }), Type.Null()]),
-  pixelHeight: Type.Union([Type.Number({ minimum: 1, maximum: 32_768 }), Type.Null()]),
+  url: Type.Union([
+    Type.String({ minLength: 1, maxLength: 16_384 }),
+    Type.Null(),
+  ]),
+  errorMessage: Type.Union([
+    Type.String({ minLength: 1, maxLength: 4_000 }),
+    Type.Null(),
+  ]),
+  pixelWidth: Type.Union([
+    Type.Number({ minimum: 1, maximum: 32_768 }),
+    Type.Null(),
+  ]),
+  pixelHeight: Type.Union([
+    Type.Number({ minimum: 1, maximum: 32_768 }),
+    Type.Null(),
+  ]),
   x: Type.Number(),
   y: Type.Number(),
   width: Type.Number({ minimum: 160, maximum: 720 }),
@@ -524,8 +853,15 @@ export const MediaAssetSchema = Type.Object({
 });
 
 const MediaOperationKindSchema = Type.Union([
-  Type.Literal("upload"), Type.Literal("generate"), Type.Literal("regenerate"), Type.Literal("variation"), Type.Literal("crop"),
-  Type.Literal("local-edit"), Type.Literal("remove-background"), Type.Literal("remove-object"), Type.Literal("multi-view"),
+  Type.Literal("upload"),
+  Type.Literal("generate"),
+  Type.Literal("regenerate"),
+  Type.Literal("variation"),
+  Type.Literal("crop"),
+  Type.Literal("local-edit"),
+  Type.Literal("remove-background"),
+  Type.Literal("remove-object"),
+  Type.Literal("multi-view"),
 ]);
 
 const ConversationUsageSchema = Type.Object({
@@ -546,18 +882,38 @@ const MediaUsageEventSchema = Type.Object({
 export const MediaOperationSchema = Type.Object({
   id: Type.String({ minLength: 1 }),
   kind: MediaOperationKindSchema,
-  inputs: Type.Array(Type.Object({ assetId: Type.String({ minLength: 1 }), role: Type.Union([Type.Literal("parent"), Type.Literal("reference")]) }), { maxItems: 16 }),
+  inputs: Type.Array(
+    Type.Object({
+      assetId: Type.String({ minLength: 1 }),
+      role: Type.Union([Type.Literal("parent"), Type.Literal("reference")]),
+    }),
+    { maxItems: 16 },
+  ),
   outputAssetIds: Type.Array(Type.String({ minLength: 1 }), { maxItems: 16 }),
-  prompt: Type.Union([Type.String({ minLength: 1, maxLength: 8_000 }), Type.Null()]),
+  prompt: Type.Union([
+    Type.String({ minLength: 1, maxLength: 8_000 }),
+    Type.Null(),
+  ]),
   ratio: Type.String({ minLength: 1, maxLength: 24 }),
   outputCount: Type.Number({ minimum: 0, maximum: 16 }),
   outputTotal: Type.Number({ minimum: 1, maximum: 16 }),
   providerId: Type.Union([Type.String({ minLength: 1 }), Type.Null()]),
   modelId: Type.Union([Type.String({ minLength: 1 }), Type.Null()]),
   parameters: Type.Record(Type.String(), Type.Unknown()),
-  status: Type.Union([Type.Literal("rendering"), Type.Literal("ready"), Type.Literal("partial"), Type.Literal("failed"), Type.Literal("cancelled")]),
-  errorMessage: Type.Union([Type.String({ minLength: 1, maxLength: 4_000 }), Type.Null()]),
-  usageEvents: Type.Optional(Type.Array(MediaUsageEventSchema, { maxItems: 128 })),
+  status: Type.Union([
+    Type.Literal("rendering"),
+    Type.Literal("ready"),
+    Type.Literal("partial"),
+    Type.Literal("failed"),
+    Type.Literal("cancelled"),
+  ]),
+  errorMessage: Type.Union([
+    Type.String({ minLength: 1, maxLength: 4_000 }),
+    Type.Null(),
+  ]),
+  usageEvents: Type.Optional(
+    Type.Array(MediaUsageEventSchema, { maxItems: 128 }),
+  ),
   createdAt: Type.Number({ minimum: 0 }),
   updatedAt: Type.Number({ minimum: 0 }),
 });
@@ -569,7 +925,11 @@ export const MediaProjectSchema = Type.Object({
   assets: Type.Array(MediaAssetSchema, { maxItems: 2_048 }),
   operations: Type.Array(MediaOperationSchema, { maxItems: 2_048 }),
   coverAssetId: Type.Union([Type.String({ minLength: 1 }), Type.Null()]),
-  viewport: Type.Object({ x: Type.Number(), y: Type.Number(), zoom: Type.Number({ minimum: 0.1, maximum: 3 }) }),
+  viewport: Type.Object({
+    x: Type.Number(),
+    y: Type.Number(),
+    zoom: Type.Number({ minimum: 0.1, maximum: 3 }),
+  }),
   createdAt: Type.Number({ minimum: 0 }),
   updatedAt: Type.Number({ minimum: 0 }),
 });
@@ -586,41 +946,139 @@ const MediaPositionSchema = Type.Object({ x: Type.Number(), y: Type.Number() });
 const MediaProviderRequestBase = {
   sessionId: Type.String({ minLength: 1 }),
   parentAssetIds: Type.Array(Type.String({ minLength: 1 }), { maxItems: 16 }),
-  referenceAssetIds: Type.Array(Type.String({ minLength: 1 }), { maxItems: 16 }),
+  referenceAssetIds: Type.Array(Type.String({ minLength: 1 }), {
+    maxItems: 16,
+  }),
   providerId: Type.String({ minLength: 1 }),
   modelId: Type.String({ minLength: 1 }),
   prompt: Type.String({ minLength: 1, maxLength: 8_000 }),
   ratio: Type.String({ minLength: 1, maxLength: 24 }),
   outputCount: Type.Number({ minimum: 1, maximum: 4 }),
-  imageParameters: Type.Optional(Type.Object({
-    aspectRatio: Type.Optional(Type.String({ minLength: 1, maxLength: 24 })),
-    resolution: Type.Optional(Type.String({ minLength: 1, maxLength: 24 })),
-    size: Type.Optional(Type.String({ minLength: 1, maxLength: 32 })),
-    quality: Type.Optional(Type.String({ minLength: 1, maxLength: 24 })),
-    outputFormat: Type.Optional(Type.String({ minLength: 1, maxLength: 16 })),
-    outputCompression: Type.Optional(Type.Number({ minimum: 0, maximum: 100 })),
-    seed: Type.Optional(Type.Number({ minimum: 0 })),
-    watermark: Type.Optional(Type.Boolean()),
-    promptEnhancement: Type.Optional(Type.Boolean()),
-  }, { additionalProperties: false })),
+  imageParameters: Type.Optional(
+    Type.Object(
+      {
+        aspectRatio: Type.Optional(
+          Type.String({ minLength: 1, maxLength: 24 }),
+        ),
+        resolution: Type.Optional(Type.String({ minLength: 1, maxLength: 24 })),
+        size: Type.Optional(Type.String({ minLength: 1, maxLength: 32 })),
+        quality: Type.Optional(Type.String({ minLength: 1, maxLength: 24 })),
+        outputFormat: Type.Optional(
+          Type.String({ minLength: 1, maxLength: 16 }),
+        ),
+        outputCompression: Type.Optional(
+          Type.Number({ minimum: 0, maximum: 100 }),
+        ),
+        seed: Type.Optional(Type.Number({ minimum: 0 })),
+        watermark: Type.Optional(Type.Boolean()),
+        promptEnhancement: Type.Optional(Type.Boolean()),
+      },
+      { additionalProperties: false },
+    ),
+  ),
   targetPosition: MediaPositionSchema,
 };
-const MediaInlineImageSchema = Type.Object({ mimeType: Type.Literal("image/png"), data: Type.String({ minLength: 1, maxLength: 70_000_000 }) });
+const MediaInlineImageSchema = Type.Object({
+  mimeType: Type.Literal("image/png"),
+  data: Type.String({ minLength: 1, maxLength: 70_000_000 }),
+});
 
 export const StartMediaOperationSchema = Type.Union([
-  Type.Object({ ...MediaProviderRequestBase, action: Type.Union([Type.Literal("generate"), Type.Literal("regenerate"), Type.Literal("variation")]) }),
-  Type.Object({ ...MediaProviderRequestBase, action: Type.Union([Type.Literal("local-edit"), Type.Literal("remove-object")]), mask: MediaInlineImageSchema }),
-  Type.Object({ ...MediaProviderRequestBase, action: Type.Literal("remove-background"), preserveSubject: Type.Union([Type.Literal("object"), Type.Literal("person")]) }),
-  Type.Object({ ...MediaProviderRequestBase, action: Type.Literal("multi-view"), views: Type.Array(Type.Object({ id: Type.String({ minLength: 1 }), label: Type.String({ minLength: 1, maxLength: 80 }), yaw: Type.Number({ minimum: -180, maximum: 180 }), pitch: Type.Number({ minimum: -90, maximum: 90 }) }), { minItems: 1, maxItems: 8 }) }),
-  Type.Object({ sessionId: Type.String({ minLength: 1 }), action: Type.Literal("crop"), sourceAssetId: Type.String({ minLength: 1 }), crop: Type.Object({ x: Type.Number({ minimum: 0, maximum: 1 }), y: Type.Number({ minimum: 0, maximum: 1 }), width: Type.Number({ exclusiveMinimum: 0, maximum: 1 }), height: Type.Number({ exclusiveMinimum: 0, maximum: 1 }) }), image: MediaInlineImageSchema, targetPosition: MediaPositionSchema }),
+  Type.Object({
+    ...MediaProviderRequestBase,
+    action: Type.Union([
+      Type.Literal("generate"),
+      Type.Literal("regenerate"),
+      Type.Literal("variation"),
+    ]),
+  }),
+  Type.Object({
+    ...MediaProviderRequestBase,
+    action: Type.Union([
+      Type.Literal("local-edit"),
+      Type.Literal("remove-object"),
+    ]),
+    mask: MediaInlineImageSchema,
+  }),
+  Type.Object({
+    ...MediaProviderRequestBase,
+    action: Type.Literal("remove-background"),
+    preserveSubject: Type.Union([
+      Type.Literal("object"),
+      Type.Literal("person"),
+    ]),
+  }),
+  Type.Object({
+    ...MediaProviderRequestBase,
+    action: Type.Literal("multi-view"),
+    views: Type.Array(
+      Type.Object({
+        id: Type.String({ minLength: 1 }),
+        label: Type.String({ minLength: 1, maxLength: 80 }),
+        yaw: Type.Number({ minimum: -180, maximum: 180 }),
+        pitch: Type.Number({ minimum: -90, maximum: 90 }),
+      }),
+      { minItems: 1, maxItems: 8 },
+    ),
+  }),
+  Type.Object({
+    sessionId: Type.String({ minLength: 1 }),
+    action: Type.Literal("crop"),
+    sourceAssetId: Type.String({ minLength: 1 }),
+    crop: Type.Object({
+      x: Type.Number({ minimum: 0, maximum: 1 }),
+      y: Type.Number({ minimum: 0, maximum: 1 }),
+      width: Type.Number({ exclusiveMinimum: 0, maximum: 1 }),
+      height: Type.Number({ exclusiveMinimum: 0, maximum: 1 }),
+    }),
+    image: MediaInlineImageSchema,
+    targetPosition: MediaPositionSchema,
+  }),
 ]);
 
-export const ImportMediaImagesSchema = Type.Object({ sessionId: Type.String({ minLength: 1 }), sourcePaths: Type.Array(Type.String({ minLength: 1, maxLength: 4_096 }), { minItems: 1, maxItems: 16 }), targetPosition: MediaPositionSchema });
-export const DuplicateMediaAssetSchema = Type.Object({ sessionId: Type.String({ minLength: 1 }), assetId: Type.String({ minLength: 1 }), targetPosition: MediaPositionSchema });
-export const DeleteMediaAssetSchema = Type.Object({ sessionId: Type.String({ minLength: 1 }), assetId: Type.String({ minLength: 1 }) });
-export const UpdateMediaLayoutSchema = Type.Object({ sessionId: Type.String({ minLength: 1 }), assets: Type.Array(Type.Object({ id: Type.String({ minLength: 1 }), x: Type.Number(), y: Type.Number(), width: Type.Number({ minimum: 160, maximum: 720 }), height: Type.Number({ minimum: 120, maximum: 720 }) }), { maxItems: 2_048 }), viewport: Type.Object({ x: Type.Number(), y: Type.Number(), zoom: Type.Number({ minimum: 0.1, maximum: 3 }) }) });
-export const SetMediaCoverSchema = Type.Object({ sessionId: Type.String({ minLength: 1 }), assetId: Type.String({ minLength: 1 }) });
-export const CancelMediaOperationSchema = Type.Object({ sessionId: Type.String({ minLength: 1 }), operationId: Type.String({ minLength: 1 }) });
+export const ImportMediaImagesSchema = Type.Object({
+  sessionId: Type.String({ minLength: 1 }),
+  sourcePaths: Type.Array(Type.String({ minLength: 1, maxLength: 4_096 }), {
+    minItems: 1,
+    maxItems: 16,
+  }),
+  targetPosition: MediaPositionSchema,
+});
+export const DuplicateMediaAssetSchema = Type.Object({
+  sessionId: Type.String({ minLength: 1 }),
+  assetId: Type.String({ minLength: 1 }),
+  targetPosition: MediaPositionSchema,
+});
+export const DeleteMediaAssetSchema = Type.Object({
+  sessionId: Type.String({ minLength: 1 }),
+  assetId: Type.String({ minLength: 1 }),
+});
+export const UpdateMediaLayoutSchema = Type.Object({
+  sessionId: Type.String({ minLength: 1 }),
+  assets: Type.Array(
+    Type.Object({
+      id: Type.String({ minLength: 1 }),
+      x: Type.Number(),
+      y: Type.Number(),
+      width: Type.Number({ minimum: 160, maximum: 720 }),
+      height: Type.Number({ minimum: 120, maximum: 720 }),
+    }),
+    { maxItems: 2_048 },
+  ),
+  viewport: Type.Object({
+    x: Type.Number(),
+    y: Type.Number(),
+    zoom: Type.Number({ minimum: 0.1, maximum: 3 }),
+  }),
+});
+export const SetMediaCoverSchema = Type.Object({
+  sessionId: Type.String({ minLength: 1 }),
+  assetId: Type.String({ minLength: 1 }),
+});
+export const CancelMediaOperationSchema = Type.Object({
+  sessionId: Type.String({ minLength: 1 }),
+  operationId: Type.String({ minLength: 1 }),
+});
 
 export type ModelReferenceDto = Static<typeof ModelReferenceSchema>;
 export type SessionDraftDto = Static<typeof SessionDraftSchema>;
@@ -631,12 +1089,22 @@ export type OpenExternalUrlDto = Static<typeof OpenExternalUrlSchema>;
 export type CreateAndPromptDto = Static<typeof CreateAndPromptSchema>;
 export type PromptSessionDto = Static<typeof PromptSessionSchema>;
 export type CompactSessionDto = Static<typeof CompactSessionSchema>;
-export type SessionHistoryPageRequestDto = Static<typeof SessionHistoryPageRequestSchema>;
-export type SessionMessageSearchRequestDto = Static<typeof SessionMessageSearchRequestSchema>;
-export type SessionToolOutputRequestDto = Static<typeof SessionToolOutputRequestSchema>;
+export type SessionHistoryPageRequestDto = Static<
+  typeof SessionHistoryPageRequestSchema
+>;
+export type SessionMessageSearchRequestDto = Static<
+  typeof SessionMessageSearchRequestSchema
+>;
+export type SessionToolOutputRequestDto = Static<
+  typeof SessionToolOutputRequestSchema
+>;
 export type WorkspaceFileRequestDto = Static<typeof WorkspaceFileRequestSchema>;
-export type ListWorkspaceDirectoryDto = Static<typeof ListWorkspaceDirectorySchema>;
-export type ResolveOperationApprovalDto = Static<typeof ResolveOperationApprovalSchema>;
+export type ListWorkspaceDirectoryDto = Static<
+  typeof ListWorkspaceDirectorySchema
+>;
+export type ResolveOperationApprovalDto = Static<
+  typeof ResolveOperationApprovalSchema
+>;
 export type ResolveUserRequestDto = Static<typeof ResolveUserRequestSchema>;
 export type RenameSessionDto = Static<typeof RenameSessionSchema>;
 export type SetSessionPinnedDto = Static<typeof SetSessionPinnedSchema>;
@@ -646,15 +1114,29 @@ export type SetSessionAccessDto = Static<typeof SetSessionAccessSchema>;
 export type SetPreferenceDto = Static<typeof SetPreferenceSchema>;
 export type UsageReportQueryDto = Static<typeof UsageReportQuerySchema>;
 export type SetExtensionEnabledDto = Static<typeof SetExtensionEnabledSchema>;
-export type UpdateExtensionSettingsDto = Static<typeof UpdateExtensionSettingsSchema>;
-export type SessionExtensionInteractionDto = Static<typeof SessionExtensionInteractionSchema>;
-export type SetSessionExtensionStateDto = Static<typeof SetSessionExtensionStateSchema>;
+export type UpdateExtensionSettingsDto = Static<
+  typeof UpdateExtensionSettingsSchema
+>;
+export type SessionExtensionInteractionDto = Static<
+  typeof SessionExtensionInteractionSchema
+>;
+export type SetSessionExtensionStateDto = Static<
+  typeof SetSessionExtensionStateSchema
+>;
 export type SaveCustomProviderDto = Static<typeof SaveCustomProviderSchema>;
 export type SetEnabledModelDto = Static<typeof SetEnabledModelSchema>;
-export type SaveBuiltinCredentialDto = Static<typeof SaveBuiltinCredentialSchema>;
-export type SaveProviderConfigurationDto = Static<typeof SaveProviderConfigurationSchema>;
-export type DiscoverProviderModelsDto = Static<typeof DiscoverProviderModelsSchema>;
-export type SetConfiguredModelEnabledDto = Static<typeof SetConfiguredModelEnabledSchema>;
+export type SaveBuiltinCredentialDto = Static<
+  typeof SaveBuiltinCredentialSchema
+>;
+export type SaveProviderConfigurationDto = Static<
+  typeof SaveProviderConfigurationSchema
+>;
+export type DiscoverProviderModelsDto = Static<
+  typeof DiscoverProviderModelsSchema
+>;
+export type SetConfiguredModelEnabledDto = Static<
+  typeof SetConfiguredModelEnabledSchema
+>;
 export type DeleteCustomProviderDto = Static<typeof DeleteCustomProviderSchema>;
 export type MediaProjectDto = Static<typeof MediaProjectSchema>;
 export type CreateMediaProjectDto = Static<typeof CreateMediaProjectSchema>;
@@ -667,7 +1149,9 @@ export type UpdateMediaLayoutDto = Static<typeof UpdateMediaLayoutSchema>;
 export type SetSkillEnabledDto = Static<typeof SetSkillEnabledSchema>;
 export type RemoveManagedSkillDto = Static<typeof RemoveManagedSkillSchema>;
 export type ImportSkillFileDto = Static<typeof ImportSkillFileSchema>;
-export type ConnectorConfigurationDto = Static<typeof ConnectorConfigurationSchema>;
+export type ConnectorConfigurationDto = Static<
+  typeof ConnectorConfigurationSchema
+>;
 export type ConnectorIdDto = Static<typeof ConnectorIdSchema>;
 export type SetConnectorEnabledDto = Static<typeof SetConnectorEnabledSchema>;
 export type SetSessionConnectorsDto = Static<typeof SetSessionConnectorsSchema>;
@@ -686,9 +1170,15 @@ export interface AppSnapshot {
   skills: SkillCatalogSnapshot;
   connectors: ConnectorCatalogSnapshot;
   mediaProjects: MediaProjectSummary[];
+  experts: ExpertSummary[];
 }
 
-export type { MediaLayoutUpdate, MediaOperationRequest, MediaProject, MediaProjectSummary };
+export type {
+  MediaLayoutUpdate,
+  MediaOperationRequest,
+  MediaProject,
+  MediaProjectSummary,
+};
 export type { UsageReport };
 
 export interface SessionSnapshot {
@@ -703,6 +1193,55 @@ export interface SessionSnapshot {
   compactionError?: string;
   extensions: AgentExtensionSessionState[];
   toolApprovalMode: ToolApprovalMode;
+  expertCollaboration?: ExpertCollaborationSnapshot;
+}
+
+export type ExpertCollaborationStatus =
+  | "queued"
+  | "running"
+  | "awaiting-approval"
+  | "awaiting-user-input"
+  | "completed"
+  | "failed"
+  | "cancelled"
+  | "skipped";
+
+export type ExpertTaskPhase =
+  | "queued"
+  | "thinking"
+  | "tool"
+  | "approval"
+  | "user-input"
+  | "finished";
+
+export interface ExpertCollaborationMember {
+  memberId: string;
+  name: string;
+  portrait: ExpertPortrait;
+  executionProfile: SessionExpertTeamMemberSnapshot["executionProfile"];
+  latestStatus: ExpertCollaborationStatus;
+  phase?: ExpertTaskPhase;
+  startedAt?: number;
+  updatedAt?: number;
+  activeToolName?: string;
+  blockedByTaskId?: string;
+  terminalReason?: string;
+  taskCount: number;
+  lastActiveAt: number;
+}
+
+export interface ExpertCollaborationLeader {
+  expertId: string;
+  name: string;
+  portrait: ExpertPortrait;
+}
+
+export interface ExpertCollaborationSnapshot {
+  teamId: string;
+  teamName: string;
+  teamPortrait: ExpertPortrait;
+  leader: ExpertCollaborationLeader;
+  members: ExpertCollaborationMember[];
 }
 
 export interface SessionHistoryTurn {
@@ -777,6 +1316,7 @@ export interface SessionViewSnapshot {
   turnSummaries: SessionTurnSummary[];
   turnUsage?: SessionTurnUsage;
   toolApprovalMode: ToolApprovalMode;
+  expertCollaboration?: ExpertCollaborationSnapshot;
 }
 
 export interface SessionWorkspaceSummary {
@@ -806,7 +1346,15 @@ export interface SessionContextSnapshot {
   changes: SessionArtifactFile[];
 }
 
-export type ArtifactKind = "presentation" | "document" | "spreadsheet" | "browser" | "report" | "dataset" | "chart" | "image";
+export type ArtifactKind =
+  | "presentation"
+  | "document"
+  | "spreadsheet"
+  | "browser"
+  | "report"
+  | "dataset"
+  | "chart"
+  | "image";
 
 export interface DataAnalysisCapabilitySnapshot {
   status: "ready" | "missing" | "error";
@@ -818,7 +1366,14 @@ export interface DataAnalysisCapabilitySnapshot {
 }
 
 export type AnalysisResearchMode = "quick" | "normal" | "heavy";
-export type AnalysisResearchStatus = "not-needed" | "awaiting-confirmation" | "blocked" | "researching" | "reviewing" | "ready" | "failed";
+export type AnalysisResearchStatus =
+  | "not-needed"
+  | "awaiting-confirmation"
+  | "blocked"
+  | "researching"
+  | "reviewing"
+  | "ready"
+  | "failed";
 
 export interface AnalysisResearchSource {
   id: string;
@@ -875,7 +1430,17 @@ export interface AnalysisDatasetSummary {
   format: string;
   size: number;
   fingerprint: string;
-  datasets: Array<{ name: string; rows: number; columns: Array<{ name: string; inferredType: string; nullCount: number | null }>; sample: Array<Record<string, unknown>>; warnings: string[] }>;
+  datasets: Array<{
+    name: string;
+    rows: number;
+    columns: Array<{
+      name: string;
+      inferredType: string;
+      nullCount: number | null;
+    }>;
+    sample: Array<Record<string, unknown>>;
+    warnings: string[];
+  }>;
   warnings: string[];
 }
 
@@ -1026,7 +1591,11 @@ export interface SpreadsheetRangeProfile {
 export interface SpreadsheetChangeRecord {
   revision: number;
   updatedAt: number;
-  operations: Array<{ command: string; locator?: string; elementType?: string }>;
+  operations: Array<{
+    command: string;
+    locator?: string;
+    elementType?: string;
+  }>;
 }
 
 export interface PresentationTemplate {
@@ -1049,31 +1618,73 @@ export type SessionWorkspaceTextFile =
 
 export type SessionArtifactDiff =
   | { status: "available"; path: string; patch: string }
-  | { status: "unavailable"; reason: "baseline-missing" | "binary" | "missing" | "too-large" };
+  | {
+      status: "unavailable";
+      reason: "baseline-missing" | "binary" | "missing" | "too-large";
+    };
 
 export type RuntimeEvent =
   | { type: "preferences.changed" }
   | { type: "skills.changed" }
+  | { type: "experts.changed" }
   | { type: "connectors.changed" }
   | { type: "model-configuration.changed" }
   | { type: "media.project.changed"; sessionId: string }
   | { type: "automation.changed"; id?: string }
   | { type: "automation-run.changed"; id?: string }
-  | { type: "artifact.changed"; artifactId: string; kind: ArtifactKind; revision: number; affectedLocators: string[] }
+  | {
+      type: "artifact.changed";
+      artifactId: string;
+      kind: ArtifactKind;
+      revision: number;
+      affectedLocators: string[];
+    }
   | { type: "run.started"; runId: string }
   | { type: "run.completed"; runId: string }
   | { type: "run.failed"; runId: string; message: string }
   | { type: "run.cancelled"; runId: string }
-  | { type: "context.compaction.started"; trigger: ContextCompactionRecord["trigger"] }
-  | { type: "context.compaction.completed"; compaction: ContextCompactionRecord; recoveredFailureMessageId?: string }
-  | { type: "context.compaction.failed"; trigger: ContextCompactionRecord["trigger"]; message: string }
+  | {
+      type: "context.compaction.started";
+      trigger: ContextCompactionRecord["trigger"];
+    }
+  | {
+      type: "context.compaction.completed";
+      compaction: ContextCompactionRecord;
+      recoveredFailureMessageId?: string;
+    }
+  | {
+      type: "context.compaction.failed";
+      trigger: ContextCompactionRecord["trigger"];
+      message: string;
+    }
   | { type: "message.started"; message: ConversationMessage }
   | { type: "message.text.delta"; messageId: string; delta: string }
   | { type: "message.reasoning.delta"; messageId: string; delta: string }
   | { type: "message.completed"; message: ConversationMessage }
-  | { type: "tool.started"; messageId: string; callId: string; name: string; input: Record<string, unknown> }
-  | { type: "tool.updated"; messageId: string; callId: string; output: string; details?: unknown; usage?: ConversationUsage }
-  | { type: "tool.completed"; messageId: string; callId: string; output: string; details?: unknown; usage?: ConversationUsage; isError: boolean }
+  | {
+      type: "tool.started";
+      messageId: string;
+      callId: string;
+      name: string;
+      input: Record<string, unknown>;
+    }
+  | {
+      type: "tool.updated";
+      messageId: string;
+      callId: string;
+      output: string;
+      details?: unknown;
+      usage?: ConversationUsage;
+    }
+  | {
+      type: "tool.completed";
+      messageId: string;
+      callId: string;
+      output: string;
+      details?: unknown;
+      usage?: ConversationUsage;
+      isError: boolean;
+    }
   | {
       type: "approval.requested";
       messageId: string;
@@ -1090,9 +1701,17 @@ export type RuntimeEvent =
         requiresElevation?: boolean;
       };
     }
-  | { type: "approval.resolved"; messageId: string; resolution: { approvalId: string; approved: boolean; feedback?: string } }
+  | {
+      type: "approval.resolved";
+      messageId: string;
+      resolution: { approvalId: string; approved: boolean; feedback?: string };
+    }
   | { type: "user-request.requested"; messageId: string; request: UserRequest }
-  | { type: "user-request.resolved"; messageId: string; resolution: UserRequestResolution }
+  | {
+      type: "user-request.resolved";
+      messageId: string;
+      resolution: UserRequestResolution;
+    }
   | { type: "model.changed"; model: ModelReference }
   | { type: "extension.event"; event: AgentExtensionEvent }
   | { type: "session.idle" };

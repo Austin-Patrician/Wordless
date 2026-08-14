@@ -49,14 +49,15 @@ function formatResearchProgress(details: ResearchDelegationDetails): string {
 
 function updateResearchTask(task: ResearchDelegationTask, next: SubagentTaskProgress): void {
   const now = Date.now();
-  task.status = next.status;
-  if (next.status !== "queued" && task.startedAt === undefined) task.startedAt = now;
-  if (["completed", "failed", "cancelled"].includes(next.status)) task.completedAt = now;
+  const status = next.status === "skipped" ? "cancelled" : next.status;
+  task.status = status;
+  if (status !== "queued" && task.startedAt === undefined) task.startedAt = now;
+  if (["completed", "failed", "cancelled"].includes(status)) task.completedAt = now;
   if (next.output !== undefined) task.output = next.output;
   if (next.usage !== undefined) task.usage = next.usage;
   if (next.approval !== undefined) task.approval = next.approval;
   if (next.userRequest !== undefined) task.userRequest = next.userRequest;
-  if (["failed", "cancelled"].includes(next.status) && task.activeTool?.state === "running") {
+  if (["failed", "cancelled"].includes(status) && task.activeTool?.state === "running") {
     task.activeTool = { ...task.activeTool, state: "error" };
   }
   if (!next.tool) return;
@@ -279,7 +280,7 @@ export function createDataAnalysisTools(service: DataAnalysisService, context: {
         }, RESEARCH_DIMENSION_TIMEOUT_MS);
         let resultValue: SubagentResult;
         try {
-          resultValue = await context.subagentRunner!.run({ id: detail.taskId, role: task.agent, prompt, cwd: context.workspaceRoot }, { signal: taskController.signal, onUpdate: (next) => {
+          resultValue = await context.subagentRunner!.run({ kind: "builtin-subagent", id: detail.taskId, role: task.agent, prompt, cwd: context.workspaceRoot, model: null }, { signal: taskController.signal, onUpdate: (next) => {
             updateResearchTask(detail, next);
             details.updatedAt = Date.now();
             emitUpdate();

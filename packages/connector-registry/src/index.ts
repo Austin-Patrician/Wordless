@@ -48,6 +48,7 @@ export const CONNECTOR_TEMPLATES: ConnectorTemplate[] = [
   { id: "web-search", name: "Web Search", description: "为搜索服务 MCP Server 配置连接。", transport: "streamable-http" },
   { id: "firecrawl", name: "Firecrawl", description: "通过 Firecrawl MCP 进行网页搜索、抓取和解析。", transport: "streamable-http" },
   { id: "github", name: "GitHub", description: "通过 GitHub MCP 访问仓库、Issue、Pull request 与 Actions。", transport: "streamable-http" },
+  { id: "ai-hot", name: "AI hot", description: "提供 AI 热点信息与趋势查询。", transport: "streamable-http" },
 ];
 
 type PersistedConnector = {
@@ -186,7 +187,7 @@ function readConfiguration(value: unknown): ConnectorConfiguration | undefined {
   const record = asRecord(value);
   if (!record || typeof record.id !== "string" || typeof record.name !== "string") return undefined;
   if (record.transport !== "stdio" && record.transport !== "streamable-http") return undefined;
-  const templateId = record.templateId === "feishu" || record.templateId === "dingtalk" || record.templateId === "wecom" || record.templateId === "postgresql" || record.templateId === "web-search" || record.templateId === "firecrawl" || record.templateId === "github" ? record.templateId : null;
+  const templateId = record.templateId === "feishu" || record.templateId === "dingtalk" || record.templateId === "wecom" || record.templateId === "postgresql" || record.templateId === "web-search" || record.templateId === "firecrawl" || record.templateId === "github" || record.templateId === "ai-hot" ? record.templateId : null;
   const environment = asRecord(record.environment) ?? {};
   const oauth = asRecord(record.oauth);
   return {

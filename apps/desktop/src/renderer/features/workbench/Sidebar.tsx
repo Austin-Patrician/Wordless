@@ -1,5 +1,5 @@
 import { Button, DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger, Tooltip, TooltipContent, TooltipTrigger } from "@wordless/ui-kit";
-import { Bell, CalendarClock, ChevronDown, ChevronLeft, Cloud, Command, Ellipsis, Folder, FolderOpen, Images, LoaderCircle, LogIn, LogOut, Pin, PinOff, Search, Settings, Trash2, Pencil, X } from "lucide-react";
+import { Bell, CalendarClock, ChevronDown, ChevronLeft, Cloud, Command, Ellipsis, Folder, FolderOpen, Images, LoaderCircle, LogIn, LogOut, Pin, PinOff, Search, Settings, Trash2, Pencil, UserRoundSearch, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import type { SessionRecord } from "@wordless/domain";
@@ -20,6 +20,7 @@ type SidebarProps = {
   onOpenAutomation: () => void;
   onOpenSettings: (page?: SettingsPage) => void;
   onOpenSkills: () => void;
+  onOpenExperts: () => void;
   onOpenSession: (sessionId: string) => void;
   onSessionDeleted: (sessionId: string) => void;
   onToggle: () => void;
@@ -27,6 +28,7 @@ type SidebarProps = {
   selectedSessionId: string | null;
   mediaActive: boolean;
   skillsActive: boolean;
+  expertsActive: boolean;
 };
 
 function sortSessions(sessions: SessionRecord[]): SessionRecord[] {
@@ -91,12 +93,13 @@ function SessionRow({ active, editingTitle, entryIconKey, onDelete, onEditCancel
 
   return (
     <div className={`group relative flex min-w-0 items-center rounded-[8px] ${rowClassName}`}>
-      <div className={`flex h-8 min-w-0 flex-1 items-center gap-2 px-3 text-left text-[12px] ${contentClassName}`}>
+      <div className={`flex h-8 min-w-0 flex-1 items-center gap-2 px-3 text-left text-[12px] ${running && !editing ? "pr-10" : ""} ${contentClassName}`}>
         <AgentEntryIcon className={active ? "opacity-100" : "opacity-70 transition-opacity group-hover:opacity-100"} iconKey={entryIconKey} />
         {editing ? <input className="h-5 min-w-0 flex-1 rounded-[3px] border border-[#6f6f6a] bg-white px-1 text-[12px] text-[#242421] outline-none dark:bg-card dark:text-foreground" maxLength={120} onBlur={onEditCancel} onChange={(event) => onEditTitleChange(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); onEditSave(); } if (event.key === "Escape") { event.preventDefault(); onEditCancel(); } }} ref={renameInputRef} value={editingTitle} /> : <button className="min-w-0 flex-1 truncate text-left outline-none focus-visible:ring-2 focus-visible:ring-ring" onClick={() => onOpen(session)} type="button">{session.title}</button>}
         {session.pinnedAt !== null && !editing ? <Pin aria-label={t("pinSession")} className="h-2.5 w-2.5 shrink-0 text-[#738847] dark:text-[#bad47a]" /> : null}
-        {running && !editing ? <span aria-label={t("assistantGeneratingResponse")} className={`grid h-4 w-4 shrink-0 place-items-center pr-1 ${timeClassName}`} role="status" title={t("assistantGeneratingResponse")}><LoaderCircle className="h-3 w-3 animate-spin" /></span> : <span className={`shrink-0 pr-1 font-mono text-[10px] ${timeClassName} ${editing ? "opacity-100" : "group-hover:opacity-0"}`}>{timeLabel}</span>}
+        {!running || editing ? <span className={`shrink-0 pr-1 font-mono text-[10px] ${timeClassName} ${editing ? "opacity-100" : "group-hover:opacity-0"}`}>{timeLabel}</span> : null}
       </div>
+      {running && !editing ? <span aria-label={t("assistantGeneratingResponse")} className={`absolute right-1 grid h-6 w-6 place-items-center rounded-[5px] transition-opacity group-hover:opacity-0 group-focus-within:opacity-0 ${timeClassName}`} role="status" title={t("assistantGeneratingResponse")}><LoaderCircle className="h-3.5 w-3.5 animate-spin" /></span> : null}
       {!editing ? <DropdownMenu>
         <DropdownMenuTrigger asChild>
           <button aria-label={t("sessionActions")} className="absolute right-1 grid h-6 w-6 place-items-center rounded-[5px] text-[#7a7a73] opacity-0 outline-none hover:bg-[#ecece7] group-hover:opacity-100 focus:opacity-100 focus-visible:ring-2 focus-visible:ring-ring dark:hover:bg-muted" type="button">
@@ -147,7 +150,7 @@ function SidebarActionNotice({ message, onDismiss }: { message: string | null; o
   );
 }
 
-export function Sidebar({ automationActive, collapsed, mediaActive, onNewThread, onOpenAutomation, onOpenMedia, onOpenSettings, onOpenSession, onSessionDeleted, onOpenSkills, onToggle, runningSessionIds, selectedSessionId, skillsActive }: SidebarProps) {
+export function Sidebar({ automationActive, collapsed, expertsActive, mediaActive, onNewThread, onOpenAutomation, onOpenExperts, onOpenMedia, onOpenSettings, onOpenSession, onSessionDeleted, onOpenSkills, onToggle, runningSessionIds, selectedSessionId, skillsActive }: SidebarProps) {
   const client = useRuntimeClient();
   const { refresh, snapshot } = useRuntime();
   const { locale, t } = usePreferences();
@@ -235,6 +238,7 @@ export function Sidebar({ automationActive, collapsed, mediaActive, onNewThread,
     { id: "new", label: t("newThread"), icon: Folder, onClick: onNewThread },
     { id: "media", label: t("imageVideoGeneration"), icon: Images, onClick: onOpenMedia },
     { id: "automation", label: t("automations"), icon: CalendarClock, onClick: onOpenAutomation },
+    { id: "experts", label: t("digitalEmployees"), icon: UserRoundSearch, onClick: onOpenExperts },
     { id: "skills", label: "Skills & MCP", icon: Command, onClick: onOpenSkills },
   ];
 
@@ -253,7 +257,7 @@ export function Sidebar({ automationActive, collapsed, mediaActive, onNewThread,
       <nav aria-label="Primary navigation" className="mt-7 shrink-0 space-y-1">
         {navItems.map((item) => {
           const Icon = item.icon;
-          const active = (item.id === "new" && selectedSessionId === null && !skillsActive && !mediaActive && !automationActive) || (item.id === "skills" && skillsActive) || (item.id === "media" && mediaActive) || (item.id === "automation" && automationActive);
+          const active = (item.id === "new" && selectedSessionId === null && !skillsActive && !expertsActive && !mediaActive && !automationActive) || (item.id === "experts" && expertsActive) || (item.id === "skills" && skillsActive) || (item.id === "media" && mediaActive) || (item.id === "automation" && automationActive);
           const button = <button className={`flex w-full items-center gap-3 rounded-xl px-3 py-2 text-left text-[13px] font-medium transition-colors ${collapsed ? "justify-center" : ""} ${active ? "bg-[#e3e3df] text-foreground dark:bg-[#2a2c22]" : "text-[#4c4c47] hover:bg-[#e7e7e3] dark:text-muted-foreground dark:hover:bg-[#282a21] dark:hover:text-foreground"}`} onClick={item.onClick} type="button"><Icon className="h-[17px] w-[17px] shrink-0" />{!collapsed ? <span className="truncate">{item.label}</span> : null}</button>;
           return collapsed ? <Tooltip key={item.id}><TooltipTrigger asChild>{button}</TooltipTrigger><TooltipContent side="right">{item.label}</TooltipContent></Tooltip> : <div key={item.id}>{button}</div>;
         })}

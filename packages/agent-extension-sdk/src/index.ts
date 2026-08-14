@@ -1,5 +1,17 @@
-import type { AgentHarness, AgentTool, ExecutionEnv, Session } from "@wordless/agent";
-import type { AgentDriverId, ConversationUsage, SessionRecord, ToolApprovalMode } from "@wordless/domain";
+import type {
+  AgentHarness,
+  AgentTool,
+  ExecutionEnv,
+  Session,
+} from "@wordless/agent";
+import type {
+  AgentDriverId,
+  ConversationUsage,
+  ExpertExecutionProfile,
+  ExpertPortrait,
+  SessionRecord,
+  ToolApprovalMode,
+} from "@wordless/domain";
 
 export type JsonObject = Record<string, unknown>;
 
@@ -51,6 +63,16 @@ export interface AgentExtensionContext {
   readonly harness: AgentHarness;
   readonly contextCompactionInstructions?: string;
   readonly subagentRunner?: SubagentRunner;
+  readonly expertTeamDelegates?: Array<{
+    id: string;
+    name: string;
+    portrait: ExpertPortrait;
+    executionProfile: ExpertExecutionProfile;
+    responsibility: string;
+    systemPrompt: string;
+    skillIds: string[];
+    connectorIds: string[];
+  }>;
   registerTools(tools: AgentTool[]): Promise<void>;
   getCurrentPrompt(): string | undefined;
   readonly state: JsonObject;
@@ -86,32 +108,80 @@ export interface AgentExtensionHostFactory {
     subagentRunner?: SubagentRunner;
     registerTools(tools: AgentTool[]): Promise<void>;
     getCurrentPrompt(): string | undefined;
+    expertTeamDelegates?: Array<{
+      id: string;
+      name: string;
+      portrait: ExpertPortrait;
+      executionProfile: ExpertExecutionProfile;
+      responsibility: string;
+      systemPrompt: string;
+      skillIds: string[];
+      connectorIds: string[];
+    }>;
     emit(event: AgentExtensionEvent): void;
   }): Promise<AgentExtensionHost>;
 }
 
 export interface SubagentRoleDefinition {
-  id: "scout" | "planner" | "reviewer" | "worker" | "researcher" | "research-reviewer";
+  id:
+    | "scout"
+    | "planner"
+    | "reviewer"
+    | "worker"
+    | "researcher"
+    | "research-reviewer";
   name: string;
   description: string;
   model: { connectionId: string; modelId: string } | null;
 }
 
-export interface SubagentTask {
-  id: string;
-  role: SubagentRoleDefinition["id"];
-  prompt: string;
-  cwd: string;
-  model?: { connectionId: string; modelId: string } | null;
-}
+export type SubagentTask =
+  | {
+      kind: "builtin-subagent";
+      id: string;
+      role: SubagentRoleDefinition["id"];
+      prompt: string;
+      cwd: string;
+      model: { connectionId: string; modelId: string } | null;
+    }
+  | {
+      kind: "expert-member";
+      id: string;
+      memberId: string;
+      prompt: string;
+      cwd: string;
+    };
 
-export type SubagentTaskStatus = "queued" | "running" | "awaiting-approval" | "awaiting-user-input" | "completed" | "failed" | "cancelled";
+export type SubagentTaskStatus =
+  | "queued"
+  | "running"
+  | "awaiting-approval"
+  | "awaiting-user-input"
+  | "completed"
+  | "failed"
+  | "cancelled"
+  | "skipped";
+
+export type SubagentTaskPhase =
+  | "queued"
+  | "thinking"
+  | "tool"
+  | "approval"
+  | "user-input"
+  | "finished";
 
 export interface SubagentTaskProgress {
   taskId: string;
   status: SubagentTaskStatus;
+  phase?: SubagentTaskPhase;
   output?: string;
-  tool?: { callId?: string; name: string; input: Record<string, unknown>; output?: string; state: "running" | "complete" | "error" };
+  tool?: {
+    callId?: string;
+    name: string;
+    input: Record<string, unknown>;
+    output?: string;
+    state: "running" | "complete" | "error";
+  };
   usage?: ConversationUsage;
   approval?: unknown;
   userRequest?: unknown;
@@ -127,12 +197,19 @@ export interface SubagentResult {
 }
 
 export interface SubagentRunner {
-  run(task: SubagentTask, options?: { signal?: AbortSignal; onUpdate?: (progress: SubagentTaskProgress) => void }): Promise<SubagentResult>;
+  run(
+    task: SubagentTask,
+    options?: {
+      signal?: AbortSignal;
+      onUpdate?: (progress: SubagentTaskProgress) => void;
+    },
+  ): Promise<SubagentResult>;
   cancel(taskId: string): Promise<void>;
   setToolApprovalMode?(mode: ToolApprovalMode): Promise<void>;
 }
 
-export const AGENT_EXTENSION_STATE_JOURNAL_TYPE = "wordless.agent-extension.state";
+export const AGENT_EXTENSION_STATE_JOURNAL_TYPE =
+  "wordless.agent-extension.state";
 
 export function isJsonObject(value: unknown): value is JsonObject {
   return typeof value === "object" && value !== null && !Array.isArray(value);

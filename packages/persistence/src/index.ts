@@ -20,6 +20,9 @@ import type {
   SessionRecord,
   UsageModelKind,
   WorkspaceRecord,
+  ExpertDefinition,
+  SessionExpertSnapshot,
+  ExpertTeamDefinition,
 } from "@wordless/domain";
 
 type SqlRow = Record<string, string | number | bigint | Uint8Array | null>;
@@ -167,8 +170,8 @@ export class WordlessDatabase {
   upsertSession(session: SessionRecord): void {
     this.database
       .prepare(
-        `INSERT INTO sessions(id, title, workspace_id, runtime_root_path, mode, entry_id, profile_id, profile_version, driver_id, journal_format, workbench_id, access_level, model_connection_id, model_id, journal_path, connector_ids, interaction_mode, tool_approval_mode, thinking_level, pinned_at, created_at, updated_at)
-         VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `INSERT INTO sessions(id, title, workspace_id, runtime_root_path, mode, entry_id, profile_id, profile_version, driver_id, journal_format, workbench_id, access_level, model_connection_id, model_id, journal_path, connector_ids, interaction_mode, tool_approval_mode, thinking_level, pinned_at, expert_selection, created_at, updated_at)
+         VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(id) DO UPDATE SET
            title = excluded.title,
            workspace_id = excluded.workspace_id,
@@ -189,6 +192,7 @@ export class WordlessDatabase {
            tool_approval_mode = excluded.tool_approval_mode,
            thinking_level = excluded.thinking_level,
            pinned_at = excluded.pinned_at,
+           expert_selection = excluded.expert_selection,
            updated_at = excluded.updated_at`,
       )
       .run(
@@ -212,6 +216,7 @@ export class WordlessDatabase {
         session.toolApprovalMode,
         session.thinkingLevel,
         session.pinnedAt,
+        session.expertSelection ? JSON.stringify(session.expertSelection) : null,
         session.createdAt,
         session.updatedAt,
       );
@@ -415,6 +420,40 @@ export class WordlessDatabase {
     return connections;
   }
 
+  listExperts(): ExpertDefinition[] {
+    return this.database.prepare("SELECT document FROM experts ORDER BY updated_at DESC").all().flatMap((row) => {
+      try { return [parseJson<ExpertDefinition>(asString((row as SqlRow).document))]; } catch { return []; }
+    });
+  }
+
+  getExpert(id: string): ExpertDefinition | undefined {
+    const row = this.database.prepare("SELECT document FROM experts WHERE id = ?").get(id) as SqlRow | undefined;
+    if (!row) return undefined;
+    try { return parseJson<ExpertDefinition>(asString(row.document)); } catch { return undefined; }
+  }
+
+  upsertExpert(expert: ExpertDefinition): void {
+    this.database.prepare("INSERT INTO experts(id, version, document, updated_at) VALUES(?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET version = excluded.version, document = excluded.document, updated_at = excluded.updated_at").run(expert.id, expert.version, JSON.stringify(expert), expert.updatedAt);
+  }
+
+  deleteExpert(id: string): void { this.database.prepare("DELETE FROM experts WHERE id = ?").run(id); }
+
+  listExpertTeams(): ExpertTeamDefinition[] { return this.database.prepare("SELECT document FROM expert_teams ORDER BY updated_at DESC").all().flatMap((row) => { try { return [parseJson<ExpertTeamDefinition>(asString((row as SqlRow).document))]; } catch { return []; } }); }
+  getExpertTeam(id: string): ExpertTeamDefinition | undefined { const row = this.database.prepare("SELECT document FROM expert_teams WHERE id = ?").get(id) as SqlRow | undefined; if (!row) return undefined; try { return parseJson<ExpertTeamDefinition>(asString(row.document)); } catch { return undefined; } }
+  upsertExpertTeam(team: ExpertTeamDefinition): void { this.database.prepare("INSERT INTO expert_teams(id, version, document, updated_at) VALUES(?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET version = excluded.version, document = excluded.document, updated_at = excluded.updated_at").run(team.id, team.version, JSON.stringify(team), team.updatedAt); }
+  deleteExpertTeam(id: string): void { this.database.prepare("DELETE FROM expert_teams WHERE id = ?").run(id); }
+
+  getSessionExpertSnapshot(sessionId: string): SessionExpertSnapshot | undefined {
+    const row = this.database.prepare("SELECT document FROM session_expert_snapshots WHERE session_id = ?").get(sessionId) as SqlRow | undefined;
+    if (!row) return undefined;
+    try { return parseJson<SessionExpertSnapshot>(asString(row.document)); } catch { return undefined; }
+  }
+
+  saveSessionExpertSnapshot(sessionId: string, snapshot: SessionExpertSnapshot): void {
+    this.database.prepare("INSERT INTO session_expert_snapshots(session_id, document) VALUES(?, ?) ON CONFLICT(session_id) DO UPDATE SET document = excluded.document").run(sessionId, JSON.stringify(snapshot));
+  }
+  deleteSessionExpertSnapshot(sessionId: string): void { this.database.prepare("DELETE FROM session_expert_snapshots WHERE session_id = ?").run(sessionId); }
+
   listAutomations(): AutomationTask[] {
     return this.database.prepare("SELECT document FROM automations ORDER BY updated_at DESC").all().flatMap((row): AutomationTask[] => {
       try { return [parseJson<AutomationTask>(asString((row as SqlRow).document))]; } catch { return []; }
@@ -597,6 +636,10 @@ export class WordlessDatabase {
       CREATE INDEX automation_runs_status ON automation_runs(status, created_at);
       CREATE INDEX automation_runs_session ON automation_runs(session_id);
     `);
+    if (this.claimMigration(12)) this.database.exec("ALTER TABLE sessions ADD COLUMN expert_selection TEXT;");
+    if (this.claimMigration(13)) this.database.exec("CREATE TABLE experts(id TEXT PRIMARY KEY, version TEXT NOT NULL, document TEXT NOT NULL, updated_at INTEGER NOT NULL);");
+    if (this.claimMigration(14)) this.database.exec("CREATE TABLE session_expert_snapshots(session_id TEXT PRIMARY KEY REFERENCES sessions(id) ON DELETE CASCADE, document TEXT NOT NULL);");
+    if (this.claimMigration(15)) this.database.exec("CREATE TABLE expert_teams(id TEXT PRIMARY KEY, version TEXT NOT NULL, document TEXT NOT NULL, updated_at INTEGER NOT NULL);");
   }
 
   private readWorkspace(row: SqlRow): WorkspaceRecord {
@@ -641,6 +684,17 @@ export class WordlessDatabase {
         ? asString(row.thinking_level) as SessionRecord["thinkingLevel"]
         : "medium",
       pinnedAt: row.pinned_at === null || row.pinned_at === undefined ? null : asNumber(row.pinned_at),
+      expertSelection: (() => {
+        if (!row.expert_selection) return undefined;
+        try {
+          const value = parseJson<unknown>(asString(row.expert_selection));
+          if (typeof value !== "object" || value === null || Array.isArray(value)) return undefined;
+          const candidate = value as Record<string, unknown>;
+          return (candidate.kind === "expert" || candidate.kind === "team") && typeof candidate.id === "string" && typeof candidate.version === "string"
+            ? { kind: candidate.kind, id: candidate.id, version: candidate.version }
+            : undefined;
+        } catch { return undefined; }
+      })(),
       createdAt: asNumber(row.created_at),
       updatedAt: asNumber(row.updated_at),
     };

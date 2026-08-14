@@ -39,16 +39,13 @@ import type {
 } from "@wordless/domain";
 import { useRuntime, useRuntimeClient } from "../../shared/runtime";
 import { usePreferences } from "../../shared/preferences";
-import { ConnectorIcon } from "../../shared/ConnectorIcon";
-import { SkillIcon } from "../../shared/SkillIcon";
 import { ProviderIcon } from "../settings/provider-icons";
 import {
   InlineSkillComposer,
   type InlineSkillComposerHandle,
   type InlineSkillComposerValue,
 } from "../thread/InlineSkillComposer";
-import mcpIcon from "../../../icons/common-icons/mcp.svg";
-import skillsIcon from "../../../icons/common-icons/skills.svg";
+import { ConnectorSwitchMenu, SkillInsertMenu } from "../thread/PromptCapabilityControls";
 import toolApprovalIcon from "../../../icons/common-icons/tool-approval.svg";
 
 type Page =
@@ -437,7 +434,7 @@ export function AutomationView({
       <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4 sm:px-8">
         <div className="mx-auto flex min-h-full w-full max-w-[1280px] flex-col">
           <div className="flex flex-wrap items-center justify-between gap-3">
-            <div className="inline-flex rounded-[8px] bg-[#eeeeeb] p-1 dark:bg-muted">
+            <nav aria-label="Automation views" className="inline-flex border-b border-[#deded9] dark:border-border">
               <TabButton
                 active={tab === "scheduled"}
                 onClick={() => setTab("scheduled")}
@@ -447,7 +444,7 @@ export function AutomationView({
               <TabButton active={tab === "runs"} onClick={() => setTab("runs")}>
                 {t("automationRunHistory")}
               </TabButton>
-            </div>
+            </nav>
             {tasks.length ? (
               <div className="flex min-w-0 flex-1 flex-wrap items-center justify-end gap-2">
                 {tab === "runs" ? (
@@ -627,7 +624,7 @@ function TabButton({
 }) {
   return (
     <button
-      className={`rounded-[6px] px-3 py-1.5 text-[12px] font-medium ${active ? "bg-white shadow-sm dark:bg-card" : "text-muted-foreground"}`}
+      className={`border-b-2 px-4 pb-2 text-[13px] font-semibold transition-colors ${active ? "border-[#252624] text-[#252624] dark:border-foreground dark:text-foreground" : "border-transparent text-[#888881] hover:text-[#4a4a45] dark:text-muted-foreground dark:hover:text-foreground"}`}
       onClick={onClick}
     >
       {children}
@@ -1551,173 +1548,6 @@ function MenuTrigger({
       <span className="truncate">{label}</span>
       <ChevronDown className="h-3 w-3 shrink-0 text-muted-foreground" />
     </DropdownMenuTrigger>
-  );
-}
-
-function SkillInsertMenu({
-  onSelect,
-  skills,
-}: {
-  onSelect: (skill: SkillSummary) => void;
-  skills: SkillSummary[];
-}) {
-  const { t } = usePreferences();
-  const [open, setOpen] = useState(false);
-  const [query, setQuery] = useState("");
-  const menuRef = useRef<HTMLDivElement>(null);
-  const filteredSkills = skills.filter((skill) =>
-    `${skill.name} ${skill.description}`
-      .toLocaleLowerCase()
-      .includes(query.trim().toLocaleLowerCase()),
-  );
-
-  useEffect(() => {
-    if (!open) return;
-    const closeOnOutsidePointer = (event: PointerEvent) => {
-      if (!menuRef.current?.contains(event.target as Node)) {
-        setOpen(false);
-        setQuery("");
-      }
-    };
-    document.addEventListener("pointerdown", closeOnOutsidePointer);
-    return () => document.removeEventListener("pointerdown", closeOnOutsidePointer);
-  }, [open]);
-
-  return (
-    <div className="relative" ref={menuRef}>
-      <button
-        aria-expanded={open}
-        aria-haspopup="menu"
-        className="inline-flex h-8 max-w-[180px] items-center justify-center gap-1.5 whitespace-nowrap rounded-lg px-2 text-[11px] font-medium text-[#555650] outline-none transition-colors hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring dark:text-foreground"
-        onClick={() => {
-          setOpen((current) => !current);
-          if (open) setQuery("");
-        }}
-        type="button"
-      >
-        <img
-          alt=""
-          className="h-3.5 w-3.5 shrink-0 object-contain dark:invert"
-          src={skillsIcon}
-        />
-        <span className="truncate">{t("automationSkills")}</span>
-        <ChevronDown className="h-3 w-3 shrink-0 text-muted-foreground" />
-      </button>
-      {open ? <div className="absolute bottom-[calc(100%+6px)] left-0 z-[100] w-[294px] overflow-hidden rounded-[8px] border border-[#d6d6d0] bg-white p-2 text-[#40403c] shadow-[0_10px_24px_rgba(0,0,0,0.14)] dark:border-border dark:bg-card dark:text-foreground" role="menu">
-        <input
-          aria-label={t("automationSearchSkills")}
-          autoFocus
-          className="h-8 w-full rounded-[6px] border border-[#e4e4df] bg-[#fafaf8] px-2 text-[12px] text-[#3f3f3a] outline-none placeholder:text-[#9b9b94] focus:border-[#9dad75] dark:border-border dark:bg-muted dark:text-foreground"
-          onChange={(event) => setQuery(event.target.value)}
-          placeholder={t("automationSearchSkills")}
-          value={query}
-        />
-        <div className="mt-1 h-[232px] overflow-y-auto overscroll-contain">
-          {filteredSkills.map((skill) => (
-            <button
-              className="flex h-auto min-h-0 w-full items-start gap-2 rounded-sm px-1.5 py-2 text-left outline-none hover:bg-accent hover:text-accent-foreground focus-visible:bg-accent focus-visible:text-accent-foreground"
-              key={skill.id}
-              onClick={() => {
-                onSelect(skill);
-                setOpen(false);
-                setQuery("");
-              }}
-              onMouseDown={(event) => event.preventDefault()}
-              role="menuitem"
-              type="button"
-            >
-              <SkillIcon
-                className="mt-0.5 h-5 w-5 shrink-0 rounded-[5px] bg-[#f2f2ef] text-[#55554f] dark:bg-muted dark:text-muted-foreground"
-                name={skill.name}
-              />
-              <span className="min-w-0 flex-1">
-                <span className="block truncate text-[12px] font-semibold">
-                  {skill.name}
-                </span>
-                <span className="mt-0.5 block truncate text-[10px] leading-4 text-muted-foreground">
-                  {skill.description}
-                </span>
-              </span>
-            </button>
-          ))}
-          {filteredSkills.length === 0 ? (
-            <p className="px-2 py-3 text-[11px] text-muted-foreground">
-              {skills.length ? t("automationNoMatchingSkills") : t("automationNoSkills")}
-            </p>
-          ) : null}
-        </div>
-      </div> : null}
-    </div>
-  );
-}
-
-function ConnectorSwitchMenu({
-  connectors,
-  onChange,
-  selected,
-}: {
-  connectors: ConnectorSummary[];
-  onChange: (ids: string[]) => void;
-  selected: string[];
-}) {
-  const { t } = usePreferences();
-  const setSelected = (connectorId: string, checked: boolean) => {
-    onChange(
-      checked
-        ? [...new Set([...selected, connectorId])]
-        : selected.filter((id) => id !== connectorId),
-    );
-  };
-
-  return (
-    <DropdownMenu>
-      <MenuTrigger
-        icon={
-          <img
-            alt=""
-            className="h-3.5 w-3.5 shrink-0 object-contain dark:invert"
-            src={mcpIcon}
-          />
-        }
-        label={selected.length ? `${t("connectors")} ${selected.length}` : t("connectors")}
-      />
-      <DropdownMenuContent
-        align="start"
-        className="w-[248px] p-1.5"
-        onCloseAutoFocus={(event) => event.preventDefault()}
-      >
-        <div className="max-h-[232px] overflow-y-auto overscroll-contain">
-          {connectors.map((connector) => {
-            const checked = selected.includes(connector.id);
-            return (
-              <div
-                className="flex h-10 min-w-0 items-center gap-2 rounded-[7px] px-2 hover:bg-[#f3f3f0] dark:hover:bg-muted"
-                key={connector.id}
-              >
-                <ConnectorIcon
-                  className="h-4 w-4 shrink-0"
-                  templateId={connector.templateId}
-                  transport={connector.transport}
-                />
-                <span className="min-w-0 flex-1 truncate text-[12px] font-medium">
-                  {connector.name}
-                </span>
-                <Switch
-                  aria-label={`${checked ? t("automationDisable") : t("automationEnable")} ${connector.name}`}
-                  checked={checked}
-                  onCheckedChange={(next) => setSelected(connector.id, next)}
-                />
-              </div>
-            );
-          })}
-          {connectors.length === 0 ? (
-            <p className="px-2 py-3 text-[11px] text-muted-foreground">
-              {t("automationNoConnectors")}
-            </p>
-          ) : null}
-        </div>
-      </DropdownMenuContent>
-    </DropdownMenu>
   );
 }
 

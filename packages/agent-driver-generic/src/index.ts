@@ -25,7 +25,10 @@ import type {
   PersistedUserRequest,
   SessionFileBaseline,
 } from "@wordless/agent-driver-sdk";
-import type { AgentExtensionHost, AgentExtensionHostFactory } from "@wordless/agent-extension-sdk";
+import type {
+  AgentExtensionHost,
+  AgentExtensionHostFactory,
+} from "@wordless/agent-extension-sdk";
 import {
   OPERATION_APPROVAL_JOURNAL_TYPE,
   CONTEXT_COMPACTION_JOURNAL_TYPE,
@@ -60,7 +63,9 @@ export interface AgentHarnessDriverOptions {
   id: string;
   features?: readonly AgentDriverFeature[];
   createTools(context: AgentDriverSessionContext): AgentTool[];
-  systemPromptContribution?: (context: AgentDriverSessionContext) => string | Promise<string>;
+  systemPromptContribution?: (
+    context: AgentDriverSessionContext,
+  ) => string | Promise<string>;
   preflightOperation?: (
     context: AgentDriverSessionContext,
     request: { toolName: string; input: Record<string, unknown> },
@@ -71,15 +76,25 @@ export interface AgentHarnessDriverOptions {
 type HookableHarness = {
   on(
     type: "context",
-    handler: (event: { messages: AgentMessage[] }) => { messages: AgentMessage[] } | undefined,
+    handler: (event: {
+      messages: AgentMessage[];
+    }) => { messages: AgentMessage[] } | undefined,
   ): () => void;
   on(
     type: "tool_call",
-    handler: (event: { toolCallId: string; toolName: string; input: Record<string, unknown> }) => Promise<{ block?: boolean; reason?: string } | undefined>,
+    handler: (event: {
+      toolCallId: string;
+      toolName: string;
+      input: Record<string, unknown>;
+    }) => Promise<{ block?: boolean; reason?: string } | undefined>,
   ): () => void;
   on(
     type: "tool_result",
-    handler: (event: { toolCallId: string; toolName: string; isError: boolean }) => Promise<{ terminate?: boolean } | undefined>,
+    handler: (event: {
+      toolCallId: string;
+      toolName: string;
+      isError: boolean;
+    }) => Promise<{ terminate?: boolean } | undefined>,
   ): () => void;
 };
 
@@ -94,26 +109,37 @@ type CustomEntrySession = {
 };
 
 type ToolCallAccessController = {
-  runWithToolCall<T>(toolCallId: string, operation: () => Promise<T>): Promise<T>;
+  runWithToolCall<T>(
+    toolCallId: string,
+    operation: () => Promise<T>,
+  ): Promise<T>;
   grantOutsideWorkspaceAccess(toolCallId: string): void;
   revokeOutsideWorkspaceAccess(toolCallId: string): void;
 };
 
-function toolCallAccessController(env: ExecutionEnv): ToolCallAccessController | undefined {
+function toolCallAccessController(
+  env: ExecutionEnv,
+): ToolCallAccessController | undefined {
   const candidate = env as ExecutionEnv & Partial<ToolCallAccessController>;
-  return typeof candidate.runWithToolCall === "function"
-    && typeof candidate.grantOutsideWorkspaceAccess === "function"
-    && typeof candidate.revokeOutsideWorkspaceAccess === "function"
-    ? candidate as ToolCallAccessController
+  return typeof candidate.runWithToolCall === "function" &&
+    typeof candidate.grantOutsideWorkspaceAccess === "function" &&
+    typeof candidate.revokeOutsideWorkspaceAccess === "function"
+    ? (candidate as ToolCallAccessController)
     : undefined;
 }
 
-function withToolCallAccessScope(tool: AgentTool, controller: ToolCallAccessController | undefined, scopeId: string): AgentTool {
+function withToolCallAccessScope(
+  tool: AgentTool,
+  controller: ToolCallAccessController | undefined,
+  scopeId: string,
+): AgentTool {
   if (!controller) return tool;
   return {
     ...tool,
     async execute(toolCallId, params, signal, onUpdate) {
-      return await controller.runWithToolCall(`${scopeId}:${toolCallId}`, () => tool.execute(toolCallId, params, signal, onUpdate));
+      return await controller.runWithToolCall(`${scopeId}:${toolCallId}`, () =>
+        tool.execute(toolCallId, params, signal, onUpdate),
+      );
     },
   };
 }
@@ -142,7 +168,9 @@ const UserRequestFieldSchema = Type.Union([
     description: Type.Optional(Type.String({ maxLength: 2_000 })),
     required: Type.Optional(Type.Boolean()),
     options: Type.Array(UserRequestOptionSchema, { minItems: 1, maxItems: 32 }),
-    defaultValue: Type.Optional(Type.Array(Type.String({ maxLength: 4_000 }), { maxItems: 32 })),
+    defaultValue: Type.Optional(
+      Type.Array(Type.String({ maxLength: 4_000 }), { maxItems: 32 }),
+    ),
     allowCustom: Type.Optional(Type.Boolean()),
   }),
   Type.Object({
@@ -184,15 +212,24 @@ const ClarificationOptionSchema = Type.Object({
 const ClarificationQuestionParamsSchema = Type.Object({
   question: Type.String({ minLength: 1, maxLength: 1_000 }),
   context: Type.Optional(Type.String({ maxLength: 2_000 })),
-  answerType: Type.Union([Type.Literal("choice"), Type.Literal("text"), Type.Literal("confirm")]),
-  options: Type.Optional(Type.Array(ClarificationOptionSchema, { minItems: 1, maxItems: 4 })),
+  answerType: Type.Union([
+    Type.Literal("choice"),
+    Type.Literal("text"),
+    Type.Literal("confirm"),
+  ]),
+  options: Type.Optional(
+    Type.Array(ClarificationOptionSchema, { minItems: 1, maxItems: 4 }),
+  ),
   recommendation: Type.Object({
     answer: Type.String({ minLength: 1, maxLength: 1_000 }),
     value: Type.Optional(Type.String({ minLength: 1, maxLength: 256 })),
     reason: Type.String({ minLength: 1, maxLength: 2_000 }),
   }),
   allowCustom: Type.Optional(Type.Boolean()),
-  purpose: Type.Union([Type.Literal("discovery"), Type.Literal("final-confirmation")]),
+  purpose: Type.Union([
+    Type.Literal("discovery"),
+    Type.Literal("final-confirmation"),
+  ]),
 });
 
 const ClarificationBriefDecisionSchema = Type.Object({
@@ -204,15 +241,23 @@ const ClarificationBriefDecisionSchema = Type.Object({
 const ClarificationBriefParamsSchema = Type.Object({
   title: Type.String({ minLength: 1, maxLength: 512 }),
   summary: Type.String({ minLength: 1, maxLength: 8_000 }),
-  goals: Type.Array(Type.String({ minLength: 1, maxLength: 2_000 }), { maxItems: 16 }),
-  constraints: Type.Array(Type.String({ minLength: 1, maxLength: 2_000 }), { maxItems: 16 }),
+  goals: Type.Array(Type.String({ minLength: 1, maxLength: 2_000 }), {
+    maxItems: 16,
+  }),
+  constraints: Type.Array(Type.String({ minLength: 1, maxLength: 2_000 }), {
+    maxItems: 16,
+  }),
   decisions: Type.Array(ClarificationBriefDecisionSchema, { maxItems: 24 }),
-  openQuestions: Type.Array(Type.String({ minLength: 1, maxLength: 2_000 }), { maxItems: 16 }),
+  openQuestions: Type.Array(Type.String({ minLength: 1, maxLength: 2_000 }), {
+    maxItems: 16,
+  }),
   recommendedNextStep: Type.String({ minLength: 1, maxLength: 2_000 }),
 });
 
 type UserRequestParams = Static<typeof UserRequestParamsSchema>;
-type ClarificationQuestionParams = Static<typeof ClarificationQuestionParamsSchema>;
+type ClarificationQuestionParams = Static<
+  typeof ClarificationQuestionParamsSchema
+>;
 type ClarificationBriefParams = Static<typeof ClarificationBriefParamsSchema>;
 
 type UserRequestToolDetails = {
@@ -232,7 +277,9 @@ type SuppressedOverflowMessage = {
 };
 
 function asRecord(value: unknown): Record<string, unknown> | undefined {
-  return typeof value === "object" && value !== null && !Array.isArray(value) ? (value as Record<string, unknown>) : undefined;
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : undefined;
 }
 
 function stripSkillReferenceMarkers(messages: AgentMessage[]): AgentMessage[] {
@@ -241,7 +288,11 @@ function stripSkillReferenceMarkers(messages: AgentMessage[]): AgentMessage[] {
     const value = asRecord(message);
     if (!value || value.role !== "user") return message;
     if (typeof value.content === "string") {
-      const content = formatPromptWorkspaceReferencesForModel(formatPromptArtifactReferencesForModel(stripPromptSkillReferences(value.content)));
+      const content = formatPromptWorkspaceReferencesForModel(
+        formatPromptArtifactReferencesForModel(
+          stripPromptSkillReferences(value.content),
+        ),
+      );
       if (content === value.content) return message;
       changed = true;
       return { ...value, content } as AgentMessage;
@@ -249,30 +300,49 @@ function stripSkillReferenceMarkers(messages: AgentMessage[]): AgentMessage[] {
     if (!Array.isArray(value.content)) return message;
     const content = value.content.map((item) => {
       const block = asRecord(item);
-      if (!block || block.type !== "text" || typeof block.text !== "string") return item;
-      const text = formatPromptWorkspaceReferencesForModel(formatPromptArtifactReferencesForModel(stripPromptSkillReferences(block.text)));
+      if (!block || block.type !== "text" || typeof block.text !== "string")
+        return item;
+      const text = formatPromptWorkspaceReferencesForModel(
+        formatPromptArtifactReferencesForModel(
+          stripPromptSkillReferences(block.text),
+        ),
+      );
       if (text === block.text) return item;
       changed = true;
       return { ...block, text };
     });
-    return changed ? { ...value, content } as AgentMessage : message;
+    return changed ? ({ ...value, content } as AgentMessage) : message;
   });
   return changed ? sanitized : messages;
 }
 
 function redactConnectorInput(value: unknown, key?: string): unknown {
-  if (key && /(?:api[-_]?key|authorization|cookie|header|password|secret|token)/i.test(key)) return "[redacted]";
-  if (Array.isArray(value)) return value.map((item) => redactConnectorInput(item));
+  if (
+    key &&
+    /(?:api[-_]?key|authorization|cookie|header|password|secret|token)/i.test(
+      key,
+    )
+  )
+    return "[redacted]";
+  if (Array.isArray(value))
+    return value.map((item) => redactConnectorInput(item));
   const record = asRecord(value);
   if (!record) return value;
-  return Object.fromEntries(Object.entries(record).map(([entryKey, entryValue]) => [entryKey, redactConnectorInput(entryValue, entryKey)]));
+  return Object.fromEntries(
+    Object.entries(record).map(([entryKey, entryValue]) => [
+      entryKey,
+      redactConnectorInput(entryValue, entryKey),
+    ]),
+  );
 }
 
 function connectorPreflightOperation(
   context: AgentDriverSessionContext,
   request: { toolName: string; input: Record<string, unknown> },
 ): OperationPreflightDecision | undefined {
-  const policy = context.connectorToolPolicies.find((candidate) => candidate.agentToolName === request.toolName);
+  const policy = context.connectorToolPolicies.find(
+    (candidate) => candidate.agentToolName === request.toolName,
+  );
   if (!policy) return undefined;
   if (policy.readOnly && policy.destructive !== true) return { type: "allow" };
   return {
@@ -280,9 +350,10 @@ function connectorPreflightOperation(
     approval: {
       risk: "connector",
       severity: policy.destructive === true ? "high" : "normal",
-      summary: policy.destructive === true
-        ? "This Connector tool may modify or delete external data and requires confirmation."
-        : "This Connector tool is not explicitly read-only and requires confirmation.",
+      summary:
+        policy.destructive === true
+          ? "This Connector tool may modify or delete external data and requires confirmation."
+          : "This Connector tool is not explicitly read-only and requires confirmation.",
       preview: {
         type: "connector",
         connectorId: policy.connectorId,
@@ -312,7 +383,9 @@ function isAssistantMessage(value: AgentMessage): value is AssistantMessage {
   );
 }
 
-function persistedFileBaseline(value: unknown): PersistedSessionFileBaseline | undefined {
+function persistedFileBaseline(
+  value: unknown,
+): PersistedSessionFileBaseline | undefined {
   const record = asRecord(value);
   const baseline = asRecord(record?.baseline);
   if (
@@ -328,66 +401,108 @@ function persistedFileBaseline(value: unknown): PersistedSessionFileBaseline | u
 
 function userRequestContent(resolution: UserRequestResolution): string {
   if (resolution.status === "cancelled") {
-    return resolution.feedback ? `The user cancelled this request: ${resolution.feedback}` : "The user cancelled this request.";
+    return resolution.feedback
+      ? `The user cancelled this request: ${resolution.feedback}`
+      : "The user cancelled this request.";
   }
   return `The user submitted the following response: ${JSON.stringify(resolution.answers ?? {})}`;
 }
 
-function validateUserRequestResolution(request: UserRequest, resolution: UserRequestResolution): UserRequestResolution {
-  if (resolution.requestId !== request.requestId) throw new Error("The user request does not match the pending interaction");
-  if (resolution.status === "cancelled") return { requestId: request.requestId, status: "cancelled", feedback: resolution.feedback };
+function validateUserRequestResolution(
+  request: UserRequest,
+  resolution: UserRequestResolution,
+): UserRequestResolution {
+  if (resolution.requestId !== request.requestId)
+    throw new Error("The user request does not match the pending interaction");
+  if (resolution.status === "cancelled")
+    return {
+      requestId: request.requestId,
+      status: "cancelled",
+      feedback: resolution.feedback,
+    };
   const submitted = resolution.answers ?? {};
   const fieldIds = new Set(request.fields.map((field) => field.id));
   for (const fieldId of Object.keys(submitted)) {
-    if (!fieldIds.has(fieldId)) throw new Error("The response contains an unknown field");
+    if (!fieldIds.has(fieldId))
+      throw new Error("The response contains an unknown field");
   }
   const answers: Record<string, UserRequestAnswer> = {};
   for (const field of request.fields) {
     const answer = submitted[field.id];
     if (field.type === "confirm") {
-      if (answer !== undefined && typeof answer !== "boolean") throw new Error("The confirmation response is invalid");
-      answers[field.id] = typeof answer === "boolean" ? answer : field.defaultValue ?? false;
+      if (answer !== undefined && typeof answer !== "boolean")
+        throw new Error("The confirmation response is invalid");
+      answers[field.id] =
+        typeof answer === "boolean" ? answer : (field.defaultValue ?? false);
       continue;
     }
     if (field.type === "text") {
-      if (answer !== undefined && typeof answer !== "string") throw new Error("The text response is invalid");
+      if (answer !== undefined && typeof answer !== "string")
+        throw new Error("The text response is invalid");
       const value = typeof answer === "string" ? answer : field.defaultValue;
-      if (field.required && !value?.trim()) throw new Error("A required response is missing");
+      if (field.required && !value?.trim())
+        throw new Error("A required response is missing");
       if (value !== undefined) answers[field.id] = value;
       continue;
     }
     const allowed = new Set(field.options.map((option) => option.value));
     if (field.type === "select") {
-      if (answer !== undefined && typeof answer !== "string") throw new Error("The selected response is invalid");
+      if (answer !== undefined && typeof answer !== "string")
+        throw new Error("The selected response is invalid");
       const value = typeof answer === "string" ? answer : field.defaultValue;
-      if (field.required && !value) throw new Error("A required response is missing");
-      if (value !== undefined && !allowed.has(value) && !field.allowCustom) throw new Error("The selected response is not available");
+      if (field.required && !value)
+        throw new Error("A required response is missing");
+      if (value !== undefined && !allowed.has(value) && !field.allowCustom)
+        throw new Error("The selected response is not available");
       if (value !== undefined) answers[field.id] = value;
       continue;
     }
-    if (answer !== undefined && (!Array.isArray(answer) || answer.some((value) => typeof value !== "string"))) {
+    if (
+      answer !== undefined &&
+      (!Array.isArray(answer) ||
+        answer.some((value) => typeof value !== "string"))
+    ) {
       throw new Error("The multi-select response is invalid");
     }
-    const values = Array.isArray(answer) ? [...new Set(answer)] : field.defaultValue ?? [];
-    if (field.required && values.length === 0) throw new Error("A required response is missing");
-    if (values.some((value) => !allowed.has(value) && !field.allowCustom)) throw new Error("The selected response is not available");
+    const values = Array.isArray(answer)
+      ? [...new Set(answer)]
+      : (field.defaultValue ?? []);
+    if (field.required && values.length === 0)
+      throw new Error("A required response is missing");
+    if (values.some((value) => !allowed.has(value) && !field.allowCustom))
+      throw new Error("The selected response is not available");
     answers[field.id] = values;
   }
   return { requestId: request.requestId, status: "submitted", answers };
 }
 
 function createUserRequestTool(
-  requestUserInput: (callId: string, params: UserRequestParams, signal?: AbortSignal) => Promise<MessageUserRequest>,
+  requestUserInput: (
+    callId: string,
+    params: UserRequestParams,
+    signal?: AbortSignal,
+  ) => Promise<MessageUserRequest>,
 ): AgentTool<typeof UserRequestParamsSchema, UserRequestToolDetails> {
   return {
     name: "request_user_input",
     label: "Request user input",
-    description: "Ask the user for missing requirements or a decision. Group related questions in one request. Do not use this tool to approve file changes or command execution.",
+    description:
+      "Ask the user for missing requirements or a decision. Group related questions in one request. Do not use this tool to approve file changes or command execution.",
     parameters: UserRequestParamsSchema,
     async execute(toolCallId, params, signal) {
       const userRequest = await requestUserInput(toolCallId, params, signal);
       return {
-        content: [{ type: "text", text: userRequestContent(userRequest.resolution ?? { requestId: userRequest.request.requestId, status: "cancelled" }) }],
+        content: [
+          {
+            type: "text",
+            text: userRequestContent(
+              userRequest.resolution ?? {
+                requestId: userRequest.request.requestId,
+                status: "cancelled",
+              },
+            ),
+          },
+        ],
         details: { userRequest },
       };
     },
@@ -401,54 +516,89 @@ function createLoadSkillTool(
   return {
     name: "load_skill",
     label: "Load skill",
-    description: "Load the complete instructions for an available skill by name.",
+    description:
+      "Load the complete instructions for an available skill by name.",
     parameters: LoadSkillParamsSchema,
     async execute(_toolCallId, params) {
       const skill = skills.find((candidate) => candidate.name === params.name);
       if (!skill) {
-        return { content: [{ type: "text", text: `Unknown skill: ${params.name}` }], details: { found: false } };
+        return {
+          content: [{ type: "text", text: `Unknown skill: ${params.name}` }],
+          details: { found: false },
+        };
       }
       onLoaded(skill);
       return {
-        content: [{ type: "text", text: `<skill name="${skill.name}" location="${skill.filePath}">\nReferences are relative to ${skill.baseDir}.\n\n${skill.content}\n</skill>` }],
+        content: [
+          {
+            type: "text",
+            text: `<skill name="${skill.name}" location="${skill.filePath}">\nReferences are relative to ${skill.baseDir}.\n\n${skill.content}\n</skill>`,
+          },
+        ],
         details: { found: true, skillId: skill.id, source: skill.source },
       };
     },
   };
 }
 
-function createClarificationQuestionTool(): AgentTool<typeof ClarificationQuestionParamsSchema, ClarificationQuestionToolDetails> {
+function createClarificationQuestionTool(): AgentTool<
+  typeof ClarificationQuestionParamsSchema,
+  ClarificationQuestionToolDetails
+> {
   return {
     name: "ask_clarifying_question",
     label: "Ask clarifying question",
-    description: "Ask exactly one question that resolves the next decision. Include a recommended answer and why it is recommended. This ends the current turn until the user responds.",
+    description:
+      "Ask exactly one question that resolves the next decision. Include a recommended answer and why it is recommended. This ends the current turn until the user responds.",
     parameters: ClarificationQuestionParamsSchema,
     async execute(_toolCallId, params) {
-      if (params.answerType === "choice" && (!params.options || params.options.length === 0)) {
+      if (
+        params.answerType === "choice" &&
+        (!params.options || params.options.length === 0)
+      ) {
         throw new Error("Choice clarification questions require options");
       }
       if (params.answerType !== "choice" && params.options !== undefined) {
-        throw new Error("Only choice clarification questions may define options");
+        throw new Error(
+          "Only choice clarification questions may define options",
+        );
       }
-      if (params.purpose === "final-confirmation" && params.answerType !== "confirm") {
-        throw new Error("Final clarification confirmation questions must use a confirmation response");
+      if (
+        params.purpose === "final-confirmation" &&
+        params.answerType !== "confirm"
+      ) {
+        throw new Error(
+          "Final clarification confirmation questions must use a confirmation response",
+        );
       }
-      if (params.answerType === "choice" && params.recommendation.value !== undefined && !params.options?.some((option) => option.value === params.recommendation.value)) {
+      if (
+        params.answerType === "choice" &&
+        params.recommendation.value !== undefined &&
+        !params.options?.some(
+          (option) => option.value === params.recommendation.value,
+        )
+      ) {
         throw new Error("The recommended value must match a question option");
       }
       return {
-        content: [{ type: "text", text: "Waiting for the user's clarification." }],
+        content: [
+          { type: "text", text: "Waiting for the user's clarification." },
+        ],
         details: { clarificationQuestion: params as ClarificationQuestion },
       };
     },
   };
 }
 
-function createClarificationBriefTool(): AgentTool<typeof ClarificationBriefParamsSchema, ClarificationBriefToolDetails> {
+function createClarificationBriefTool(): AgentTool<
+  typeof ClarificationBriefParamsSchema,
+  ClarificationBriefToolDetails
+> {
   return {
     name: "complete_clarification",
     label: "Complete clarification",
-    description: "Record the agreed clarification brief after the user has confirmed the shared understanding. This ends the current turn and shows the user next-mode choices.",
+    description:
+      "Record the agreed clarification brief after the user has confirmed the shared understanding. This ends the current turn and shows the user next-mode choices.",
     parameters: ClarificationBriefParamsSchema,
     async execute(_toolCallId, params) {
       return {
@@ -474,14 +624,18 @@ function isClarificationMode(context: AgentDriverSessionContext): boolean {
   return context.record.interactionMode === "clarify";
 }
 
-function formatSelectedSkillsForSystemPrompt(skills: readonly AgentRuntimeSkill[]): string {
+function formatSelectedSkillsForSystemPrompt(
+  skills: readonly AgentRuntimeSkill[],
+): string {
   if (skills.length === 0) return "";
   const lines = [
     "The user explicitly selected the following skills for this request. Apply their instructions throughout this run.",
     "<selected_skills>",
   ];
   for (const skill of skills) {
-    lines.push(`  <skill name="${escapeXml(skill.name)}" location="${escapeXml(skill.filePath)}">`);
+    lines.push(
+      `  <skill name="${escapeXml(skill.name)}" location="${escapeXml(skill.filePath)}">`,
+    );
     lines.push(`References are relative to ${escapeXml(skill.baseDir)}.`);
     lines.push("");
     lines.push(skill.content);
@@ -500,11 +654,21 @@ function escapeXml(value: string): string {
     .replace(/'/g, "&apos;");
 }
 
-async function persistedBaselinePaths(context: AgentDriverSessionContext): Promise<Set<string>> {
+async function persistedBaselinePaths(
+  context: AgentDriverSessionContext,
+): Promise<Set<string>> {
   const paths = new Set<string>();
   for (const entry of await context.session.getEntries()) {
-    const customEntry = entry as unknown as { type: string; customType?: string; data?: unknown };
-    if (customEntry.type !== "custom" || customEntry.customType !== SESSION_FILE_BASELINE_JOURNAL_TYPE) continue;
+    const customEntry = entry as unknown as {
+      type: string;
+      customType?: string;
+      data?: unknown;
+    };
+    if (
+      customEntry.type !== "custom" ||
+      customEntry.customType !== SESSION_FILE_BASELINE_JOURNAL_TYPE
+    )
+      continue;
     const persisted = persistedFileBaseline(customEntry.data);
     if (persisted) paths.add(persisted.baseline.path);
   }
@@ -517,7 +681,9 @@ function contentToText(value: unknown): string {
   return value
     .flatMap((item) => {
       const record = asRecord(item);
-      return record?.type === "text" && typeof record.text === "string" ? [record.text] : [];
+      return record?.type === "text" && typeof record.text === "string"
+        ? [record.text]
+        : [];
     })
     .join("\n");
 }
@@ -531,7 +697,8 @@ function estimateJournalTokens(entries: readonly unknown[]): number {
         break;
       }
     }
-    const contextEntries = lastCompaction === -1 ? entries : entries.slice(lastCompaction);
+    const contextEntries =
+      lastCompaction === -1 ? entries : entries.slice(lastCompaction);
     return Math.ceil(JSON.stringify(contextEntries).length / 4);
   } catch {
     return 0;
@@ -543,37 +710,93 @@ function toConversationUsage(value: unknown): ConversationUsage | undefined {
   const cost = asRecord(usage?.cost);
   const inputTokens = typeof usage?.input === "number" ? usage.input : 0;
   const outputTokens = typeof usage?.output === "number" ? usage.output : 0;
-  const cacheReadTokens = typeof usage?.cacheRead === "number" ? usage.cacheRead : 0;
-  const cacheWriteTokens = typeof usage?.cacheWrite === "number" ? usage.cacheWrite : 0;
-  const totalTokens = typeof usage?.totalTokens === "number"
-    ? usage.totalTokens
-    : typeof usage?.total === "number"
-      ? usage.total
-      : inputTokens + outputTokens + cacheReadTokens + cacheWriteTokens;
+  const cacheReadTokens =
+    typeof usage?.cacheRead === "number" ? usage.cacheRead : 0;
+  const cacheWriteTokens =
+    typeof usage?.cacheWrite === "number" ? usage.cacheWrite : 0;
+  const totalTokens =
+    typeof usage?.totalTokens === "number"
+      ? usage.totalTokens
+      : typeof usage?.total === "number"
+        ? usage.total
+        : inputTokens + outputTokens + cacheReadTokens + cacheWriteTokens;
   const totalCost = typeof cost?.total === "number" ? cost.total : 0;
-  if (totalTokens === 0 && inputTokens === 0 && outputTokens === 0 && cacheReadTokens === 0 && cacheWriteTokens === 0) return undefined;
-  return { inputTokens, outputTokens, cacheReadTokens, cacheWriteTokens, totalTokens, totalCost };
+  if (
+    totalTokens === 0 &&
+    inputTokens === 0 &&
+    outputTokens === 0 &&
+    cacheReadTokens === 0 &&
+    cacheWriteTokens === 0
+  )
+    return undefined;
+  return {
+    inputTokens,
+    outputTokens,
+    cacheReadTokens,
+    cacheWriteTokens,
+    totalTokens,
+    totalCost,
+  };
 }
 
 function toolUsageFromDetails(details: unknown): ConversationUsage | undefined {
   return conversationUsageFromUnknown(asRecord(details)?.usage);
 }
 
-function isToolExecutionStart(event: AgentHarnessEvent): event is AgentHarnessEvent & { type: "tool_execution_start"; toolCallId: string; toolName: string; args: unknown } {
-  return event.type === "tool_execution_start" && "toolCallId" in event && "toolName" in event && "args" in event;
+function isToolExecutionStart(
+  event: AgentHarnessEvent,
+): event is AgentHarnessEvent & {
+  type: "tool_execution_start";
+  toolCallId: string;
+  toolName: string;
+  args: unknown;
+} {
+  return (
+    event.type === "tool_execution_start" &&
+    "toolCallId" in event &&
+    "toolName" in event &&
+    "args" in event
+  );
 }
 
-function isToolExecutionUpdate(event: AgentHarnessEvent): event is AgentHarnessEvent & { type: "tool_execution_update"; toolCallId: string; partialResult: unknown } {
-  return event.type === "tool_execution_update" && "toolCallId" in event && "partialResult" in event;
+function isToolExecutionUpdate(
+  event: AgentHarnessEvent,
+): event is AgentHarnessEvent & {
+  type: "tool_execution_update";
+  toolCallId: string;
+  partialResult: unknown;
+} {
+  return (
+    event.type === "tool_execution_update" &&
+    "toolCallId" in event &&
+    "partialResult" in event
+  );
 }
 
-function isToolExecutionEnd(event: AgentHarnessEvent): event is AgentHarnessEvent & { type: "tool_execution_end"; toolCallId: string; result: unknown; isError: boolean } {
-  return event.type === "tool_execution_end" && "toolCallId" in event && "result" in event && "isError" in event;
+function isToolExecutionEnd(
+  event: AgentHarnessEvent,
+): event is AgentHarnessEvent & {
+  type: "tool_execution_end";
+  toolCallId: string;
+  result: unknown;
+  isError: boolean;
+} {
+  return (
+    event.type === "tool_execution_end" &&
+    "toolCallId" in event &&
+    "result" in event &&
+    "isError" in event
+  );
 }
 
-function toConversationMessage(message: AgentMessage, model: ConversationMessage["model"], id: string): ConversationMessage | undefined {
+function toConversationMessage(
+  message: AgentMessage,
+  model: ConversationMessage["model"],
+  id: string,
+): ConversationMessage | undefined {
   const value = asRecord(message);
-  if (!value || (value.role !== "user" && value.role !== "assistant")) return undefined;
+  if (!value || (value.role !== "user" && value.role !== "assistant"))
+    return undefined;
   const blocks: MessageBlock[] = [];
   const content = value.content;
   if (value.role === "user") {
@@ -584,9 +807,15 @@ function toConversationMessage(message: AgentMessage, model: ConversationMessage
     for (const item of content) {
       const block = asRecord(item);
       if (!block) continue;
-      if (block.type === "text" && typeof block.text === "string") blocks.push({ type: "text", text: block.text });
-      if (block.type === "thinking" && typeof block.thinking === "string") blocks.push({ type: "reasoning", text: block.thinking });
-      if (block.type === "toolCall" && typeof block.id === "string" && typeof block.name === "string") {
+      if (block.type === "text" && typeof block.text === "string")
+        blocks.push({ type: "text", text: block.text });
+      if (block.type === "thinking" && typeof block.thinking === "string")
+        blocks.push({ type: "reasoning", text: block.thinking });
+      if (
+        block.type === "toolCall" &&
+        typeof block.id === "string" &&
+        typeof block.name === "string"
+      ) {
         blocks.push({
           type: "tool",
           callId: block.id,
@@ -600,12 +829,20 @@ function toConversationMessage(message: AgentMessage, model: ConversationMessage
   return {
     id,
     role: value.role,
-    status: value.stopReason === "error" ? "error" : value.stopReason === "aborted" ? "aborted" : "complete",
+    status:
+      value.stopReason === "error"
+        ? "error"
+        : value.stopReason === "aborted"
+          ? "aborted"
+          : "complete",
     blocks,
     model: value.role === "assistant" ? model : null,
-    timestamp: typeof value.timestamp === "number" ? value.timestamp : Date.now(),
-    usage: value.role === "assistant" ? toConversationUsage(value.usage) : undefined,
-    errorMessage: typeof value.errorMessage === "string" ? value.errorMessage : undefined,
+    timestamp:
+      typeof value.timestamp === "number" ? value.timestamp : Date.now(),
+    usage:
+      value.role === "assistant" ? toConversationUsage(value.usage) : undefined,
+    errorMessage:
+      typeof value.errorMessage === "string" ? value.errorMessage : undefined,
   };
 }
 
@@ -627,7 +864,10 @@ class AgentHarnessDriverSession implements AgentDriverSession {
       resolve: (resolution: OperationApprovalResolution) => void;
     }
   >();
-  private readonly approvalResults = new Map<string, PersistedOperationApproval>();
+  private readonly approvalResults = new Map<
+    string,
+    PersistedOperationApproval
+  >();
   private readonly elevatedToolCallIds = new Set<string>();
   private readonly pendingUserRequests = new Map<
     string,
@@ -638,7 +878,10 @@ class AgentHarnessDriverSession implements AgentDriverSession {
     }
   >();
   private readonly userRequestResults = new Map<string, PersistedUserRequest>();
-  private readonly pendingFileBaselines = new Map<string, SessionFileBaseline>();
+  private readonly pendingFileBaselines = new Map<
+    string,
+    SessionFileBaseline
+  >();
   private readonly persistedFileBaselinePaths: Set<string>;
   private readonly toolMessageIds = new Map<string, string>();
   private activeAssistantMessageId: string | undefined;
@@ -666,9 +909,11 @@ class AgentHarnessDriverSession implements AgentDriverSession {
     this.clarificationMode = isClarificationMode(context);
     const clarificationMode = this.clarificationMode;
     const supportsToolUse = context.modelCapabilities.supportsToolUse !== false;
-    const canRequestUserInput = supportsToolUse && context.allowUserRequests !== false;
+    const canRequestUserInput =
+      supportsToolUse && context.allowUserRequests !== false;
     const skillPrompt = formatSkillsForSystemPrompt(context.skills, {
-      loadingInstruction: "Use the load_skill tool to load a skill's complete instructions when the task matches its description.",
+      loadingInstruction:
+        "Use the load_skill tool to load a skill's complete instructions when the task matches its description.",
     });
     const profileSystemPrompt = `${context.profile.systemPrompt}${systemPromptContribution ? `\n\n${systemPromptContribution}` : ""}`;
     const baseSystemPrompt = clarificationMode
@@ -677,23 +922,65 @@ class AgentHarnessDriverSession implements AgentDriverSession {
         ? `${profileSystemPrompt}${skillPrompt ? `\n\n${skillPrompt}` : ""}\n\nWhen a user decision or missing requirement blocks progress, call request_user_input with a concise form. Group related questions together. Do not use it to approve file changes or commands.`
         : context.executionKind === "subagent"
           ? `${profileSystemPrompt}${skillPrompt ? `\n\n${skillPrompt}` : ""}\n\nComplete the delegated task without asking the user for input. If required information is missing, return a concise blocker to the parent agent.`
-        : `${profileSystemPrompt}${skillPrompt ? `\n\n${skillPrompt}` : ""}\n\nThis model cannot call tools. When you need a user decision, ask a concise question in normal response text instead.`;
-    const skillTools = context.skills.length > 0
-      ? [createLoadSkillTool(context.skills, (skill) => context.trustedSkillReadRoots?.add(skill.baseDir))]
+          : `${profileSystemPrompt}${skillPrompt ? `\n\n${skillPrompt}` : ""}\n\nThis model cannot call tools. When you need a user decision, ask a concise question in normal response text instead.`;
+    const skillTools =
+      context.skills.length > 0
+        ? [
+            createLoadSkillTool(context.skills, (skill) =>
+              context.trustedSkillReadRoots?.add(skill.baseDir),
+            ),
+          ]
+        : [];
+    const clarificationTools =
+      clarificationMode && supportsToolUse
+        ? [createClarificationQuestionTool(), createClarificationBriefTool()]
+        : [];
+    const userRequestTools = canRequestUserInput
+      ? [
+          createUserRequestTool((callId, params, signal) =>
+            this.requestUserInput(callId, params, signal),
+          ),
+        ]
       : [];
-    const clarificationTools = clarificationMode && supportsToolUse ? [createClarificationQuestionTool(), createClarificationBriefTool()] : [];
-    const userRequestTools = canRequestUserInput ? [createUserRequestTool((callId, params, signal) => this.requestUserInput(callId, params, signal))] : [];
     const accessController = this.accessController;
-    const tools = (supportsToolUse
-      ? [...baseTools, ...context.connectorTools, ...skillTools, ...userRequestTools, ...clarificationTools]
-      : [...baseTools, ...context.connectorTools])
-      .map((tool) => withToolCallAccessScope(tool, accessController, this.accessScopeId));
-    const clarificationToolNames = new Set(["read", "grep", "find", "ls", "workspace_changes", "load_skill", "ask_clarifying_question", "complete_clarification"]);
+    const tools = (
+      supportsToolUse
+        ? [
+            ...baseTools,
+            ...context.connectorTools,
+            ...skillTools,
+            ...userRequestTools,
+            ...clarificationTools,
+          ]
+        : [...baseTools, ...context.connectorTools]
+    ).map((tool) =>
+      withToolCallAccessScope(tool, accessController, this.accessScopeId),
+    );
+    const clarificationToolNames = new Set([
+      "read",
+      "grep",
+      "find",
+      "ls",
+      "workspace_changes",
+      "load_skill",
+      "ask_clarifying_question",
+      "complete_clarification",
+    ]);
     const activeToolNames = clarificationMode
-      ? tools.filter((tool) => clarificationToolNames.has(tool.name)).map((tool) => tool.name)
+      ? tools
+          .filter((tool) => clarificationToolNames.has(tool.name))
+          .map((tool) => tool.name)
       : supportsToolUse
-        ? [...context.profile.activeToolNames, ...context.connectorTools.map((tool) => tool.name), ...skillTools.map((tool) => tool.name), ...(canRequestUserInput ? ["request_user_input"] : [])]
-        : [...context.profile.activeToolNames, ...context.connectorTools.map((tool) => tool.name)];
+        ? [
+            ...context.profile.activeToolNames,
+            ...context.connectorTools.map((tool) => tool.name),
+            ...skillTools.map((tool) => tool.name),
+            ...(canRequestUserInput ? ["request_user_input"] : []),
+          ]
+        : [
+            ...context.profile.activeToolNames,
+            ...context.connectorTools.map((tool) => tool.name),
+          ];
     const toolContract = `Only call tools exposed for this session: ${activeToolNames.join(", ") || "none"}. Never invent or call tools outside this list.`;
     this.harness = new AgentHarness<Skill>({
       env: context.env,
@@ -707,9 +994,17 @@ class AgentHarnessDriverSession implements AgentDriverSession {
       resources: { skills: context.skills },
     });
     this.harness.on("before_agent_start", (event) => {
-      const selectedSkillsPrompt = formatSelectedSkillsForSystemPrompt(this.selectedSkillsForRun);
-      const prompt = selectedSkillsPrompt ? `${event.systemPrompt}\n\n${selectedSkillsPrompt}` : event.systemPrompt;
-      return { systemPrompt: clarificationMode ? `${prompt}\n\n${CLARIFICATION_MODE_PROMPT}\n\n${toolContract}` : `${prompt}\n\n${toolContract}` };
+      const selectedSkillsPrompt = formatSelectedSkillsForSystemPrompt(
+        this.selectedSkillsForRun,
+      );
+      const prompt = selectedSkillsPrompt
+        ? `${event.systemPrompt}\n\n${selectedSkillsPrompt}`
+        : event.systemPrompt;
+      return {
+        systemPrompt: clarificationMode
+          ? `${prompt}\n\n${CLARIFICATION_MODE_PROMPT}\n\n${toolContract}`
+          : `${prompt}\n\n${toolContract}`,
+      };
     });
     const hookableHarness = this.harness as unknown as HookableHarness;
     hookableHarness.on("context", (event) => {
@@ -717,20 +1012,31 @@ class AgentHarnessDriverSession implements AgentDriverSession {
       return messages === event.messages ? undefined : { messages };
     });
     if (clarificationMode) {
-      hookableHarness.on("tool_call", async (event) => clarificationToolNames.has(event.toolName)
-        ? undefined
-        : { block: true, reason: "Clarification mode only permits read-only exploration and clarification tools." });
+      hookableHarness.on("tool_call", async (event) =>
+        clarificationToolNames.has(event.toolName)
+          ? undefined
+          : {
+              block: true,
+              reason:
+                "Clarification mode only permits read-only exploration and clarification tools.",
+            },
+      );
     }
-    this.unsubscribe = this.harness.subscribe((event) => this.handleHarnessEvent(event));
+    this.unsubscribe = this.harness.subscribe((event) =>
+      this.handleHarnessEvent(event),
+    );
     if (preflightOperation || context.connectorToolPolicies.length > 0) {
       hookableHarness.on("tool_call", async (event) => {
         const operationRequest = {
           toolName: event.toolName,
           input: event.input,
         };
-        const decision = connectorPreflightOperation(this.context, operationRequest) ?? await preflightOperation?.(this.context, operationRequest);
+        const decision =
+          connectorPreflightOperation(this.context, operationRequest) ??
+          (await preflightOperation?.(this.context, operationRequest));
         if (!decision) return undefined;
-        if (decision.type === "block") return { block: true, reason: decision.reason };
+        if (decision.type === "block")
+          return { block: true, reason: decision.reason };
         if (decision.type === "allow") {
           const baseline = decision.sessionFileBaseline;
           if (baseline && !this.persistedFileBaselinePaths.has(baseline.path)) {
@@ -742,7 +1048,12 @@ class AgentHarnessDriverSession implements AgentDriverSession {
         const definition = decision.approval;
         const { sessionFileBaseline, ...approvalDefinition } = definition;
         const messageId = this.activeAssistantMessageId;
-        if (!messageId) return { block: true, reason: "Unable to request operation approval without an active assistant message" };
+        if (!messageId)
+          return {
+            block: true,
+            reason:
+              "Unable to request operation approval without an active assistant message",
+          };
         const request: OperationApprovalRequest = {
           ...approvalDefinition,
           approvalId: randomUUID(),
@@ -750,48 +1061,84 @@ class AgentHarnessDriverSession implements AgentDriverSession {
           toolName: event.toolName,
           input: event.input,
         };
-        const automaticallyApproved = request.requiresElevation !== true
-          && (this.toolApprovalMode === "bypass" || (this.toolApprovalMode === "auto" && request.severity === "normal"));
+        const automaticallyApproved =
+          request.requiresElevation !== true &&
+          (this.toolApprovalMode === "bypass" ||
+            (this.toolApprovalMode === "auto" &&
+              request.severity === "normal"));
         let resolution: OperationApprovalResolution;
         if (automaticallyApproved) {
-          await (this.context.session as unknown as CustomEntrySession).appendCustomEntry(
-            OPERATION_APPROVAL_JOURNAL_TYPE,
-            { callId: event.toolCallId, approval: request } satisfies PersistedOperationApproval,
-          );
+          await (
+            this.context.session as unknown as CustomEntrySession
+          ).appendCustomEntry(OPERATION_APPROVAL_JOURNAL_TYPE, {
+            callId: event.toolCallId,
+            approval: request,
+          } satisfies PersistedOperationApproval);
           resolution = { approvalId: request.approvalId, approved: true };
         } else {
-          let resolveApproval: ((value: OperationApprovalResolution) => void) | undefined;
-          const pendingResolution = new Promise<OperationApprovalResolution>((resolve) => {
-            resolveApproval = resolve;
-            this.pendingApprovals.set(request.approvalId, { messageId, request, resolve });
-          });
+          let resolveApproval:
+            ((value: OperationApprovalResolution) => void) | undefined;
+          const pendingResolution = new Promise<OperationApprovalResolution>(
+            (resolve) => {
+              resolveApproval = resolve;
+              this.pendingApprovals.set(request.approvalId, {
+                messageId,
+                request,
+                resolve,
+              });
+            },
+          );
           try {
-            await (this.context.session as unknown as CustomEntrySession).appendCustomEntry(
-              OPERATION_APPROVAL_JOURNAL_TYPE,
-              { callId: event.toolCallId, approval: request } satisfies PersistedOperationApproval,
-            );
+            await (
+              this.context.session as unknown as CustomEntrySession
+            ).appendCustomEntry(OPERATION_APPROVAL_JOURNAL_TYPE, {
+              callId: event.toolCallId,
+              approval: request,
+            } satisfies PersistedOperationApproval);
           } catch (cause) {
             this.pendingApprovals.delete(request.approvalId);
-            resolveApproval?.({ approvalId: request.approvalId, approved: false, feedback: "Approval request could not be persisted" });
+            resolveApproval?.({
+              approvalId: request.approvalId,
+              approved: false,
+              feedback: "Approval request could not be persisted",
+            });
             throw cause;
           }
           if (this.pendingApprovals.has(request.approvalId)) {
-            this.emit({ type: "approval.requested", messageId, approval: request });
+            this.emit({
+              type: "approval.requested",
+              messageId,
+              approval: request,
+            });
           }
           resolution = await pendingResolution;
         }
-        const persisted: PersistedOperationApproval = { callId: event.toolCallId, approval: request, resolution };
+        const persisted: PersistedOperationApproval = {
+          callId: event.toolCallId,
+          approval: request,
+          resolution,
+        };
         this.approvalResults.set(event.toolCallId, persisted);
-        await (this.context.session as unknown as CustomEntrySession).appendCustomEntry(OPERATION_APPROVAL_JOURNAL_TYPE, persisted);
+        await (
+          this.context.session as unknown as CustomEntrySession
+        ).appendCustomEntry(OPERATION_APPROVAL_JOURNAL_TYPE, persisted);
         if (!resolution.approved) {
-          return { block: true, reason: resolution.feedback ? `Operation rejected by the user: ${resolution.feedback}` : "Operation rejected by the user" };
+          return {
+            block: true,
+            reason: resolution.feedback
+              ? `Operation rejected by the user: ${resolution.feedback}`
+              : "Operation rejected by the user",
+          };
         }
         if (request.requiresElevation && accessController) {
           const accessKey = this.toolCallAccessKey(event.toolCallId);
           accessController.grantOutsideWorkspaceAccess(accessKey);
           this.elevatedToolCallIds.add(accessKey);
         }
-        if (sessionFileBaseline && !this.persistedFileBaselinePaths.has(sessionFileBaseline.path)) {
+        if (
+          sessionFileBaseline &&
+          !this.persistedFileBaselinePaths.has(sessionFileBaseline.path)
+        ) {
           this.persistedFileBaselinePaths.add(sessionFileBaseline.path);
           this.pendingFileBaselines.set(event.toolCallId, sessionFileBaseline);
         }
@@ -805,14 +1152,24 @@ class AgentHarnessDriverSession implements AgentDriverSession {
           this.persistedFileBaselinePaths.delete(baseline.path);
           return undefined;
         }
-        const persisted: PersistedSessionFileBaseline = { callId: event.toolCallId, baseline };
-        await (this.context.session as unknown as CustomEntrySession).appendCustomEntry(SESSION_FILE_BASELINE_JOURNAL_TYPE, persisted);
+        const persisted: PersistedSessionFileBaseline = {
+          callId: event.toolCallId,
+          baseline,
+        };
+        await (
+          this.context.session as unknown as CustomEntrySession
+        ).appendCustomEntry(SESSION_FILE_BASELINE_JOURNAL_TYPE, persisted);
         return undefined;
       });
     }
     if (clarificationMode) {
       hookableHarness.on("tool_result", async (event) => {
-        if (event.isError || (event.toolName !== "ask_clarifying_question" && event.toolName !== "complete_clarification")) return undefined;
+        if (
+          event.isError ||
+          (event.toolName !== "ask_clarifying_question" &&
+            event.toolName !== "complete_clarification")
+        )
+          return undefined;
         return { terminate: true };
       });
     }
@@ -820,14 +1177,17 @@ class AgentHarnessDriverSession implements AgentDriverSession {
 
   private extensionHost?: AgentExtensionHost;
 
-  async initialize(createExtensionHost?: AgentExtensionHostFactory): Promise<void> {
+  async initialize(
+    createExtensionHost?: AgentExtensionHostFactory,
+  ): Promise<void> {
     if (!createExtensionHost) return;
     this.extensionHost = await createExtensionHost.create({
       record: this.context.record,
       env: this.context.env,
       session: this.context.session,
       harness: this.harness,
-      contextCompactionInstructions: this.context.profile.contextCompactionInstructions,
+      contextCompactionInstructions:
+        this.context.profile.contextCompactionInstructions,
       subagentRunner: this.context.subagentRunner,
       registerTools: async (tools) => {
         const managedHarness = this.harness as unknown as ToolManagingHarness;
@@ -835,21 +1195,36 @@ class AgentHarnessDriverSession implements AgentDriverSession {
         const existingNames = new Set(existing.map((tool) => tool.name));
         const additions = tools
           .filter((tool) => !existingNames.has(tool.name))
-          .map((tool) => withToolCallAccessScope(tool, this.accessController, this.accessScopeId));
+          .map((tool) =>
+            withToolCallAccessScope(
+              tool,
+              this.accessController,
+              this.accessScopeId,
+            ),
+          );
         if (additions.length === 0) return;
         const active = isClarificationMode(this.context)
           ? managedHarness.getActiveTools().map((tool) => tool.name)
-          : [...managedHarness.getActiveTools().map((tool) => tool.name), ...additions.map((tool) => tool.name)];
+          : [
+              ...managedHarness.getActiveTools().map((tool) => tool.name),
+              ...additions.map((tool) => tool.name),
+            ];
         await managedHarness.setTools([...existing, ...additions], active);
       },
       getCurrentPrompt: () => this.currentPrompt,
+      expertTeamDelegates: this.context.expertTeamDelegates,
       emit: (event) => this.emit({ type: "extension.event", event }),
     });
     await this.extensionHost.activate();
     if (this.clarificationMode) {
       const hookableHarness = this.harness as unknown as HookableHarness;
       hookableHarness.on("tool_result", async (event) => {
-        if (event.isError || (event.toolName !== "ask_clarifying_question" && event.toolName !== "complete_clarification")) return undefined;
+        if (
+          event.isError ||
+          (event.toolName !== "ask_clarifying_question" &&
+            event.toolName !== "complete_clarification")
+        )
+          return undefined;
         return { terminate: true };
       });
     }
@@ -860,18 +1235,29 @@ class AgentHarnessDriverSession implements AgentDriverSession {
     return () => this.listeners.delete(listener);
   }
 
-  private async requestUserInput(callId: string, params: UserRequestParams, signal?: AbortSignal): Promise<MessageUserRequest> {
-    if (this.pendingUserRequests.size > 0) throw new Error("Another user request is already awaiting a response");
-    const messageId = this.activeAssistantMessageId ?? this.toolMessageIds.get(callId);
-    if (!messageId) throw new Error("Unable to request user input without an active assistant message");
+  private async requestUserInput(
+    callId: string,
+    params: UserRequestParams,
+    signal?: AbortSignal,
+  ): Promise<MessageUserRequest> {
+    if (this.pendingUserRequests.size > 0)
+      throw new Error("Another user request is already awaiting a response");
+    const messageId =
+      this.activeAssistantMessageId ?? this.toolMessageIds.get(callId);
+    if (!messageId)
+      throw new Error(
+        "Unable to request user input without an active assistant message",
+      );
     const fieldIds = new Set<string>();
     for (const field of params.fields) {
-      if (fieldIds.has(field.id)) throw new Error("User request field ids must be unique");
+      if (fieldIds.has(field.id))
+        throw new Error("User request field ids must be unique");
       fieldIds.add(field.id);
       if (field.type === "select" || field.type === "multi-select") {
         const optionValues = new Set<string>();
         for (const option of field.options) {
-          if (optionValues.has(option.value)) throw new Error("User request option values must be unique");
+          if (optionValues.has(option.value))
+            throw new Error("User request option values must be unique");
           optionValues.add(option.value);
         }
       }
@@ -884,17 +1270,35 @@ class AgentHarnessDriverSession implements AgentDriverSession {
       description: params.description,
       fields: params.fields as UserRequestField[],
     };
-    await (this.context.session as unknown as CustomEntrySession).appendCustomEntry(USER_REQUEST_JOURNAL_TYPE, { callId, request } satisfies PersistedUserRequest);
-    const onAbort = () => this.resolvePendingUserRequests("The request was cancelled because the agent stopped");
+    await (
+      this.context.session as unknown as CustomEntrySession
+    ).appendCustomEntry(USER_REQUEST_JOURNAL_TYPE, {
+      callId,
+      request,
+    } satisfies PersistedUserRequest);
+    const onAbort = () =>
+      this.resolvePendingUserRequests(
+        "The request was cancelled because the agent stopped",
+      );
     signal?.addEventListener("abort", onAbort, { once: true });
     try {
       const resolution = await new Promise<UserRequestResolution>((resolve) => {
-        this.pendingUserRequests.set(request.requestId, { messageId, request, resolve });
+        this.pendingUserRequests.set(request.requestId, {
+          messageId,
+          request,
+          resolve,
+        });
         this.emit({ type: "user-request.requested", messageId, request });
       });
-      const persisted = { callId, request, resolution } satisfies PersistedUserRequest;
+      const persisted = {
+        callId,
+        request,
+        resolution,
+      } satisfies PersistedUserRequest;
       this.userRequestResults.set(callId, persisted);
-      await (this.context.session as unknown as CustomEntrySession).appendCustomEntry(USER_REQUEST_JOURNAL_TYPE, persisted);
+      await (
+        this.context.session as unknown as CustomEntrySession
+      ).appendCustomEntry(USER_REQUEST_JOURNAL_TYPE, persisted);
       return { request, resolution };
     } finally {
       signal?.removeEventListener("abort", onAbort);
@@ -912,7 +1316,12 @@ class AgentHarnessDriverSession implements AgentDriverSession {
           this.activeUserSubmission = command.submission;
           const response = await this.harness.prompt(
             command.text,
-            command.submission ? { messageId: command.submission.messageId, timestamp: command.submission.submittedAt } : undefined,
+            command.submission
+              ? {
+                  messageId: command.submission.messageId,
+                  timestamp: command.submission.submittedAt,
+                }
+              : undefined,
           );
           await this.recoverContextOverflow(response);
           return;
@@ -931,30 +1340,52 @@ class AgentHarnessDriverSession implements AgentDriverSession {
         return;
       case "cancel":
         this.resolvePendingApprovals(false, "Operation cancelled");
-        this.resolvePendingUserRequests("The request was cancelled because the agent stopped");
+        this.resolvePendingUserRequests(
+          "The request was cancelled because the agent stopped",
+        );
         await this.harness.abort();
         return;
       case "resolve-approval": {
-        const pending = this.pendingApprovals.get(command.resolution.approvalId);
-        if (!pending) throw new Error("Operation approval is no longer pending");
+        const pending = this.pendingApprovals.get(
+          command.resolution.approvalId,
+        );
+        if (!pending)
+          throw new Error("Operation approval is no longer pending");
         this.pendingApprovals.delete(command.resolution.approvalId);
         pending.resolve(command.resolution);
-        this.emit({ type: "approval.resolved", messageId: pending.messageId, resolution: command.resolution });
+        this.emit({
+          type: "approval.resolved",
+          messageId: pending.messageId,
+          resolution: command.resolution,
+        });
         return;
       }
       case "set-tool-approval-mode":
         this.toolApprovalMode = command.mode;
         if (command.mode === "auto") this.resolvePendingNormalApprovals();
-        if (command.mode === "bypass") this.resolvePendingApprovals(true, "Automatically approved by Bypass permissions");
+        if (command.mode === "bypass")
+          this.resolvePendingApprovals(
+            true,
+            "Automatically approved by Bypass permissions",
+          );
         await this.context.subagentRunner?.setToolApprovalMode?.(command.mode);
         return;
       case "resolve-user-request": {
-        const pending = this.pendingUserRequests.get(command.resolution.requestId);
+        const pending = this.pendingUserRequests.get(
+          command.resolution.requestId,
+        );
         if (!pending) throw new Error("User request is no longer pending");
-        const resolution = validateUserRequestResolution(pending.request, command.resolution);
+        const resolution = validateUserRequestResolution(
+          pending.request,
+          command.resolution,
+        );
         this.pendingUserRequests.delete(resolution.requestId);
         pending.resolve(resolution);
-        this.emit({ type: "user-request.resolved", messageId: pending.messageId, resolution });
+        this.emit({
+          type: "user-request.resolved",
+          messageId: pending.messageId,
+          resolution,
+        });
         return;
       }
       case "set-model": {
@@ -967,32 +1398,55 @@ class AgentHarnessDriverSession implements AgentDriverSession {
         await this.harness.setThinkingLevel(command.level);
         return;
       case "compact": {
-        if (command.trigger === "automatic" && !(await this.shouldAutomaticallyCompact())) return;
-        this.emit({ type: "context.compaction.started", trigger: command.trigger });
+        if (
+          command.trigger === "automatic" &&
+          !(await this.shouldAutomaticallyCompact())
+        )
+          return;
+        this.emit({
+          type: "context.compaction.started",
+          trigger: command.trigger,
+        });
         try {
           await this.harness.compact(command.instructions);
           const compaction = await this.persistCompaction(command.trigger);
           this.emit({ type: "context.compaction.completed", compaction });
         } catch (cause) {
-          const message = cause instanceof Error ? cause.message : String(cause);
-          if (command.trigger === "automatic" && message === "Nothing to compact") return;
-          this.emit({ type: "context.compaction.failed", trigger: command.trigger, message });
+          const message =
+            cause instanceof Error ? cause.message : String(cause);
+          if (
+            command.trigger === "automatic" &&
+            message === "Nothing to compact"
+          )
+            return;
+          this.emit({
+            type: "context.compaction.failed",
+            trigger: command.trigger,
+            message,
+          });
           throw cause;
         }
         return;
       }
       case "extension.interact":
-        if (!this.extensionHost) throw new Error("Agent extensions are unavailable for this session");
+        if (!this.extensionHost)
+          throw new Error("Agent extensions are unavailable for this session");
         await this.extensionHost.interact(command.interaction);
         return;
     }
   }
 
   dispose(): void {
-    for (const toolCallId of this.elevatedToolCallIds) this.accessController?.revokeOutsideWorkspaceAccess(toolCallId);
+    for (const toolCallId of this.elevatedToolCallIds)
+      this.accessController?.revokeOutsideWorkspaceAccess(toolCallId);
     this.elevatedToolCallIds.clear();
-    this.resolvePendingApprovals(false, "Operation cancelled because the session was closed");
-    this.resolvePendingUserRequests("The request was cancelled because the session was closed");
+    this.resolvePendingApprovals(
+      false,
+      "Operation cancelled because the session was closed",
+    );
+    this.resolvePendingUserRequests(
+      "The request was cancelled because the session was closed",
+    );
     this.unsubscribe();
     if (this.extensionHost) void this.extensionHost.dispose();
   }
@@ -1021,7 +1475,9 @@ class AgentHarnessDriverSession implements AgentDriverSession {
     );
   }
 
-  private async recoverContextOverflow(response: AssistantMessage): Promise<void> {
+  private async recoverContextOverflow(
+    response: AssistantMessage,
+  ): Promise<void> {
     if (!this.isCurrentModelOverflow(response)) return;
     if (response.stopReason === "stop") {
       await this.compactForOverflow();
@@ -1031,7 +1487,8 @@ class AgentHarnessDriverSession implements AgentDriverSession {
       this.emit({
         type: "context.compaction.failed",
         trigger: "overflow",
-        message: "Context overflow recovery failed after one compact-and-retry attempt. Reduce the task scope or switch to a larger-context model.",
+        message:
+          "Context overflow recovery failed after one compact-and-retry attempt. Reduce the task scope or switch to a larger-context model.",
       });
       return;
     }
@@ -1039,7 +1496,8 @@ class AgentHarnessDriverSession implements AgentDriverSession {
     this.overflowRecoveryAttempted = true;
     let recoveredFailureEntryId: string;
     try {
-      ({ failedMessageEntryId: recoveredFailureEntryId } = await this.harness.prepareContextOverflowRecovery());
+      ({ failedMessageEntryId: recoveredFailureEntryId } =
+        await this.harness.prepareContextOverflowRecovery());
     } catch (cause) {
       this.completeSuppressedOverflowMessage();
       this.emit({
@@ -1050,8 +1508,12 @@ class AgentHarnessDriverSession implements AgentDriverSession {
       return;
     }
 
-    const recoveredFailureMessageId = this.suppressedOverflowMessage?.message.id;
-    const compacted = await this.compactForOverflow(recoveredFailureEntryId, recoveredFailureMessageId);
+    const recoveredFailureMessageId =
+      this.suppressedOverflowMessage?.message.id;
+    const compacted = await this.compactForOverflow(
+      recoveredFailureEntryId,
+      recoveredFailureMessageId,
+    );
     if (!compacted) {
       this.completeSuppressedOverflowMessage();
       return;
@@ -1062,11 +1524,17 @@ class AgentHarnessDriverSession implements AgentDriverSession {
     await this.recoverContextOverflow(retryResponse);
   }
 
-  private async compactForOverflow(recoveredFailureEntryId?: string, recoveredFailureMessageId?: string): Promise<boolean> {
+  private async compactForOverflow(
+    recoveredFailureEntryId?: string,
+    recoveredFailureMessageId?: string,
+  ): Promise<boolean> {
     this.emit({ type: "context.compaction.started", trigger: "overflow" });
     try {
       await this.harness.compact();
-      const compaction = await this.persistCompaction("overflow", recoveredFailureEntryId);
+      const compaction = await this.persistCompaction(
+        "overflow",
+        recoveredFailureEntryId,
+      );
       this.emit({
         type: "context.compaction.completed",
         compaction,
@@ -1085,7 +1553,10 @@ class AgentHarnessDriverSession implements AgentDriverSession {
 
   private completeSuppressedOverflowMessage(): void {
     if (!this.suppressedOverflowMessage) return;
-    this.emit({ type: "message.completed", message: this.suppressedOverflowMessage.message });
+    this.emit({
+      type: "message.completed",
+      message: this.suppressedOverflowMessage.message,
+    });
     this.suppressedOverflowMessage = undefined;
   }
 
@@ -1112,10 +1583,16 @@ class AgentHarnessDriverSession implements AgentDriverSession {
       model: this.context.record.model,
       recoveredFailureEntryId,
     };
-    await (this.context.session as unknown as CustomEntrySession).appendCustomEntry(CONTEXT_COMPACTION_JOURNAL_TYPE, persisted);
+    await (
+      this.context.session as unknown as CustomEntrySession
+    ).appendCustomEntry(CONTEXT_COMPACTION_JOURNAL_TYPE, persisted);
     return {
       id: record.id,
-      timestamp: typeof record.timestamp === "string" && !Number.isNaN(Date.parse(record.timestamp)) ? Date.parse(record.timestamp) : Date.now(),
+      timestamp:
+        typeof record.timestamp === "string" &&
+        !Number.isNaN(Date.parse(record.timestamp))
+          ? Date.parse(record.timestamp)
+          : Date.now(),
       trigger,
       summary: record.summary,
       tokensBefore: record.tokensBefore,
@@ -1137,52 +1614,100 @@ class AgentHarnessDriverSession implements AgentDriverSession {
   private resolvePendingApprovals(approved: boolean, feedback: string): void {
     for (const [approvalId, pending] of this.pendingApprovals) {
       this.pendingApprovals.delete(approvalId);
-      const resolution: OperationApprovalResolution = { approvalId, approved, feedback };
+      const resolution: OperationApprovalResolution = {
+        approvalId,
+        approved,
+        feedback,
+      };
       pending.resolve(resolution);
-      this.emit({ type: "approval.resolved", messageId: pending.messageId, resolution });
+      this.emit({
+        type: "approval.resolved",
+        messageId: pending.messageId,
+        resolution,
+      });
     }
   }
 
-  private resolvePendingApproval(approvalId: string, approved: boolean, feedback?: string): void {
+  private resolvePendingApproval(
+    approvalId: string,
+    approved: boolean,
+    feedback?: string,
+  ): void {
     const pending = this.pendingApprovals.get(approvalId);
     if (!pending) return;
     this.pendingApprovals.delete(approvalId);
-    const resolution: OperationApprovalResolution = { approvalId, approved, ...(feedback ? { feedback } : {}) };
+    const resolution: OperationApprovalResolution = {
+      approvalId,
+      approved,
+      ...(feedback ? { feedback } : {}),
+    };
     pending.resolve(resolution);
-    this.emit({ type: "approval.resolved", messageId: pending.messageId, resolution });
+    this.emit({
+      type: "approval.resolved",
+      messageId: pending.messageId,
+      resolution,
+    });
   }
 
   private resolvePendingNormalApprovals(): void {
     for (const [approvalId, pending] of this.pendingApprovals) {
-      if (pending.request.severity !== "normal" || pending.request.requiresElevation) continue;
-      this.resolvePendingApproval(approvalId, true, "Automatically approved for this session");
+      if (
+        pending.request.severity !== "normal" ||
+        pending.request.requiresElevation
+      )
+        continue;
+      this.resolvePendingApproval(
+        approvalId,
+        true,
+        "Automatically approved for this session",
+      );
     }
   }
 
   private resolvePendingUserRequests(feedback: string): void {
     for (const [requestId, pending] of this.pendingUserRequests) {
       this.pendingUserRequests.delete(requestId);
-      const resolution: UserRequestResolution = { requestId, status: "cancelled", feedback };
+      const resolution: UserRequestResolution = {
+        requestId,
+        status: "cancelled",
+        feedback,
+      };
       pending.resolve(resolution);
-      this.emit({ type: "user-request.resolved", messageId: pending.messageId, resolution });
+      this.emit({
+        type: "user-request.resolved",
+        messageId: pending.messageId,
+        resolution,
+      });
     }
   }
 
-  private toolDetailsWithInteractions(callId: string, details: unknown): unknown {
+  private toolDetailsWithInteractions(
+    callId: string,
+    details: unknown,
+  ): unknown {
     const approval = this.approvalResults.get(callId);
     const approvalResolution = approval?.resolution;
     const userRequest = this.userRequestResults.get(callId);
     if (!approval && !userRequest) return details;
     return {
       ...(asRecord(details) ?? {}),
-      ...(approval && approvalResolution ? {
-        approval: {
-          ...approval.approval,
-          status: approvalResolution.approved ? "approved" : "rejected",
-          feedback: approvalResolution.feedback,
-        },
-      } : {}),
-      ...(userRequest ? { userRequest: { request: userRequest.request, resolution: userRequest.resolution } } : {}),
+      ...(approval && approvalResolution
+        ? {
+            approval: {
+              ...approval.approval,
+              status: approvalResolution.approved ? "approved" : "rejected",
+              feedback: approvalResolution.feedback,
+            },
+          }
+        : {}),
+      ...(userRequest
+        ? {
+            userRequest: {
+              request: userRequest.request,
+              resolution: userRequest.resolution,
+            },
+          }
+        : {}),
     };
   }
 
@@ -1192,31 +1717,72 @@ class AgentHarnessDriverSession implements AgentDriverSession {
       this.accessController?.revokeOutsideWorkspaceAccess(accessKey);
       this.elevatedToolCallIds.delete(accessKey);
     }
-    if (event.type === "message_start" && (event.message.role === "assistant" || event.message.role === "user")) {
+    if (
+      event.type === "message_start" &&
+      (event.message.role === "assistant" || event.message.role === "user")
+    ) {
       if (event.message.role === "user" && !this.activeUserSubmission) return;
-      const id = this.messageId(event.message, event.message.role === "user" ? this.activeUserSubmission?.messageId : undefined);
+      const id = this.messageId(
+        event.message,
+        event.message.role === "user"
+          ? this.activeUserSubmission?.messageId
+          : undefined,
+      );
       if (event.message.role === "assistant") {
         this.activeAssistantMessageId = id;
         this.emit({
           type: "message.started",
-          message: { id, role: "assistant", status: "streaming", blocks: [], model: this.context.record.model, timestamp: Date.now() },
+          message: {
+            id,
+            role: "assistant",
+            status: "streaming",
+            blocks: [],
+            model: this.context.record.model,
+            timestamp: Date.now(),
+          },
         });
       } else {
-        const message = toConversationMessage(event.message, this.context.record.model, id);
+        const message = toConversationMessage(
+          event.message,
+          this.context.record.model,
+          id,
+        );
         if (message) this.emit({ type: "message.started", message });
       }
       return;
     }
-    if (event.type === "message_update" && event.assistantMessageEvent.type === "text_delta" && this.activeAssistantMessageId) {
-      this.emit({ type: "message.text.delta", messageId: this.activeAssistantMessageId, delta: event.assistantMessageEvent.delta });
+    if (
+      event.type === "message_update" &&
+      event.assistantMessageEvent.type === "text_delta" &&
+      this.activeAssistantMessageId
+    ) {
+      this.emit({
+        type: "message.text.delta",
+        messageId: this.activeAssistantMessageId,
+        delta: event.assistantMessageEvent.delta,
+      });
       return;
     }
-    if (event.type === "message_update" && event.assistantMessageEvent.type === "thinking_delta" && this.activeAssistantMessageId) {
-      this.emit({ type: "message.reasoning.delta", messageId: this.activeAssistantMessageId, delta: event.assistantMessageEvent.delta });
+    if (
+      event.type === "message_update" &&
+      event.assistantMessageEvent.type === "thinking_delta" &&
+      this.activeAssistantMessageId
+    ) {
+      this.emit({
+        type: "message.reasoning.delta",
+        messageId: this.activeAssistantMessageId,
+        delta: event.assistantMessageEvent.delta,
+      });
       return;
     }
-    if (isToolExecutionStart(event) && (this.activeAssistantMessageId ?? this.toolMessageIds.get(event.toolCallId))) {
-      const messageId = this.activeAssistantMessageId ?? this.toolMessageIds.get(event.toolCallId);
+    if (
+      isToolExecutionStart(event) &&
+      (this.activeAssistantMessageId ??
+        this.toolMessageIds.get(event.toolCallId))
+    ) {
+      const messageId =
+        this.activeAssistantMessageId ??
+        this.toolMessageIds.get(event.toolCallId);
       if (!messageId) return;
       this.emit({
         type: "tool.started",
@@ -1227,8 +1793,14 @@ class AgentHarnessDriverSession implements AgentDriverSession {
       });
       return;
     }
-    if (isToolExecutionUpdate(event) && (this.activeAssistantMessageId ?? this.toolMessageIds.get(event.toolCallId))) {
-      const messageId = this.activeAssistantMessageId ?? this.toolMessageIds.get(event.toolCallId);
+    if (
+      isToolExecutionUpdate(event) &&
+      (this.activeAssistantMessageId ??
+        this.toolMessageIds.get(event.toolCallId))
+    ) {
+      const messageId =
+        this.activeAssistantMessageId ??
+        this.toolMessageIds.get(event.toolCallId);
       if (!messageId) return;
       this.emit({
         type: "tool.updated",
@@ -1240,11 +1812,20 @@ class AgentHarnessDriverSession implements AgentDriverSession {
       });
       return;
     }
-    if (isToolExecutionEnd(event) && (this.activeAssistantMessageId ?? this.toolMessageIds.get(event.toolCallId))) {
-      const messageId = this.activeAssistantMessageId ?? this.toolMessageIds.get(event.toolCallId);
+    if (
+      isToolExecutionEnd(event) &&
+      (this.activeAssistantMessageId ??
+        this.toolMessageIds.get(event.toolCallId))
+    ) {
+      const messageId =
+        this.activeAssistantMessageId ??
+        this.toolMessageIds.get(event.toolCallId);
       if (!messageId) return;
       const result = asRecord(event.result);
-      const details = this.toolDetailsWithInteractions(event.toolCallId, result?.details);
+      const details = this.toolDetailsWithInteractions(
+        event.toolCallId,
+        result?.details,
+      );
       this.emit({
         type: "tool.completed",
         messageId,
@@ -1256,13 +1837,22 @@ class AgentHarnessDriverSession implements AgentDriverSession {
       });
       return;
     }
-    if (event.type === "message_end" && (event.message.role === "assistant" || event.message.role === "user")) {
-      const id = event.message.role === "assistant"
-        ? this.activeAssistantMessageId ?? this.messageId(event.message)
-        : this.activeUserSubmission
-          ? this.messageId(event.message, this.activeUserSubmission.messageId)
-          : await this.context.session.getLeafId() ?? this.messageId(event.message);
-      const completed = toConversationMessage(event.message, this.context.record.model, id);
+    if (
+      event.type === "message_end" &&
+      (event.message.role === "assistant" || event.message.role === "user")
+    ) {
+      const id =
+        event.message.role === "assistant"
+          ? (this.activeAssistantMessageId ?? this.messageId(event.message))
+          : this.activeUserSubmission
+            ? this.messageId(event.message, this.activeUserSubmission.messageId)
+            : ((await this.context.session.getLeafId()) ??
+              this.messageId(event.message));
+      const completed = toConversationMessage(
+        event.message,
+        this.context.record.model,
+        id,
+      );
       if (event.message.role === "user") {
         if (completed) {
           this.emit({ type: "message.started", message: completed });
@@ -1275,8 +1865,10 @@ class AgentHarnessDriverSession implements AgentDriverSession {
         event.message.stopReason !== "stop" &&
         !this.overflowRecoveryAttempted &&
         this.isCurrentModelOverflow(event.message);
-      if (completed && suppressForRecovery) this.suppressedOverflowMessage = { message: completed };
-      else if (completed) this.emit({ type: "message.completed", message: completed });
+      if (completed && suppressForRecovery)
+        this.suppressedOverflowMessage = { message: completed };
+      else if (completed)
+        this.emit({ type: "message.completed", message: completed });
       if (event.message.role === "assistant") {
         let hasToolCalls = false;
         for (const block of completed?.blocks ?? []) {
@@ -1291,14 +1883,25 @@ class AgentHarnessDriverSession implements AgentDriverSession {
   }
 }
 
-export function createAgentHarnessDriver(options: AgentHarnessDriverOptions): AgentDriver {
-  const baseFeatures = options.features ?? ["steer", "follow-up", "thinking", "compact", ...(options.createExtensionHost ? ["extensions" as const] : [])];
-  const features = baseFeatures.includes("user-request") ? baseFeatures : [...baseFeatures, "user-request" as const];
+export function createAgentHarnessDriver(
+  options: AgentHarnessDriverOptions,
+): AgentDriver {
+  const baseFeatures = options.features ?? [
+    "steer",
+    "follow-up",
+    "thinking",
+    "compact",
+    ...(options.createExtensionHost ? ["extensions" as const] : []),
+  ];
+  const features = baseFeatures.includes("user-request")
+    ? baseFeatures
+    : [...baseFeatures, "user-request" as const];
   return {
     id: options.id,
     features,
     async createSession(context) {
-      const systemPromptContribution = await options.systemPromptContribution?.(context) ?? "";
+      const systemPromptContribution =
+        (await options.systemPromptContribution?.(context)) ?? "";
       const session = new AgentHarnessDriverSession(
         context,
         options.createTools(context),
@@ -1307,17 +1910,23 @@ export function createAgentHarnessDriver(options: AgentHarnessDriverOptions): Ag
         await persistedBaselinePaths(context),
         systemPromptContribution,
       );
-      await session.initialize(context.executionKind === "subagent" ? undefined : options.createExtensionHost);
+      await session.initialize(
+        context.executionKind === "subagent"
+          ? undefined
+          : options.createExtensionHost,
+      );
       return session;
     },
   };
 }
 
-export function createGenericAgentDriver(options: {
-  createExtensionHost?: AgentExtensionHostFactory;
-  createTools?: (context: AgentDriverSessionContext) => AgentTool[];
-  preflightOperation?: AgentHarnessDriverOptions["preflightOperation"];
-} = {}): AgentDriver {
+export function createGenericAgentDriver(
+  options: {
+    createExtensionHost?: AgentExtensionHostFactory;
+    createTools?: (context: AgentDriverSessionContext) => AgentTool[];
+    preflightOperation?: AgentHarnessDriverOptions["preflightOperation"];
+  } = {},
+): AgentDriver {
   return createAgentHarnessDriver({
     id: "generic",
     createTools: options.createTools ?? (() => []),

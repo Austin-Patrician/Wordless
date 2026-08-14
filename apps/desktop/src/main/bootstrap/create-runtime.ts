@@ -4,7 +4,10 @@ import { app } from "electron";
 import { AgentExtensionManager } from "@wordless/agent-extension-runtime";
 import { contextCompactionExtension } from "@wordless/agent-extension-context-compaction";
 import { planModeExtension } from "@wordless/agent-extension-plan-mode";
-import { subagentExtension } from "@wordless/agent-extension-subagent";
+import {
+  expertTeamExtension,
+  subagentExtension,
+} from "@wordless/agent-extension-subagent";
 import { createCodingAgentDriver } from "@wordless/agent-driver-coding";
 import { createPresentationAgentDriver } from "@wordless/agent-driver-presentation";
 import { createSpreadsheetAgentDriver } from "@wordless/agent-driver-spreadsheet";
@@ -29,7 +32,12 @@ export function createDesktopRuntime(userData: string, office: OfficeCliService,
   const resourcesRoot = app.isPackaged ? process.resourcesPath : path.resolve(__dirname, "../../resources");
   const extensions = new AgentExtensionManager({
     path: path.join(userData, "agent-extensions.json"),
-    definitions: [planModeExtension, subagentExtension, contextCompactionExtension],
+    definitions: [
+      planModeExtension,
+      subagentExtension,
+      expertTeamExtension,
+      contextCompactionExtension,
+    ],
   });
   const workspaceSearch = new WorkspaceSearchService({
     ...(app.isPackaged ? {
@@ -56,6 +64,7 @@ export function createDesktopRuntime(userData: string, office: OfficeCliService,
     workspaceSearch,
     drivers: createAgentDriverRegistry([
       createGenericAgentDriver({
+        createExtensionHost: extensions,
         createTools: (context) => [
           ...createHeadlessCodingTools(context.env, context.workspaceSearch),
           ...(context.profile.reference.id === "data" ? createDataAnalysisTools(dataAnalysis, {

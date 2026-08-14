@@ -1,10 +1,17 @@
-import type { AgentTool, ExecutionEnv, Session, SessionMetadata, ThinkingLevel } from "@wordless/agent";
+import type {
+  AgentTool,
+  ExecutionEnv,
+  Session,
+  SessionMetadata,
+  ThinkingLevel,
+} from "@wordless/agent";
 import type { Api, Model, Models } from "@wordless/ai";
 import type { WorkspaceSearchProvider } from "@wordless/workspace-search";
 import type {
   AgentExtensionEvent,
   AgentExtensionInteraction,
   SubagentRunner,
+  SubagentRoleDefinition,
 } from "@wordless/agent-extension-sdk";
 import type {
   AgentDriverId,
@@ -12,6 +19,8 @@ import type {
   ConversationUsage,
   ContextCompactionRecord,
   ContextCompactionTrigger,
+  ExpertExecutionProfile,
+  ExpertPortrait,
   MessageAttachmentBlock,
   MessageBlock,
   ModelCapabilities,
@@ -61,7 +70,15 @@ export interface SessionFileBaseline {
   content: string | null;
 }
 
-export interface OperationApprovalDefinition extends Pick<OperationApprovalRequest, "risk" | "severity" | "summary" | "preview" | "matchedRules" | "requiresElevation"> {
+export interface OperationApprovalDefinition extends Pick<
+  OperationApprovalRequest,
+  | "risk"
+  | "severity"
+  | "summary"
+  | "preview"
+  | "matchedRules"
+  | "requiresElevation"
+> {
   sessionFileBaseline?: SessionFileBaseline;
 }
 
@@ -86,7 +103,8 @@ export interface OperationApprovalResolution {
 }
 
 export const OPERATION_APPROVAL_JOURNAL_TYPE = "wordless.operation-approval";
-export const SESSION_FILE_BASELINE_JOURNAL_TYPE = "wordless.session-file-baseline";
+export const SESSION_FILE_BASELINE_JOURNAL_TYPE =
+  "wordless.session-file-baseline";
 export const USER_REQUEST_JOURNAL_TYPE = "wordless.user-request";
 export const CONTEXT_COMPACTION_JOURNAL_TYPE = "wordless.context-compaction";
 
@@ -144,7 +162,15 @@ type SerializedArtifactReference = {
   version: 1;
   id: string;
   artifactId: string;
-  kind: "presentation" | "document" | "spreadsheet" | "browser" | "report" | "dataset" | "chart" | "image";
+  kind:
+    | "presentation"
+    | "document"
+    | "spreadsheet"
+    | "browser"
+    | "report"
+    | "dataset"
+    | "chart"
+    | "image";
   name: string;
   revision: number;
   surfaceId: string;
@@ -153,29 +179,52 @@ type SerializedArtifactReference = {
   intent?: "reference" | "analyze" | "formula" | "chart" | "pivot";
 };
 
-export function formatPromptWithSkillReferences(parts: readonly UserPromptPart[]): string {
-  return parts.map((part, index) => {
-    if (part.type === "text") return part.text;
-    if (part.type === "workspace-reference") {
-      const reference: SerializedWorkspaceReference = { version: 1, id: `${part.path}:${index}`, path: part.path, name: part.name, kind: part.kind };
-      return `${WORKSPACE_REFERENCE_START}${encodeURIComponent(JSON.stringify(reference))}${WORKSPACE_REFERENCE_END}`;
-    }
-    if (part.type === "artifact-reference") {
-      const reference: SerializedArtifactReference = { version: 1, id: `${part.artifactId}:${part.surfaceId}:${index}`, artifactId: part.artifactId, kind: part.kind, name: part.name, revision: part.revision, surfaceId: part.surfaceId, locator: part.locator, ...(part.locators ? { locators: part.locators } : {}), ...(part.intent ? { intent: part.intent } : {}) };
-      return `${ARTIFACT_REFERENCE_START}${encodeURIComponent(JSON.stringify(reference))}${ARTIFACT_REFERENCE_END}`;
-    }
-    const reference: SerializedSkillReference = {
-      version: 1,
-      id: `${part.skillId}:${index}`,
-      skillId: part.skillId,
-      name: part.name,
-      source: part.source,
-    };
-    return `${SKILL_REFERENCE_START}${encodeURIComponent(JSON.stringify(reference))}${SKILL_REFERENCE_END}`;
-  }).join("");
+export function formatPromptWithSkillReferences(
+  parts: readonly UserPromptPart[],
+): string {
+  return parts
+    .map((part, index) => {
+      if (part.type === "text") return part.text;
+      if (part.type === "workspace-reference") {
+        const reference: SerializedWorkspaceReference = {
+          version: 1,
+          id: `${part.path}:${index}`,
+          path: part.path,
+          name: part.name,
+          kind: part.kind,
+        };
+        return `${WORKSPACE_REFERENCE_START}${encodeURIComponent(JSON.stringify(reference))}${WORKSPACE_REFERENCE_END}`;
+      }
+      if (part.type === "artifact-reference") {
+        const reference: SerializedArtifactReference = {
+          version: 1,
+          id: `${part.artifactId}:${part.surfaceId}:${index}`,
+          artifactId: part.artifactId,
+          kind: part.kind,
+          name: part.name,
+          revision: part.revision,
+          surfaceId: part.surfaceId,
+          locator: part.locator,
+          ...(part.locators ? { locators: part.locators } : {}),
+          ...(part.intent ? { intent: part.intent } : {}),
+        };
+        return `${ARTIFACT_REFERENCE_START}${encodeURIComponent(JSON.stringify(reference))}${ARTIFACT_REFERENCE_END}`;
+      }
+      const reference: SerializedSkillReference = {
+        version: 1,
+        id: `${part.skillId}:${index}`,
+        skillId: part.skillId,
+        name: part.name,
+        source: part.source,
+      };
+      return `${SKILL_REFERENCE_START}${encodeURIComponent(JSON.stringify(reference))}${SKILL_REFERENCE_END}`;
+    })
+    .join("");
 }
 
-export function selectedSkillIdsFromPromptParts(parts: readonly UserPromptPart[]): string[] {
+export function selectedSkillIdsFromPromptParts(
+  parts: readonly UserPromptPart[],
+): string[] {
   const seen = new Set<string>();
   return parts.flatMap((part) => {
     if (part.type !== "skill-reference" || seen.has(part.skillId)) return [];
@@ -184,7 +233,9 @@ export function selectedSkillIdsFromPromptParts(parts: readonly UserPromptPart[]
   });
 }
 
-function parseSkillReference(value: string): SerializedSkillReference | undefined {
+function parseSkillReference(
+  value: string,
+): SerializedSkillReference | undefined {
   try {
     const parsed = JSON.parse(decodeURIComponent(value)) as unknown;
     if (
@@ -201,7 +252,8 @@ function parseSkillReference(value: string): SerializedSkillReference | undefine
       typeof parsed.skillId !== "string" ||
       typeof parsed.name !== "string" ||
       typeof parsed.source !== "string"
-    ) return undefined;
+    )
+      return undefined;
     return parsed as SerializedSkillReference;
   } catch {
     return undefined;
@@ -209,16 +261,26 @@ function parseSkillReference(value: string): SerializedSkillReference | undefine
 }
 
 export function stripPromptSkillReferences(text: string): string {
-  const pattern = new RegExp(`${SKILL_REFERENCE_START}([^<]*)${SKILL_REFERENCE_END}`, "g");
-  return text.replace(pattern, (marker, encoded: string) => parseSkillReference(encoded) ? "" : marker);
+  const pattern = new RegExp(
+    `${SKILL_REFERENCE_START}([^<]*)${SKILL_REFERENCE_END}`,
+    "g",
+  );
+  return text.replace(pattern, (marker, encoded: string) =>
+    parseSkillReference(encoded) ? "" : marker,
+  );
 }
 
 export function formatPromptArtifactReferencesForModel(text: string): string {
-  const pattern = new RegExp(`${ARTIFACT_REFERENCE_START}([^<]*)${ARTIFACT_REFERENCE_END}`, "g");
+  const pattern = new RegExp(
+    `${ARTIFACT_REFERENCE_START}([^<]*)${ARTIFACT_REFERENCE_END}`,
+    "g",
+  );
   return text.replace(pattern, (marker, encoded: string) => {
     const reference = parseArtifactReference(encoded);
     if (!reference) return marker;
-    const locators = reference.locators?.length ? reference.locators : [reference.locator];
+    const locators = reference.locators?.length
+      ? reference.locators
+      : [reference.locator];
     return [
       "<wordless_artifact_reference>",
       `artifact_id=${reference.artifactId}`,
@@ -234,26 +296,47 @@ export function formatPromptArtifactReferencesForModel(text: string): string {
 
 function projectPromptSkillReferences(text: string): MessageBlock[] {
   const blocks: MessageBlock[] = [];
-  const pattern = new RegExp(`${SKILL_REFERENCE_START}([^<]*)${SKILL_REFERENCE_END}`, "g");
+  const pattern = new RegExp(
+    `${SKILL_REFERENCE_START}([^<]*)${SKILL_REFERENCE_END}`,
+    "g",
+  );
   let cursor = 0;
   for (const match of text.matchAll(pattern)) {
     const reference = parseSkillReference(match[1] ?? "");
     if (!reference) continue;
     const index = match.index ?? 0;
-    if (index > cursor) blocks.push({ type: "text", text: text.slice(cursor, index) });
-    blocks.push({ type: "skill-reference", id: reference.id, skillId: reference.skillId, name: reference.name, source: reference.source });
+    if (index > cursor)
+      blocks.push({ type: "text", text: text.slice(cursor, index) });
+    blocks.push({
+      type: "skill-reference",
+      id: reference.id,
+      skillId: reference.skillId,
+      name: reference.name,
+      source: reference.source,
+    });
     cursor = index + match[0].length;
   }
-  if (cursor < text.length) blocks.push({ type: "text", text: text.slice(cursor) });
+  if (cursor < text.length)
+    blocks.push({ type: "text", text: text.slice(cursor) });
   return blocks;
 }
 
-function parseWorkspaceReference(value: string): SerializedWorkspaceReference | undefined {
+function parseWorkspaceReference(
+  value: string,
+): SerializedWorkspaceReference | undefined {
   try {
     const parsed = JSON.parse(decodeURIComponent(value)) as unknown;
-    if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) return undefined;
+    if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed))
+      return undefined;
     const valueRecord = parsed as Record<string, unknown>;
-    if (valueRecord.version !== 1 || typeof valueRecord.id !== "string" || typeof valueRecord.path !== "string" || typeof valueRecord.name !== "string" || (valueRecord.kind !== "file" && valueRecord.kind !== "directory")) return undefined;
+    if (
+      valueRecord.version !== 1 ||
+      typeof valueRecord.id !== "string" ||
+      typeof valueRecord.path !== "string" ||
+      typeof valueRecord.name !== "string" ||
+      (valueRecord.kind !== "file" && valueRecord.kind !== "directory")
+    )
+      return undefined;
     return valueRecord as SerializedWorkspaceReference;
   } catch {
     return undefined;
@@ -261,7 +344,10 @@ function parseWorkspaceReference(value: string): SerializedWorkspaceReference | 
 }
 
 export function formatPromptWorkspaceReferencesForModel(text: string): string {
-  const pattern = new RegExp(`${WORKSPACE_REFERENCE_START}([^<]*)${WORKSPACE_REFERENCE_END}`, "g");
+  const pattern = new RegExp(
+    `${WORKSPACE_REFERENCE_START}([^<]*)${WORKSPACE_REFERENCE_END}`,
+    "g",
+  );
   return text.replace(pattern, (marker, encoded: string) => {
     const reference = parseWorkspaceReference(encoded);
     if (!reference) return marker;
@@ -277,29 +363,77 @@ export function formatPromptWorkspaceReferencesForModel(text: string): string {
 
 function projectPromptWorkspaceReferences(text: string): MessageBlock[] {
   const blocks: MessageBlock[] = [];
-  const pattern = new RegExp(`${WORKSPACE_REFERENCE_START}([^<]*)${WORKSPACE_REFERENCE_END}`, "g");
+  const pattern = new RegExp(
+    `${WORKSPACE_REFERENCE_START}([^<]*)${WORKSPACE_REFERENCE_END}`,
+    "g",
+  );
   let cursor = 0;
   for (const match of text.matchAll(pattern)) {
     const reference = parseWorkspaceReference(match[1] ?? "");
     if (!reference) continue;
     const index = match.index ?? 0;
-    if (index > cursor) blocks.push({ type: "text", text: text.slice(cursor, index) });
-    blocks.push({ type: "workspace-reference", id: reference.id, path: reference.path, name: reference.name, kind: reference.kind });
+    if (index > cursor)
+      blocks.push({ type: "text", text: text.slice(cursor, index) });
+    blocks.push({
+      type: "workspace-reference",
+      id: reference.id,
+      path: reference.path,
+      name: reference.name,
+      kind: reference.kind,
+    });
     cursor = index + match[0].length;
   }
-  if (cursor < text.length) blocks.push({ type: "text", text: text.slice(cursor) });
+  if (cursor < text.length)
+    blocks.push({ type: "text", text: text.slice(cursor) });
   return blocks;
 }
 
-function parseArtifactReference(value: string): SerializedArtifactReference | undefined {
+function parseArtifactReference(
+  value: string,
+): SerializedArtifactReference | undefined {
   try {
     const parsed = JSON.parse(decodeURIComponent(value)) as unknown;
-    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return undefined;
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed))
+      return undefined;
     const record = parsed as Record<string, unknown>;
-    if (record.version !== 1 || typeof record.id !== "string" || typeof record.artifactId !== "string" || typeof record.name !== "string" || typeof record.revision !== "number" || !Number.isInteger(record.revision) || record.revision < 1 || typeof record.surfaceId !== "string" || typeof record.locator !== "string") return undefined;
-    if (record.kind !== "presentation" && record.kind !== "document" && record.kind !== "spreadsheet" && record.kind !== "browser" && record.kind !== "report" && record.kind !== "dataset" && record.kind !== "chart" && record.kind !== "image") return undefined;
-    if (record.locators !== undefined && (!Array.isArray(record.locators) || record.locators.some((locator) => typeof locator !== "string"))) return undefined;
-    if (record.intent !== undefined && record.intent !== "reference" && record.intent !== "analyze" && record.intent !== "formula" && record.intent !== "chart" && record.intent !== "pivot") return undefined;
+    if (
+      record.version !== 1 ||
+      typeof record.id !== "string" ||
+      typeof record.artifactId !== "string" ||
+      typeof record.name !== "string" ||
+      typeof record.revision !== "number" ||
+      !Number.isInteger(record.revision) ||
+      record.revision < 1 ||
+      typeof record.surfaceId !== "string" ||
+      typeof record.locator !== "string"
+    )
+      return undefined;
+    if (
+      record.kind !== "presentation" &&
+      record.kind !== "document" &&
+      record.kind !== "spreadsheet" &&
+      record.kind !== "browser" &&
+      record.kind !== "report" &&
+      record.kind !== "dataset" &&
+      record.kind !== "chart" &&
+      record.kind !== "image"
+    )
+      return undefined;
+    if (
+      record.locators !== undefined &&
+      (!Array.isArray(record.locators) ||
+        record.locators.some((locator) => typeof locator !== "string"))
+    )
+      return undefined;
+    if (
+      record.intent !== undefined &&
+      record.intent !== "reference" &&
+      record.intent !== "analyze" &&
+      record.intent !== "formula" &&
+      record.intent !== "chart" &&
+      record.intent !== "pivot"
+    )
+      return undefined;
     return record as SerializedArtifactReference;
   } catch {
     return undefined;
@@ -308,24 +442,44 @@ function parseArtifactReference(value: string): SerializedArtifactReference | un
 
 function projectPromptArtifactReferences(text: string): MessageBlock[] {
   const blocks: MessageBlock[] = [];
-  const pattern = new RegExp(`${ARTIFACT_REFERENCE_START}([^<]*)${ARTIFACT_REFERENCE_END}`, "g");
+  const pattern = new RegExp(
+    `${ARTIFACT_REFERENCE_START}([^<]*)${ARTIFACT_REFERENCE_END}`,
+    "g",
+  );
   let cursor = 0;
   for (const match of text.matchAll(pattern)) {
     const reference = parseArtifactReference(match[1] ?? "");
     if (!reference) continue;
     const index = match.index ?? 0;
-    if (index > cursor) blocks.push({ type: "text", text: text.slice(cursor, index) });
-    blocks.push({ type: "artifact", artifactId: reference.artifactId, kind: reference.kind, name: reference.name, revision: reference.revision, surfaceId: reference.surfaceId, locator: reference.locator });
+    if (index > cursor)
+      blocks.push({ type: "text", text: text.slice(cursor, index) });
+    blocks.push({
+      type: "artifact",
+      artifactId: reference.artifactId,
+      kind: reference.kind,
+      name: reference.name,
+      revision: reference.revision,
+      surfaceId: reference.surfaceId,
+      locator: reference.locator,
+    });
     cursor = index + match[0].length;
   }
-  if (cursor < text.length) blocks.push({ type: "text", text: text.slice(cursor) });
+  if (cursor < text.length)
+    blocks.push({ type: "text", text: text.slice(cursor) });
   return blocks;
 }
 
-export function splitPromptAttachments(text: string): { text: string; attachments: MessageAttachmentBlock[] } {
+export function splitPromptAttachments(text: string): {
+  text: string;
+  attachments: MessageAttachmentBlock[];
+} {
   const start = text.lastIndexOf(WORKSPACE_ATTACHMENT_START);
-  if (start === -1 || !text.endsWith(WORKSPACE_ATTACHMENT_END)) return { text, attachments: [] };
-  const payload = text.slice(start + WORKSPACE_ATTACHMENT_START.length, -WORKSPACE_ATTACHMENT_END.length);
+  if (start === -1 || !text.endsWith(WORKSPACE_ATTACHMENT_END))
+    return { text, attachments: [] };
+  const payload = text.slice(
+    start + WORKSPACE_ATTACHMENT_START.length,
+    -WORKSPACE_ATTACHMENT_END.length,
+  );
   try {
     const value = JSON.parse(payload) as unknown;
     if (
@@ -338,21 +492,30 @@ export function splitPromptAttachments(text: string): { text: string; attachment
     ) {
       return { text, attachments: [] };
     }
-    const attachments = value.attachments.flatMap((attachment, index): MessageAttachmentBlock[] => {
-      if (
-        typeof attachment !== "object" ||
-        attachment === null ||
-        !("path" in attachment) ||
-        !("name" in attachment) ||
-        !("mediaType" in attachment) ||
-        typeof attachment.path !== "string" ||
-        typeof attachment.name !== "string" ||
-        typeof attachment.mediaType !== "string"
-      ) {
-        return [];
-      }
-      return [{ type: "attachment", id: `${attachment.path}:${index}`, name: attachment.name, mediaType: attachment.mediaType }];
-    });
+    const attachments = value.attachments.flatMap(
+      (attachment, index): MessageAttachmentBlock[] => {
+        if (
+          typeof attachment !== "object" ||
+          attachment === null ||
+          !("path" in attachment) ||
+          !("name" in attachment) ||
+          !("mediaType" in attachment) ||
+          typeof attachment.path !== "string" ||
+          typeof attachment.name !== "string" ||
+          typeof attachment.mediaType !== "string"
+        ) {
+          return [];
+        }
+        return [
+          {
+            type: "attachment",
+            id: `${attachment.path}:${index}`,
+            name: attachment.name,
+            mediaType: attachment.mediaType,
+          },
+        ];
+      },
+    );
     return { text: text.slice(0, start), attachments };
   } catch {
     return { text, attachments: [] };
@@ -363,7 +526,10 @@ export function projectUserMessageContent(content: unknown): MessageBlock[] {
   const blocks: MessageBlock[] = [];
   const appendText = (text: string) => {
     const visibleText = text
-      .replace(/\n*<wordless-presentation(?:\s[^>]*)?>[\s\S]*?<\/wordless-presentation>\s*/gi, "")
+      .replace(
+        /\n*<wordless-presentation(?:\s[^>]*)?>[\s\S]*?<\/wordless-presentation>\s*/gi,
+        "",
+      )
       .trimEnd();
     const parsed = splitPromptAttachments(visibleText);
     for (const artifactBlock of projectPromptArtifactReferences(parsed.text)) {
@@ -371,8 +537,11 @@ export function projectUserMessageContent(content: unknown): MessageBlock[] {
         blocks.push(artifactBlock);
         continue;
       }
-      for (const block of projectPromptWorkspaceReferences(artifactBlock.text)) {
-        if (block.type === "text") blocks.push(...projectPromptSkillReferences(block.text));
+      for (const block of projectPromptWorkspaceReferences(
+        artifactBlock.text,
+      )) {
+        if (block.type === "text")
+          blocks.push(...projectPromptSkillReferences(block.text));
         else blocks.push(block);
       }
     }
@@ -386,7 +555,16 @@ export function projectUserMessageContent(content: unknown): MessageBlock[] {
   if (!Array.isArray(content)) return blocks;
 
   for (const item of content) {
-    if (typeof item !== "object" || item === null || Array.isArray(item) || !("type" in item) || item.type !== "text" || !("text" in item) || typeof item.text !== "string") continue;
+    if (
+      typeof item !== "object" ||
+      item === null ||
+      Array.isArray(item) ||
+      !("type" in item) ||
+      item.type !== "text" ||
+      !("text" in item) ||
+      typeof item.text !== "string"
+    )
+      continue;
     appendText(item.text);
   }
   return blocks;
@@ -421,10 +599,16 @@ export interface AgentProfileDefinition {
   artifactKinds: string[];
   contextCompactionInstructions?: string;
   workbenchId: WorkbenchId;
+  expertSystemPrompt?: string;
 }
 
 export type AgentDriverCommand =
-  | { type: "prompt"; text: string; selectedSkills?: AgentRuntimeSkill[]; submission?: UserMessageSubmission }
+  | {
+      type: "prompt";
+      text: string;
+      selectedSkills?: AgentRuntimeSkill[];
+      submission?: UserMessageSubmission;
+    }
   | { type: "steer"; text: string; submission?: UserMessageSubmission }
   | { type: "follow-up"; text: string; submission?: UserMessageSubmission }
   | { type: "cancel" }
@@ -433,7 +617,11 @@ export type AgentDriverCommand =
   | { type: "resolve-user-request"; resolution: UserRequestResolution }
   | { type: "set-model"; model: ModelReference }
   | { type: "set-thinking"; level: ThinkingLevel }
-  | { type: "compact"; trigger: ContextCompactionTrigger; instructions?: string }
+  | {
+      type: "compact";
+      trigger: ContextCompactionTrigger;
+      instructions?: string;
+    }
   | { type: "extension.interact"; interaction: AgentExtensionInteraction };
 
 export type AgentDriverEventBase =
@@ -441,17 +629,58 @@ export type AgentDriverEventBase =
   | { type: "message.text.delta"; messageId: string; delta: string }
   | { type: "message.reasoning.delta"; messageId: string; delta: string }
   | { type: "message.completed"; message: ConversationMessage }
-  | { type: "tool.started"; messageId: string; callId: string; name: string; input: Record<string, unknown> }
-  | { type: "tool.updated"; messageId: string; callId: string; output: string; details?: unknown; usage?: ConversationUsage }
-  | { type: "tool.completed"; messageId: string; callId: string; output: string; details?: unknown; usage?: ConversationUsage; isError: boolean }
-  | { type: "approval.requested"; messageId: string; approval: OperationApprovalRequest }
-  | { type: "approval.resolved"; messageId: string; resolution: OperationApprovalResolution }
+  | {
+      type: "tool.started";
+      messageId: string;
+      callId: string;
+      name: string;
+      input: Record<string, unknown>;
+    }
+  | {
+      type: "tool.updated";
+      messageId: string;
+      callId: string;
+      output: string;
+      details?: unknown;
+      usage?: ConversationUsage;
+    }
+  | {
+      type: "tool.completed";
+      messageId: string;
+      callId: string;
+      output: string;
+      details?: unknown;
+      usage?: ConversationUsage;
+      isError: boolean;
+    }
+  | {
+      type: "approval.requested";
+      messageId: string;
+      approval: OperationApprovalRequest;
+    }
+  | {
+      type: "approval.resolved";
+      messageId: string;
+      resolution: OperationApprovalResolution;
+    }
   | { type: "user-request.requested"; messageId: string; request: UserRequest }
-  | { type: "user-request.resolved"; messageId: string; resolution: UserRequestResolution }
+  | {
+      type: "user-request.resolved";
+      messageId: string;
+      resolution: UserRequestResolution;
+    }
   | { type: "model.changed"; model: ModelReference }
   | { type: "context.compaction.started"; trigger: ContextCompactionTrigger }
-  | { type: "context.compaction.completed"; compaction: ContextCompactionRecord; recoveredFailureMessageId?: string }
-  | { type: "context.compaction.failed"; trigger: ContextCompactionTrigger; message: string };
+  | {
+      type: "context.compaction.completed";
+      compaction: ContextCompactionRecord;
+      recoveredFailureMessageId?: string;
+    }
+  | {
+      type: "context.compaction.failed";
+      trigger: ContextCompactionTrigger;
+      message: string;
+    };
 
 export type AgentDriverEvent =
   | AgentDriverEventBase
@@ -477,6 +706,16 @@ export interface AgentDriverSessionContext {
   resourceOwnerSessionId?: string;
   allowUserRequests?: boolean;
   subagentRunner?: SubagentRunner;
+  expertTeamDelegates?: Array<{
+    id: string;
+    name: string;
+    portrait: ExpertPortrait;
+    executionProfile: ExpertExecutionProfile;
+    responsibility: string;
+    systemPrompt: string;
+    skillIds: string[];
+    connectorIds: string[];
+  }>;
   toolApprovalMode?: ToolApprovalMode;
 }
 
@@ -490,7 +729,9 @@ export interface AgentDriverSession {
 export interface AgentDriver {
   readonly id: AgentDriverId;
   readonly features: readonly AgentDriverFeature[];
-  createSession(context: AgentDriverSessionContext): Promise<AgentDriverSession>;
+  createSession(
+    context: AgentDriverSessionContext,
+  ): Promise<AgentDriverSession>;
 }
 
 export interface AgentDriverRegistry {
@@ -498,10 +739,13 @@ export interface AgentDriverRegistry {
   list(): AgentDriver[];
 }
 
-export function createAgentDriverRegistry(drivers: AgentDriver[]): AgentDriverRegistry {
+export function createAgentDriverRegistry(
+  drivers: AgentDriver[],
+): AgentDriverRegistry {
   const byId = new Map<AgentDriverId, AgentDriver>();
   for (const driver of drivers) {
-    if (byId.has(driver.id)) throw new Error(`Duplicate Agent Driver: ${driver.id}`);
+    if (byId.has(driver.id))
+      throw new Error(`Duplicate Agent Driver: ${driver.id}`);
     byId.set(driver.id, driver);
   }
   return {

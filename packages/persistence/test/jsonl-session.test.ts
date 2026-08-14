@@ -106,6 +106,22 @@ test("persists session rename, pin state, and deletion", async (context) => {
   database.close();
 });
 
+test("keeps an immutable expert snapshot for existing sessions", async (context) => {
+  const root = await mkdtemp(join(tmpdir(), "wordless-persistence-"));
+  context.after(async () => await rm(root, { force: true, recursive: true }));
+  const database = new WordlessDatabase(join(root, "wordless.db"));
+  const expert = { id: "expert-1", version: "1", name: "Analyst", description: "Evidence-first analysis", portrait: { kind: "builtin" as const, key: "research-analyst" }, kind: "expert" as const, systemPrompt: "Use evidence.", skillIds: ["research"], connectorIds: ["web"], skillCount: 1, connectorCount: 1, source: "local" as const, createdAt: 1, updatedAt: 1 };
+  database.upsertExpert(expert);
+  database.upsertSession({ id: "session-expert", title: "Expert run", workspaceId: null, runtimeRootPath: join(root, "workspace"), mode: "everyday", entryId: "general-work", profile: { id: "general", version: "1" }, driverId: "generic", journalFormat: "wordless-agent-v1", workbenchId: "conversation", accessLevel: "default", model: { connectionId: "openai", modelId: "gpt-4.1-mini" }, thinkingLevel: "medium", journalPath: join(root, "session.jsonl"), connectorIds: ["web"], toolApprovalMode: "manual", pinnedAt: null, expertSelection: { kind: "expert", id: expert.id, version: expert.version }, createdAt: 1, updatedAt: 1 });
+  database.saveSessionExpertSnapshot("session-expert", { selection: { kind: "expert", id: expert.id, version: expert.version }, name: expert.name, systemPrompt: expert.systemPrompt, skillIds: expert.skillIds, connectorIds: expert.connectorIds });
+  database.deleteExpert(expert.id);
+  assert.equal(database.getExpert(expert.id), undefined);
+  assert.deepEqual(database.getSessionExpertSnapshot("session-expert")?.skillIds, ["research"]);
+  database.deleteSession("session-expert");
+  assert.equal(database.getSessionExpertSnapshot("session-expert"), undefined);
+  database.close();
+});
+
 test("merges appearance defaults into preferences written before background support", async (context) => {
   const root = await mkdtemp(join(tmpdir(), "wordless-persistence-"));
   context.after(async () => await rm(root, { force: true, recursive: true }));

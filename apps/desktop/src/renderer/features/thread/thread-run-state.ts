@@ -108,7 +108,11 @@ export function nextAssistantRunActivityUpdateAt(activity: AssistantRunActivity)
 
 export function assistantToolActivity(toolName: string): AssistantToolActivity {
   const normalized = toolName.toLowerCase();
-  if (normalized.includes("delegate_task")) return "delegate";
+  if (
+    normalized.includes("delegate_task") ||
+    normalized.includes("delegate_expert")
+  )
+    return "delegate";
   if (normalized.includes("load_skill")) return "skill";
   if (normalized.includes("connector")) return "connector";
   if (/(bash|shell|powershell|command|exec)/.test(normalized)) return "command";

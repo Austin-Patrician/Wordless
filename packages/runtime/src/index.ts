@@ -1,16 +1,31 @@
 import { createHash, randomUUID } from "node:crypto";
 import { access, mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
-import { basename, extname, isAbsolute, join, relative } from "node:path";
+import {
+  basename,
+  extname,
+  isAbsolute,
+  join,
+  relative,
+  resolve,
+} from "node:path";
 import { fileURLToPath } from "node:url";
 import { createTwoFilesPatch } from "diff";
 import {
   AGENT_EXTENSION_STATE_JOURNAL_TYPE,
   type AgentExtensionManager,
 } from "@wordless/agent-extension-runtime";
-import { isValidFileSecurityPattern, resolveFileSecurityRules } from "@wordless/capability-filesystem";
+import {
+  isValidFileSecurityPattern,
+  resolveFileSecurityRules,
+} from "@wordless/capability-filesystem";
 import { resolveCommandSecurityRules } from "@wordless/capability-shell";
-import type { AgentExtensionInteraction, AgentExtensionSessionState, AgentExtensionSnapshot, JsonObject } from "@wordless/agent-extension-sdk";
+import type {
+  AgentExtensionInteraction,
+  AgentExtensionSessionState,
+  AgentExtensionSnapshot,
+  JsonObject,
+} from "@wordless/agent-extension-sdk";
 import {
   OPERATION_APPROVAL_JOURNAL_TYPE,
   CONTEXT_COMPACTION_JOURNAL_TYPE,
@@ -41,7 +56,10 @@ import {
   clampThinkingLevel,
   getSupportedThinkingLevels,
 } from "@wordless/ai";
-import { calculateCurrentTurnUsage, conversationUsageFromUnknown } from "@wordless/domain";
+import {
+  calculateCurrentTurnUsage,
+  conversationUsageFromUnknown,
+} from "@wordless/domain";
 import type {
   AgentInteractionModeId,
   AppPreferences,
@@ -80,6 +98,18 @@ import type {
   UserMessageSubmission,
   WorkbenchEntryDefinition,
   WorkspaceRecord,
+  ExpertSelection,
+  ExpertSummary,
+  ExpertDefinition,
+  ExpertDefinitionInput,
+  SessionExpertSnapshot,
+  SessionExpertTeamLeaderSnapshot,
+  SessionExpertTeamMemberSnapshot,
+  ExpertPortrait,
+  ExpertTeamDefinition,
+  ExpertTeamDefinitionInput,
+  ExpertTeamDetail,
+  ExpertTeamDetailMember,
 } from "@wordless/domain";
 import type { ProfileDefinition, ProfileRegistry } from "@wordless/profile-sdk";
 import {
@@ -92,6 +122,9 @@ import {
   type SessionContextSnapshot,
   type SessionHistoryPage,
   type SessionHistoryPageRequest,
+  type ExpertCollaborationSnapshot,
+  type ExpertCollaborationStatus,
+  type ExpertTaskPhase,
   type SessionMessageSearchRequest,
   type SessionMessageSearchResponse,
   type SessionSnapshot,
@@ -99,20 +132,211 @@ import {
   type SessionWorkspaceTextFile,
   type WorkspaceFileEntry,
 } from "@wordless/protocol";
-import { WordlessDatabase, createWordlessSession, openWordlessSession, type WordlessSessionMetadata } from "@wordless/persistence";
+import {
+  WordlessDatabase,
+  createWordlessSession,
+  openWordlessSession,
+  type WordlessSessionMetadata,
+} from "@wordless/persistence";
 import { WorkspacePathService } from "@wordless/platform-node";
 import type { WorkspaceSearchService } from "@wordless/workspace-search";
-import { ConnectorRegistry, type ConnectorAuthorizationCallbacks, type ConnectorConfiguration } from "@wordless/connector-registry";
+import {
+  ConnectorRegistry,
+  type ConnectorAuthorizationCallbacks,
+  type ConnectorConfiguration,
+} from "@wordless/connector-registry";
 import { SkillRegistry } from "@wordless/skill-registry";
-import { RuntimeModelConfiguration, type ModelConfigurationPaths } from "./model-configuration.ts";
-import { SessionSubagentRunner, type SubagentFileChange } from "./subagent-runner.ts";
+import {
+  RuntimeModelConfiguration,
+  type ModelConfigurationPaths,
+} from "./model-configuration.ts";
+import {
+  SessionSubagentRunner,
+  type SubagentFileChange,
+} from "./subagent-runner.ts";
 import { estimateSessionContextUsage } from "./context-usage.ts";
-import { createSessionHistoryPage, createSessionHistoryProjection, searchSessionHistoryMessages, type SessionHistoryProjection } from "./session-history.ts";
+import {
+  createSessionHistoryPage,
+  createSessionHistoryProjection,
+  searchSessionHistoryMessages,
+  type SessionHistoryProjection,
+} from "./session-history.ts";
 import { sessionTitleFromPrompt } from "./session-title.ts";
-import { UsageReportService, conversationUsageFromAiUsage } from "./usage-report.ts";
+import {
+  UsageReportService,
+  conversationUsageFromAiUsage,
+} from "./usage-report.ts";
 
 const SUBAGENT_FILE_CHANGE_JOURNAL_TYPE = "wordless.subagent-file-change";
 const CLARIFICATION_ANSWER_JOURNAL_TYPE = "wordless.clarification-answer";
+
+const BUILTIN_EXPERTS: ExpertSummary[] = [
+  {
+    id: "research-analyst",
+    version: "1",
+    name: "研究分析师",
+    description: "把复杂问题拆成可验证的研究结论和行动建议。",
+    portrait: { kind: "builtin", key: "research-analyst" },
+    kind: "expert",
+    skillCount: 0,
+    connectorCount: 0,
+    source: "builtin",
+  },
+  {
+    id: "product-strategist",
+    version: "1",
+    name: "产品策略师",
+    description: "从用户目标、约束和证据出发，形成清晰的产品决策。",
+    portrait: { kind: "builtin", key: "product-strategist" },
+    kind: "expert",
+    skillCount: 0,
+    connectorCount: 0,
+    source: "builtin",
+  },
+  {
+    id: "content-studio",
+    version: "1",
+    name: "内容创作工作室",
+    description:
+      "由内容主理人协调策划、撰写与审校，把模糊的创作目标推进为完整且可发布的内容。",
+    portrait: { kind: "builtin", key: "content-studio" },
+    kind: "team",
+    memberCount: 3,
+    skillCount: 0,
+    connectorCount: 0,
+    source: "builtin",
+    tags: ["内容策略", "写作", "审校"],
+    roleLabel: "3 位专家协作",
+  },
+];
+
+const BUILTIN_TEAM_MEMBERS: Record<
+  string,
+  Array<Omit<ExpertTeamDetailMember, "available">>
+> = {
+  "content-studio": [
+    {
+      id: "content-writer",
+      expertId: "content-writer",
+      name: "内容撰稿人",
+      portrait: { kind: "builtin", key: "product-strategist" },
+      executionProfile: "read-only",
+      responsibility: "把研究和大纲转化为符合受众、语气与渠道要求的完整初稿。",
+    },
+    {
+      id: "content-reviewer",
+      expertId: "content-reviewer",
+      name: "内容审校",
+      portrait: { kind: "builtin", key: "research-analyst" },
+      executionProfile: "review",
+      responsibility: "检查逻辑、事实、表达与一致性，给出可执行的修改建议。",
+    },
+  ],
+};
+
+const BUILTIN_TEAM_LEADERS: Record<
+  string,
+  {
+    expertId: string;
+    name: string;
+    portrait: ExpertPortrait;
+  }
+> = {
+  "content-studio": {
+    expertId: "content-lead",
+    name: "内容主理人",
+    portrait: { kind: "builtin", key: "content-studio" },
+  },
+};
+
+const BUILTIN_TEAM_SUGGESTIONS: Record<string, string[]> = {
+  "content-studio": [
+    "围绕一个主题完成带资料依据的内容选题与文章初稿。",
+    "把现有材料整理成清晰的大纲，并输出适合目标读者的完整内容。",
+    "审校这篇内容的事实、结构和表达，并给出可直接修改的建议。",
+  ],
+};
+
+const BUILTIN_EXPERT_PROMPTS: Record<string, string> = {
+  "research-analyst":
+    "You are the Research Analyst expert. Work from evidence, separate facts from assumptions, state uncertainty, and finish with actionable conclusions.",
+  "product-strategist":
+    "You are the Product Strategist expert. Clarify the target user and decision, compare tradeoffs, and produce a prioritized recommendation with measurable acceptance criteria.",
+  "content-lead":
+    "You are the Content Lead and the accountable editor speaking directly with the user. Lead with a clear editorial judgment, define the audience and promise, separate verified evidence from interpretation, and use precise, confident language rather than a generic assistant voice. When current facts or external context matter, use your available web research connectors and preserve source URLs, dates, and caveats. You may complete straightforward work yourself. When delegation materially improves the result, prepare a self-contained evidence packet and brief, read every member result, resolve conflicts, and deliver the final coherent answer in your own lead-editor voice.",
+  "content-writer":
+    "You are the Content Writer. Write the complete deliverable from the assigned brief and upstream material. Maintain a consistent voice, concrete argument flow, and clear evidence boundaries. Do not replace missing facts with invention, and do not switch into reviewer or coordinator voice.",
+  "content-reviewer":
+    "You are the Content Reviewer. Independently inspect the draft for factual support, logical gaps, audience fit, structure, tone, repetition, and publication risk. Cite exact passages when raising issues and provide prioritized, directly actionable revisions. Do not merely summarize the draft or assume the writer's voice.",
+};
+
+const BUILTIN_TEAM_PROMPTS: Record<string, string> = {
+  "content-studio":
+    "You are the only lead, primary conversational identity, and final decision-maker of the Content Studio. Clarify the audience, goal, tone, constraints, evidence boundary, and acceptance criteria. Decide deliberately whether member specialization creates enough quality, verification, or perspective gain to justify delegation. Simple questions and work you can complete to a high standard may stay with you. When you delegate, give each member a self-contained brief, read the results, resolve disagreements, and deliver one coherent final result in your own decisive lead-editor voice. Never delegate work back to yourself or expose raw member output as the final answer.",
+};
+
+function expertSummary(expert: ExpertDefinition): ExpertSummary {
+  const {
+    id,
+    version,
+    name,
+    description,
+    portrait,
+    kind,
+    skillCount,
+    connectorCount,
+    source,
+    tags,
+    categories,
+    roleLabel,
+  } = expert;
+  return {
+    id,
+    version,
+    name,
+    description,
+    portrait,
+    kind,
+    skillCount,
+    connectorCount,
+    source,
+    tags,
+    categories,
+    roleLabel,
+  };
+}
+function teamSummary(team: ExpertTeamDefinition): ExpertSummary {
+  const {
+    id,
+    version,
+    name,
+    description,
+    portrait,
+    kind,
+    memberCount,
+    skillCount,
+    connectorCount,
+    source,
+    tags,
+    categories,
+    roleLabel,
+  } = team;
+  return {
+    id,
+    version,
+    name,
+    description,
+    portrait,
+    kind,
+    memberCount,
+    skillCount,
+    connectorCount,
+    source,
+    tags,
+    categories,
+    roleLabel,
+  };
+}
 
 type PersistedClarificationAnswer = ClarificationQuestionAnswer;
 
@@ -151,7 +375,12 @@ type MediaProjectV2 = {
   documentVersion: 2;
   sessionId: string;
   title: string;
-  scenes: Array<{ id: string; primaryAssetId: string | null; x: number; y: number }>;
+  scenes: Array<{
+    id: string;
+    primaryAssetId: string | null;
+    x: number;
+    y: number;
+  }>;
   assets: Array<{
     id: string;
     sceneId: string;
@@ -341,36 +570,232 @@ function connectionSecretId(connectionId: string): string {
   return `provider:${connectionId}`;
 }
 
-function isCompatible(model: EnabledModelRecord, entry: WorkbenchEntryDefinition): boolean {
+function isCompatible(
+  model: EnabledModelRecord,
+  entry: WorkbenchEntryDefinition,
+): boolean {
   const requirements = entry.modelRequirements;
-  if (requirements.requiresVision && !model.capabilities.supportsVision) return false;
-  if (requirements.requiresToolUse && model.capabilities.supportsToolUse === false) return false;
-  if (requirements.minimumContextWindow && model.capabilities.contextWindow < requirements.minimumContextWindow) return false;
+  if (requirements.requiresVision && !model.capabilities.supportsVision)
+    return false;
+  if (
+    requirements.requiresToolUse &&
+    model.capabilities.supportsToolUse === false
+  )
+    return false;
+  if (
+    requirements.minimumContextWindow &&
+    model.capabilities.contextWindow < requirements.minimumContextWindow
+  )
+    return false;
   return true;
 }
 
-function thinkingLevelForModel(model: Model<Api>, requested: ThinkingLevel = "medium"): ThinkingLevel {
+function thinkingLevelForModel(
+  model: Model<Api>,
+  requested: ThinkingLevel = "medium",
+): ThinkingLevel {
   if (!model.reasoning) return "off";
   return clampThinkingLevel(model, requested) as ThinkingLevel;
 }
 
 function asRecord(value: unknown): Record<string, unknown> | undefined {
-  return typeof value === "object" && value !== null && !Array.isArray(value) ? (value as Record<string, unknown>) : undefined;
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : undefined;
 }
 
-function validCustomFileRules(value: AppPreferences["security"]["customFileRules"]): AppPreferences["security"]["customFileRules"] {
+const EXPERT_COLLABORATION_STATUSES = new Set<ExpertCollaborationStatus>([
+  "queued",
+  "running",
+  "awaiting-approval",
+  "awaiting-user-input",
+  "completed",
+  "failed",
+  "cancelled",
+  "skipped",
+]);
+const EXPERT_TASK_PHASES = new Set<ExpertTaskPhase>([
+  "queued",
+  "thinking",
+  "tool",
+  "approval",
+  "user-input",
+  "finished",
+]);
+
+export function createExpertCollaborationSnapshot(
+  messages: readonly ConversationMessage[],
+  expert: SessionExpertSnapshot | undefined,
+): ExpertCollaborationSnapshot | undefined {
+  if (expert?.kind !== "team") return undefined;
+  const roster = new Map(
+    expert.teamMembers.map((member) => [member.id, member]),
+  );
+  const activity = new Map<
+    string,
+    {
+      latestStatus: ExpertCollaborationStatus;
+      phase?: ExpertTaskPhase;
+      startedAt?: number;
+      activeToolName?: string;
+      blockedByTaskId?: string;
+      terminalReason?: string;
+      lastActiveAt: number;
+      taskIds: Set<string>;
+    }
+  >();
+  for (const message of messages)
+    for (const block of message.blocks) {
+      if (block.type !== "tool" || block.name !== "delegate_expert") continue;
+      const tasks = asRecord(block.details)?.tasks;
+      if (!Array.isArray(tasks)) continue;
+      for (const value of tasks) {
+        const task = asRecord(value);
+        if (
+          typeof task?.id !== "string" ||
+          typeof task.memberId !== "string" ||
+          typeof task.status !== "string" ||
+          !EXPERT_COLLABORATION_STATUSES.has(
+            task.status as ExpertCollaborationStatus,
+          ) ||
+          !roster.has(task.memberId)
+        )
+          continue;
+        const eventActiveAt = Array.isArray(task.events)
+          ? task.events.reduce((latest, event) => {
+              const at = asRecord(event)?.at;
+              return typeof at === "number" ? Math.max(latest, at) : latest;
+            }, message.timestamp)
+          : message.timestamp;
+        const lastActiveAt =
+          typeof task.updatedAt === "number" ? task.updatedAt : eventActiveAt;
+        const phase =
+          typeof task.phase === "string" &&
+          EXPERT_TASK_PHASES.has(task.phase as ExpertTaskPhase)
+            ? (task.phase as ExpertTaskPhase)
+            : undefined;
+        const taskState = {
+          latestStatus: task.status as ExpertCollaborationStatus,
+          ...(phase ? { phase } : {}),
+          ...(typeof task.startedAt === "number"
+            ? { startedAt: task.startedAt }
+            : {}),
+          ...(typeof task.activeToolName === "string"
+            ? { activeToolName: task.activeToolName }
+            : {}),
+          ...(typeof task.blockedByTaskId === "string"
+            ? { blockedByTaskId: task.blockedByTaskId }
+            : {}),
+          ...(typeof task.terminalReason === "string"
+            ? { terminalReason: task.terminalReason }
+            : {}),
+          lastActiveAt,
+        };
+        const current = activity.get(task.memberId);
+        if (!current) {
+          activity.set(task.memberId, {
+            ...taskState,
+            taskIds: new Set([task.id]),
+          });
+          continue;
+        }
+        current.taskIds.add(task.id);
+        if (lastActiveAt >= current.lastActiveAt) {
+          Object.assign(current, taskState);
+        }
+      }
+    }
+  const members = expert.teamMembers.flatMap((member) => {
+    const current = activity.get(member.id);
+    return current
+      ? [
+          {
+            memberId: member.id,
+            name: member.expertName,
+            portrait: member.portrait,
+            executionProfile: member.executionProfile,
+            latestStatus: current.latestStatus,
+            ...(current.phase ? { phase: current.phase } : {}),
+            ...(current.startedAt ? { startedAt: current.startedAt } : {}),
+            ...(current.activeToolName
+              ? { activeToolName: current.activeToolName }
+              : {}),
+            ...(current.blockedByTaskId
+              ? { blockedByTaskId: current.blockedByTaskId }
+              : {}),
+            ...(current.terminalReason
+              ? { terminalReason: current.terminalReason }
+              : {}),
+            taskCount: current.taskIds.size,
+            lastActiveAt: current.lastActiveAt,
+          },
+        ]
+      : [];
+  });
+  return {
+    teamId: expert.selection.id,
+    teamName: expert.teamName,
+    teamPortrait: expert.teamPortrait,
+    leader: {
+      expertId: expert.leader.expertId,
+      name: expert.leader.expertName,
+      portrait: expert.leader.portrait,
+    },
+    members,
+  };
+}
+
+export function expertConnectorScopes(
+  sessionConnectorIds: readonly string[],
+  expert: SessionExpertSnapshot | undefined,
+): { primary: string[]; delegates: string[] } {
+  const primary = [
+    ...new Set([...sessionConnectorIds, ...(expert?.connectorIds ?? [])]),
+  ];
+  return {
+    primary,
+    delegates: [
+      ...new Set([
+        ...primary,
+        ...(expert?.kind === "team"
+          ? expert.teamMembers.flatMap((member) => member.connectorIds)
+          : []),
+      ]),
+    ],
+  };
+}
+
+function validCustomFileRules(
+  value: AppPreferences["security"]["customFileRules"],
+): AppPreferences["security"]["customFileRules"] {
   return Array.isArray(value)
-    ? value.flatMap((rule) => typeof rule?.id === "string" && typeof rule.label === "string" && typeof rule.pattern === "string" && rule.id.trim() && rule.label.trim() && isValidFileSecurityPattern(rule.pattern)
-      ? [{ id: rule.id, label: rule.label, pattern: rule.pattern }]
-      : [])
+    ? value.flatMap((rule) =>
+        typeof rule?.id === "string" &&
+        typeof rule.label === "string" &&
+        typeof rule.pattern === "string" &&
+        rule.id.trim() &&
+        rule.label.trim() &&
+        isValidFileSecurityPattern(rule.pattern)
+          ? [{ id: rule.id, label: rule.label, pattern: rule.pattern }]
+          : [],
+      )
     : [];
 }
 
-function validCustomCommandRules(value: AppPreferences["security"]["customCommandRules"]): AppPreferences["security"]["customCommandRules"] {
+function validCustomCommandRules(
+  value: AppPreferences["security"]["customCommandRules"],
+): AppPreferences["security"]["customCommandRules"] {
   return Array.isArray(value)
-    ? value.flatMap((rule) => typeof rule?.id === "string" && typeof rule.label === "string" && typeof rule.command === "string" && rule.id.trim() && rule.label.trim() && rule.command.trim()
-      ? [{ id: rule.id, label: rule.label, command: rule.command }]
-      : [])
+    ? value.flatMap((rule) =>
+        typeof rule?.id === "string" &&
+        typeof rule.label === "string" &&
+        typeof rule.command === "string" &&
+        rule.id.trim() &&
+        rule.label.trim() &&
+        rule.command.trim()
+          ? [{ id: rule.id, label: rule.label, command: rule.command }]
+          : [],
+      )
     : [];
 }
 
@@ -379,7 +804,9 @@ function contentToText(value: unknown): string {
   return value
     .flatMap((item) => {
       const record = asRecord(item);
-      return record?.type === "text" && typeof record.text === "string" ? [record.text] : [];
+      return record?.type === "text" && typeof record.text === "string"
+        ? [record.text]
+        : [];
     })
     .join("\n");
 }
@@ -389,19 +816,38 @@ function toConversationUsage(value: unknown): ConversationUsage | undefined {
   const cost = asRecord(usage?.cost);
   const inputTokens = typeof usage?.input === "number" ? usage.input : 0;
   const outputTokens = typeof usage?.output === "number" ? usage.output : 0;
-  const cacheReadTokens = typeof usage?.cacheRead === "number" ? usage.cacheRead : 0;
-  const cacheWriteTokens = typeof usage?.cacheWrite === "number" ? usage.cacheWrite : 0;
-  const totalTokens = typeof usage?.totalTokens === "number"
-    ? usage.totalTokens
-    : typeof usage?.total === "number"
-      ? usage.total
-      : inputTokens + outputTokens + cacheReadTokens + cacheWriteTokens;
+  const cacheReadTokens =
+    typeof usage?.cacheRead === "number" ? usage.cacheRead : 0;
+  const cacheWriteTokens =
+    typeof usage?.cacheWrite === "number" ? usage.cacheWrite : 0;
+  const totalTokens =
+    typeof usage?.totalTokens === "number"
+      ? usage.totalTokens
+      : typeof usage?.total === "number"
+        ? usage.total
+        : inputTokens + outputTokens + cacheReadTokens + cacheWriteTokens;
   const totalCost = typeof cost?.total === "number" ? cost.total : 0;
-  if (totalTokens === 0 && inputTokens === 0 && outputTokens === 0 && cacheReadTokens === 0 && cacheWriteTokens === 0) return undefined;
-  return { inputTokens, outputTokens, cacheReadTokens, cacheWriteTokens, totalTokens, totalCost };
+  if (
+    totalTokens === 0 &&
+    inputTokens === 0 &&
+    outputTokens === 0 &&
+    cacheReadTokens === 0 &&
+    cacheWriteTokens === 0
+  )
+    return undefined;
+  return {
+    inputTokens,
+    outputTokens,
+    cacheReadTokens,
+    cacheWriteTokens,
+    totalTokens,
+    totalCost,
+  };
 }
 
-function persistedApproval(value: unknown): PersistedOperationApproval | undefined {
+function persistedApproval(
+  value: unknown,
+): PersistedOperationApproval | undefined {
   const record = asRecord(value);
   const approval = asRecord(record?.approval);
   const resolution = asRecord(record?.resolution);
@@ -411,20 +857,32 @@ function persistedApproval(value: unknown): PersistedOperationApproval | undefin
   ) {
     return undefined;
   }
-  if (resolution && (typeof resolution.approvalId !== "string" || typeof resolution.approved !== "boolean")) return undefined;
+  if (
+    resolution &&
+    (typeof resolution.approvalId !== "string" ||
+      typeof resolution.approved !== "boolean")
+  )
+    return undefined;
   const matchedRules = Array.isArray(approval.matchedRules)
     ? approval.matchedRules.flatMap((candidate): ToolSecurityRuleMatch[] => {
-      const rule = asRecord(candidate);
-      if (
-        (rule?.category !== "file" && rule?.category !== "command") ||
-        typeof rule.id !== "string" ||
-        typeof rule.label !== "string" ||
-        (rule.source !== "builtin" && rule.source !== "custom")
-      ) {
-        return [];
-      }
-      return [{ category: rule.category, id: rule.id, label: rule.label, source: rule.source }];
-    })
+        const rule = asRecord(candidate);
+        if (
+          (rule?.category !== "file" && rule?.category !== "command") ||
+          typeof rule.id !== "string" ||
+          typeof rule.label !== "string" ||
+          (rule.source !== "builtin" && rule.source !== "custom")
+        ) {
+          return [];
+        }
+        return [
+          {
+            category: rule.category,
+            id: rule.id,
+            label: rule.label,
+            source: rule.source,
+          },
+        ];
+      })
     : [];
   return {
     callId: record.callId,
@@ -433,18 +891,24 @@ function persistedApproval(value: unknown): PersistedOperationApproval | undefin
       severity: approval.severity === "high" ? "high" : "normal",
       matchedRules,
     },
-    ...(resolution ? {
-      resolution: {
-        ...(resolution as unknown as OperationApprovalResolution),
-        approvalId: resolution.approvalId as string,
-        approved: resolution.approved as boolean,
-        ...(typeof resolution.feedback === "string" ? { feedback: resolution.feedback } : {}),
-      },
-    } : {}),
+    ...(resolution
+      ? {
+          resolution: {
+            ...(resolution as unknown as OperationApprovalResolution),
+            approvalId: resolution.approvalId as string,
+            approved: resolution.approved as boolean,
+            ...(typeof resolution.feedback === "string"
+              ? { feedback: resolution.feedback }
+              : {}),
+          },
+        }
+      : {}),
   };
 }
 
-function persistedFileBaseline(value: unknown): PersistedSessionFileBaseline | undefined {
+function persistedFileBaseline(
+  value: unknown,
+): PersistedSessionFileBaseline | undefined {
   const record = asRecord(value);
   const baseline = asRecord(record?.baseline);
   if (
@@ -458,12 +922,20 @@ function persistedFileBaseline(value: unknown): PersistedSessionFileBaseline | u
   return value as PersistedSessionFileBaseline;
 }
 
-function persistedSubagentFileChange(value: unknown): SubagentFileChange | undefined {
+function persistedSubagentFileChange(
+  value: unknown,
+): SubagentFileChange | undefined {
   const record = asRecord(value);
   const baseline = asRecord(record?.baseline);
   if (
     typeof record?.taskId !== "string" ||
-    (record.role !== "scout" && record.role !== "planner" && record.role !== "reviewer" && record.role !== "worker") ||
+    (record.role !== "scout" &&
+      record.role !== "planner" &&
+      record.role !== "reviewer" &&
+      record.role !== "worker" &&
+      record.role !== "researcher" &&
+      record.role !== "research-reviewer" &&
+      record.role !== "expert-member") ||
     typeof record.path !== "string" ||
     (record.kind !== "created" && record.kind !== "modified") ||
     typeof baseline?.path !== "string" ||
@@ -477,14 +949,21 @@ function persistedSubagentFileChange(value: unknown): SubagentFileChange | undef
     role: record.role,
     path: record.path,
     kind: record.kind,
-    baseline: { path: baseline.path, existed: baseline.existed, content: baseline.content },
+    baseline: {
+      path: baseline.path,
+      existed: baseline.existed,
+      content: baseline.content,
+    },
   };
 }
 
-function persistedUserRequest(value: unknown): PersistedUserRequest | undefined {
+function persistedUserRequest(
+  value: unknown,
+): PersistedUserRequest | undefined {
   const record = asRecord(value);
   const request = asRecord(record?.request);
-  const resolution = record?.resolution === undefined ? undefined : asRecord(record.resolution);
+  const resolution =
+    record?.resolution === undefined ? undefined : asRecord(record.resolution);
   if (
     typeof record?.callId !== "string" ||
     typeof request?.requestId !== "string" ||
@@ -492,21 +971,29 @@ function persistedUserRequest(value: unknown): PersistedUserRequest | undefined 
     typeof request.toolName !== "string" ||
     typeof request.title !== "string" ||
     !Array.isArray(request.fields) ||
-    (resolution !== undefined && (typeof resolution.requestId !== "string" || (resolution.status !== "submitted" && resolution.status !== "cancelled")))
+    (resolution !== undefined &&
+      (typeof resolution.requestId !== "string" ||
+        (resolution.status !== "submitted" &&
+          resolution.status !== "cancelled")))
   ) {
     return undefined;
   }
   return value as PersistedUserRequest;
 }
 
-function persistedContextCompaction(value: unknown): PersistedContextCompaction | undefined {
+function persistedContextCompaction(
+  value: unknown,
+): PersistedContextCompaction | undefined {
   const record = asRecord(value);
   const model = asRecord(record?.model);
   if (
     typeof record?.compactionId !== "string" ||
-    (record.trigger !== "manual" && record.trigger !== "automatic" && record.trigger !== "overflow") ||
+    (record.trigger !== "manual" &&
+      record.trigger !== "automatic" &&
+      record.trigger !== "overflow") ||
     typeof record.tokensAfter !== "number" ||
-    (record.recoveredFailureEntryId !== undefined && typeof record.recoveredFailureEntryId !== "string") ||
+    (record.recoveredFailureEntryId !== undefined &&
+      typeof record.recoveredFailureEntryId !== "string") ||
     typeof model?.connectionId !== "string" ||
     typeof model.modelId !== "string"
   ) {
@@ -517,19 +1004,27 @@ function persistedContextCompaction(value: unknown): PersistedContextCompaction 
     trigger: record.trigger,
     tokensAfter: record.tokensAfter,
     model: { connectionId: model.connectionId, modelId: model.modelId },
-    recoveredFailureEntryId: typeof record.recoveredFailureEntryId === "string" ? record.recoveredFailureEntryId : undefined,
+    recoveredFailureEntryId:
+      typeof record.recoveredFailureEntryId === "string"
+        ? record.recoveredFailureEntryId
+        : undefined,
   };
 }
 
-function clarificationQuestionFromDetails(value: unknown): ClarificationQuestion | undefined {
+function clarificationQuestionFromDetails(
+  value: unknown,
+): ClarificationQuestion | undefined {
   const details = asRecord(value);
   const question = asRecord(details?.clarificationQuestion);
   const recommendation = asRecord(question?.recommendation);
   if (
     !question ||
     typeof question.question !== "string" ||
-    (question.answerType !== "choice" && question.answerType !== "text" && question.answerType !== "confirm") ||
-    (question.purpose !== "discovery" && question.purpose !== "final-confirmation") ||
+    (question.answerType !== "choice" &&
+      question.answerType !== "text" &&
+      question.answerType !== "confirm") ||
+    (question.purpose !== "discovery" &&
+      question.purpose !== "final-confirmation") ||
     !recommendation ||
     typeof recommendation.answer !== "string" ||
     typeof recommendation.reason !== "string"
@@ -538,24 +1033,40 @@ function clarificationQuestionFromDetails(value: unknown): ClarificationQuestion
   }
   const options = Array.isArray(question.options)
     ? question.options.flatMap((candidate) => {
-      const option = asRecord(candidate);
-      return typeof option?.value === "string" && typeof option.label === "string"
-        ? [{ value: option.value, label: option.label, ...(typeof option.description === "string" ? { description: option.description } : {}) }]
-        : [];
-    })
+        const option = asRecord(candidate);
+        return typeof option?.value === "string" &&
+          typeof option.label === "string"
+          ? [
+              {
+                value: option.value,
+                label: option.label,
+                ...(typeof option.description === "string"
+                  ? { description: option.description }
+                  : {}),
+              },
+            ]
+          : [];
+      })
     : undefined;
-  if (question.answerType === "choice" && (!options || options.length === 0)) return undefined;
+  if (question.answerType === "choice" && (!options || options.length === 0))
+    return undefined;
   return {
     question: question.question,
-    ...(typeof question.context === "string" ? { context: question.context } : {}),
+    ...(typeof question.context === "string"
+      ? { context: question.context }
+      : {}),
     answerType: question.answerType,
     ...(options ? { options } : {}),
     recommendation: {
       answer: recommendation.answer,
-      ...(typeof recommendation.value === "string" ? { value: recommendation.value } : {}),
+      ...(typeof recommendation.value === "string"
+        ? { value: recommendation.value }
+        : {}),
       reason: recommendation.reason,
     },
-    ...(typeof question.allowCustom === "boolean" ? { allowCustom: question.allowCustom } : {}),
+    ...(typeof question.allowCustom === "boolean"
+      ? { allowCustom: question.allowCustom }
+      : {}),
     purpose: question.purpose,
   };
 }
@@ -566,18 +1077,38 @@ function hasPositiveClarificationConfirmation(value: unknown): boolean {
   return question?.purpose === "final-confirmation" && answer?.value === true;
 }
 
-function clarificationBriefFromDetails(value: unknown): ClarificationBrief | undefined {
+function clarificationBriefFromDetails(
+  value: unknown,
+): ClarificationBrief | undefined {
   const details = asRecord(value);
   const brief = asRecord(details?.clarificationBrief);
-  if (!brief || typeof brief.title !== "string" || typeof brief.summary !== "string" || typeof brief.recommendedNextStep !== "string") return undefined;
-  const strings = (value: unknown): string[] => Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
+  if (
+    !brief ||
+    typeof brief.title !== "string" ||
+    typeof brief.summary !== "string" ||
+    typeof brief.recommendedNextStep !== "string"
+  )
+    return undefined;
+  const strings = (value: unknown): string[] =>
+    Array.isArray(value)
+      ? value.filter((item): item is string => typeof item === "string")
+      : [];
   const decisions = Array.isArray(brief.decisions)
     ? brief.decisions.flatMap((candidate) => {
-      const decision = asRecord(candidate);
-      return typeof decision?.topic === "string" && typeof decision.outcome === "string"
-        ? [{ topic: decision.topic, outcome: decision.outcome, ...(typeof decision.rationale === "string" ? { rationale: decision.rationale } : {}) }]
-        : [];
-    })
+        const decision = asRecord(candidate);
+        return typeof decision?.topic === "string" &&
+          typeof decision.outcome === "string"
+          ? [
+              {
+                topic: decision.topic,
+                outcome: decision.outcome,
+                ...(typeof decision.rationale === "string"
+                  ? { rationale: decision.rationale }
+                  : {}),
+              },
+            ]
+          : [];
+      })
     : [];
   return {
     title: brief.title,
@@ -590,7 +1121,9 @@ function clarificationBriefFromDetails(value: unknown): ClarificationBrief | und
   };
 }
 
-function persistedClarificationAnswer(value: unknown): PersistedClarificationAnswer | undefined {
+function persistedClarificationAnswer(
+  value: unknown,
+): PersistedClarificationAnswer | undefined {
   const answer = asRecord(value);
   if (
     typeof answer?.callId !== "string" ||
@@ -599,7 +1132,11 @@ function persistedClarificationAnswer(value: unknown): PersistedClarificationAns
   ) {
     return undefined;
   }
-  return { callId: answer.callId, value: answer.value, submittedAt: answer.submittedAt };
+  return {
+    callId: answer.callId,
+    value: answer.value,
+    submittedAt: answer.submittedAt,
+  };
 }
 
 function normalizeToLf(value: string): string {
@@ -607,18 +1144,37 @@ function normalizeToLf(value: string): string {
 }
 
 function unifiedPatch(path: string, before: string, after: string): string {
-  return createTwoFilesPatch(`a/${path}`, `b/${path}`, normalizeToLf(before), normalizeToLf(after), undefined, undefined, { context: 3 });
+  return createTwoFilesPatch(
+    `a/${path}`,
+    `b/${path}`,
+    normalizeToLf(before),
+    normalizeToLf(after),
+    undefined,
+    undefined,
+    { context: 3 },
+  );
 }
 
-function workspaceRelativePath(rootPath: string, path: string): string | undefined {
+function workspaceRelativePath(
+  rootPath: string,
+  path: string,
+): string | undefined {
   const candidate = isAbsolute(path) ? relative(rootPath, path) : path;
   if (isAbsolute(candidate)) return undefined;
   const normalized = candidate.replace(/\\/g, "/");
-  if (!normalized || normalized === "." || normalized === ".." || normalized.startsWith("../")) return undefined;
+  if (
+    !normalized ||
+    normalized === "." ||
+    normalized === ".." ||
+    normalized.startsWith("../")
+  )
+    return undefined;
   return normalized;
 }
 
-function approvalFileBaseline(value: PersistedOperationApproval): SessionFileBaseline | undefined {
+function approvalFileBaseline(
+  value: PersistedOperationApproval,
+): SessionFileBaseline | undefined {
   if (!value.resolution?.approved) return undefined;
   const preview = asRecord(value.approval.preview);
   if (
@@ -650,7 +1206,11 @@ class VaultCredentialStore implements CredentialStore {
   ): Promise<Credential | undefined> {
     const current = await this.read(providerId);
     const next = await fn(current);
-    if (next) await this.vault.write(connectionSecretId(providerId), JSON.stringify(next));
+    if (next)
+      await this.vault.write(
+        connectionSecretId(providerId),
+        JSON.stringify(next),
+      );
     return next ?? current;
   }
 
@@ -660,24 +1220,38 @@ class VaultCredentialStore implements CredentialStore {
 }
 
 function terminalizeToolDetails(details: unknown, reason: string): unknown {
-  if (typeof details !== "object" || details === null || Array.isArray(details)) return details;
+  if (typeof details !== "object" || details === null || Array.isArray(details))
+    return details;
   const record = details as Record<string, unknown>;
   if (!Array.isArray(record.tasks)) return details;
   return {
     ...record,
     updatedAt: Date.now(),
     tasks: record.tasks.map((value) => {
-      if (typeof value !== "object" || value === null || Array.isArray(value)) return value;
+      if (typeof value !== "object" || value === null || Array.isArray(value))
+        return value;
       const task = value as Record<string, unknown>;
       const status = task.status;
-      if (status === "completed" || status === "failed" || status === "cancelled") return task;
+      if (
+        status === "completed" ||
+        status === "failed" ||
+        status === "cancelled"
+      )
+        return task;
       return {
         ...task,
         status: "cancelled",
         completedAt: Date.now(),
         error: typeof task.error === "string" ? task.error : reason,
-        ...(typeof task.activeTool === "object" && task.activeTool !== null && !Array.isArray(task.activeTool)
-          ? { activeTool: { ...(task.activeTool as Record<string, unknown>), state: "error" } }
+        ...(typeof task.activeTool === "object" &&
+        task.activeTool !== null &&
+        !Array.isArray(task.activeTool)
+          ? {
+              activeTool: {
+                ...(task.activeTool as Record<string, unknown>),
+                state: "error",
+              },
+            }
           : {}),
       };
     }),
@@ -727,7 +1301,9 @@ export class WordlessRuntime {
   constructor(options: RuntimeOptions) {
     this.options = options;
     this.database = new WordlessDatabase(options.paths.databasePath);
-    this.preferences = this.database.getPreferences(DEFAULT_PREFERENCES(options.defaultWorkspaceRoot));
+    this.preferences = this.database.getPreferences(
+      DEFAULT_PREFERENCES(options.defaultWorkspaceRoot),
+    );
     this.profiles = options.profiles;
     this.drivers = options.drivers;
     this.extensions = options.extensions;
@@ -737,13 +1313,21 @@ export class WordlessRuntime {
         managedRoot: join(options.paths.dataRoot, "skills"),
       },
       homeDir: homedir(),
-      builtInRoots: options.paths.builtInSkillsRoot ? [options.paths.builtInSkillsRoot] : [],
+      builtInRoots: options.paths.builtInSkillsRoot
+        ? [options.paths.builtInSkillsRoot]
+        : [],
     });
-    this.connectorRegistry = new ConnectorRegistry({ configPath: join(options.paths.dataRoot, "connectors.json") });
-    this.models = createModels({ credentials: new VaultCredentialStore(options.credentialVault) });
+    this.connectorRegistry = new ConnectorRegistry({
+      configPath: join(options.paths.dataRoot, "connectors.json"),
+    });
+    this.models = createModels({
+      credentials: new VaultCredentialStore(options.credentialVault),
+    });
     this.modelConfiguration = new RuntimeModelConfiguration({
       credentials: new VaultCredentialStore(options.credentialVault),
-      imageModels: createImagesModels({ credentials: new VaultCredentialStore(options.credentialVault) }),
+      imageModels: createImagesModels({
+        credentials: new VaultCredentialStore(options.credentialVault),
+      }),
       models: this.models,
       paths: options.paths.modelConfiguration ?? {
         extensionsRoot: join(options.paths.dataRoot, "provider-extensions"),
@@ -767,14 +1351,20 @@ export class WordlessRuntime {
     await this.extensions.initialize();
     if (this.database.claimMigration(2)) {
       for (const connection of this.database.clearLegacyModelConfiguration()) {
-        await this.options.credentialVault.delete(connectionSecretId(connection.id));
+        await this.options.credentialVault.delete(
+          connectionSecretId(connection.id),
+        );
       }
     }
     await this.refreshWorkspaceAvailability();
     await this.skillRegistry.initialize(this.database.listWorkspaces());
-    this.skillRegistry.subscribe(() => this.emitApp({ type: "skills.changed" }));
+    this.skillRegistry.subscribe(() =>
+      this.emitApp({ type: "skills.changed" }),
+    );
     await this.connectorRegistry.initialize();
-    this.connectorRegistry.subscribe(() => this.emitApp({ type: "connectors.changed" }));
+    this.connectorRegistry.subscribe(() =>
+      this.emitApp({ type: "connectors.changed" }),
+    );
     await this.modelConfiguration.initialize();
     this.modelConfiguration.subscribe(() => this.emitConfigurationChanged());
   }
@@ -813,6 +1403,354 @@ export class WordlessRuntime {
       skills: this.skillRegistry.snapshot(),
       connectors: this.connectorRegistry.snapshot(),
       mediaProjects: this.listMediaProjects(),
+      experts: [
+        ...BUILTIN_EXPERTS,
+        ...this.database.listExperts().map(expertSummary),
+        ...this.database.listExpertTeams().map(teamSummary),
+      ],
+    };
+  }
+
+  listExperts(): ExpertDefinition[] {
+    return this.database.listExperts();
+  }
+
+  saveExpert(input: ExpertDefinitionInput, id?: string): ExpertDefinition {
+    const now = Date.now();
+    const existing = id ? this.database.getExpert(id) : undefined;
+    if (id && !existing) throw new Error("Expert not found");
+    const expert: ExpertDefinition = {
+      id: existing?.id ?? randomUUID(),
+      version: String((Number(existing?.version ?? "0") || 0) + 1),
+      kind: "expert",
+      name: input.name.trim(),
+      description: input.description.trim(),
+      systemPrompt: input.systemPrompt.trim(),
+      portrait: structuredClone(input.portrait),
+      skillIds: [...new Set(input.skillIds ?? [])],
+      connectorIds: [...new Set(input.connectorIds ?? [])],
+      skillCount: new Set(input.skillIds ?? []).size,
+      connectorCount: new Set(input.connectorIds ?? []).size,
+      source: "local",
+      createdAt: existing?.createdAt ?? now,
+      updatedAt: now,
+      tags: [...new Set(input.tags ?? [])],
+      categories: [...new Set(input.categories ?? [])],
+      roleLabel: input.roleLabel?.trim() || undefined,
+    };
+    if (!expert.name || !expert.description || !expert.systemPrompt)
+      throw new Error(
+        "Name, description, and expert instructions are required",
+      );
+    this.database.upsertExpert(expert);
+    this.emitApp({ type: "experts.changed" });
+    return expert;
+  }
+
+  deleteExpert(id: string): void {
+    this.database.deleteExpert(id);
+    this.emitApp({ type: "experts.changed" });
+  }
+
+  listExpertTeams(): ExpertTeamDefinition[] {
+    return this.database.listExpertTeams();
+  }
+  getExpertTeamDetail(id: string): ExpertTeamDetail {
+    const summary = [
+      ...BUILTIN_EXPERTS,
+      ...this.database.listExpertTeams().map(teamSummary),
+    ].find((candidate) => candidate.kind === "team" && candidate.id === id);
+    if (!summary || summary.kind !== "team")
+      throw new Error("Expert team not found");
+    const resolvedSummary = summary as ExpertSummary & { kind: "team" };
+    const builtinMembers = BUILTIN_TEAM_MEMBERS[id];
+    const builtinLeader = BUILTIN_TEAM_LEADERS[id];
+    if (builtinMembers && builtinLeader)
+      return {
+        ...resolvedSummary,
+        leader: { ...builtinLeader, available: true },
+        members: builtinMembers.map((member) => ({
+          ...member,
+          available: true,
+        })),
+        suggestedPrompts: BUILTIN_TEAM_SUGGESTIONS[id] ?? [
+          resolvedSummary.description,
+        ],
+      };
+    const team = this.database.getExpertTeam(id);
+    if (!team) throw new Error("Expert team not found");
+    const experts = [
+      ...BUILTIN_EXPERTS,
+      ...this.database.listExperts().map(expertSummary),
+    ];
+    const leader = experts.find(
+      (candidate) =>
+        candidate.kind === "expert" && candidate.id === team.leaderExpertId,
+    );
+    const members = team.members
+      .filter((member) => member.expertId !== team.leaderExpertId)
+      .map((member) => {
+        const expert = experts.find(
+          (candidate) =>
+            candidate.kind === "expert" && candidate.id === member.expertId,
+        );
+        return {
+          ...member,
+          name: expert?.name ?? "Unavailable expert",
+          portrait: expert?.portrait ?? {
+            kind: "builtin" as const,
+            key: "research-analyst",
+          },
+          available: Boolean(expert),
+        };
+      });
+    const focus = team.tags?.slice(0, 2).join("、") || team.description;
+    return {
+      ...resolvedSummary,
+      leader: {
+        expertId: team.leaderExpertId,
+        name: leader?.name ?? "Unavailable expert",
+        portrait: leader?.portrait ?? {
+          kind: "builtin",
+          key: "research-analyst",
+        },
+        available: Boolean(leader),
+      },
+      members,
+      suggestedPrompts: [
+        team.description,
+        `请围绕${focus}制定执行方案并交付结果。`,
+        "请分工处理这项复杂任务，并在最后汇总可执行结论。",
+      ],
+    };
+  }
+  saveExpertTeam(
+    input: ExpertTeamDefinitionInput,
+    id?: string,
+  ): ExpertTeamDefinition {
+    const now = Date.now();
+    const existing = id ? this.database.getExpertTeam(id) : undefined;
+    if (id && !existing) throw new Error("Expert team not found");
+    const experts = new Set([
+      ...BUILTIN_EXPERTS.filter((item) => item.kind === "expert").map(
+        (item) => item.id,
+      ),
+      ...this.database.listExperts().map((item) => item.id),
+    ]);
+    if (
+      !experts.has(input.leaderExpertId) ||
+      input.members.some((member) => !experts.has(member.expertId))
+    )
+      throw new Error("One or more team experts are unavailable");
+    if (
+      input.members.some((member) => member.expertId === input.leaderExpertId)
+    )
+      throw new Error("The Team Lead cannot also be a delegated member");
+    const members = input.members
+      .slice(0, 8)
+      .map((member) => ({ ...member, id: randomUUID() }));
+    if (!members.length)
+      throw new Error("An expert team requires at least one member");
+    const team: ExpertTeamDefinition = {
+      id: existing?.id ?? randomUUID(),
+      version: String((Number(existing?.version ?? "0") || 0) + 1),
+      kind: "team",
+      name: input.name.trim(),
+      description: input.description.trim(),
+      portrait: { kind: "builtin", key: input.portraitKey },
+      leaderExpertId: input.leaderExpertId,
+      members,
+      systemPrompt: input.systemPrompt.trim(),
+      memberCount: members.length + 1,
+      skillCount: 0,
+      connectorCount: 0,
+      source: "local",
+      createdAt: existing?.createdAt ?? now,
+      updatedAt: now,
+      tags: [...new Set(input.tags ?? [])],
+      categories: [...new Set(input.categories ?? [])],
+      roleLabel: input.roleLabel?.trim() || undefined,
+    };
+    if (!team.name || !team.description || !team.systemPrompt)
+      throw new Error("Name, description, and team instructions are required");
+    this.database.upsertExpertTeam(team);
+    this.emitApp({ type: "experts.changed" });
+    return team;
+  }
+  deleteExpertTeam(id: string): void {
+    this.database.deleteExpertTeam(id);
+    this.emitApp({ type: "experts.changed" });
+  }
+
+  private resolveExpertSelection(
+    selection: ExpertSelection | undefined,
+  ): ExpertSummary | undefined {
+    if (!selection) return undefined;
+    const expert = [
+      ...BUILTIN_EXPERTS,
+      ...this.database.listExperts().map(expertSummary),
+      ...this.database.listExpertTeams().map(teamSummary),
+    ].find(
+      (candidate) =>
+        candidate.kind === selection.kind &&
+        candidate.id === selection.id &&
+        candidate.version === selection.version,
+    );
+    if (!expert) throw new Error(`Expert is unavailable: ${selection.id}`);
+    return expert;
+  }
+
+  private sessionExpertSnapshot(
+    record: SessionRecord,
+  ): SessionExpertSnapshot | undefined {
+    if (!record.expertSelection) return undefined;
+    const snapshot = this.database.getSessionExpertSnapshot(record.id);
+    const matches =
+      snapshot?.selection.id === record.expertSelection.id &&
+      snapshot.selection.version === record.expertSelection.version &&
+      snapshot.selection.kind === record.expertSelection.kind;
+    return matches ? snapshot : undefined;
+  }
+
+  private resolveTeamLeader(
+    id: string,
+    team?: ExpertTeamDefinition,
+  ): SessionExpertTeamLeaderSnapshot | undefined {
+    const builtin = BUILTIN_TEAM_LEADERS[id];
+    const expertId = team?.leaderExpertId ?? builtin?.expertId;
+    if (!expertId) return undefined;
+    const summary = [
+      ...BUILTIN_EXPERTS,
+      ...this.database.listExperts().map(expertSummary),
+    ].find(
+      (candidate) => candidate.kind === "expert" && candidate.id === expertId,
+    );
+    const definition =
+      summary?.source === "local"
+        ? this.database.getExpert(expertId)
+        : undefined;
+    if (!builtin && !summary) return undefined;
+    const contentResearchSkill =
+      id === "content-studio"
+        ? this.skillRegistry
+            .getSessionSkills(null)
+            .find((skill) => skill.name === "content-web-research")
+        : undefined;
+    const contentResearchConnectorIds =
+      id === "content-studio"
+        ? this.connectorRegistry
+            .snapshot()
+            .connectors.filter(
+              (connector) =>
+                connector.enabled &&
+                connector.status === "ready" &&
+                (connector.templateId === "web-search" ||
+                  connector.templateId === "firecrawl" ||
+                  connector.templateId === "ai-hot"),
+            )
+            .map((connector) => connector.id)
+        : [];
+    return {
+      expertId,
+      expertName: builtin?.name ?? summary?.name ?? expertId,
+      portrait: builtin?.portrait ??
+        summary?.portrait ?? {
+          kind: "builtin",
+          key: "research-analyst",
+        },
+      systemPrompt:
+        definition?.systemPrompt ??
+        BUILTIN_EXPERT_PROMPTS[expertId] ??
+        `You are the ${builtin?.name ?? summary?.name ?? expertId} expert.`,
+      skillIds:
+        definition?.skillIds ??
+        (contentResearchSkill ? [contentResearchSkill.id] : []),
+      connectorIds: definition?.connectorIds ?? contentResearchConnectorIds,
+    };
+  }
+
+  private resolveTeamMembers(
+    id: string,
+    team?: ExpertTeamDefinition,
+  ): SessionExpertTeamMemberSnapshot[] | undefined {
+    const definitions = (team?.members ?? BUILTIN_TEAM_MEMBERS[id])?.filter(
+      (member) => member.expertId !== team?.leaderExpertId,
+    );
+    if (!definitions) return undefined;
+    const experts = [
+      ...BUILTIN_EXPERTS,
+      ...this.database.listExperts().map(expertSummary),
+    ];
+    return definitions.map((member) => {
+      const summary = experts.find(
+        (candidate) =>
+          candidate.id === member.expertId && candidate.kind === "expert",
+      );
+      const definition =
+        summary?.source === "local"
+          ? this.database.getExpert(member.expertId)
+          : undefined;
+      const presentation = member as typeof member & {
+        name?: string;
+        portrait?: ExpertPortrait;
+      };
+      return {
+        id: member.id,
+        expertId: member.expertId,
+        executionProfile: member.executionProfile,
+        responsibility: member.responsibility,
+        expertName: presentation.name ?? summary?.name ?? member.expertId,
+        portrait: presentation.portrait ??
+          summary?.portrait ?? {
+            kind: "builtin" as const,
+            key: "research-analyst",
+          },
+        systemPrompt:
+          definition?.systemPrompt ??
+          BUILTIN_EXPERT_PROMPTS[member.expertId] ??
+          `You are the ${presentation.name ?? member.expertId} expert. Fulfill the assigned responsibility: ${member.responsibility}`,
+        skillIds: definition?.skillIds ?? [],
+        connectorIds: definition?.connectorIds ?? [],
+      };
+    });
+  }
+
+  private createSessionExpertSnapshot(
+    selection: ExpertSelection,
+    expert: ExpertSummary,
+  ): SessionExpertSnapshot {
+    if (selection.kind === "expert") {
+      const definition =
+        expert.source === "local"
+          ? this.database.getExpert(expert.id)
+          : undefined;
+      return {
+        kind: "expert",
+        selection,
+        name: expert.name,
+        systemPrompt:
+          definition?.systemPrompt ?? BUILTIN_EXPERT_PROMPTS[expert.id] ?? "",
+        skillIds: definition?.skillIds ?? [],
+        connectorIds: definition?.connectorIds ?? [],
+      };
+    }
+    const team = this.database.getExpertTeam(expert.id);
+    const leader = this.resolveTeamLeader(expert.id, team);
+    if (!leader) throw new Error(`Team Lead is unavailable: ${expert.id}`);
+    const members = this.resolveTeamMembers(expert.id, team) ?? [];
+    const teamPrompt =
+      team?.systemPrompt ?? BUILTIN_TEAM_PROMPTS[expert.id] ?? "";
+    return {
+      kind: "team",
+      selection,
+      name: leader.expertName,
+      systemPrompt: `${leader.systemPrompt}\n\n[TEAM COORDINATION]\n${teamPrompt}`,
+      skillIds: leader.skillIds,
+      connectorIds: leader.connectorIds,
+      teamName: expert.name,
+      teamPortrait: expert.portrait,
+      leader,
+      teamMembers: members,
     };
   }
 
@@ -836,7 +1774,12 @@ export class WordlessRuntime {
     await this.skillRegistry.removeManagedSkill(skillId);
   }
 
-  async saveConnector(configuration: Omit<ConnectorConfiguration, "id" | "createdAt" | "updatedAt"> & { id?: string }) {
+  async saveConnector(
+    configuration: Omit<
+      ConnectorConfiguration,
+      "id" | "createdAt" | "updatedAt"
+    > & { id?: string },
+  ) {
     return await this.connectorRegistry.upsert(configuration);
   }
 
@@ -844,7 +1787,10 @@ export class WordlessRuntime {
     await this.connectorRegistry.test(connectorId);
   }
 
-  async authorizeConnector(connectorId: string, callbacks: ConnectorAuthorizationCallbacks): Promise<void> {
+  async authorizeConnector(
+    connectorId: string,
+    callbacks: ConnectorAuthorizationCallbacks,
+  ): Promise<void> {
     await this.connectorRegistry.authorize(connectorId, callbacks);
   }
 
@@ -852,7 +1798,10 @@ export class WordlessRuntime {
     await this.connectorRegistry.trust(connectorId);
   }
 
-  async setConnectorEnabled(connectorId: string, enabled: boolean): Promise<void> {
+  async setConnectorEnabled(
+    connectorId: string,
+    enabled: boolean,
+  ): Promise<void> {
     await this.connectorRegistry.setEnabled(connectorId, enabled);
   }
 
@@ -872,17 +1821,101 @@ export class WordlessRuntime {
     return await this.connectorRegistry.listPrompts(connectorId);
   }
 
-  async getConnectorPrompt(connectorId: string, name: string, argumentsValue: Record<string, string>) {
-    return await this.connectorRegistry.getPrompt(connectorId, name, argumentsValue);
+  async getConnectorPrompt(
+    connectorId: string,
+    name: string,
+    argumentsValue: Record<string, string>,
+  ) {
+    return await this.connectorRegistry.getPrompt(
+      connectorId,
+      name,
+      argumentsValue,
+    );
   }
 
-  setSessionConnectors(sessionId: string, connectorIds: string[]): SessionRecord {
-    if (this.runs.has(sessionId)) throw new Error("Connectors can only change while the session is idle");
+  setSessionConnectors(
+    sessionId: string,
+    connectorIds: string[],
+  ): SessionRecord {
+    if (this.runs.has(sessionId))
+      throw new Error("Connectors can only change while the session is idle");
     const session = this.requireSession(sessionId);
-    const unique = [...new Set(connectorIds)].filter((id) => this.connectorRegistry.snapshot().connectors.some((connector) => connector.id === id && connector.enabled && connector.status === "ready"));
+    const unique = [...new Set(connectorIds)].filter((id) =>
+      this.connectorRegistry
+        .snapshot()
+        .connectors.some(
+          (connector) =>
+            connector.id === id &&
+            connector.enabled &&
+            connector.status === "ready",
+        ),
+    );
     const next = { ...session, connectorIds: unique, updatedAt: Date.now() };
     this.database.upsertSession(next);
     return next;
+  }
+
+  setSessionExpert(
+    sessionId: string,
+    selection: ExpertSelection | null,
+  ): SessionRecord {
+    if (this.runs.has(sessionId))
+      throw new Error("Experts can only change while the session is idle");
+    const session = this.requireSession(sessionId);
+    if (session.entryId !== "general-work")
+      throw new Error("Experts are only available for General Work");
+    const next = {
+      ...session,
+      ...(selection
+        ? { expertSelection: selection }
+        : { expertSelection: undefined }),
+      updatedAt: Date.now(),
+    };
+    if (!selection) {
+      this.database.upsertSession(next);
+      this.database.deleteSessionExpertSnapshot(sessionId);
+      return next;
+    }
+    const expert = this.resolveExpertSelection(selection)!;
+    const expertSnapshot = this.createSessionExpertSnapshot(selection, expert);
+    const readyConnectorIds = new Set(
+      this.connectorRegistry
+        .snapshot()
+        .connectors.filter(
+          (connector) => connector.enabled && connector.status === "ready",
+        )
+        .map((connector) => connector.id),
+    );
+    const requiredConnectorIds = [
+      ...new Set([
+        ...expertSnapshot.connectorIds,
+        ...(expertSnapshot.kind === "team"
+          ? expertSnapshot.teamMembers.flatMap((member) => member.connectorIds)
+          : []),
+      ]),
+    ];
+    const missingConnectorIds = requiredConnectorIds.filter(
+      (id) => !readyConnectorIds.has(id),
+    );
+    if (missingConnectorIds.length)
+      throw new Error(
+        `Expert requires unavailable MCP connectors: ${missingConnectorIds.join(", ")}`,
+      );
+    const selectedRecord =
+      expertSnapshot.kind === "expert"
+        ? {
+            ...next,
+            connectorIds: [
+              ...new Set([
+                ...next.connectorIds,
+                ...expertSnapshot.connectorIds,
+              ]),
+            ],
+          }
+        : next;
+    this.database.upsertSession(selectedRecord);
+    this.database.saveSessionExpertSnapshot(sessionId, expertSnapshot);
+    return selectedRecord;
   }
 
   async getSessionSnapshot(sessionId: string): Promise<SessionSnapshot> {
@@ -890,73 +1923,159 @@ export class WordlessRuntime {
     const session = await openWordlessSession(record.journalPath);
     const entries = await session.getEntries();
     const messages: ConversationMessage[] = [];
-    const tools = new Map<string, { messageIndex: number; blockIndex: number }>();
+    const tools = new Map<
+      string,
+      { messageIndex: number; blockIndex: number }
+    >();
     const approvals = new Map<string, PersistedOperationApproval>();
     const userRequests = new Map<string, PersistedUserRequest>();
-    const clarificationAnswers = new Map<string, PersistedClarificationAnswer>();
+    const clarificationAnswers = new Map<
+      string,
+      PersistedClarificationAnswer
+    >();
     const compactionMetadata = new Map<string, PersistedContextCompaction>();
-    const compactions: Array<{ id: string; timestamp: number; summary: string; tokensBefore: number }> = [];
+    const compactions: Array<{
+      id: string;
+      timestamp: number;
+      summary: string;
+      tokensBefore: number;
+    }> = [];
     const extensions: AgentExtensionSessionState[] = [];
     for (const entry of entries) {
-      const customEntry = entry as unknown as { type: string; customType?: string; data?: unknown };
-      if (customEntry.type === "custom" && customEntry.customType === AGENT_EXTENSION_STATE_JOURNAL_TYPE) {
+      const customEntry = entry as unknown as {
+        type: string;
+        customType?: string;
+        data?: unknown;
+      };
+      if (
+        customEntry.type === "custom" &&
+        customEntry.customType === AGENT_EXTENSION_STATE_JOURNAL_TYPE
+      ) {
         const state = asRecord(customEntry.data);
-        if (typeof state?.extensionId === "string" && typeof state.updatedAt === "number" && asRecord(state.state)) {
-          const next = { extensionId: state.extensionId, updatedAt: state.updatedAt, state: asRecord(state.state)! } satisfies AgentExtensionSessionState;
-          const index = extensions.findIndex((item) => item.extensionId === next.extensionId);
+        if (
+          typeof state?.extensionId === "string" &&
+          typeof state.updatedAt === "number" &&
+          asRecord(state.state)
+        ) {
+          const next = {
+            extensionId: state.extensionId,
+            updatedAt: state.updatedAt,
+            state: asRecord(state.state)!,
+          } satisfies AgentExtensionSessionState;
+          const index = extensions.findIndex(
+            (item) => item.extensionId === next.extensionId,
+          );
           if (index === -1) extensions.push(next);
           else extensions[index] = next;
         }
         continue;
       }
-      if (customEntry.type === "custom" && customEntry.customType === OPERATION_APPROVAL_JOURNAL_TYPE) {
+      if (
+        customEntry.type === "custom" &&
+        customEntry.customType === OPERATION_APPROVAL_JOURNAL_TYPE
+      ) {
         const approval = persistedApproval(customEntry.data);
         if (!approval) continue;
         approvals.set(approval.callId, approval);
-        this.applyApproval(messages, tools.get(approval.callId), approval, this.runs.has(sessionId));
+        this.applyApproval(
+          messages,
+          tools.get(approval.callId),
+          approval,
+          this.runs.has(sessionId),
+        );
         continue;
       }
-      if (customEntry.type === "custom" && customEntry.customType === USER_REQUEST_JOURNAL_TYPE) {
+      if (
+        customEntry.type === "custom" &&
+        customEntry.customType === USER_REQUEST_JOURNAL_TYPE
+      ) {
         const userRequest = persistedUserRequest(customEntry.data);
         if (!userRequest) continue;
         userRequests.set(userRequest.callId, userRequest);
-        this.applyUserRequest(messages, tools.get(userRequest.callId), userRequest, this.runs.has(sessionId));
+        this.applyUserRequest(
+          messages,
+          tools.get(userRequest.callId),
+          userRequest,
+          this.runs.has(sessionId),
+        );
         continue;
       }
-      if (customEntry.type === "custom" && customEntry.customType === CLARIFICATION_ANSWER_JOURNAL_TYPE) {
+      if (
+        customEntry.type === "custom" &&
+        customEntry.customType === CLARIFICATION_ANSWER_JOURNAL_TYPE
+      ) {
         const answer = persistedClarificationAnswer(customEntry.data);
         if (!answer) continue;
         clarificationAnswers.set(answer.callId, answer);
-        this.applyClarificationAnswer(messages, tools.get(answer.callId), answer);
+        this.applyClarificationAnswer(
+          messages,
+          tools.get(answer.callId),
+          answer,
+        );
         continue;
       }
-      if (customEntry.type === "custom" && customEntry.customType === CONTEXT_COMPACTION_JOURNAL_TYPE) {
+      if (
+        customEntry.type === "custom" &&
+        customEntry.customType === CONTEXT_COMPACTION_JOURNAL_TYPE
+      ) {
         const compaction = persistedContextCompaction(customEntry.data);
-        if (compaction) compactionMetadata.set(compaction.compactionId, compaction);
+        if (compaction)
+          compactionMetadata.set(compaction.compactionId, compaction);
         continue;
       }
       if (entry.type === "compaction") {
         const value = asRecord(entry);
-        if (typeof value?.id === "string" && typeof value.summary === "string" && typeof value.tokensBefore === "number") {
-          const timestamp = typeof value.timestamp === "string" ? Date.parse(value.timestamp) : Number.NaN;
-          compactions.push({ id: value.id, timestamp: Number.isNaN(timestamp) ? Date.now() : timestamp, summary: value.summary, tokensBefore: value.tokensBefore });
+        if (
+          typeof value?.id === "string" &&
+          typeof value.summary === "string" &&
+          typeof value.tokensBefore === "number"
+        ) {
+          const timestamp =
+            typeof value.timestamp === "string"
+              ? Date.parse(value.timestamp)
+              : Number.NaN;
+          compactions.push({
+            id: value.id,
+            timestamp: Number.isNaN(timestamp) ? Date.now() : timestamp,
+            summary: value.summary,
+            tokensBefore: value.tokensBefore,
+          });
         }
         continue;
       }
       if (entry.type !== "message") continue;
       const value = asRecord(entry.message);
-      if (value?.role === "toolResult" && typeof value.toolCallId === "string") {
-        this.applyToolResult(messages, tools.get(value.toolCallId), value, approvals.get(value.toolCallId), userRequests.get(value.toolCallId));
+      if (
+        value?.role === "toolResult" &&
+        typeof value.toolCallId === "string"
+      ) {
+        this.applyToolResult(
+          messages,
+          tools.get(value.toolCallId),
+          value,
+          approvals.get(value.toolCallId),
+          userRequests.get(value.toolCallId),
+        );
         const answer = clarificationAnswers.get(value.toolCallId);
-        if (answer) this.applyClarificationAnswer(messages, tools.get(value.toolCallId), answer);
+        if (answer)
+          this.applyClarificationAnswer(
+            messages,
+            tools.get(value.toolCallId),
+            answer,
+          );
         continue;
       }
-      const message = this.toConversationMessage(entry.message, record.model, entry.id);
+      const message = this.toConversationMessage(
+        entry.message,
+        record.model,
+        entry.id,
+      );
       if (!message) continue;
       const messageIndex = messages.length;
       messages.push(message);
       message.blocks.forEach((block, blockIndex) => {
-        if (block.type === "tool") tools.set(block.callId, { messageIndex, blockIndex });
+        if (block.type === "tool")
+          tools.set(block.callId, { messageIndex, blockIndex });
       });
     }
     const active = this.runs.get(sessionId);
@@ -966,7 +2085,13 @@ export class WordlessRuntime {
         if (!location) continue;
         const message = messages[location.messageIndex];
         const block = message?.blocks[location.blockIndex];
-        if (!message || !block || block.type !== "tool" || block.state !== "pending") continue;
+        if (
+          !message ||
+          !block ||
+          block.type !== "tool" ||
+          block.state !== "pending"
+        )
+          continue;
         const blocks = [...message.blocks];
         blocks[location.blockIndex] = {
           ...activeTool,
@@ -976,26 +2101,35 @@ export class WordlessRuntime {
         messages[location.messageIndex] = { ...message, blocks };
       }
     }
-    const contextCompactions: ContextCompactionRecord[] = compactions.map((compaction) => {
-      const metadata = compactionMetadata.get(compaction.id);
-      return {
-        ...compaction,
-        trigger: metadata?.trigger ?? "manual",
-        tokensAfter: metadata?.tokensAfter ?? 0,
-        model: metadata?.model ?? record.model,
-      };
-    });
+    const contextCompactions: ContextCompactionRecord[] = compactions.map(
+      (compaction) => {
+        const metadata = compactionMetadata.get(compaction.id);
+        return {
+          ...compaction,
+          trigger: metadata?.trigger ?? "manual",
+          tokensAfter: metadata?.tokensAfter ?? 0,
+          model: metadata?.model ?? record.model,
+        };
+      },
+    );
     const recoveredFailureEntryIds = new Set(
       [...compactionMetadata.values()]
         .map((metadata) => metadata.recoveredFailureEntryId)
         .filter((entryId): entryId is string => typeof entryId === "string"),
     );
-    const latestInputTokens = [...messages].reverse().find((message) => (message.usage?.inputTokens ?? 0) > 0)?.usage?.inputTokens;
+    const latestInputTokens = [...messages]
+      .reverse()
+      .find((message) => (message.usage?.inputTokens ?? 0) > 0)
+      ?.usage?.inputTokens;
     let contextUsage: SessionSnapshot["contextUsage"];
     try {
       const model = this.requireRuntimeModel(record.model);
       contextUsage = estimateSessionContextUsage({
-        connectors: this.connectorRegistry.snapshot().connectors.filter((connector) => record.connectorIds.includes(connector.id)),
+        connectors: this.connectorRegistry
+          .snapshot()
+          .connectors.filter((connector) =>
+            record.connectorIds.includes(connector.id),
+          ),
         contextWindow: model.contextWindow || 128_000,
         entries,
         extensions: this.extensions.snapshot(),
@@ -1006,10 +2140,16 @@ export class WordlessRuntime {
     } catch {
       contextUsage = undefined;
     }
-    const visibleMessages = messages.filter((message) => !recoveredFailureEntryIds.has(message.id));
+    const visibleMessages = messages.filter(
+      (message) => !recoveredFailureEntryIds.has(message.id),
+    );
     return {
       session: record,
       messages: visibleMessages,
+      expertCollaboration: createExpertCollaborationSnapshot(
+        visibleMessages,
+        this.sessionExpertSnapshot(record),
+      ),
       contextUsage,
       turnUsage: calculateCurrentTurnUsage(visibleMessages),
       contextCompactions,
@@ -1037,20 +2177,164 @@ export class WordlessRuntime {
       toolApprovalMode: record.toolApprovalMode,
       compactionError: cached.snapshot.compactionError,
       extensions: cached.snapshot.extensions,
+      expertCollaboration: cached.snapshot.expertCollaboration,
     };
   }
 
-  async getSessionHistoryPage(sessionId: string, request: SessionHistoryPageRequest): Promise<SessionHistoryPage> {
+  async getSessionHistoryPage(
+    sessionId: string,
+    request: SessionHistoryPageRequest,
+  ): Promise<SessionHistoryPage> {
     const cached = await this.getCachedSessionHistory(sessionId);
-    return createSessionHistoryPage(cached.projection, cached.revision, request);
+    return createSessionHistoryPage(
+      cached.projection,
+      cached.revision,
+      request,
+    );
   }
 
-  async searchSessionMessages(sessionId: string, request: SessionMessageSearchRequest): Promise<SessionMessageSearchResponse> {
+  async getExpertMemberHistory(
+    sessionId: string,
+    memberId: string,
+    request: SessionHistoryPageRequest,
+  ): Promise<SessionHistoryPage> {
+    const member = await this.getExpertMemberHistoryProjection(
+      sessionId,
+      memberId,
+    );
+    return createSessionHistoryPage(
+      member.projection,
+      member.revision,
+      request,
+    );
+  }
+
+  async getExpertMemberToolOutput(
+    sessionId: string,
+    memberId: string,
+    callId: string,
+  ): Promise<string> {
+    const member = await this.getExpertMemberHistoryProjection(
+      sessionId,
+      memberId,
+    );
+    const output = member.projection.toolOutputs.get(callId);
+    if (output === undefined) throw new Error("Tool output is unavailable");
+    return output;
+  }
+
+  private async getExpertMemberHistoryProjection(
+    sessionId: string,
+    memberId: string,
+  ): Promise<{ projection: SessionHistoryProjection; revision: string }> {
+    const record = this.requireSession(sessionId);
+    const expert = this.sessionExpertSnapshot(record);
+    if (expert?.kind !== "team")
+      throw new Error("The session does not use an expert team");
+    const member = expert.teamMembers.find(
+      (candidate) => candidate.id === memberId,
+    );
+    if (!member) throw new Error("Expert team member is unavailable");
+    const membersRoot = resolve(
+      this.options.paths.journalsRoot,
+      "subagents",
+      record.id,
+      "members",
+    );
+    const journalPath = resolve(membersRoot, `${member.id}.jsonl`);
+    const memberPath = relative(membersRoot, journalPath);
+    if (!memberPath || memberPath.startsWith("..") || isAbsolute(memberPath))
+      throw new Error("Invalid expert member journal path");
+    let details;
+    try {
+      details = await stat(journalPath);
+    } catch (cause) {
+      if ((cause as NodeJS.ErrnoException).code !== "ENOENT") throw cause;
+      return {
+        projection: createSessionHistoryProjection([], []),
+        revision: "missing",
+      };
+    }
+    const journal = await openWordlessSession(journalPath);
+    const messages: ConversationMessage[] = [];
+    const compactions: ContextCompactionRecord[] = [];
+    const tools = new Map<
+      string,
+      { messageIndex: number; blockIndex: number }
+    >();
+    let model = record.model;
+    for (const entry of await journal.getEntries()) {
+      const value = asRecord(entry);
+      if (
+        entry.type === "model_change" &&
+        typeof value?.provider === "string" &&
+        typeof value.modelId === "string"
+      ) {
+        model = { connectionId: value.provider, modelId: value.modelId };
+        continue;
+      }
+      if (entry.type === "compaction") {
+        if (
+          typeof value?.id === "string" &&
+          typeof value.summary === "string" &&
+          typeof value.tokensBefore === "number"
+        ) {
+          const timestamp =
+            typeof value.timestamp === "string"
+              ? Date.parse(value.timestamp)
+              : Number.NaN;
+          compactions.push({
+            id: value.id,
+            timestamp: Number.isNaN(timestamp) ? Date.now() : timestamp,
+            summary: value.summary,
+            tokensBefore: value.tokensBefore,
+            tokensAfter: 0,
+            trigger: "manual",
+            model,
+          });
+        }
+        continue;
+      }
+      if (entry.type !== "message") continue;
+      const stored = asRecord(entry.message);
+      if (
+        stored?.role === "toolResult" &&
+        typeof stored.toolCallId === "string"
+      ) {
+        this.applyToolResult(messages, tools.get(stored.toolCallId), stored);
+        continue;
+      }
+      const message = this.toConversationMessage(
+        entry.message,
+        model,
+        entry.id,
+      );
+      if (!message) continue;
+      const messageIndex = messages.length;
+      messages.push(message);
+      message.blocks.forEach((block, blockIndex) => {
+        if (block.type === "tool")
+          tools.set(block.callId, { messageIndex, blockIndex });
+      });
+    }
+    return {
+      projection: createSessionHistoryProjection(messages, compactions),
+      revision: `${details.size}:${Math.round(details.mtimeMs)}`,
+    };
+  }
+
+  async searchSessionMessages(
+    sessionId: string,
+    request: SessionMessageSearchRequest,
+  ): Promise<SessionMessageSearchResponse> {
     const cached = await this.getCachedSessionHistory(sessionId);
     return searchSessionHistoryMessages(cached.projection, request);
   }
 
-  async getSessionToolOutput(sessionId: string, callId: string): Promise<string> {
+  async getSessionToolOutput(
+    sessionId: string,
+    callId: string,
+  ): Promise<string> {
     const cached = await this.getCachedSessionHistory(sessionId);
     const output = cached.projection.toolOutputs.get(callId);
     if (output === undefined) throw new Error("Tool output is unavailable");
@@ -1059,139 +2343,280 @@ export class WordlessRuntime {
 
   async getSessionContext(sessionId: string): Promise<SessionContextSnapshot> {
     const record = this.requireSession(sessionId);
-    const workspace = record.workspaceId ? this.requireWorkspace(record.workspaceId) : undefined;
+    const workspace = record.workspaceId
+      ? this.requireWorkspace(record.workspaceId)
+      : undefined;
     const session = await openWordlessSession(record.journalPath);
     const changes = new Map<string, SessionArtifactFile>();
     const baselines = new Map<string, PersistedSessionFileBaseline>();
     const approvedBaselines = new Map<string, SessionFileBaseline>();
     const successfulWriteCalls = new Set<string>();
     for (const entry of await session.getEntries()) {
-      const customEntry = entry as unknown as { type: string; customType?: string; data?: unknown };
-      if (customEntry.type === "custom" && customEntry.customType === SUBAGENT_FILE_CHANGE_JOURNAL_TYPE) {
+      const customEntry = entry as unknown as {
+        type: string;
+        customType?: string;
+        data?: unknown;
+      };
+      if (
+        customEntry.type === "custom" &&
+        customEntry.customType === SUBAGENT_FILE_CHANGE_JOURNAL_TYPE
+      ) {
         const persisted = persistedSubagentFileChange(customEntry.data);
-        const path = persisted ? workspaceRelativePath(record.runtimeRootPath, persisted.path) : undefined;
+        const path = persisted
+          ? workspaceRelativePath(record.runtimeRootPath, persisted.path)
+          : undefined;
         if (!persisted || !path) continue;
-        if (!baselines.has(path)) baselines.set(path, { callId: `subagent:${persisted.taskId}`, baseline: persisted.baseline });
+        if (!baselines.has(path))
+          baselines.set(path, {
+            callId: `subagent:${persisted.taskId}`,
+            baseline: persisted.baseline,
+          });
         const existing = changes.get(path);
         changes.set(path, {
           path,
           name: basename(path),
-          kind: existing?.kind === "created" || persisted.kind === "created" ? "created" : "modified",
+          kind:
+            existing?.kind === "created" || persisted.kind === "created"
+              ? "created"
+              : "modified",
           diffAvailable: true,
         });
         continue;
       }
-      if (customEntry.type === "custom" && customEntry.customType === SESSION_FILE_BASELINE_JOURNAL_TYPE) {
+      if (
+        customEntry.type === "custom" &&
+        customEntry.customType === SESSION_FILE_BASELINE_JOURNAL_TYPE
+      ) {
         const persisted = persistedFileBaseline(customEntry.data);
-        const path = persisted ? workspaceRelativePath(record.runtimeRootPath, persisted.baseline.path) : undefined;
-        if (persisted && path && !baselines.has(path)) baselines.set(path, persisted);
+        const path = persisted
+          ? workspaceRelativePath(
+              record.runtimeRootPath,
+              persisted.baseline.path,
+            )
+          : undefined;
+        if (persisted && path && !baselines.has(path))
+          baselines.set(path, persisted);
         continue;
       }
-      if (customEntry.type === "custom" && customEntry.customType === OPERATION_APPROVAL_JOURNAL_TYPE) {
+      if (
+        customEntry.type === "custom" &&
+        customEntry.customType === OPERATION_APPROVAL_JOURNAL_TYPE
+      ) {
         const approval = persistedApproval(customEntry.data);
         const baseline = approval ? approvalFileBaseline(approval) : undefined;
-        const path = baseline ? workspaceRelativePath(record.runtimeRootPath, baseline.path) : undefined;
-        if (approval && baseline && path && !approvedBaselines.has(approval.callId)) approvedBaselines.set(approval.callId, baseline);
+        const path = baseline
+          ? workspaceRelativePath(record.runtimeRootPath, baseline.path)
+          : undefined;
+        if (
+          approval &&
+          baseline &&
+          path &&
+          !approvedBaselines.has(approval.callId)
+        )
+          approvedBaselines.set(approval.callId, baseline);
         continue;
       }
       if (entry.type !== "message") continue;
       const message = asRecord(entry.message);
-      if (message?.role !== "toolResult" || message.isError === true || (message.toolName !== "write" && message.toolName !== "edit")) continue;
+      if (
+        message?.role !== "toolResult" ||
+        message.isError === true ||
+        (message.toolName !== "write" && message.toolName !== "edit")
+      )
+        continue;
       const details = asRecord(message.details);
       const change = asRecord(details?.change);
-      const path = typeof details?.path === "string" ? workspaceRelativePath(record.runtimeRootPath, details.path) : undefined;
-      if (!path || typeof change?.kind !== "string" || typeof message.toolCallId !== "string") continue;
+      const path =
+        typeof details?.path === "string"
+          ? workspaceRelativePath(record.runtimeRootPath, details.path)
+          : undefined;
+      if (
+        !path ||
+        typeof change?.kind !== "string" ||
+        typeof message.toolCallId !== "string"
+      )
+        continue;
       successfulWriteCalls.add(message.toolCallId);
       const existing = changes.get(path);
       changes.set(path, {
         path,
         name: basename(path),
-        kind: existing?.kind === "created" || change.kind === "created" ? "created" : "modified",
+        kind:
+          existing?.kind === "created" || change.kind === "created"
+            ? "created"
+            : "modified",
         diffAvailable: false,
       });
     }
     for (const callId of successfulWriteCalls) {
       const baseline = approvedBaselines.get(callId);
-      const path = baseline ? workspaceRelativePath(record.runtimeRootPath, baseline.path) : undefined;
-      if (baseline && path && !baselines.has(path)) baselines.set(path, { callId, baseline });
+      const path = baseline
+        ? workspaceRelativePath(record.runtimeRootPath, baseline.path)
+        : undefined;
+      if (baseline && path && !baselines.has(path))
+        baselines.set(path, { callId, baseline });
     }
-    for (const change of changes.values()) change.diffAvailable = baselines.has(change.path);
-    const sortedChanges = [...changes.values()].sort((left, right) => left.path.localeCompare(right.path));
+    for (const change of changes.values())
+      change.diffAvailable = baselines.has(change.path);
+    const sortedChanges = [...changes.values()].sort((left, right) =>
+      left.path.localeCompare(right.path),
+    );
     return {
-      workspace: workspace ? { id: workspace.id, name: workspace.name, available: workspace.availability === "available" } : null,
+      workspace: workspace
+        ? {
+            id: workspace.id,
+            name: workspace.name,
+            available: workspace.availability === "available",
+          }
+        : null,
       artifacts: sortedChanges.filter((change) => change.kind === "created"),
       changes: sortedChanges,
     };
   }
 
-  async readSessionWorkspaceTextFile(sessionId: string, path: string): Promise<SessionWorkspaceTextFile> {
+  async readSessionWorkspaceTextFile(
+    sessionId: string,
+    path: string,
+  ): Promise<SessionWorkspaceTextFile> {
     const record = this.requireWorkspaceSession(sessionId);
     try {
-      const file = await this.pathService.readWorkspaceTextFile(record.runtimeRootPath, path, 1_048_576);
+      const file = await this.pathService.readWorkspaceTextFile(
+        record.runtimeRootPath,
+        path,
+        1_048_576,
+      );
       return { status: "available", ...file };
     } catch (cause) {
-      return { status: "unavailable", reason: this.workspaceReadFailure(cause) };
+      return {
+        status: "unavailable",
+        reason: this.workspaceReadFailure(cause),
+      };
     }
   }
 
-  async getSessionArtifactDiff(sessionId: string, path: string): Promise<SessionArtifactDiff> {
+  async getSessionArtifactDiff(
+    sessionId: string,
+    path: string,
+  ): Promise<SessionArtifactDiff> {
     const record = this.requireWorkspaceSession(sessionId);
     const workspacePath = workspaceRelativePath(record.runtimeRootPath, path);
-    if (!workspacePath) return { status: "unavailable", reason: "baseline-missing" };
+    if (!workspacePath)
+      return { status: "unavailable", reason: "baseline-missing" };
     const session = await openWordlessSession(record.journalPath);
     let baseline: PersistedSessionFileBaseline | undefined;
     const approvedBaselines = new Map<string, SessionFileBaseline>();
     const successfulWriteCalls = new Set<string>();
     for (const entry of await session.getEntries()) {
-      const customEntry = entry as unknown as { type: string; customType?: string; data?: unknown };
-      if (customEntry.type === "custom" && customEntry.customType === SUBAGENT_FILE_CHANGE_JOURNAL_TYPE) {
+      const customEntry = entry as unknown as {
+        type: string;
+        customType?: string;
+        data?: unknown;
+      };
+      if (
+        customEntry.type === "custom" &&
+        customEntry.customType === SUBAGENT_FILE_CHANGE_JOURNAL_TYPE
+      ) {
         const candidate = persistedSubagentFileChange(customEntry.data);
-        if (candidate && workspaceRelativePath(record.runtimeRootPath, candidate.path) === workspacePath && !baseline) {
-          baseline = { callId: `subagent:${candidate.taskId}`, baseline: candidate.baseline };
+        if (
+          candidate &&
+          workspaceRelativePath(record.runtimeRootPath, candidate.path) ===
+            workspacePath &&
+          !baseline
+        ) {
+          baseline = {
+            callId: `subagent:${candidate.taskId}`,
+            baseline: candidate.baseline,
+          };
         }
         continue;
       }
-      if (customEntry.type === "custom" && customEntry.customType === SESSION_FILE_BASELINE_JOURNAL_TYPE) {
+      if (
+        customEntry.type === "custom" &&
+        customEntry.customType === SESSION_FILE_BASELINE_JOURNAL_TYPE
+      ) {
         const candidate = persistedFileBaseline(customEntry.data);
-        if (candidate && workspaceRelativePath(record.runtimeRootPath, candidate.baseline.path) === workspacePath && !baseline) baseline = candidate;
+        if (
+          candidate &&
+          workspaceRelativePath(
+            record.runtimeRootPath,
+            candidate.baseline.path,
+          ) === workspacePath &&
+          !baseline
+        )
+          baseline = candidate;
         continue;
       }
-      if (customEntry.type === "custom" && customEntry.customType === OPERATION_APPROVAL_JOURNAL_TYPE) {
+      if (
+        customEntry.type === "custom" &&
+        customEntry.customType === OPERATION_APPROVAL_JOURNAL_TYPE
+      ) {
         const approval = persistedApproval(customEntry.data);
         const candidate = approval ? approvalFileBaseline(approval) : undefined;
-        if (approval && candidate) approvedBaselines.set(approval.callId, candidate);
+        if (approval && candidate)
+          approvedBaselines.set(approval.callId, candidate);
         continue;
       }
       if (entry.type !== "message") continue;
       const message = asRecord(entry.message);
-      if (message?.role === "toolResult" && message.isError !== true && (message.toolName === "write" || message.toolName === "edit") && typeof message.toolCallId === "string") successfulWriteCalls.add(message.toolCallId);
+      if (
+        message?.role === "toolResult" &&
+        message.isError !== true &&
+        (message.toolName === "write" || message.toolName === "edit") &&
+        typeof message.toolCallId === "string"
+      )
+        successfulWriteCalls.add(message.toolCallId);
     }
     if (!baseline) {
       for (const callId of successfulWriteCalls) {
         const candidate = approvedBaselines.get(callId);
-        if (candidate && workspaceRelativePath(record.runtimeRootPath, candidate.path) === workspacePath) {
+        if (
+          candidate &&
+          workspaceRelativePath(record.runtimeRootPath, candidate.path) ===
+            workspacePath
+        ) {
           baseline = { callId, baseline: candidate };
           break;
         }
       }
     }
-    if (!baseline || baseline.baseline.content === null) return { status: "unavailable", reason: "baseline-missing" };
-    const current = await this.readSessionWorkspaceTextFile(sessionId, workspacePath);
+    if (!baseline || baseline.baseline.content === null)
+      return { status: "unavailable", reason: "baseline-missing" };
+    const current = await this.readSessionWorkspaceTextFile(
+      sessionId,
+      workspacePath,
+    );
     if (current.status === "unavailable") return current;
-    return { status: "available", path: workspacePath, patch: unifiedPatch(workspacePath, baseline.baseline.content, current.content) };
+    return {
+      status: "available",
+      path: workspacePath,
+      patch: unifiedPatch(
+        workspacePath,
+        baseline.baseline.content,
+        current.content,
+      ),
+    };
   }
 
-  async listSessionWorkspaceDirectory(sessionId: string, path: string): Promise<WorkspaceFileEntry[]> {
+  async listSessionWorkspaceDirectory(
+    sessionId: string,
+    path: string,
+  ): Promise<WorkspaceFileEntry[]> {
     const record = this.requireWorkspaceSession(sessionId);
     return await this.pathService.listDirectory(record.runtimeRootPath, path);
   }
 
-  async searchSessionWorkspace(sessionId: string, query: string): Promise<WorkspaceFileEntry[]> {
+  async searchSessionWorkspace(
+    sessionId: string,
+    query: string,
+  ): Promise<WorkspaceFileEntry[]> {
     const record = this.requireWorkspaceSession(sessionId);
     return await this.searchWorkspaceRoot(record.runtimeRootPath, query);
   }
 
-  async searchWorkspace(workspaceId: string, query: string): Promise<WorkspaceFileEntry[]> {
+  async searchWorkspace(
+    workspaceId: string,
+    query: string,
+  ): Promise<WorkspaceFileEntry[]> {
     const workspace = await this.resolveAvailableWorkspace(workspaceId);
     return await this.searchWorkspaceRoot(workspace.canonicalRootPath, query);
   }
@@ -1200,19 +2625,37 @@ export class WordlessRuntime {
     this.requireSession(sessionId);
   }
 
-  async resolveSessionWorkspaceFile(sessionId: string, path: string): Promise<string> {
+  async resolveSessionWorkspaceFile(
+    sessionId: string,
+    path: string,
+  ): Promise<string> {
     const record = this.requireWorkspaceSession(sessionId);
-    return await this.pathService.resolveWorkspaceFile(record.runtimeRootPath, path);
+    return await this.pathService.resolveWorkspaceFile(
+      record.runtimeRootPath,
+      path,
+    );
   }
 
-  async resolveSessionWorkspaceEntry(sessionId: string, path: string): Promise<string> {
-    if (this.runs.has(sessionId)) throw new Error("Workspace entries cannot be moved to Trash while the agent is running");
+  async resolveSessionWorkspaceEntry(
+    sessionId: string,
+    path: string,
+  ): Promise<string> {
+    if (this.runs.has(sessionId))
+      throw new Error(
+        "Workspace entries cannot be moved to Trash while the agent is running",
+      );
     const record = this.requireWorkspaceSession(sessionId);
-    return await this.pathService.resolveWorkspaceEntry(record.runtimeRootPath, path);
+    return await this.pathService.resolveWorkspaceEntry(
+      record.runtimeRootPath,
+      path,
+    );
   }
 
   async createManagedWorkspace(name: string): Promise<WorkspaceRecord> {
-    const location = await this.pathService.createManagedWorkspace(this.preferences.defaultWorkspaceRoot, name.trim());
+    const location = await this.pathService.createManagedWorkspace(
+      this.preferences.defaultWorkspaceRoot,
+      name.trim(),
+    );
     const now = Date.now();
     const workspace: WorkspaceRecord = {
       id: randomUUID(),
@@ -1232,7 +2675,9 @@ export class WordlessRuntime {
 
   async openLinkedWorkspace(path: string): Promise<WorkspaceRecord> {
     const location = await this.pathService.openLinkedWorkspace(path);
-    const existing = this.database.findWorkspaceByCanonicalRoot(location.canonicalRootPath);
+    const existing = this.database.findWorkspaceByCanonicalRoot(
+      location.canonicalRootPath,
+    );
     const now = Date.now();
     if (existing) {
       const refreshed = {
@@ -1263,26 +2708,84 @@ export class WordlessRuntime {
     return workspace;
   }
 
-  async createAndPrompt(draft: SessionDraft, prompt: string, skillIds: string[] = [], submission?: UserMessageSubmission): Promise<SessionRecord> {
+  async createAndPrompt(
+    draft: SessionDraft,
+    prompt: string,
+    skillIds: string[] = [],
+    submission?: UserMessageSubmission,
+  ): Promise<SessionRecord> {
     const entry = this.getEntry(draft.entryId);
-    if (entry.mode !== draft.mode) throw new Error("Selected entry does not belong to the selected mode");
-    const profile = entry.profile ? this.profiles.get(entry.profile) : undefined;
-    if (entry.availability !== "available" || !profile || !this.drivers.get(profile.driverId)) {
+    if (entry.mode !== draft.mode)
+      throw new Error("Selected entry does not belong to the selected mode");
+    const profile = entry.profile
+      ? this.profiles.get(entry.profile)
+      : undefined;
+    if (
+      entry.availability !== "available" ||
+      !profile ||
+      !this.drivers.get(profile.driverId)
+    ) {
       throw new Error("This work type is not available yet");
     }
     const model = this.resolveSessionModel(draft, entry);
-    this.assertInteractionModeAvailable(draft.interactionMode ?? "default", profile.driverId, model);
-    const workspace = draft.workspaceId ? await this.resolveAvailableWorkspace(draft.workspaceId) : undefined;
-    if ((entry.workbenchId === "code" || entry.workbenchId === "analysis") && !workspace) throw new Error(`${entry.workbenchId === "code" ? "Coding" : "Data analysis"} sessions require a workspace`);
+    const expert = this.resolveExpertSelection(draft.expertSelection);
+    this.assertInteractionModeAvailable(
+      draft.interactionMode ?? "default",
+      profile.driverId,
+      model,
+    );
+    const workspace = draft.workspaceId
+      ? await this.resolveAvailableWorkspace(draft.workspaceId)
+      : undefined;
+    if (
+      (entry.workbenchId === "code" || entry.workbenchId === "analysis") &&
+      !workspace
+    )
+      throw new Error(
+        `${entry.workbenchId === "code" ? "Coding" : "Data analysis"} sessions require a workspace`,
+      );
 
     const now = Date.now();
     const id = randomUUID();
-    const runtimeRootPath = workspace?.canonicalRootPath ?? join(this.options.paths.sessionWorkspacesRoot, id);
+    const runtimeRootPath =
+      workspace?.canonicalRootPath ??
+      join(this.options.paths.sessionWorkspacesRoot, id);
     await this.pathService.ensureSessionRoot(runtimeRootPath);
     const journalPath = join(this.options.paths.journalsRoot, `${id}.jsonl`);
-    const availableConnectors = this.connectorRegistry.snapshot().connectors.filter((connector) => connector.enabled && connector.status === "ready");
-    const defaultConnectorTemplates = new Set(profile.defaultConnectorTemplateIds ?? []);
-    const defaultConnectorIds = availableConnectors.filter((connector) => connector.templateId && defaultConnectorTemplates.has(connector.templateId)).map((connector) => connector.id);
+    const availableConnectors = this.connectorRegistry
+      .snapshot()
+      .connectors.filter(
+        (connector) => connector.enabled && connector.status === "ready",
+      );
+    const defaultConnectorTemplates = new Set(
+      profile.defaultConnectorTemplateIds ?? [],
+    );
+    const defaultConnectorIds = availableConnectors
+      .filter(
+        (connector) =>
+          connector.templateId &&
+          defaultConnectorTemplates.has(connector.templateId),
+      )
+      .map((connector) => connector.id);
+    const expertSnapshot =
+      expert && draft.expertSelection
+        ? this.createSessionExpertSnapshot(draft.expertSelection, expert)
+        : undefined;
+    const missingConnectorIds = [
+      ...new Set([
+        ...(expertSnapshot?.connectorIds ?? []),
+        ...(expertSnapshot?.kind === "team"
+          ? expertSnapshot.teamMembers.flatMap((member) => member.connectorIds)
+          : []),
+      ]),
+    ].filter(
+      (connectorId) =>
+        !availableConnectors.some((connector) => connector.id === connectorId),
+    );
+    if (missingConnectorIds.length)
+      throw new Error(
+        `Expert requires unavailable MCP connectors: ${missingConnectorIds.join(", ")}`,
+      );
     const record: SessionRecord = {
       id,
       title: draft.title?.trim() || sessionTitleFromPrompt(prompt),
@@ -1292,18 +2795,35 @@ export class WordlessRuntime {
       entryId: entry.id,
       profile: profile.reference,
       driverId: profile.driverId,
-      journalFormat: profile.driverId === "coding" ? "wordless-coding-v1" : "wordless-agent-v1",
+      journalFormat:
+        profile.driverId === "coding"
+          ? "wordless-coding-v1"
+          : "wordless-agent-v1",
       workbenchId: entry.workbenchId,
       accessLevel: draft.accessLevel,
       model,
-      thinkingLevel: thinkingLevelForModel(this.requireRuntimeModel(model), draft.thinkingLevel ?? "medium"),
+      thinkingLevel: thinkingLevelForModel(
+        this.requireRuntimeModel(model),
+        draft.thinkingLevel ?? "medium",
+      ),
       journalPath,
-      connectorIds: [...new Set([...(draft.connectorIds ?? []), ...defaultConnectorIds])].filter((id) => availableConnectors.some((connector) => connector.id === id)),
+      connectorIds: [
+        ...new Set([
+          ...(draft.connectorIds ?? []),
+          ...defaultConnectorIds,
+          ...(expertSnapshot?.kind === "expert"
+            ? expertSnapshot.connectorIds
+            : []),
+        ]),
+      ].filter((id) =>
+        availableConnectors.some((connector) => connector.id === id),
+      ),
       interactionMode: draft.interactionMode ?? "default",
       toolApprovalMode: draft.toolApprovalMode ?? "manual",
       pinnedAt: null,
       createdAt: now,
       updatedAt: now,
+      ...(expert ? { expertSelection: draft.expertSelection } : {}),
     };
     const metadata: WordlessSessionMetadata = {
       id,
@@ -1322,29 +2842,57 @@ export class WordlessRuntime {
     const journal = await createWordlessSession(metadata);
     await journal.appendModelChange(model.connectionId, model.modelId);
     await journal.appendThinkingLevelChange(record.thinkingLevel);
-    if (record.interactionMode === "plan") await this.persistPlanModeState(record, "planning");
+    if (record.interactionMode === "plan")
+      await this.persistPlanModeState(record, "planning");
     this.database.upsertSession(record);
+    if (expertSnapshot)
+      this.database.saveSessionExpertSnapshot(id, expertSnapshot);
     this.rememberEntryModel(entry.id, model);
-    const initialPrompt = entry.workbenchId === "presentation"
-      ? `${prompt}\n\n<wordless-presentation mode="${draft.presentation?.generationMode ?? "guided"}" template="${draft.presentation?.templateId ?? "auto"}">\nUse the Presentation workflow. In guided mode, inspect the request, propose a slide outline, and wait for confirmation before creating the deck. In quick mode, create the first complete draft directly.\n</wordless-presentation>`
-      : prompt;
+    const initialPrompt =
+      entry.workbenchId === "presentation"
+        ? `${prompt}\n\n<wordless-presentation mode="${draft.presentation?.generationMode ?? "guided"}" template="${draft.presentation?.templateId ?? "auto"}">\nUse the Presentation workflow. In guided mode, inspect the request, propose a slide outline, and wait for confirmation before creating the deck. In quick mode, create the first complete draft directly.\n</wordless-presentation>`
+        : prompt;
     await this.promptSession(id, initialPrompt, skillIds, submission);
     return this.requireSession(id);
   }
 
-  async promptSession(sessionId: string, prompt: string, skillIds: string[] = [], submission?: UserMessageSubmission): Promise<void> {
+  async promptSession(
+    sessionId: string,
+    prompt: string,
+    skillIds: string[] = [],
+    submission?: UserMessageSubmission,
+  ): Promise<void> {
     const record = await this.ensureSessionModelForOpen(sessionId);
     const active = this.runs.get(sessionId);
     if (active) {
-      if (active.kind === "compaction") throw new Error("Context compaction is in progress");
-      if (skillIds.length > 0) throw new Error("Skills can only be selected before starting a new agent run");
-      await active.driverSession.execute({ type: "steer", text: prompt, submission });
+      if (active.kind === "compaction")
+        throw new Error("Context compaction is in progress");
+      if (skillIds.length > 0)
+        throw new Error(
+          "Skills can only be selected before starting a new agent run",
+        );
+      await active.driverSession.execute({
+        type: "steer",
+        text: prompt,
+        submission,
+      });
       return;
     }
     const selectedSkills = this.resolveSelectedSkills(record, skillIds);
     const automaticCompaction = this.isAutomaticContextCompactionEnabled();
-    const run = await this.createActiveRun(sessionId, automaticCompaction ? "compaction" : "prompt", submission?.messageId);
-    void this.executeActiveRun(sessionId, run, prompt, selectedSkills, automaticCompaction, submission).catch(() => {});
+    const run = await this.createActiveRun(
+      sessionId,
+      automaticCompaction ? "compaction" : "prompt",
+      submission?.messageId,
+    );
+    void this.executeActiveRun(
+      sessionId,
+      run,
+      prompt,
+      selectedSkills,
+      automaticCompaction,
+      submission,
+    ).catch(() => {});
   }
 
   async cancelSession(sessionId: string): Promise<void> {
@@ -1352,18 +2900,26 @@ export class WordlessRuntime {
     if (!active) return;
     if (active.kind === "compaction") return;
     await active.driverSession.execute({ type: "cancel" });
-    this.emit(sessionId, active, { type: "run.cancelled", runId: active.runId });
+    this.emit(sessionId, active, {
+      type: "run.cancelled",
+      runId: active.runId,
+    });
   }
 
   renameSession(sessionId: string, title: string): SessionRecord {
     const normalized = title.trim();
-    if (!normalized || normalized.length > 120) throw new Error("Session title must be between 1 and 120 characters");
+    if (!normalized || normalized.length > 120)
+      throw new Error("Session title must be between 1 and 120 characters");
     const session = this.database.renameSession(sessionId, normalized);
     if (!session) throw new Error("Session not found");
     if (session.workbenchId === "media-canvas") {
       const project = this.database.getMediaProject(sessionId);
       if (project) {
-        this.database.upsertMediaProject({ ...project, title: normalized, updatedAt: session.updatedAt });
+        this.database.upsertMediaProject({
+          ...project,
+          title: normalized,
+          updatedAt: session.updatedAt,
+        });
         this.emitApp({ type: "media.project.changed", sessionId });
       }
     }
@@ -1376,89 +2932,179 @@ export class WordlessRuntime {
     return session;
   }
 
-  setSessionAccess(sessionId: string, accessLevel: SessionRecord["accessLevel"]): SessionRecord {
-    if (this.runs.has(sessionId)) throw new Error("Access level can only change while the session is idle");
+  setSessionAccess(
+    sessionId: string,
+    accessLevel: SessionRecord["accessLevel"],
+  ): SessionRecord {
+    if (this.runs.has(sessionId))
+      throw new Error("Access level can only change while the session is idle");
     const session = this.requireSession(sessionId);
     const next = { ...session, accessLevel, updatedAt: Date.now() };
     this.database.upsertSession(next);
     return next;
   }
 
-  async setSessionToolApprovalMode(sessionId: string, mode: ToolApprovalMode): Promise<void> {
+  async setSessionToolApprovalMode(
+    sessionId: string,
+    mode: ToolApprovalMode,
+  ): Promise<void> {
     const previous = this.requireSession(sessionId);
     const active = this.runs.get(sessionId);
     const next = { ...previous, toolApprovalMode: mode };
     this.database.upsertSession(next);
     if (!active) return;
     try {
-      await active.driverSession.execute({ type: "set-tool-approval-mode", mode });
+      await active.driverSession.execute({
+        type: "set-tool-approval-mode",
+        mode,
+      });
     } catch (error) {
       this.database.upsertSession(previous);
-      await active.driverSession.execute({ type: "set-tool-approval-mode", mode: previous.toolApprovalMode }).catch(() => {});
+      await active.driverSession
+        .execute({
+          type: "set-tool-approval-mode",
+          mode: previous.toolApprovalMode,
+        })
+        .catch(() => {});
       throw error;
     }
   }
 
-  async setSessionInteractionMode(sessionId: string, interactionMode: AgentInteractionModeId): Promise<SessionRecord> {
-    if (this.runs.has(sessionId)) throw new Error("Interaction mode can only change while the session is idle");
+  async setSessionInteractionMode(
+    sessionId: string,
+    interactionMode: AgentInteractionModeId,
+  ): Promise<SessionRecord> {
+    if (this.runs.has(sessionId))
+      throw new Error(
+        "Interaction mode can only change while the session is idle",
+      );
     const current = this.requireSession(sessionId);
-    this.assertInteractionModeAvailable(interactionMode, current.driverId, current.model);
+    this.assertInteractionModeAvailable(
+      interactionMode,
+      current.driverId,
+      current.model,
+    );
     const next = { ...current, interactionMode, updatedAt: Date.now() };
     this.database.upsertSession(next);
-    await this.persistPlanModeState(next, interactionMode === "plan" ? "planning" : "off");
+    await this.persistPlanModeState(
+      next,
+      interactionMode === "plan" ? "planning" : "off",
+    );
     this.historyCache.delete(sessionId);
     return next;
   }
 
-  async resolveClarificationQuestion(sessionId: string, callId: string, value: string | boolean): Promise<UserMessageSubmission> {
-    if (this.runs.has(sessionId)) throw new Error("Wait for the current response before answering a clarification question");
+  async resolveClarificationQuestion(
+    sessionId: string,
+    callId: string,
+    value: string | boolean,
+  ): Promise<UserMessageSubmission> {
+    if (this.runs.has(sessionId))
+      throw new Error(
+        "Wait for the current response before answering a clarification question",
+      );
     const session = this.requireSession(sessionId);
-    if (session.interactionMode !== "clarify") throw new Error("The session is not in clarification mode");
+    if (session.interactionMode !== "clarify")
+      throw new Error("The session is not in clarification mode");
     const snapshot = await this.getSessionSnapshot(sessionId);
     const block = snapshot.messages
       .flatMap((message) => message.blocks)
-      .find((candidate) => candidate.type === "tool" && candidate.callId === callId && candidate.name === "ask_clarifying_question");
-    if (!block || block.type !== "tool") throw new Error("The clarification question is unavailable");
-    if (asRecord(block.details)?.clarificationAnswer !== undefined) throw new Error("This clarification question has already been answered");
+      .find(
+        (candidate) =>
+          candidate.type === "tool" &&
+          candidate.callId === callId &&
+          candidate.name === "ask_clarifying_question",
+      );
+    if (!block || block.type !== "tool")
+      throw new Error("The clarification question is unavailable");
+    if (asRecord(block.details)?.clarificationAnswer !== undefined)
+      throw new Error("This clarification question has already been answered");
     const question = clarificationQuestionFromDetails(block.details);
     if (!question) throw new Error("The clarification question is invalid");
-    if (question.answerType === "confirm" && typeof value !== "boolean") throw new Error("This clarification question requires a confirmation");
-    if (question.answerType !== "confirm" && typeof value !== "string") throw new Error("This clarification question requires text");
-    if (typeof value === "string" && !value.trim()) throw new Error("A clarification answer is required");
-    if (question.answerType === "choice" && typeof value === "string" && !question.allowCustom && !question.options?.some((option) => option.value === value)) {
+    if (question.answerType === "confirm" && typeof value !== "boolean")
+      throw new Error("This clarification question requires a confirmation");
+    if (question.answerType !== "confirm" && typeof value !== "string")
+      throw new Error("This clarification question requires text");
+    if (typeof value === "string" && !value.trim())
+      throw new Error("A clarification answer is required");
+    if (
+      question.answerType === "choice" &&
+      typeof value === "string" &&
+      !question.allowCustom &&
+      !question.options?.some((option) => option.value === value)
+    ) {
       throw new Error("The selected clarification answer is unavailable");
     }
-    const answer: PersistedClarificationAnswer = { callId, value, submittedAt: Date.now() };
+    const answer: PersistedClarificationAnswer = {
+      callId,
+      value,
+      submittedAt: Date.now(),
+    };
     const journal = await openWordlessSession(session.journalPath);
-    await (journal as unknown as { appendCustomEntry(customType: string, data?: unknown): Promise<string> }).appendCustomEntry(CLARIFICATION_ANSWER_JOURNAL_TYPE, answer);
+    await (
+      journal as unknown as {
+        appendCustomEntry(customType: string, data?: unknown): Promise<string>;
+      }
+    ).appendCustomEntry(CLARIFICATION_ANSWER_JOURNAL_TYPE, answer);
     this.historyCache.delete(sessionId);
     const submission: UserMessageSubmission = {
       messageId: randomUUID(),
       submittedAt: Date.now(),
     };
-    const displayValue = typeof value === "boolean" ? value ? "Yes" : "No" : value;
-    await this.promptSession(sessionId, `Clarification answer to "${question.question}": ${displayValue}`, [], submission);
+    const displayValue =
+      typeof value === "boolean" ? (value ? "Yes" : "No") : value;
+    await this.promptSession(
+      sessionId,
+      `Clarification answer to "${question.question}": ${displayValue}`,
+      [],
+      submission,
+    );
     return submission;
   }
 
-  async handoffClarification(sessionId: string, interactionMode: AgentInteractionModeId): Promise<void> {
-    if (this.runs.has(sessionId)) throw new Error("Wait for the current response before choosing the next mode");
+  async handoffClarification(
+    sessionId: string,
+    interactionMode: AgentInteractionModeId,
+  ): Promise<void> {
+    if (this.runs.has(sessionId))
+      throw new Error(
+        "Wait for the current response before choosing the next mode",
+      );
     const current = this.requireSession(sessionId);
-    if (current.interactionMode !== "clarify") throw new Error("The session is not in clarification mode");
+    if (current.interactionMode !== "clarify")
+      throw new Error("The session is not in clarification mode");
     const snapshot = await this.getSessionSnapshot(sessionId);
     const brief = [...snapshot.messages]
       .reverse()
       .flatMap((message) => [...message.blocks].reverse())
-      .flatMap((block) => block.type === "tool" && block.name === "complete_clarification" ? [clarificationBriefFromDetails(block.details)] : [])
-      .find((candidate): candidate is ClarificationBrief => candidate !== undefined);
-    if (!brief) throw new Error("A clarification brief is required before changing modes");
+      .flatMap((block) =>
+        block.type === "tool" && block.name === "complete_clarification"
+          ? [clarificationBriefFromDetails(block.details)]
+          : [],
+      )
+      .find(
+        (candidate): candidate is ClarificationBrief => candidate !== undefined,
+      );
+    if (!brief)
+      throw new Error(
+        "A clarification brief is required before changing modes",
+      );
     const confirmed = snapshot.messages
       .flatMap((message) => message.blocks)
-      .some((block) => block.type === "tool" && block.name === "ask_clarifying_question" && hasPositiveClarificationConfirmation(block.details));
-    if (!confirmed) throw new Error("Confirm the clarification brief before changing modes");
+      .some(
+        (block) =>
+          block.type === "tool" &&
+          block.name === "ask_clarifying_question" &&
+          hasPositiveClarificationConfirmation(block.details),
+      );
+    if (!confirmed)
+      throw new Error("Confirm the clarification brief before changing modes");
     await this.setSessionInteractionMode(sessionId, interactionMode);
     if (interactionMode === "clarify") {
-      await this.promptSession(sessionId, "Continue clarifying the highest-priority unresolved question. Ask exactly one question.");
+      await this.promptSession(
+        sessionId,
+        "Continue clarifying the highest-priority unresolved question. Ask exactly one question.",
+      );
       return;
     }
     if (interactionMode === "plan") {
@@ -1469,28 +3115,62 @@ export class WordlessRuntime {
         `Decisions:\n${brief.decisions.map((decision) => `- ${decision.topic}: ${decision.outcome}`).join("\n")}`,
         `Open questions:\n${brief.openQuestions.map((question) => `- ${question}`).join("\n")}`,
       ].filter((section) => section.trim().length > 0);
-      await this.promptSession(sessionId, `Based on the clarification brief below, produce a concise ordered implementation plan. Do not execute the plan.\n\n${sections.join("\n\n")}`);
+      await this.promptSession(
+        sessionId,
+        `Based on the clarification brief below, produce a concise ordered implementation plan. Do not execute the plan.\n\n${sections.join("\n\n")}`,
+      );
     }
   }
 
-  async deleteSession(sessionId: string, beforeDelete?: (session: SessionRecord) => Promise<void>): Promise<void> {
-    if (this.runs.has(sessionId)) throw new Error("Wait for the current response before deleting this session");
+  async deleteSession(
+    sessionId: string,
+    beforeDelete?: (session: SessionRecord) => Promise<void>,
+  ): Promise<void> {
+    if (this.runs.has(sessionId))
+      throw new Error(
+        "Wait for the current response before deleting this session",
+      );
     const session = this.requireSession(sessionId);
     await beforeDelete?.(session);
-    if (this.isInternalSessionRoot(session.runtimeRootPath)) await rm(session.runtimeRootPath, { force: true, recursive: true, maxRetries: 10, retryDelay: 200 });
-    await rm(session.journalPath, { force: true, maxRetries: 5, retryDelay: 100 });
-    await rm(join(this.options.paths.journalsRoot, "subagents", sessionId), { force: true, recursive: true, maxRetries: 5, retryDelay: 100 });
-    await rm(join(this.mediaAssetsRoot(), sessionId), { force: true, recursive: true, maxRetries: 5, retryDelay: 100 });
-    if (session.workbenchId === "media-canvas") this.database.deleteMediaProject(sessionId);
+    if (this.isInternalSessionRoot(session.runtimeRootPath))
+      await rm(session.runtimeRootPath, {
+        force: true,
+        recursive: true,
+        maxRetries: 10,
+        retryDelay: 200,
+      });
+    await rm(session.journalPath, {
+      force: true,
+      maxRetries: 5,
+      retryDelay: 100,
+    });
+    await rm(join(this.options.paths.journalsRoot, "subagents", sessionId), {
+      force: true,
+      recursive: true,
+      maxRetries: 5,
+      retryDelay: 100,
+    });
+    await rm(join(this.mediaAssetsRoot(), sessionId), {
+      force: true,
+      recursive: true,
+      maxRetries: 5,
+      retryDelay: 100,
+    });
+    if (session.workbenchId === "media-canvas")
+      this.database.deleteMediaProject(sessionId);
     this.database.deleteSession(sessionId);
     this.historyCache.delete(sessionId);
-    if (session.workbenchId === "media-canvas") this.emitApp({ type: "media.project.changed", sessionId });
+    if (session.workbenchId === "media-canvas")
+      this.emitApp({ type: "media.project.changed", sessionId });
   }
 
   async createMediaProject(title?: string): Promise<MediaProject> {
     const entry = this.getEntry("image-generation");
-    const profile = entry.profile ? this.profiles.get(entry.profile) : undefined;
-    if (!profile || !this.drivers.get(profile.driverId)) throw new Error("The media workbench profile is unavailable");
+    const profile = entry.profile
+      ? this.profiles.get(entry.profile)
+      : undefined;
+    if (!profile || !this.drivers.get(profile.driverId))
+      throw new Error("The media workbench profile is unavailable");
 
     const now = Date.now();
     const id = randomUUID();
@@ -1498,7 +3178,10 @@ export class WordlessRuntime {
     await this.pathService.ensureSessionRoot(runtimeRootPath);
     const journalPath = join(this.options.paths.journalsRoot, `${id}.jsonl`);
     const model = this.defaultMediaAgentModel();
-    const runtimeModel = model.connectionId === "media-agent" ? undefined : this.requireRuntimeModel(model);
+    const runtimeModel =
+      model.connectionId === "media-agent"
+        ? undefined
+        : this.requireRuntimeModel(model);
     const record: SessionRecord = {
       id,
       title: title?.trim() || "Untitled canvas",
@@ -1512,7 +3195,9 @@ export class WordlessRuntime {
       workbenchId: entry.workbenchId,
       accessLevel: "default",
       model,
-      thinkingLevel: runtimeModel ? thinkingLevelForModel(runtimeModel) : "medium",
+      thinkingLevel: runtimeModel
+        ? thinkingLevelForModel(runtimeModel)
+        : "medium",
       journalPath,
       connectorIds: [],
       interactionMode: "default",
@@ -1526,7 +3211,14 @@ export class WordlessRuntime {
       createdAt: new Date(now).toISOString(),
       cwd: runtimeRootPath,
       path: journalPath,
-      metadata: { workspaceId: null, entryId: entry.id, profile: record.profile, driverId: record.driverId, accessLevel: record.accessLevel, model },
+      metadata: {
+        workspaceId: null,
+        entryId: entry.id,
+        profile: record.profile,
+        driverId: record.driverId,
+        accessLevel: record.accessLevel,
+        model,
+      },
     });
     await journal.appendModelChange(model.connectionId, model.modelId);
     await journal.appendThinkingLevelChange(record.thinkingLevel);
@@ -1549,7 +3241,8 @@ export class WordlessRuntime {
 
   getMediaProject(sessionId: string): MediaProject {
     const session = this.requireSession(sessionId);
-    if (session.workbenchId !== "media-canvas") throw new Error("The session is not a media project");
+    if (session.workbenchId !== "media-canvas")
+      throw new Error("The session is not a media project");
     const project = this.database.getMediaProject(sessionId);
     if (!project) throw new Error("Media project not found");
     const normalized = this.normalizeMediaProject(project);
@@ -1559,36 +3252,99 @@ export class WordlessRuntime {
 
   private saveMediaProject(project: MediaProject): MediaProject {
     const session = this.requireSession(project.sessionId);
-    if (session.workbenchId !== "media-canvas") throw new Error("The session is not a media project");
+    if (session.workbenchId !== "media-canvas")
+      throw new Error("The session is not a media project");
     const now = Date.now();
-    const next: MediaProject = { ...project, title: project.title.trim() || session.title, updatedAt: now };
+    const next: MediaProject = {
+      ...project,
+      title: project.title.trim() || session.title,
+      updatedAt: now,
+    };
     this.database.upsertMediaProject(next);
-    if (next.title !== session.title) this.database.upsertSession({ ...session, title: next.title, updatedAt: now });
+    if (next.title !== session.title)
+      this.database.upsertSession({
+        ...session,
+        title: next.title,
+        updatedAt: now,
+      });
     else this.database.upsertSession({ ...session, updatedAt: now });
     this.emitApp({ type: "media.project.changed", sessionId: next.sessionId });
     return next;
   }
 
-  async importMediaImages(request: { sessionId: string; sourcePaths: string[]; targetPosition: { x: number; y: number } }): Promise<MediaProject> {
+  async importMediaImages(request: {
+    sessionId: string;
+    sourcePaths: string[];
+    targetPosition: { x: number; y: number };
+  }): Promise<MediaProject> {
     let project = this.getMediaProject(request.sessionId);
     const now = Date.now();
     const assets: MediaAsset[] = [];
     const operations: MediaOperation[] = [];
     for (const [index, sourcePath] of request.sourcePaths.entries()) {
-      const imported = await this.writeMediaFileAsset(request.sessionId, sourcePath);
+      const imported = await this.writeMediaFileAsset(
+        request.sessionId,
+        sourcePath,
+      );
       const operationId = randomUUID();
       const assetId = randomUUID();
-      const position = this.createAssetPosition(undefined, request.targetPosition, request.sourcePaths.length, index);
-      operations.push({ id: operationId, kind: "upload", inputs: [], outputAssetIds: [assetId], prompt: null, ratio: "source", outputCount: 1, outputTotal: 1, providerId: null, modelId: null, parameters: { sourceName: imported.name }, status: "ready", errorMessage: null, createdAt: now, updatedAt: now });
-      assets.push({ id: assetId, operationId, origin: "uploaded", kind: "image", status: "ready", name: imported.name, mimeType: imported.mimeType, url: imported.url, errorMessage: null, pixelWidth: null, pixelHeight: null, ...position, outputIndex: 0, createdAt: now, updatedAt: now });
+      const position = this.createAssetPosition(
+        undefined,
+        request.targetPosition,
+        request.sourcePaths.length,
+        index,
+      );
+      operations.push({
+        id: operationId,
+        kind: "upload",
+        inputs: [],
+        outputAssetIds: [assetId],
+        prompt: null,
+        ratio: "source",
+        outputCount: 1,
+        outputTotal: 1,
+        providerId: null,
+        modelId: null,
+        parameters: { sourceName: imported.name },
+        status: "ready",
+        errorMessage: null,
+        createdAt: now,
+        updatedAt: now,
+      });
+      assets.push({
+        id: assetId,
+        operationId,
+        origin: "uploaded",
+        kind: "image",
+        status: "ready",
+        name: imported.name,
+        mimeType: imported.mimeType,
+        url: imported.url,
+        errorMessage: null,
+        pixelWidth: null,
+        pixelHeight: null,
+        ...position,
+        outputIndex: 0,
+        createdAt: now,
+        updatedAt: now,
+      });
     }
-    return this.saveMediaProject({ ...project, assets: [...project.assets, ...assets], operations: [...project.operations, ...operations] });
+    return this.saveMediaProject({
+      ...project,
+      assets: [...project.assets, ...assets],
+      operations: [...project.operations, ...operations],
+    });
   }
 
-  async duplicateMediaAsset(sessionId: string, assetId: string, targetPosition: { x: number; y: number }): Promise<MediaProject> {
+  async duplicateMediaAsset(
+    sessionId: string,
+    assetId: string,
+    targetPosition: { x: number; y: number },
+  ): Promise<MediaProject> {
     const project = this.getMediaProject(sessionId);
     const source = this.requireMediaAsset(project, assetId);
-    if (source.status !== "ready" || source.kind !== "image") throw new Error("Only ready image nodes can be copied");
+    if (source.status !== "ready" || source.kind !== "image")
+      throw new Error("Only ready image nodes can be copied");
     const image = await this.readMediaAssetInput(sessionId, source);
     const now = Date.now();
     const operationId = randomUUID();
@@ -1600,7 +3356,11 @@ export class WordlessRuntime {
       id: copiedAssetId,
       operationId,
       name,
-      url: await this.writeMediaImageAsset(sessionId, image.mimeType, image.data),
+      url: await this.writeMediaImageAsset(
+        sessionId,
+        image.mimeType,
+        image.data,
+      ),
       x: targetPosition.x,
       y: targetPosition.y,
       outputIndex: 0,
@@ -1624,50 +3384,100 @@ export class WordlessRuntime {
       createdAt: now,
       updatedAt: now,
     };
-    return this.saveMediaProject({ ...project, assets: [...project.assets, copiedAsset], operations: [...project.operations, operation] });
+    return this.saveMediaProject({
+      ...project,
+      assets: [...project.assets, copiedAsset],
+      operations: [...project.operations, operation],
+    });
   }
 
-  async deleteMediaAsset(sessionId: string, assetId: string): Promise<MediaProject> {
+  async deleteMediaAsset(
+    sessionId: string,
+    assetId: string,
+  ): Promise<MediaProject> {
     const project = this.getMediaProject(sessionId);
     const asset = this.requireMediaAsset(project, assetId);
-    if (asset.status === "rendering") throw new Error("Wait for the image generation to finish before deleting it");
+    if (asset.status === "rendering")
+      throw new Error(
+        "Wait for the image generation to finish before deleting it",
+      );
     const next: MediaProject = {
       ...project,
       assets: project.assets.filter((candidate) => candidate.id !== assetId),
-      operations: project.operations.map((operation) => ({ ...operation, outputAssetIds: operation.outputAssetIds.filter((id) => id !== assetId) })).filter((operation) => operation.outputAssetIds.length > 0),
-      coverAssetId: project.coverAssetId === assetId ? null : project.coverAssetId,
+      operations: project.operations
+        .map((operation) => ({
+          ...operation,
+          outputAssetIds: operation.outputAssetIds.filter(
+            (id) => id !== assetId,
+          ),
+        }))
+        .filter((operation) => operation.outputAssetIds.length > 0),
+      coverAssetId:
+        project.coverAssetId === assetId ? null : project.coverAssetId,
     };
     const saved = this.saveMediaProject(next);
-    if (asset.url && !saved.assets.some((candidate) => candidate.url === asset.url)) {
+    if (
+      asset.url &&
+      !saved.assets.some((candidate) => candidate.url === asset.url)
+    ) {
       const parsed = new URL(asset.url);
-      const [assetSessionId, fileName] = parsed.pathname.split("/").filter(Boolean).map(decodeURIComponent);
-      if (parsed.protocol === "wordless-media:" && parsed.hostname === "asset" && assetSessionId === sessionId && fileName && /^[a-f0-9]{64}\.(gif|jpe?g|png|webp)$/i.test(fileName)) {
-        try { await rm(join(this.mediaAssetsRoot(), sessionId, fileName), { force: true }); } catch {}
+      const [assetSessionId, fileName] = parsed.pathname
+        .split("/")
+        .filter(Boolean)
+        .map(decodeURIComponent);
+      if (
+        parsed.protocol === "wordless-media:" &&
+        parsed.hostname === "asset" &&
+        assetSessionId === sessionId &&
+        fileName &&
+        /^[a-f0-9]{64}\.(gif|jpe?g|png|webp)$/i.test(fileName)
+      ) {
+        try {
+          await rm(join(this.mediaAssetsRoot(), sessionId, fileName), {
+            force: true,
+          });
+        } catch {}
       }
     }
     return saved;
   }
 
-  async readMediaAssetData(sessionId: string, assetId: string): Promise<MediaInlineImage> {
+  async readMediaAssetData(
+    sessionId: string,
+    assetId: string,
+  ): Promise<MediaInlineImage> {
     const project = this.getMediaProject(sessionId);
     const asset = this.requireMediaAsset(project, assetId);
     const image = await this.readMediaAssetInput(sessionId, asset);
     return { mimeType: image.mimeType, data: image.data };
   }
 
-  async downloadMediaAsset(sessionId: string, assetId: string, destinationDirectory: string): Promise<string> {
+  async downloadMediaAsset(
+    sessionId: string,
+    assetId: string,
+    destinationDirectory: string,
+  ): Promise<string> {
     const project = this.getMediaProject(sessionId);
     const asset = this.requireMediaAsset(project, assetId);
     const image = await this.readMediaAssetInput(sessionId, asset);
     const extension = extensionForMediaMimeType(image.mimeType);
     const originalStem = basename(asset.name, extname(asset.name));
-    const sanitizedStem = originalStem.replace(/[<>:"/\\|?*\u0000-\u001f]/g, "_").replace(/[. ]+$/g, "").trim() || "wordless-image";
+    const sanitizedStem =
+      originalStem
+        .replace(/[<>:"/\\|?*\u0000-\u001f]/g, "_")
+        .replace(/[. ]+$/g, "")
+        .trim() || "wordless-image";
     await mkdir(destinationDirectory, { recursive: true });
     for (let suffix = 0; ; suffix += 1) {
-      const fileName = suffix === 0 ? `${sanitizedStem}.${extension}` : `${sanitizedStem} (${suffix}).${extension}`;
+      const fileName =
+        suffix === 0
+          ? `${sanitizedStem}.${extension}`
+          : `${sanitizedStem} (${suffix}).${extension}`;
       const targetPath = join(destinationDirectory, fileName);
       try {
-        await writeFile(targetPath, Buffer.from(image.data, "base64"), { flag: "wx" });
+        await writeFile(targetPath, Buffer.from(image.data, "base64"), {
+          flag: "wx",
+        });
         return targetPath;
       } catch (cause) {
         if ((cause as NodeJS.ErrnoException).code !== "EEXIST") throw cause;
@@ -1675,18 +3485,35 @@ export class WordlessRuntime {
     }
   }
 
-  async startMediaOperation(request: MediaOperationRequest): Promise<MediaProject> {
+  async startMediaOperation(
+    request: MediaOperationRequest,
+  ): Promise<MediaProject> {
     if (request.action === "crop") return await this.createMediaCrop(request);
     const project = this.getMediaProject(request.sessionId);
     const prompt = request.prompt.trim();
     if (!prompt) throw new Error("Describe the image before generating");
     const inputIds = [...request.parentAssetIds, ...request.referenceAssetIds];
-    const inputAssets = inputIds.map((assetId) => this.requireMediaAsset(project, assetId));
-    if (inputAssets.some((asset) => asset.status !== "ready" || asset.kind !== "image")) throw new Error("All source images must be ready");
+    const inputAssets = inputIds.map((assetId) =>
+      this.requireMediaAsset(project, assetId),
+    );
+    if (
+      inputAssets.some(
+        (asset) => asset.status !== "ready" || asset.kind !== "image",
+      )
+    )
+      throw new Error("All source images must be ready");
     const operationId = randomUUID();
-    const outputTotal = request.action === "multi-view" ? request.views.length : request.outputCount;
+    const outputTotal =
+      request.action === "multi-view"
+        ? request.views.length
+        : request.outputCount;
     const now = Date.now();
-    const inputs = inputIds.map((assetId) => ({ assetId, role: request.parentAssetIds.includes(assetId) ? "parent" as const : "reference" as const }));
+    const inputs = inputIds.map((assetId) => ({
+      assetId,
+      role: request.parentAssetIds.includes(assetId)
+        ? ("parent" as const)
+        : ("reference" as const),
+    }));
     const operation: MediaOperation = {
       id: operationId,
       kind: request.action,
@@ -1698,42 +3525,74 @@ export class WordlessRuntime {
       outputTotal,
       providerId: request.providerId,
       modelId: request.modelId,
-      parameters: request.action === "local-edit" || request.action === "remove-object"
-        ? { hasMask: true, ...(request.imageParameters ? { imageParameters: request.imageParameters } : {}) }
-        : request.action === "remove-background"
-          ? { preserveSubject: request.preserveSubject, ...(request.imageParameters ? { imageParameters: request.imageParameters } : {}) }
-          : request.action === "multi-view"
-            ? { views: request.views, ...(request.imageParameters ? { imageParameters: request.imageParameters } : {}) }
-            : request.imageParameters ? { imageParameters: request.imageParameters } : {},
+      parameters:
+        request.action === "local-edit" || request.action === "remove-object"
+          ? {
+              hasMask: true,
+              ...(request.imageParameters
+                ? { imageParameters: request.imageParameters }
+                : {}),
+            }
+          : request.action === "remove-background"
+            ? {
+                preserveSubject: request.preserveSubject,
+                ...(request.imageParameters
+                  ? { imageParameters: request.imageParameters }
+                  : {}),
+              }
+            : request.action === "multi-view"
+              ? {
+                  views: request.views,
+                  ...(request.imageParameters
+                    ? { imageParameters: request.imageParameters }
+                    : {}),
+                }
+              : request.imageParameters
+                ? { imageParameters: request.imageParameters }
+                : {},
       status: "rendering",
       errorMessage: null,
       createdAt: now,
       updatedAt: now,
     };
-    const parent = inputAssets.find((asset) => request.parentAssetIds.includes(asset.id));
-    const assets = Array.from({ length: outputTotal }, (_, outputIndex): MediaAsset => ({
-      id: randomUUID(),
-      operationId,
-      origin: "generated",
-      kind: "image",
-      status: "rendering",
-      name: `Image ${String(project.assets.length + outputIndex + 1).padStart(3, "0")}`,
-      mimeType: "image/png",
-      url: null,
-      errorMessage: null,
-      pixelWidth: null,
-      pixelHeight: null,
-      ...this.createAssetPosition(parent, request.targetPosition, outputTotal, outputIndex),
-      outputIndex,
-      createdAt: now,
-      updatedAt: now,
-    }));
+    const parent = inputAssets.find((asset) =>
+      request.parentAssetIds.includes(asset.id),
+    );
+    const assets = Array.from(
+      { length: outputTotal },
+      (_, outputIndex): MediaAsset => ({
+        id: randomUUID(),
+        operationId,
+        origin: "generated",
+        kind: "image",
+        status: "rendering",
+        name: `Image ${String(project.assets.length + outputIndex + 1).padStart(3, "0")}`,
+        mimeType: "image/png",
+        url: null,
+        errorMessage: null,
+        pixelWidth: null,
+        pixelHeight: null,
+        ...this.createAssetPosition(
+          parent,
+          request.targetPosition,
+          outputTotal,
+          outputIndex,
+        ),
+        outputIndex,
+        createdAt: now,
+        updatedAt: now,
+      }),
+    );
     operation.outputAssetIds = assets.map((asset) => asset.id);
     const controller = new AbortController();
     this.mediaOperations.set(operationId, controller);
     let initial: MediaProject;
     try {
-      initial = this.saveMediaProject({ ...project, assets: [...project.assets, ...assets], operations: [...project.operations, operation] });
+      initial = this.saveMediaProject({
+        ...project,
+        assets: [...project.assets, ...assets],
+        operations: [...project.operations, operation],
+      });
     } catch (cause) {
       this.mediaOperations.delete(operationId);
       throw cause;
@@ -1742,16 +3601,39 @@ export class WordlessRuntime {
     return initial;
   }
 
-  async cancelMediaOperation(sessionId: string, operationId: string): Promise<void> {
+  async cancelMediaOperation(
+    sessionId: string,
+    operationId: string,
+  ): Promise<void> {
     const project = this.getMediaProject(sessionId);
-    const operation = project.operations.find((candidate) => candidate.id === operationId);
+    const operation = project.operations.find(
+      (candidate) => candidate.id === operationId,
+    );
     if (!operation) throw new Error("Media operation not found");
     this.mediaOperations.get(operationId)?.abort();
     if (!this.mediaOperations.has(operationId)) {
       this.saveMediaProject({
         ...project,
-        operations: project.operations.map((candidate) => candidate.id === operationId ? { ...candidate, status: "cancelled", errorMessage: "Operation cancelled", updatedAt: Date.now() } : candidate),
-        assets: project.assets.map((asset) => asset.operationId === operationId && asset.status === "rendering" ? { ...asset, status: "failed", errorMessage: "Operation cancelled", updatedAt: Date.now() } : asset),
+        operations: project.operations.map((candidate) =>
+          candidate.id === operationId
+            ? {
+                ...candidate,
+                status: "cancelled",
+                errorMessage: "Operation cancelled",
+                updatedAt: Date.now(),
+              }
+            : candidate,
+        ),
+        assets: project.assets.map((asset) =>
+          asset.operationId === operationId && asset.status === "rendering"
+            ? {
+                ...asset,
+                status: "failed",
+                errorMessage: "Operation cancelled",
+                updatedAt: Date.now(),
+              }
+            : asset,
+        ),
       });
     }
   }
@@ -1763,7 +3645,16 @@ export class WordlessRuntime {
       ...project,
       assets: project.assets.map((asset) => {
         const position = positions.get(asset.id);
-        return position ? { ...asset, x: position.x, y: position.y, width: position.width, height: position.height, updatedAt: Date.now() } : asset;
+        return position
+          ? {
+              ...asset,
+              x: position.x,
+              y: position.y,
+              width: position.width,
+              height: position.height,
+              updatedAt: Date.now(),
+            }
+          : asset;
       }),
       viewport: update.viewport,
     });
@@ -1772,156 +3663,388 @@ export class WordlessRuntime {
   setMediaCoverAsset(sessionId: string, assetId: string): MediaProject {
     const project = this.getMediaProject(sessionId);
     const asset = this.requireMediaAsset(project, assetId);
-    if (asset.status !== "ready") throw new Error("Only ready media assets can be used as the cover");
+    if (asset.status !== "ready")
+      throw new Error("Only ready media assets can be used as the cover");
     return this.saveMediaProject({ ...project, coverAssetId: assetId });
   }
 
-  private async runMediaOperation(request: Exclude<MediaOperationRequest, MediaCropRequest>, operationId: string, signal: AbortSignal): Promise<void> {
+  private async runMediaOperation(
+    request: Exclude<MediaOperationRequest, MediaCropRequest>,
+    operationId: string,
+    signal: AbortSignal,
+  ): Promise<void> {
     let completed = 0;
     try {
       const project = this.getMediaProject(request.sessionId);
-      const operation = project.operations.find((candidate) => candidate.id === operationId);
+      const operation = project.operations.find(
+        (candidate) => candidate.id === operationId,
+      );
       if (!operation) throw new Error("Media operation not found");
-      const targets = project.assets.filter((asset) => asset.operationId === operationId);
-      const inputs = [...request.parentAssetIds, ...request.referenceAssetIds].map((assetId) => this.requireMediaAsset(project, assetId));
-      const batches = targets.map((target, index) => ({ targets: [target], viewLabel: request.action === "multi-view" ? request.views[index]?.label : undefined }));
+      const targets = project.assets.filter(
+        (asset) => asset.operationId === operationId,
+      );
+      const inputs = [
+        ...request.parentAssetIds,
+        ...request.referenceAssetIds,
+      ].map((assetId) => this.requireMediaAsset(project, assetId));
+      const batches = targets.map((target, index) => ({
+        targets: [target],
+        viewLabel:
+          request.action === "multi-view"
+            ? request.views[index]?.label
+            : undefined,
+      }));
       for (const [batchIndex, batch] of batches.entries()) {
         if (signal.aborted) throw new Error("Operation cancelled");
         const prompt = this.mediaOperationPrompt(request, batch.viewLabel);
         const input: ImagesContext["input"] = [
-          ...await Promise.all(inputs.map((asset) => this.readMediaAssetInput(request.sessionId, asset))),
+          ...(await Promise.all(
+            inputs.map((asset) =>
+              this.readMediaAssetInput(request.sessionId, asset),
+            ),
+          )),
           { type: "text", text: prompt },
         ];
-        const response = await this.modelConfiguration.generateImage(request.providerId, request.modelId, {
-          input,
-          outputCount: batch.targets.length,
-          generation: {
-            aspectRatio: request.imageParameters?.aspectRatio ?? request.ratio,
-            ...request.imageParameters,
+        const response = await this.modelConfiguration.generateImage(
+          request.providerId,
+          request.modelId,
+          {
+            input,
+            outputCount: batch.targets.length,
+            generation: {
+              aspectRatio:
+                request.imageParameters?.aspectRatio ?? request.ratio,
+              ...request.imageParameters,
+            },
+            ...(request.action === "local-edit" ||
+            request.action === "remove-object"
+              ? {
+                  edit: {
+                    mask: {
+                      type: "image" as const,
+                      mimeType: request.mask.mimeType,
+                      data: request.mask.data,
+                    },
+                    inputFidelity: "high" as const,
+                  },
+                }
+              : {}),
+            ...(request.action === "remove-background"
+              ? { edit: { background: "transparent" as const } }
+              : {}),
           },
-          ...(request.action === "local-edit" || request.action === "remove-object" ? { edit: { mask: { type: "image" as const, mimeType: request.mask.mimeType, data: request.mask.data }, inputFidelity: "high" as const } } : {}),
-          ...(request.action === "remove-background" ? { edit: { background: "transparent" as const } } : {}),
-        }, { signal });
+          { signal },
+        );
         const usage = conversationUsageFromAiUsage(response.usage);
         this.updateMediaProject(request.sessionId, (current) => ({
           ...current,
-          operations: current.operations.map((candidate) => candidate.id === operationId
-            ? {
-                ...candidate,
-                usageEvents: [
-                  ...(candidate.usageEvents ?? []),
-                  {
-                    id: response.responseId ?? `${operationId}:${batchIndex}`,
-                    timestamp: response.timestamp,
-                    ...(usage ? { usage } : {}),
-                  },
-                ],
-                updatedAt: Date.now(),
-              }
-            : candidate),
+          operations: current.operations.map((candidate) =>
+            candidate.id === operationId
+              ? {
+                  ...candidate,
+                  usageEvents: [
+                    ...(candidate.usageEvents ?? []),
+                    {
+                      id: response.responseId ?? `${operationId}:${batchIndex}`,
+                      timestamp: response.timestamp,
+                      ...(usage ? { usage } : {}),
+                    },
+                  ],
+                  updatedAt: Date.now(),
+                }
+              : candidate,
+          ),
         }));
-        if (response.stopReason !== "stop") throw new Error(response.errorMessage ?? "Image generation failed");
-        const images = response.output.filter((item): item is Extract<typeof item, { type: "image" }> => item.type === "image");
-        if (images.length === 0) throw new Error("The selected model did not return an image");
-        for (const [index, image] of images.slice(0, batch.targets.length).entries()) {
+        if (response.stopReason !== "stop")
+          throw new Error(response.errorMessage ?? "Image generation failed");
+        const images = response.output.filter(
+          (item): item is Extract<typeof item, { type: "image" }> =>
+            item.type === "image",
+        );
+        if (images.length === 0)
+          throw new Error("The selected model did not return an image");
+        for (const [index, image] of images
+          .slice(0, batch.targets.length)
+          .entries()) {
           const target = batch.targets[index];
           if (!target) continue;
-          const url = await this.writeMediaImageAsset(request.sessionId, image.mimeType, image.data);
+          const url = await this.writeMediaImageAsset(
+            request.sessionId,
+            image.mimeType,
+            image.data,
+          );
           completed += 1;
           this.updateMediaProject(request.sessionId, (current) => ({
             ...current,
-            assets: current.assets.map((asset) => asset.id === target.id ? { ...asset, status: "ready", url, mimeType: image.mimeType, errorMessage: null, updatedAt: Date.now() } : asset),
-            operations: current.operations.map((candidate) => candidate.id === operationId ? { ...candidate, outputCount: completed, updatedAt: Date.now() } : candidate),
+            assets: current.assets.map((asset) =>
+              asset.id === target.id
+                ? {
+                    ...asset,
+                    status: "ready",
+                    url,
+                    mimeType: image.mimeType,
+                    errorMessage: null,
+                    updatedAt: Date.now(),
+                  }
+                : asset,
+            ),
+            operations: current.operations.map((candidate) =>
+              candidate.id === operationId
+                ? {
+                    ...candidate,
+                    outputCount: completed,
+                    updatedAt: Date.now(),
+                  }
+                : candidate,
+            ),
           }));
         }
-        if (images.length < batch.targets.length) throw new Error(`The selected model returned ${images.length} of ${batch.targets.length} requested images`);
+        if (images.length < batch.targets.length)
+          throw new Error(
+            `The selected model returned ${images.length} of ${batch.targets.length} requested images`,
+          );
       }
-      this.updateMediaProject(request.sessionId, (current) => ({ ...current, operations: current.operations.map((candidate) => candidate.id === operationId ? { ...candidate, status: "ready", outputCount: completed, errorMessage: null, updatedAt: Date.now() } : candidate) }));
-    } catch (cause) {
-      const message = signal.aborted ? "Operation cancelled" : cause instanceof Error ? cause.message : String(cause);
       this.updateMediaProject(request.sessionId, (current) => ({
         ...current,
-        assets: current.assets.map((asset) => asset.operationId === operationId && asset.status === "rendering" ? { ...asset, status: "failed", errorMessage: message, updatedAt: Date.now() } : asset),
-        operations: current.operations.map((candidate) => candidate.id === operationId ? { ...candidate, status: signal.aborted ? "cancelled" : completed > 0 ? "partial" : "failed", outputCount: completed, errorMessage: message, updatedAt: Date.now() } : candidate),
+        operations: current.operations.map((candidate) =>
+          candidate.id === operationId
+            ? {
+                ...candidate,
+                status: "ready",
+                outputCount: completed,
+                errorMessage: null,
+                updatedAt: Date.now(),
+              }
+            : candidate,
+        ),
+      }));
+    } catch (cause) {
+      const message = signal.aborted
+        ? "Operation cancelled"
+        : cause instanceof Error
+          ? cause.message
+          : String(cause);
+      this.updateMediaProject(request.sessionId, (current) => ({
+        ...current,
+        assets: current.assets.map((asset) =>
+          asset.operationId === operationId && asset.status === "rendering"
+            ? {
+                ...asset,
+                status: "failed",
+                errorMessage: message,
+                updatedAt: Date.now(),
+              }
+            : asset,
+        ),
+        operations: current.operations.map((candidate) =>
+          candidate.id === operationId
+            ? {
+                ...candidate,
+                status: signal.aborted
+                  ? "cancelled"
+                  : completed > 0
+                    ? "partial"
+                    : "failed",
+                outputCount: completed,
+                errorMessage: message,
+                updatedAt: Date.now(),
+              }
+            : candidate,
+        ),
       }));
     } finally {
       this.mediaOperations.delete(operationId);
     }
   }
 
-  private mediaOperationPrompt(request: Exclude<MediaOperationRequest, MediaCropRequest>, viewLabel?: string): string {
-    if (request.action === "remove-background") return `${request.prompt}\nRemove the background and preserve only the ${request.preserveSubject}. Return a transparent background.`;
-    if (request.action === "remove-object") return `${request.prompt}\nUse the provided raster mask as a strict spatial constraint. Transparent mask pixels are the only editable area. Remove only the image content inside that area and inpaint it from the immediate surroundings. Preserve every unmasked region exactly, especially connected body parts, the person's face, identity, pose, and clothing outside the mask. Never remove the whole subject unless the whole subject is masked.`;
-    if (request.action === "multi-view" && viewLabel) return `${request.prompt}\nGenerate the same subject from the ${viewLabel} view while preserving identity, materials, lighting, and proportions.`;
+  private mediaOperationPrompt(
+    request: Exclude<MediaOperationRequest, MediaCropRequest>,
+    viewLabel?: string,
+  ): string {
+    if (request.action === "remove-background")
+      return `${request.prompt}\nRemove the background and preserve only the ${request.preserveSubject}. Return a transparent background.`;
+    if (request.action === "remove-object")
+      return `${request.prompt}\nUse the provided raster mask as a strict spatial constraint. Transparent mask pixels are the only editable area. Remove only the image content inside that area and inpaint it from the immediate surroundings. Preserve every unmasked region exactly, especially connected body parts, the person's face, identity, pose, and clothing outside the mask. Never remove the whole subject unless the whole subject is masked.`;
+    if (request.action === "multi-view" && viewLabel)
+      return `${request.prompt}\nGenerate the same subject from the ${viewLabel} view while preserving identity, materials, lighting, and proportions.`;
     return request.prompt;
   }
 
-  private updateMediaProject(sessionId: string, update: (project: MediaProject) => MediaProject): MediaProject {
+  private updateMediaProject(
+    sessionId: string,
+    update: (project: MediaProject) => MediaProject,
+  ): MediaProject {
     return this.saveMediaProject(update(this.getMediaProject(sessionId)));
   }
 
-  private async createMediaCrop(request: MediaCropRequest): Promise<MediaProject> {
+  private async createMediaCrop(
+    request: MediaCropRequest,
+  ): Promise<MediaProject> {
     const project = this.getMediaProject(request.sessionId);
     const source = this.requireMediaAsset(project, request.sourceAssetId);
-    if (source.status !== "ready") throw new Error("The source image is not ready");
+    if (source.status !== "ready")
+      throw new Error("The source image is not ready");
     const operationId = randomUUID();
     const assetId = randomUUID();
     const now = Date.now();
-    const url = await this.writeMediaImageAsset(request.sessionId, request.image.mimeType, request.image.data);
-    const operation: MediaOperation = { id: operationId, kind: "crop", inputs: [{ assetId: source.id, role: "parent" }], outputAssetIds: [assetId], prompt: null, ratio: "source", outputCount: 1, outputTotal: 1, providerId: null, modelId: null, parameters: { crop: request.crop }, status: "ready", errorMessage: null, createdAt: now, updatedAt: now };
-    const asset: MediaAsset = { id: assetId, operationId, origin: "generated", kind: "image", status: "ready", name: `${source.name} cropped`, mimeType: request.image.mimeType, url, errorMessage: null, pixelWidth: null, pixelHeight: null, ...this.createAssetPosition(source, request.targetPosition, 1, 0), outputIndex: 0, createdAt: now, updatedAt: now };
-    return this.saveMediaProject({ ...project, assets: [...project.assets, asset], operations: [...project.operations, operation] });
+    const url = await this.writeMediaImageAsset(
+      request.sessionId,
+      request.image.mimeType,
+      request.image.data,
+    );
+    const operation: MediaOperation = {
+      id: operationId,
+      kind: "crop",
+      inputs: [{ assetId: source.id, role: "parent" }],
+      outputAssetIds: [assetId],
+      prompt: null,
+      ratio: "source",
+      outputCount: 1,
+      outputTotal: 1,
+      providerId: null,
+      modelId: null,
+      parameters: { crop: request.crop },
+      status: "ready",
+      errorMessage: null,
+      createdAt: now,
+      updatedAt: now,
+    };
+    const asset: MediaAsset = {
+      id: assetId,
+      operationId,
+      origin: "generated",
+      kind: "image",
+      status: "ready",
+      name: `${source.name} cropped`,
+      mimeType: request.image.mimeType,
+      url,
+      errorMessage: null,
+      pixelWidth: null,
+      pixelHeight: null,
+      ...this.createAssetPosition(source, request.targetPosition, 1, 0),
+      outputIndex: 0,
+      createdAt: now,
+      updatedAt: now,
+    };
+    return this.saveMediaProject({
+      ...project,
+      assets: [...project.assets, asset],
+      operations: [...project.operations, operation],
+    });
   }
 
   getSessionRuntimeRoot(sessionId: string): string {
     return this.requireSession(sessionId).runtimeRootPath;
   }
 
-  async resolveOperationApproval(sessionId: string, approvalId: string, approved: boolean, feedback?: string): Promise<void> {
+  async resolveOperationApproval(
+    sessionId: string,
+    approvalId: string,
+    approved: boolean,
+    feedback?: string,
+  ): Promise<void> {
     const active = this.runs.get(sessionId);
     if (!active) throw new Error("The requested operation is no longer active");
-    if (await active.subagents.resolveOperationApproval(approvalId, approved, feedback)) return;
-    await active.driverSession.execute({ type: "resolve-approval", resolution: { approvalId, approved, feedback } });
+    if (
+      await active.subagents.resolveOperationApproval(
+        approvalId,
+        approved,
+        feedback,
+      )
+    )
+      return;
+    await active.driverSession.execute({
+      type: "resolve-approval",
+      resolution: { approvalId, approved, feedback },
+    });
   }
 
   async resolveUserRequest(
     sessionId: string,
     requestId: string,
-    resolution: { status: "submitted" | "cancelled"; answers?: Record<string, string | string[] | boolean>; feedback?: string },
+    resolution: {
+      status: "submitted" | "cancelled";
+      answers?: Record<string, string | string[] | boolean>;
+      feedback?: string;
+    },
   ): Promise<void> {
     const active = this.runs.get(sessionId);
-    if (!active) throw new Error("The requested user input is no longer active");
-    if (await active.subagents.resolveUserRequest(requestId, resolution)) return;
+    if (!active)
+      throw new Error("The requested user input is no longer active");
+    if (await active.subagents.resolveUserRequest(requestId, resolution))
+      return;
     await active.driverSession.execute({
       type: "resolve-user-request",
-      resolution: { requestId, status: resolution.status, answers: resolution.answers, feedback: resolution.feedback },
+      resolution: {
+        requestId,
+        status: resolution.status,
+        answers: resolution.answers,
+        feedback: resolution.feedback,
+      },
     });
   }
 
-  async setSessionModel(sessionId: string, model: ModelReference, requestedThinkingLevel?: ThinkingLevel): Promise<void> {
+  async setSessionModel(
+    sessionId: string,
+    model: ModelReference,
+    requestedThinkingLevel?: ThinkingLevel,
+  ): Promise<void> {
     const session = this.requireSession(sessionId);
     const entry = this.getEntry(session.entryId);
     this.requireCompatibleEnabledModel(model, entry);
-    if (this.runs.has(sessionId)) throw new Error("Wait for the current response before changing the model");
-    const currentRuntimeModel = this.models.getModel(session.model.connectionId, session.model.modelId);
+    if (this.runs.has(sessionId))
+      throw new Error(
+        "Wait for the current response before changing the model",
+      );
+    const currentRuntimeModel = this.models.getModel(
+      session.model.connectionId,
+      session.model.modelId,
+    );
     const nextRuntimeModel = this.requireRuntimeModel(model);
-    const requestedLevel = requestedThinkingLevel ?? (currentRuntimeModel?.reasoning ? session.thinkingLevel : "medium");
-    if (requestedThinkingLevel && !getSupportedThinkingLevels(nextRuntimeModel).includes(requestedThinkingLevel)) {
-      throw new Error("The selected model does not support this thinking depth");
+    const requestedLevel =
+      requestedThinkingLevel ??
+      (currentRuntimeModel?.reasoning ? session.thinkingLevel : "medium");
+    if (
+      requestedThinkingLevel &&
+      !getSupportedThinkingLevels(nextRuntimeModel).includes(
+        requestedThinkingLevel,
+      )
+    ) {
+      throw new Error(
+        "The selected model does not support this thinking depth",
+      );
     }
-    const thinkingLevel = thinkingLevelForModel(nextRuntimeModel, requestedLevel);
+    const thinkingLevel = thinkingLevelForModel(
+      nextRuntimeModel,
+      requestedLevel,
+    );
     const journal = await openWordlessSession(session.journalPath);
     await journal.appendModelChange(model.connectionId, model.modelId);
-    if (thinkingLevel !== session.thinkingLevel) await journal.appendThinkingLevelChange(thinkingLevel);
-    this.database.upsertSession({ ...session, model, thinkingLevel, updatedAt: Date.now() });
+    if (thinkingLevel !== session.thinkingLevel)
+      await journal.appendThinkingLevelChange(thinkingLevel);
+    this.database.upsertSession({
+      ...session,
+      model,
+      thinkingLevel,
+      updatedAt: Date.now(),
+    });
     this.rememberEntryModel(session.entryId, model);
   }
 
-  async setSessionThinkingLevel(sessionId: string, level: ThinkingLevel): Promise<SessionRecord> {
+  async setSessionThinkingLevel(
+    sessionId: string,
+    level: ThinkingLevel,
+  ): Promise<SessionRecord> {
     const session = this.requireSession(sessionId);
-    if (this.runs.has(sessionId)) throw new Error("Wait for the current response before changing the thinking depth");
+    if (this.runs.has(sessionId))
+      throw new Error(
+        "Wait for the current response before changing the thinking depth",
+      );
     const model = this.requireRuntimeModel(session.model);
-    if (!getSupportedThinkingLevels(model).includes(level)) throw new Error("The selected model does not support this thinking depth");
+    if (!getSupportedThinkingLevels(model).includes(level))
+      throw new Error(
+        "The selected model does not support this thinking depth",
+      );
     if (session.thinkingLevel === level) return session;
     const journal = await openWordlessSession(session.journalPath);
     await journal.appendThinkingLevelChange(level);
@@ -1936,24 +4059,52 @@ export class WordlessRuntime {
     this.emitApp({ type: "preferences.changed" });
   }
 
-  async discoverProviderModels(request: import("@wordless/domain").ProviderModelDiscoveryRequest): Promise<import("@wordless/domain").ProviderModelCandidate[]> {
+  async discoverProviderModels(
+    request: import("@wordless/domain").ProviderModelDiscoveryRequest,
+  ): Promise<import("@wordless/domain").ProviderModelCandidate[]> {
     return await this.modelConfiguration.discoverProviderModels(request);
   }
 
-  async saveProviderConfiguration(kind: "chat" | "image", providerId: string, configuration: Record<string, unknown>, enabledModelIds?: string[]): Promise<void> {
-    await this.modelConfiguration.saveProviderConfiguration(kind, providerId, configuration, enabledModelIds);
+  async saveProviderConfiguration(
+    kind: "chat" | "image",
+    providerId: string,
+    configuration: Record<string, unknown>,
+    enabledModelIds?: string[],
+  ): Promise<void> {
+    await this.modelConfiguration.saveProviderConfiguration(
+      kind,
+      providerId,
+      configuration,
+      enabledModelIds,
+    );
   }
 
-  async deleteCustomProvider(kind: "chat" | "image", providerId: string): Promise<void> {
+  async deleteCustomProvider(
+    kind: "chat" | "image",
+    providerId: string,
+  ): Promise<void> {
     await this.modelConfiguration.deleteCustomProvider(kind, providerId);
     if (kind === "chat") this.removeProviderModelPreferences(providerId);
   }
 
-  async setConfiguredModelEnabled(kind: "chat" | "image", providerId: string, modelId: string, enabled: boolean): Promise<void> {
-    await this.modelConfiguration.setEnabled(kind, providerId, modelId, enabled);
+  async setConfiguredModelEnabled(
+    kind: "chat" | "image",
+    providerId: string,
+    modelId: string,
+    enabled: boolean,
+  ): Promise<void> {
+    await this.modelConfiguration.setEnabled(
+      kind,
+      providerId,
+      modelId,
+      enabled,
+    );
   }
 
-  async loginProviderOAuth(providerId: string, callbacks: unknown): Promise<void> {
+  async loginProviderOAuth(
+    providerId: string,
+    callbacks: unknown,
+  ): Promise<void> {
     await this.modelConfiguration.loginOAuth(providerId, callbacks);
   }
 
@@ -1961,41 +4112,90 @@ export class WordlessRuntime {
     return this.extensions.snapshot();
   }
 
-  async setExtensionEnabled(extensionId: string, enabled: boolean): Promise<AgentExtensionSnapshot> {
+  async setExtensionEnabled(
+    extensionId: string,
+    enabled: boolean,
+  ): Promise<AgentExtensionSnapshot> {
     return await this.extensions.setEnabled(extensionId, enabled);
   }
 
-  async updateExtensionSettings(extensionId: string, settings: JsonObject): Promise<AgentExtensionSnapshot> {
+  async updateExtensionSettings(
+    extensionId: string,
+    settings: JsonObject,
+  ): Promise<AgentExtensionSnapshot> {
     return await this.extensions.updateSettings(extensionId, settings);
   }
 
-  async interactWithSessionExtension(sessionId: string, interaction: AgentExtensionInteraction): Promise<void> {
+  async interactWithSessionExtension(
+    sessionId: string,
+    interaction: AgentExtensionInteraction,
+  ): Promise<void> {
     const active = this.runs.get(sessionId);
     if (!active) throw new Error("The session is not running");
-    await active.driverSession.execute({ type: "extension.interact", interaction });
+    await active.driverSession.execute({
+      type: "extension.interact",
+      interaction,
+    });
   }
 
-  async setSessionExtensionState(sessionId: string, extensionId: string, state: JsonObject): Promise<void> {
+  async setSessionExtensionState(
+    sessionId: string,
+    extensionId: string,
+    state: JsonObject,
+  ): Promise<void> {
     const session = this.requireSession(sessionId);
     const journal = await openWordlessSession(session.journalPath);
-    await (journal as unknown as { appendCustomEntry(customType: string, data?: unknown): Promise<string> }).appendCustomEntry(AGENT_EXTENSION_STATE_JOURNAL_TYPE, { extensionId, state, updatedAt: Date.now() });
+    await (
+      journal as unknown as {
+        appendCustomEntry(customType: string, data?: unknown): Promise<string>;
+      }
+    ).appendCustomEntry(AGENT_EXTENSION_STATE_JOURNAL_TYPE, {
+      extensionId,
+      state,
+      updatedAt: Date.now(),
+    });
   }
 
   async compactSession(sessionId: string): Promise<void> {
-    if (this.runs.has(sessionId)) throw new Error("Wait for the current operation before compacting this session");
+    if (this.runs.has(sessionId))
+      throw new Error(
+        "Wait for the current operation before compacting this session",
+      );
     await this.runCompaction(sessionId);
   }
 
-  private async executeActiveRun(sessionId: string, active: ActiveRun, prompt: string, selectedSkills: ReturnType<SkillRegistry["getSessionSkills"]>, automaticCompaction: boolean, submission?: UserMessageSubmission): Promise<void> {
+  private async executeActiveRun(
+    sessionId: string,
+    active: ActiveRun,
+    prompt: string,
+    selectedSkills: ReturnType<SkillRegistry["getSessionSkills"]>,
+    automaticCompaction: boolean,
+    submission?: UserMessageSubmission,
+  ): Promise<void> {
     try {
       if (automaticCompaction) active.compactionTrigger = "automatic";
-      if (automaticCompaction) await active.driverSession.execute({ type: "compact", trigger: "automatic" });
+      if (automaticCompaction)
+        await active.driverSession.execute({
+          type: "compact",
+          trigger: "automatic",
+        });
       active.kind = "prompt";
       active.isCompacting = false;
       active.compactionTrigger = undefined;
-      this.emit(sessionId, active, { type: "run.started", runId: active.runId });
-      await active.driverSession.execute({ type: "prompt", text: prompt, selectedSkills, submission });
-      this.emit(sessionId, active, { type: "run.completed", runId: active.runId });
+      this.emit(sessionId, active, {
+        type: "run.started",
+        runId: active.runId,
+      });
+      await active.driverSession.execute({
+        type: "prompt",
+        text: prompt,
+        selectedSkills,
+        submission,
+      });
+      this.emit(sessionId, active, {
+        type: "run.completed",
+        runId: active.runId,
+      });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       try {
@@ -2003,9 +4203,17 @@ export class WordlessRuntime {
       } catch {
         // The driver may already have torn down its harness after the request failure.
       }
-      this.finalizeActiveTools(sessionId, active, `Agent run failed: ${message}`);
+      this.finalizeActiveTools(
+        sessionId,
+        active,
+        `Agent run failed: ${message}`,
+      );
       await active.subagents.dispose();
-      this.emit(sessionId, active, { type: "run.failed", runId: active.runId, message });
+      this.emit(sessionId, active, {
+        type: "run.failed",
+        runId: active.runId,
+        message,
+      });
       throw error;
     } finally {
       this.closeActiveRun(sessionId, active);
@@ -2015,42 +4223,92 @@ export class WordlessRuntime {
   private async runCompaction(sessionId: string): Promise<void> {
     const active = await this.createActiveRun(sessionId, "compaction");
     try {
-      await active.driverSession.execute({ type: "compact", trigger: "manual" });
+      await active.driverSession.execute({
+        type: "compact",
+        trigger: "manual",
+      });
     } finally {
       this.closeActiveRun(sessionId, active);
     }
   }
 
-  private async createActiveRun(sessionId: string, kind: ActiveRun["kind"], userMessageId?: string): Promise<ActiveRun> {
+  private async createActiveRun(
+    sessionId: string,
+    kind: ActiveRun["kind"],
+    userMessageId?: string,
+  ): Promise<ActiveRun> {
     const record = await this.ensureSessionModelForOpen(sessionId);
-    if (this.runs.has(sessionId)) throw new Error("The session is already running");
-    const profile = this.requireProfile(record);
+    if (this.runs.has(sessionId))
+      throw new Error("The session is already running");
+    const baseProfile = this.requireProfile(record);
+    const expertSnapshot = this.sessionExpertSnapshot(record);
+    const expertPrompt = expertSnapshot?.systemPrompt;
+    const profile = expertPrompt
+      ? {
+          ...baseProfile,
+          systemPrompt: `${baseProfile.systemPrompt}\n\n[ACTIVE EXPERT ROLE]\nYou are operating as ${expertSnapshot.name}. Treat this role as the primary identity for the session. Keep your decisions, tone, terminology, and deliverables aligned with this expert role. Do not fall back to a generic assistant voice when the request is within this role's responsibility.\n\n${expertPrompt}`,
+        }
+      : baseProfile;
     const driver = this.drivers.get(record.driverId);
-    if (!driver) throw new Error(`Agent Driver is unavailable: ${record.driverId}`);
+    if (!driver)
+      throw new Error(`Agent Driver is unavailable: ${record.driverId}`);
     const model = this.requireRuntimeModel(record.model);
     const journal = await openWordlessSession(record.journalPath);
     const skills = this.skillRegistry.getSessionSkills(record.workspaceId);
-    const env = this.pathService.createExecutionEnv(record.runtimeRootPath, record.accessLevel, {
-      readOnlyRoots: skills.map((skill) => skill.baseDir),
-    });
-    const connectorTools = this.connectorRegistry.createTools(record.connectorIds);
-    const connectorToolPolicies = this.connectorRegistry.createToolPolicies(record.connectorIds);
+    const env = this.pathService.createExecutionEnv(
+      record.runtimeRootPath,
+      record.accessLevel,
+      {
+        readOnlyRoots: skills.map((skill) => skill.baseDir),
+      },
+    );
+    const connectorScopes = expertConnectorScopes(
+      record.connectorIds,
+      expertSnapshot,
+    );
+    const primaryConnectorTools = this.connectorRegistry.createTools(
+      connectorScopes.primary,
+    );
+    const primaryConnectorToolPolicies =
+      this.connectorRegistry.createToolPolicies(connectorScopes.primary);
+    const delegateConnectorTools = this.connectorRegistry.createTools(
+      connectorScopes.delegates,
+    );
+    const delegateConnectorToolPolicies =
+      this.connectorRegistry.createToolPolicies(connectorScopes.delegates);
     const subagents = new SessionSubagentRunner({
       parent: record,
-      profile,
+      profile: baseProfile,
       driver,
       models: this.models,
       env,
-      workspaceSearch: this.options.workspaceSearch.forRoot(record.runtimeRootPath),
+      workspaceSearch: this.options.workspaceSearch.forRoot(
+        record.runtimeRootPath,
+      ),
       skills,
-      connectorTools,
-      connectorToolPolicies,
+      connectorTools: delegateConnectorTools,
+      connectorToolPolicies: delegateConnectorToolPolicies,
       security: this.securityPolicy(),
       journalsRoot: this.options.paths.journalsRoot,
       resolveModel: (reference) => this.requireRuntimeModel(reference),
-      resolveCapabilities: (reference) => this.requireEnabledModel(reference).capabilities,
-      onFilesChanged: async (changes) => await this.persistSubagentFileChanges(record, changes),
+      resolveCapabilities: (reference) =>
+        this.requireEnabledModel(reference).capabilities,
+      onFilesChanged: async (changes) =>
+        await this.persistSubagentFileChanges(record, changes),
       toolApprovalMode: record.toolApprovalMode,
+      expertTeamDelegates:
+        expertSnapshot?.kind === "team"
+          ? expertSnapshot.teamMembers.map((member) => ({
+              id: member.id,
+              name: member.expertName,
+              portrait: member.portrait,
+              executionProfile: member.executionProfile,
+              responsibility: member.responsibility,
+              systemPrompt: member.systemPrompt,
+              skillIds: member.skillIds,
+              connectorIds: member.connectorIds,
+            }))
+          : undefined,
     });
     const driverSession = await driver.createSession({
       record,
@@ -2060,14 +4318,29 @@ export class WordlessRuntime {
       models: this.models,
       session: journal,
       env,
-      workspaceSearch: this.options.workspaceSearch.forRoot(record.runtimeRootPath),
+      workspaceSearch: this.options.workspaceSearch.forRoot(
+        record.runtimeRootPath,
+      ),
       skills,
-      connectorTools,
-      connectorToolPolicies,
+      connectorTools: primaryConnectorTools,
+      connectorToolPolicies: primaryConnectorToolPolicies,
       security: this.securityPolicy(),
       resolveModel: (reference) => this.requireRuntimeModel(reference),
       executionKind: "primary",
       subagentRunner: subagents,
+      expertTeamDelegates:
+        expertSnapshot?.kind === "team"
+          ? expertSnapshot.teamMembers.map((member) => ({
+              id: member.id,
+              name: member.expertName,
+              portrait: member.portrait,
+              executionProfile: member.executionProfile,
+              responsibility: member.responsibility,
+              systemPrompt: member.systemPrompt,
+              skillIds: member.skillIds,
+              connectorIds: member.connectorIds,
+            }))
+          : undefined,
       toolApprovalMode: record.toolApprovalMode,
     });
     const active: ActiveRun = {
@@ -2082,13 +4355,19 @@ export class WordlessRuntime {
       ...(userMessageId ? { userMessageId } : {}),
       unsubscribe: () => {},
     };
-    active.unsubscribe = driverSession.subscribe((event) => this.handleDriverEvent(sessionId, active, event));
+    active.unsubscribe = driverSession.subscribe((event) =>
+      this.handleDriverEvent(sessionId, active, event),
+    );
     this.runs.set(sessionId, active);
     return active;
   }
 
   private closeActiveRun(sessionId: string, active: ActiveRun): void {
-    this.finalizeActiveTools(sessionId, active, "Agent run ended before the tool completed");
+    this.finalizeActiveTools(
+      sessionId,
+      active,
+      "Agent run ended before the tool completed",
+    );
     active.unsubscribe();
     active.driverSession.dispose();
     void active.subagents.dispose();
@@ -2098,7 +4377,11 @@ export class WordlessRuntime {
     this.database.upsertSession({ ...current, updatedAt: Date.now() });
   }
 
-  private finalizeActiveTools(sessionId: string, active: ActiveRun, reason: string): void {
+  private finalizeActiveTools(
+    sessionId: string,
+    active: ActiveRun,
+    reason: string,
+  ): void {
     for (const [callId, tool] of active.tools) {
       if (tool.state === "complete" || tool.state === "error") continue;
       const details = terminalizeToolDetails(tool.details, reason);
@@ -2117,16 +4400,33 @@ export class WordlessRuntime {
     this.historyCache.delete(sessionId);
   }
 
-  private async persistSubagentFileChanges(parent: SessionRecord, changes: SubagentFileChange[]): Promise<void> {
+  private async persistSubagentFileChanges(
+    parent: SessionRecord,
+    changes: SubagentFileChange[],
+  ): Promise<void> {
     if (changes.length === 0) return;
     const journal = await openWordlessSession(parent.journalPath);
     for (const change of changes) {
-      await (journal as unknown as { appendCustomEntry(customType: string, data?: unknown): Promise<string> }).appendCustomEntry(SUBAGENT_FILE_CHANGE_JOURNAL_TYPE, change);
+      await (
+        journal as unknown as {
+          appendCustomEntry(
+            customType: string,
+            data?: unknown,
+          ): Promise<string>;
+        }
+      ).appendCustomEntry(SUBAGENT_FILE_CHANGE_JOURNAL_TYPE, change);
     }
   }
 
-  private async searchWorkspaceRoot(rootPath: string, query: string): Promise<WorkspaceFileEntry[]> {
-    return (await this.options.workspaceSearch.forRoot(rootPath).searchReferences(query, 50)).map((entry) => ({
+  private async searchWorkspaceRoot(
+    rootPath: string,
+    query: string,
+  ): Promise<WorkspaceFileEntry[]> {
+    return (
+      await this.options.workspaceSearch
+        .forRoot(rootPath)
+        .searchReferences(query, 50)
+    ).map((entry) => ({
       path: entry.path,
       name: entry.name,
       kind: entry.kind,
@@ -2135,11 +4435,25 @@ export class WordlessRuntime {
     }));
   }
 
-  private handleDriverEvent(sessionId: string, active: ActiveRun, event: AgentDriverEvent): void {
-    if (event.type === "message.started") this.emit(sessionId, active, { type: "message.started", message: event.message });
-    if (event.type === "message.text.delta") this.emit(sessionId, active, event);
-    if (event.type === "message.reasoning.delta") this.emit(sessionId, active, event);
-    if (event.type === "message.completed") this.emit(sessionId, active, { type: "message.completed", message: event.message });
+  private handleDriverEvent(
+    sessionId: string,
+    active: ActiveRun,
+    event: AgentDriverEvent,
+  ): void {
+    if (event.type === "message.started")
+      this.emit(sessionId, active, {
+        type: "message.started",
+        message: event.message,
+      });
+    if (event.type === "message.text.delta")
+      this.emit(sessionId, active, event);
+    if (event.type === "message.reasoning.delta")
+      this.emit(sessionId, active, event);
+    if (event.type === "message.completed")
+      this.emit(sessionId, active, {
+        type: "message.completed",
+        message: event.message,
+      });
     if (event.type === "tool.started") {
       const configuredTimeout = event.input.timeout;
       active.tools.set(event.callId, {
@@ -2149,7 +4463,12 @@ export class WordlessRuntime {
         name: event.name,
         state: "running",
         startedAt: Date.now(),
-        ...(event.name === "bash" ? { timeoutSeconds: typeof configuredTimeout === "number" ? configuredTimeout : 30 } : {}),
+        ...(event.name === "bash"
+          ? {
+              timeoutSeconds:
+                typeof configuredTimeout === "number" ? configuredTimeout : 30,
+            }
+          : {}),
         input: event.input,
       });
       this.historyCache.delete(sessionId);
@@ -2188,10 +4507,23 @@ export class WordlessRuntime {
         !event.isError &&
         typeof artifact?.id === "string" &&
         typeof artifact.revision === "number" &&
-        (artifact.kind === "presentation" || artifact.kind === "document" || artifact.kind === "spreadsheet" || artifact.kind === "browser")
+        (artifact.kind === "presentation" ||
+          artifact.kind === "document" ||
+          artifact.kind === "spreadsheet" ||
+          artifact.kind === "browser")
       ) {
-        const affectedLocators = Array.isArray(details?.affectedLocators) ? details.affectedLocators.filter((value): value is string => typeof value === "string") : [];
-        this.emit(sessionId, active, { type: "artifact.changed", artifactId: artifact.id, kind: artifact.kind, revision: artifact.revision, affectedLocators });
+        const affectedLocators = Array.isArray(details?.affectedLocators)
+          ? details.affectedLocators.filter(
+              (value): value is string => typeof value === "string",
+            )
+          : [];
+        this.emit(sessionId, active, {
+          type: "artifact.changed",
+          artifactId: artifact.id,
+          kind: artifact.kind,
+          revision: artifact.revision,
+          affectedLocators,
+        });
       }
     }
     if (event.type === "approval.requested") {
@@ -2202,8 +4534,10 @@ export class WordlessRuntime {
       this.historyCache.delete(sessionId);
       this.emit(sessionId, active, event);
     }
-    if (event.type === "user-request.requested") this.emit(sessionId, active, event);
-    if (event.type === "user-request.resolved") this.emit(sessionId, active, event);
+    if (event.type === "user-request.requested")
+      this.emit(sessionId, active, event);
+    if (event.type === "user-request.resolved")
+      this.emit(sessionId, active, event);
     if (event.type === "model.changed") this.emit(sessionId, active, event);
     if (event.type === "context.compaction.started") {
       active.isCompacting = true;
@@ -2224,7 +4558,10 @@ export class WordlessRuntime {
   }
 
   private isAutomaticContextCompactionEnabled(): boolean {
-    return this.extensions.snapshot().configurations["wordless.context-compaction"]?.enabled ?? false;
+    return (
+      this.extensions.snapshot().configurations["wordless.context-compaction"]
+        ?.enabled ?? false
+    );
   }
 
   private getEntries(): WorkbenchEntryDefinition[] {
@@ -2232,7 +4569,8 @@ export class WordlessRuntime {
       if (entry.availability === "unavailable") return entry;
       if (!entry.profile) return entry;
       const profile = this.profiles.get(entry.profile);
-      if (!profile || !this.drivers.get(profile.driverId)) return { ...entry, availability: "unavailable" as const };
+      if (!profile || !this.drivers.get(profile.driverId))
+        return { ...entry, availability: "unavailable" as const };
       return { ...entry, availability: "available" as const };
     });
   }
@@ -2249,54 +4587,104 @@ export class WordlessRuntime {
     return profile;
   }
 
-  private resolveSessionModel(draft: SessionDraft, entry: WorkbenchEntryDefinition): ModelReference {
-    const candidates = [draft.model, this.preferences.entryModels[entry.id], this.preferences.defaultModel];
+  private resolveSessionModel(
+    draft: SessionDraft,
+    entry: WorkbenchEntryDefinition,
+  ): ModelReference {
+    const candidates = [
+      draft.model,
+      this.preferences.entryModels[entry.id],
+      this.preferences.defaultModel,
+    ];
     for (const candidate of candidates) {
-      if (candidate && this.isAvailableSessionModel(candidate, entry)) return candidate;
+      if (candidate && this.isAvailableSessionModel(candidate, entry))
+        return candidate;
     }
     const fallback = this.firstAvailableSessionModel(entry);
-    if (!fallback) throw new Error("Configure and enable a compatible model before starting this task");
+    if (!fallback)
+      throw new Error(
+        "Configure and enable a compatible model before starting this task",
+      );
     return fallback;
   }
 
-  private requireCompatibleEnabledModel(reference: ModelReference, entry: WorkbenchEntryDefinition): ModelReference {
-    const model = this.toLegacyEnabledModels(this.modelConfiguration.snapshot()).find(
-      (candidate) => candidate.connectionId === reference.connectionId && candidate.modelId === reference.modelId,
+  private requireCompatibleEnabledModel(
+    reference: ModelReference,
+    entry: WorkbenchEntryDefinition,
+  ): ModelReference {
+    const model = this.toLegacyEnabledModels(
+      this.modelConfiguration.snapshot(),
+    ).find(
+      (candidate) =>
+        candidate.connectionId === reference.connectionId &&
+        candidate.modelId === reference.modelId,
     );
     if (!model?.enabled) throw new Error("The selected model is not enabled");
-    if (!isCompatible(model, entry)) throw new Error("The selected model does not support this work type");
+    if (!isCompatible(model, entry))
+      throw new Error("The selected model does not support this work type");
     this.requireRuntimeModel(reference);
     return reference;
   }
 
   private requireRuntimeModel(reference: ModelReference): Model<Api> {
-    const model = this.models.getModel(reference.connectionId, reference.modelId);
+    const model = this.models.getModel(
+      reference.connectionId,
+      reference.modelId,
+    );
     if (!model) throw new Error("The selected model is no longer available");
     return model;
   }
 
-  private isAvailableSessionModel(reference: ModelReference, entry: WorkbenchEntryDefinition): boolean {
+  private isAvailableSessionModel(
+    reference: ModelReference,
+    entry: WorkbenchEntryDefinition,
+  ): boolean {
     const snapshot = this.modelConfiguration.snapshot();
-    const provider = snapshot.providers.find((candidate) => candidate.kind === "chat" && candidate.id === reference.connectionId);
+    const provider = snapshot.providers.find(
+      (candidate) =>
+        candidate.kind === "chat" && candidate.id === reference.connectionId,
+    );
     if (provider?.authStatus !== "configured") return false;
     const model = this.toLegacyEnabledModels(snapshot).find(
-      (candidate) => candidate.connectionId === reference.connectionId && candidate.modelId === reference.modelId,
+      (candidate) =>
+        candidate.connectionId === reference.connectionId &&
+        candidate.modelId === reference.modelId,
     );
-    return model !== undefined && isCompatible(model, entry) && this.models.getModel(reference.connectionId, reference.modelId) !== undefined;
+    return (
+      model !== undefined &&
+      isCompatible(model, entry) &&
+      this.models.getModel(reference.connectionId, reference.modelId) !==
+        undefined
+    );
   }
 
-  private firstAvailableSessionModel(entry: WorkbenchEntryDefinition): ModelReference | undefined {
+  private firstAvailableSessionModel(
+    entry: WorkbenchEntryDefinition,
+  ): ModelReference | undefined {
     const snapshot = this.modelConfiguration.snapshot();
-    const configuredProviders = new Set(snapshot.providers.filter((provider) => provider.kind === "chat" && provider.authStatus === "configured").map((provider) => provider.id));
+    const configuredProviders = new Set(
+      snapshot.providers
+        .filter(
+          (provider) =>
+            provider.kind === "chat" && provider.authStatus === "configured",
+        )
+        .map((provider) => provider.id),
+    );
     for (const model of this.toLegacyEnabledModels(snapshot)) {
-      if (!configuredProviders.has(model.connectionId) || !isCompatible(model, entry)) continue;
+      if (
+        !configuredProviders.has(model.connectionId) ||
+        !isCompatible(model, entry)
+      )
+        continue;
       if (!this.models.getModel(model.connectionId, model.modelId)) continue;
       return { connectionId: model.connectionId, modelId: model.modelId };
     }
     return undefined;
   }
 
-  private async ensureSessionModelForOpen(sessionId: string): Promise<SessionRecord> {
+  private async ensureSessionModelForOpen(
+    sessionId: string,
+  ): Promise<SessionRecord> {
     const session = this.requireSession(sessionId);
     if (this.runs.has(sessionId)) return session;
     const entry = this.getEntry(session.entryId);
@@ -2305,17 +4693,26 @@ export class WordlessRuntime {
     if (!model) return session;
     const journal = await openWordlessSession(session.journalPath);
     await journal.appendModelChange(model.connectionId, model.modelId);
-    const previousModel = this.models.getModel(session.model.connectionId, session.model.modelId);
+    const previousModel = this.models.getModel(
+      session.model.connectionId,
+      session.model.modelId,
+    );
     const nextRuntimeModel = this.requireRuntimeModel(model);
-    const thinkingLevel = thinkingLevelForModel(nextRuntimeModel, previousModel?.reasoning ? session.thinkingLevel : "medium");
-    if (thinkingLevel !== session.thinkingLevel) await journal.appendThinkingLevelChange(thinkingLevel);
+    const thinkingLevel = thinkingLevelForModel(
+      nextRuntimeModel,
+      previousModel?.reasoning ? session.thinkingLevel : "medium",
+    );
+    if (thinkingLevel !== session.thinkingLevel)
+      await journal.appendThinkingLevelChange(thinkingLevel);
     const next = { ...session, model, thinkingLevel, updatedAt: Date.now() };
     this.database.upsertSession(next);
     this.historyCache.delete(sessionId);
     return next;
   }
 
-  private async getCachedSessionHistory(sessionId: string): Promise<CachedSessionHistory> {
+  private async getCachedSessionHistory(
+    sessionId: string,
+  ): Promise<CachedSessionHistory> {
     const record = this.requireSession(sessionId);
     const details = await stat(record.journalPath);
     const revision = `${details.size}:${Math.round(details.mtimeMs)}`;
@@ -2327,14 +4724,24 @@ export class WordlessRuntime {
     }
     const snapshot = await this.getSessionSnapshot(sessionId);
     const next: CachedSessionHistory = {
-      projection: createSessionHistoryProjection(snapshot.messages, snapshot.contextCompactions),
+      projection: createSessionHistoryProjection(
+        snapshot.messages,
+        snapshot.contextCompactions,
+      ),
       revision,
       snapshot,
       bytes: details.size * 2,
     };
     this.historyCache.delete(sessionId);
     this.historyCache.set(sessionId, next);
-    while (this.historyCache.size > 5 || [...this.historyCache.values()].reduce((total, item) => total + item.bytes, 0) > 64 * 1024 * 1024) {
+    while (
+      this.historyCache.size > 5 ||
+      [...this.historyCache.values()].reduce(
+        (total, item) => total + item.bytes,
+        0,
+      ) >
+        64 * 1024 * 1024
+    ) {
       const oldest = this.historyCache.keys().next().value;
       if (!oldest) break;
       this.historyCache.delete(oldest);
@@ -2343,32 +4750,55 @@ export class WordlessRuntime {
   }
 
   private requireEnabledModel(reference: ModelReference): EnabledModelRecord {
-    const model = this.toLegacyEnabledModels(this.modelConfiguration.snapshot()).find(
-      (candidate) => candidate.connectionId === reference.connectionId && candidate.modelId === reference.modelId,
+    const model = this.toLegacyEnabledModels(
+      this.modelConfiguration.snapshot(),
+    ).find(
+      (candidate) =>
+        candidate.connectionId === reference.connectionId &&
+        candidate.modelId === reference.modelId,
     );
     if (!model?.enabled) throw new Error("The selected model is not enabled");
     return model;
   }
 
-  private assertInteractionModeAvailable(interactionMode: AgentInteractionModeId, driverId: string, model: ModelReference): void {
+  private assertInteractionModeAvailable(
+    interactionMode: AgentInteractionModeId,
+    driverId: string,
+    model: ModelReference,
+  ): void {
     if (interactionMode === "default") return;
     if (interactionMode === "clarify") {
-      if (this.requireEnabledModel(model).capabilities.supportsToolUse === false) {
-        throw new Error("Clarification mode requires a model that supports tool calling");
+      if (
+        this.requireEnabledModel(model).capabilities.supportsToolUse === false
+      ) {
+        throw new Error(
+          "Clarification mode requires a model that supports tool calling",
+        );
       }
       return;
     }
-    if (driverId !== "coding" || !this.extensions.snapshot().configurations["wordless.plan-mode"]?.enabled) {
+    if (
+      driverId !== "coding" ||
+      !this.extensions.snapshot().configurations["wordless.plan-mode"]?.enabled
+    ) {
       throw new Error("Plan mode is unavailable for this session");
     }
   }
 
-  private async persistPlanModeState(session: SessionRecord, mode: "off" | "planning"): Promise<void> {
+  private async persistPlanModeState(
+    session: SessionRecord,
+    mode: "off" | "planning",
+  ): Promise<void> {
     const journal = await openWordlessSession(session.journalPath);
-    await (journal as unknown as { appendCustomEntry(customType: string, data?: unknown): Promise<string> }).appendCustomEntry(
-      AGENT_EXTENSION_STATE_JOURNAL_TYPE,
-      { extensionId: "wordless.plan-mode", state: { mode, plan: [] }, updatedAt: Date.now() },
-    );
+    await (
+      journal as unknown as {
+        appendCustomEntry(customType: string, data?: unknown): Promise<string>;
+      }
+    ).appendCustomEntry(AGENT_EXTENSION_STATE_JOURNAL_TYPE, {
+      extensionId: "wordless.plan-mode",
+      state: { mode, plan: [] },
+      updatedAt: Date.now(),
+    });
   }
 
   private requireSession(id: string): SessionRecord {
@@ -2378,76 +4808,144 @@ export class WordlessRuntime {
   }
 
   private securityPolicy(): SecurityPolicySnapshot {
-    const customFileRules = validCustomFileRules(this.preferences.security.customFileRules);
-    const customCommandRules = validCustomCommandRules(this.preferences.security.customCommandRules);
+    const customFileRules = validCustomFileRules(
+      this.preferences.security.customFileRules,
+    );
+    const customCommandRules = validCustomCommandRules(
+      this.preferences.security.customCommandRules,
+    );
     return {
       fileRules: resolveFileSecurityRules(customFileRules),
       commandRules: resolveCommandSecurityRules(customCommandRules),
     };
   }
 
-  private resolveSelectedSkills(record: SessionRecord, skillIds: string[]): ReturnType<SkillRegistry["getSessionSkills"]> {
+  private resolveSelectedSkills(
+    record: SessionRecord,
+    skillIds: string[],
+  ): ReturnType<SkillRegistry["getSessionSkills"]> {
     const profile = this.requireProfile(record);
-    const selectedIds = [...profile.skills.map((skill) => skill.id), ...skillIds];
+    const expertSkillIds = this.sessionExpertSnapshot(record)?.skillIds ?? [];
+    const selectedIds = [
+      ...profile.skills.map((skill) => skill.id),
+      ...expertSkillIds,
+      ...skillIds,
+    ];
     if (selectedIds.length === 0) return [];
-    const available = new Map(this.skillRegistry.getSessionSkills(record.workspaceId).map((skill) => [skill.id, skill]));
+    const available = new Map(
+      this.skillRegistry
+        .getSessionSkills(record.workspaceId)
+        .map((skill) => [skill.id, skill]),
+    );
     const selected = [] as ReturnType<SkillRegistry["getSessionSkills"]>;
     const seen = new Set<string>();
     for (const skillId of selectedIds) {
       const required = profile.skills.find((skill) => skill.id === skillId);
-      const skill = required?.source === "built-in"
-        ? this.skillRegistry.getRequiredBuiltInSkill(skillId) ?? available.get(skillId)
-        : available.get(skillId);
+      const skill =
+        required?.source === "built-in"
+          ? (this.skillRegistry.getRequiredBuiltInSkill(skillId) ??
+            available.get(skillId))
+          : available.get(skillId);
       const identity = skill?.id ?? skillId;
       if (seen.has(identity)) continue;
       seen.add(identity);
-      if (!skill) throw new Error(`Required or selected skill is unavailable: ${skillId}`);
+      if (!skill)
+        throw new Error(
+          `Required or selected skill is unavailable: ${skillId}`,
+        );
       selected.push(skill);
     }
     return selected;
   }
 
   private listMediaProjects(): MediaProjectSummary[] {
-    return this.database.listMediaProjects().map((project) => {
-      const normalized = this.normalizeMediaProject(project);
-      if (normalized !== project) this.database.upsertMediaProject(normalized);
-      return normalized;
-    }).map((project) => ({
-      sessionId: project.sessionId,
-      title: project.title,
-      assetCount: project.assets.length,
-      readyAssetCount: project.assets.filter((asset) => asset.status === "ready").length,
-      previewImageUrl: project.assets.find((asset) => asset.id === project.coverAssetId)?.url ?? project.assets.find((asset) => asset.status === "ready")?.url ?? null,
-      updatedAt: project.updatedAt,
-    }));
+    return this.database
+      .listMediaProjects()
+      .map((project) => {
+        const normalized = this.normalizeMediaProject(project);
+        if (normalized !== project)
+          this.database.upsertMediaProject(normalized);
+        return normalized;
+      })
+      .map((project) => ({
+        sessionId: project.sessionId,
+        title: project.title,
+        assetCount: project.assets.length,
+        readyAssetCount: project.assets.filter(
+          (asset) => asset.status === "ready",
+        ).length,
+        previewImageUrl:
+          project.assets.find((asset) => asset.id === project.coverAssetId)
+            ?.url ??
+          project.assets.find((asset) => asset.status === "ready")?.url ??
+          null,
+        updatedAt: project.updatedAt,
+      }));
   }
 
   private defaultMediaAgentModel(): ModelReference {
     const preferred = this.preferences.defaultModel;
-    if (preferred && this.toLegacyEnabledModels(this.modelConfiguration.snapshot()).some((model) => model.connectionId === preferred.connectionId && model.modelId === preferred.modelId)) {
+    if (
+      preferred &&
+      this.toLegacyEnabledModels(this.modelConfiguration.snapshot()).some(
+        (model) =>
+          model.connectionId === preferred.connectionId &&
+          model.modelId === preferred.modelId,
+      )
+    ) {
       return preferred;
     }
-    const model = this.modelConfiguration.snapshot().models.find((candidate) => candidate.kind === "chat" && candidate.enabled);
-    return model ? { connectionId: model.providerId, modelId: model.modelId } : { connectionId: "media-agent", modelId: "unconfigured" };
+    const model = this.modelConfiguration
+      .snapshot()
+      .models.find(
+        (candidate) => candidate.kind === "chat" && candidate.enabled,
+      );
+    return model
+      ? { connectionId: model.providerId, modelId: model.modelId }
+      : { connectionId: "media-agent", modelId: "unconfigured" };
   }
 
-  private requireMediaAsset(project: MediaProject, assetId: string): MediaAsset {
+  private requireMediaAsset(
+    project: MediaProject,
+    assetId: string,
+  ): MediaAsset {
     const asset = project.assets.find((candidate) => candidate.id === assetId);
     if (!asset) throw new Error("Media asset not found");
     return asset;
   }
 
-  private createAssetPosition(parent: MediaAsset | undefined, targetPosition: { x: number; y: number }, outputTotal: number, outputIndex: number): Pick<MediaAsset, "x" | "y" | "width" | "height"> {
+  private createAssetPosition(
+    parent: MediaAsset | undefined,
+    targetPosition: { x: number; y: number },
+    outputTotal: number,
+    outputIndex: number,
+  ): Pick<MediaAsset, "x" | "y" | "width" | "height"> {
     const width = 300;
     const height = 210;
     const originX = parent ? parent.x + parent.width + 160 : targetPosition.x;
-    const originY = parent ? parent.y + (parent.height - height) / 2 : targetPosition.y;
-    if (outputTotal <= 3) return { x: originX, y: originY + outputIndex * (height + 32) - ((outputTotal - 1) * (height + 32)) / 2, width, height };
+    const originY = parent
+      ? parent.y + (parent.height - height) / 2
+      : targetPosition.y;
+    if (outputTotal <= 3)
+      return {
+        x: originX,
+        y:
+          originY +
+          outputIndex * (height + 32) -
+          ((outputTotal - 1) * (height + 32)) / 2,
+        width,
+        height,
+      };
     const column = outputIndex % 2;
     const row = Math.floor(outputIndex / 2);
     return {
       x: originX + (outputTotal > 2 ? column * (width + 40) : 0),
-      y: originY + (outputTotal === 1 ? 0 : row * (height + 32) - ((Math.ceil(outputTotal / 2) - 1) * (height + 32)) / 2),
+      y:
+        originY +
+        (outputTotal === 1
+          ? 0
+          : row * (height + 32) -
+            ((Math.ceil(outputTotal / 2) - 1) * (height + 32)) / 2),
       width,
       height,
     };
@@ -2459,14 +4957,35 @@ export class WordlessRuntime {
 
   private normalizeMediaProject(project: MediaProject): MediaProject {
     const raw = project as unknown as { documentVersion?: unknown };
-    if (raw.documentVersion === 2) return this.migrateMediaProjectV2(project as unknown as MediaProjectV2);
-    if (raw.documentVersion !== 3) return this.migrateLegacyMediaProject(project as unknown as LegacyMediaProject);
+    if (raw.documentVersion === 2)
+      return this.migrateMediaProjectV2(project as unknown as MediaProjectV2);
+    if (raw.documentVersion !== 3)
+      return this.migrateLegacyMediaProject(
+        project as unknown as LegacyMediaProject,
+      );
     let changed = false;
-    const interruptedOperationIds = new Set(project.operations.filter((operation) => (operation.status === "rendering" || operation.status === "partial") && !this.mediaOperations.has(operation.id)).map((operation) => operation.id));
+    const interruptedOperationIds = new Set(
+      project.operations
+        .filter(
+          (operation) =>
+            (operation.status === "rendering" ||
+              operation.status === "partial") &&
+            !this.mediaOperations.has(operation.id),
+        )
+        .map((operation) => operation.id),
+    );
     const assets = project.assets.map((asset) => {
-      if (asset.status === "rendering" && interruptedOperationIds.has(asset.operationId)) {
+      if (
+        asset.status === "rendering" &&
+        interruptedOperationIds.has(asset.operationId)
+      ) {
         changed = true;
-        return { ...asset, status: "failed" as const, errorMessage: "Generation was interrupted when Wordless closed", updatedAt: Date.now() };
+        return {
+          ...asset,
+          status: "failed" as const,
+          errorMessage: "Generation was interrupted when Wordless closed",
+          updatedAt: Date.now(),
+        };
       }
       if (!asset.url) return asset;
       const url = this.toMediaAssetUrl(asset.url);
@@ -2476,14 +4995,25 @@ export class WordlessRuntime {
     const operations = project.operations.map((operation) => {
       if (!interruptedOperationIds.has(operation.id)) return operation;
       changed = true;
-      return { ...operation, status: "failed" as const, errorMessage: "Generation was interrupted when Wordless closed", updatedAt: Date.now() };
+      return {
+        ...operation,
+        status: "failed" as const,
+        errorMessage: "Generation was interrupted when Wordless closed",
+        updatedAt: Date.now(),
+      };
     });
     return changed ? { ...project, assets, operations } : project;
   }
 
   private migrateMediaProjectV2(project: MediaProjectV2): MediaProject {
-    const scenePositions = new Map(project.scenes.map((scene) => [scene.id, scene]));
-    const interruptedGenerationIds = new Set(project.generations.filter((generation) => generation.status === "rendering").map((generation) => generation.id));
+    const scenePositions = new Map(
+      project.scenes.map((scene) => [scene.id, scene]),
+    );
+    const interruptedGenerationIds = new Set(
+      project.generations
+        .filter((generation) => generation.status === "rendering")
+        .map((generation) => generation.id),
+    );
     const assets = project.assets.map((asset): MediaAsset => {
       const scene = scenePositions.get(asset.sceneId);
       const url = asset.url ? this.toMediaAssetUrl(asset.url) : null;
@@ -2497,7 +5027,9 @@ export class WordlessRuntime {
         name: `Image ${String(asset.candidateIndex + 1).padStart(3, "0")}`,
         mimeType: url ? mimeTypeForMediaName(url) : "image/png",
         url,
-        errorMessage: interrupted ? "Generation was interrupted when Wordless closed" : asset.errorMessage,
+        errorMessage: interrupted
+          ? "Generation was interrupted when Wordless closed"
+          : asset.errorMessage,
         pixelWidth: null,
         pixelHeight: null,
         x: (scene?.x ?? 0) + asset.x,
@@ -2509,24 +5041,49 @@ export class WordlessRuntime {
         updatedAt: asset.updatedAt,
       };
     });
-    const operations = project.generations.map((generation): MediaOperation => ({
-      id: generation.id,
-      kind: generation.action === "upscale" ? "variation" : generation.action,
-      inputs: generation.parentAssetIds.map((assetId, index) => ({ assetId, role: index === 0 ? "parent" : "reference" })),
-      outputAssetIds: project.assets.filter((asset) => asset.generationId === generation.id).map((asset) => asset.id),
-      prompt: generation.prompt,
-      ratio: generation.ratio,
-      outputCount: generation.outputCount,
-      outputTotal: generation.outputTotal,
-      providerId: generation.providerId,
-      modelId: generation.modelId,
-      parameters: generation.action === "upscale" ? { legacyAction: "upscale" } : {},
-      status: generation.status === "rendering" ? "failed" : generation.status,
-      errorMessage: generation.status === "rendering" ? "Generation was interrupted when Wordless closed" : generation.errorMessage,
-      createdAt: generation.createdAt,
-      updatedAt: generation.updatedAt,
-    }));
-    return { documentVersion: 3, sessionId: project.sessionId, title: project.title, assets, operations, coverAssetId: project.scenes.find((scene) => scene.primaryAssetId)?.primaryAssetId ?? assets.find((asset) => asset.status === "ready")?.id ?? null, viewport: project.viewport, createdAt: project.createdAt, updatedAt: project.updatedAt };
+    const operations = project.generations.map(
+      (generation): MediaOperation => ({
+        id: generation.id,
+        kind: generation.action === "upscale" ? "variation" : generation.action,
+        inputs: generation.parentAssetIds.map((assetId, index) => ({
+          assetId,
+          role: index === 0 ? "parent" : "reference",
+        })),
+        outputAssetIds: project.assets
+          .filter((asset) => asset.generationId === generation.id)
+          .map((asset) => asset.id),
+        prompt: generation.prompt,
+        ratio: generation.ratio,
+        outputCount: generation.outputCount,
+        outputTotal: generation.outputTotal,
+        providerId: generation.providerId,
+        modelId: generation.modelId,
+        parameters:
+          generation.action === "upscale" ? { legacyAction: "upscale" } : {},
+        status:
+          generation.status === "rendering" ? "failed" : generation.status,
+        errorMessage:
+          generation.status === "rendering"
+            ? "Generation was interrupted when Wordless closed"
+            : generation.errorMessage,
+        createdAt: generation.createdAt,
+        updatedAt: generation.updatedAt,
+      }),
+    );
+    return {
+      documentVersion: 3,
+      sessionId: project.sessionId,
+      title: project.title,
+      assets,
+      operations,
+      coverAssetId:
+        project.scenes.find((scene) => scene.primaryAssetId)?.primaryAssetId ??
+        assets.find((asset) => asset.status === "ready")?.id ??
+        null,
+      viewport: project.viewport,
+      createdAt: project.createdAt,
+      updatedAt: project.updatedAt,
+    };
   }
 
   private migrateLegacyMediaProject(project: LegacyMediaProject): MediaProject {
@@ -2536,31 +5093,39 @@ export class WordlessRuntime {
     let coverAssetId: string | null = null;
     for (const legacyScene of project.scenes) {
       const operationId = randomUUID();
-      const sceneAssets = legacyScene.imageUrls.map((url, candidateIndex): MediaAsset => {
-        const position = this.createAssetPosition(undefined, { x: 64, y: 142 }, legacyScene.imageUrls.length, candidateIndex);
-        const urlValue = this.toMediaAssetUrl(url);
-        const name = basename(urlValue).split("?")[0] || `Image ${candidateIndex + 1}`;
-        return {
-          id: randomUUID(),
-          operationId,
-          origin: "generated",
-          kind: legacyScene.kind,
-          status: "ready",
-          name,
-          mimeType: mimeTypeForMediaName(name),
-          url: urlValue,
-          errorMessage: null,
-          pixelWidth: null,
-          pixelHeight: null,
-          x: position.x + legacyScene.x,
-          y: position.y + legacyScene.y,
-          width: position.width,
-          height: position.height,
-          outputIndex: candidateIndex,
-          createdAt: project.createdAt || now,
-          updatedAt: project.updatedAt || now,
-        };
-      });
+      const sceneAssets = legacyScene.imageUrls.map(
+        (url, candidateIndex): MediaAsset => {
+          const position = this.createAssetPosition(
+            undefined,
+            { x: 64, y: 142 },
+            legacyScene.imageUrls.length,
+            candidateIndex,
+          );
+          const urlValue = this.toMediaAssetUrl(url);
+          const name =
+            basename(urlValue).split("?")[0] || `Image ${candidateIndex + 1}`;
+          return {
+            id: randomUUID(),
+            operationId,
+            origin: "generated",
+            kind: legacyScene.kind,
+            status: "ready",
+            name,
+            mimeType: mimeTypeForMediaName(name),
+            url: urlValue,
+            errorMessage: null,
+            pixelWidth: null,
+            pixelHeight: null,
+            x: position.x + legacyScene.x,
+            y: position.y + legacyScene.y,
+            width: position.width,
+            height: position.height,
+            outputIndex: candidateIndex,
+            createdAt: project.createdAt || now,
+            updatedAt: project.updatedAt || now,
+          };
+        },
+      );
       assets.push(...sceneAssets);
       if (!coverAssetId && sceneAssets[0]) coverAssetId = sceneAssets[0].id;
       if (legacyScene.prompt || sceneAssets.length > 0) {
@@ -2572,12 +5137,22 @@ export class WordlessRuntime {
           prompt: legacyScene.prompt || "Generated image",
           ratio: legacyScene.ratio || "16:9",
           outputCount: sceneAssets.length,
-          outputTotal: Math.max(legacyScene.outputTotal || 1, sceneAssets.length),
+          outputTotal: Math.max(
+            legacyScene.outputTotal || 1,
+            sceneAssets.length,
+          ),
           providerId: legacyScene.providerId,
           modelId: legacyScene.modelId,
           parameters: {},
-          status: legacyScene.status === "failed" || legacyScene.status === "rendering" ? "failed" : "ready",
-          errorMessage: legacyScene.status === "rendering" ? "Generation was interrupted when Wordless closed" : legacyScene.errorMessage,
+          status:
+            legacyScene.status === "failed" ||
+            legacyScene.status === "rendering"
+              ? "failed"
+              : "ready",
+          errorMessage:
+            legacyScene.status === "rendering"
+              ? "Generation was interrupted when Wordless closed"
+              : legacyScene.errorMessage,
           createdAt: project.createdAt || now,
           updatedAt: project.updatedAt || now,
         });
@@ -2603,14 +5178,25 @@ export class WordlessRuntime {
       const assetPath = relative(this.mediaAssetsRoot(), absolutePath);
       const parts = assetPath.split(/[/\\]+/);
       const [projectId, fileName] = parts;
-      if (parts.length !== 2 || !projectId || !fileName || !/^[a-f0-9-]{36}$/i.test(projectId) || !/^[a-f0-9]{64}\.(gif|jpe?g|png|webp)$/i.test(fileName)) return value;
+      if (
+        parts.length !== 2 ||
+        !projectId ||
+        !fileName ||
+        !/^[a-f0-9-]{36}$/i.test(projectId) ||
+        !/^[a-f0-9]{64}\.(gif|jpe?g|png|webp)$/i.test(fileName)
+      )
+        return value;
       return `wordless-media://asset/${encodeURIComponent(projectId)}/${encodeURIComponent(fileName)}`;
     } catch {
       return value;
     }
   }
 
-  private async writeMediaImageAsset(sessionId: string, mimeType: string, data: string): Promise<string> {
+  private async writeMediaImageAsset(
+    sessionId: string,
+    mimeType: string,
+    data: string,
+  ): Promise<string> {
     const extension = extensionForMediaMimeType(mimeType);
     const digest = createHash("sha256").update(data).digest("hex");
     const directory = join(this.mediaAssetsRoot(), sessionId);
@@ -2620,41 +5206,92 @@ export class WordlessRuntime {
     return `wordless-media://asset/${encodeURIComponent(sessionId)}/${encodeURIComponent(`${digest}.${extension}`)}`;
   }
 
-  private async writeMediaFileAsset(sessionId: string, sourcePath: string): Promise<{ url: string; mimeType: string; name: string }> {
+  private async writeMediaFileAsset(
+    sessionId: string,
+    sourcePath: string,
+  ): Promise<{ url: string; mimeType: string; name: string }> {
     const extension = extname(sourcePath).toLowerCase();
-    if (extension !== ".png" && extension !== ".jpg" && extension !== ".jpeg" && extension !== ".webp") throw new Error(`Unsupported image type: ${extension || "unknown"}`);
+    if (
+      extension !== ".png" &&
+      extension !== ".jpg" &&
+      extension !== ".jpeg" &&
+      extension !== ".webp"
+    )
+      throw new Error(`Unsupported image type: ${extension || "unknown"}`);
     const mimeType = mimeTypeForMediaName(sourcePath);
     const metadata = await stat(sourcePath);
-    if (!metadata.isFile()) throw new Error("The selected media source is not a file");
-    if (metadata.size > 50 * 1024 * 1024) throw new Error("Images must be 50 MB or smaller");
+    if (!metadata.isFile())
+      throw new Error("The selected media source is not a file");
+    if (metadata.size > 50 * 1024 * 1024)
+      throw new Error("Images must be 50 MB or smaller");
     const data = (await readFile(sourcePath)).toString("base64");
-    return { url: await this.writeMediaImageAsset(sessionId, mimeType, data), mimeType, name: basename(sourcePath) };
+    return {
+      url: await this.writeMediaImageAsset(sessionId, mimeType, data),
+      mimeType,
+      name: basename(sourcePath),
+    };
   }
 
-  private async readMediaAssetInput(sessionId: string, asset: MediaAsset): Promise<ImageContent> {
+  private async readMediaAssetInput(
+    sessionId: string,
+    asset: MediaAsset,
+  ): Promise<ImageContent> {
     if (!asset.url) throw new Error("The source image is not available yet");
     const parsed = new URL(asset.url);
-    const parts = parsed.pathname.split("/").filter(Boolean).map(decodeURIComponent);
+    const parts = parsed.pathname
+      .split("/")
+      .filter(Boolean)
+      .map(decodeURIComponent);
     const [assetSessionId, fileName] = parts;
-    if (parsed.protocol !== "wordless-media:" || parsed.hostname !== "asset" || assetSessionId !== sessionId || !fileName || !/^[a-f0-9]{64}\.(gif|jpe?g|png|webp)$/i.test(fileName)) {
+    if (
+      parsed.protocol !== "wordless-media:" ||
+      parsed.hostname !== "asset" ||
+      assetSessionId !== sessionId ||
+      !fileName ||
+      !/^[a-f0-9]{64}\.(gif|jpe?g|png|webp)$/i.test(fileName)
+    ) {
       throw new Error("The source image is not a Wordless media asset");
     }
-    const mimeType = fileName.endsWith(".jpg") || fileName.endsWith(".jpeg") ? "image/jpeg" : fileName.endsWith(".webp") ? "image/webp" : fileName.endsWith(".gif") ? "image/gif" : "image/png";
-    return { type: "image", mimeType, data: (await readFile(join(this.mediaAssetsRoot(), sessionId, fileName))).toString("base64") };
+    const mimeType =
+      fileName.endsWith(".jpg") || fileName.endsWith(".jpeg")
+        ? "image/jpeg"
+        : fileName.endsWith(".webp")
+          ? "image/webp"
+          : fileName.endsWith(".gif")
+            ? "image/gif"
+            : "image/png";
+    return {
+      type: "image",
+      mimeType,
+      data: (
+        await readFile(join(this.mediaAssetsRoot(), sessionId, fileName))
+      ).toString("base64"),
+    };
   }
 
   private isInternalSessionRoot(rootPath: string): boolean {
-    const relativePath = relative(this.options.paths.sessionWorkspacesRoot, rootPath);
-    return relativePath.length > 0 && !relativePath.startsWith("..") && !isAbsolute(relativePath);
+    const relativePath = relative(
+      this.options.paths.sessionWorkspacesRoot,
+      rootPath,
+    );
+    return (
+      relativePath.length > 0 &&
+      !relativePath.startsWith("..") &&
+      !isAbsolute(relativePath)
+    );
   }
 
   private requireWorkspace(id: string): WorkspaceRecord {
-    const workspace = this.database.listWorkspaces().find((candidate) => candidate.id === id);
+    const workspace = this.database
+      .listWorkspaces()
+      .find((candidate) => candidate.id === id);
     if (!workspace) throw new Error("Workspace not found");
     return workspace;
   }
 
-  private async resolveAvailableWorkspace(id: string): Promise<WorkspaceRecord> {
+  private async resolveAvailableWorkspace(
+    id: string,
+  ): Promise<WorkspaceRecord> {
     const workspace = this.requireWorkspace(id);
     let available = false;
     try {
@@ -2662,67 +5299,91 @@ export class WordlessRuntime {
     } catch {
       available = false;
     }
-    const availability = available ? "available" as const : "missing" as const;
-    const current = workspace.availability === availability ? workspace : { ...workspace, availability, updatedAt: Date.now() };
+    const availability = available
+      ? ("available" as const)
+      : ("missing" as const);
+    const current =
+      workspace.availability === availability
+        ? workspace
+        : { ...workspace, availability, updatedAt: Date.now() };
     if (current !== workspace) {
       this.database.upsertWorkspace(current);
       await this.skillRegistry.refresh(this.database.listWorkspaces());
     }
-    if (!available) throw new Error("The selected workspace is unavailable. Select an available folder and try again.");
+    if (!available)
+      throw new Error(
+        "The selected workspace is unavailable. Select an available folder and try again.",
+      );
     return current;
   }
 
   private requireWorkspaceSession(sessionId: string): SessionRecord {
     const record = this.requireSession(sessionId);
-    if (!record.workspaceId) throw new Error("This session does not have a workspace");
+    if (!record.workspaceId)
+      throw new Error("This session does not have a workspace");
     const workspace = this.requireWorkspace(record.workspaceId);
-    if (workspace.availability !== "available") throw new Error("The selected workspace is unavailable");
+    if (workspace.availability !== "available")
+      throw new Error("The selected workspace is unavailable");
     return record;
   }
 
-  private workspaceReadFailure(cause: unknown): "binary" | "missing" | "too-large" {
+  private workspaceReadFailure(
+    cause: unknown,
+  ): "binary" | "missing" | "too-large" {
     const message = cause instanceof Error ? cause.message : String(cause);
     if (message.includes("too large")) return "too-large";
     if (message.includes("UTF-8 text")) return "binary";
     return "missing";
   }
 
-  private toLegacyConnections(snapshot: ModelConfigurationSnapshot): ProviderConnectionRecord[] {
+  private toLegacyConnections(
+    snapshot: ModelConfigurationSnapshot,
+  ): ProviderConnectionRecord[] {
     const now = Date.now();
     return snapshot.providers
       .filter((provider) => provider.kind === "chat")
       .map((provider) => ({
         id: provider.id,
-        kind: provider.source === "custom" ? "openai-compatible" as const : "builtin" as const,
+        kind:
+          provider.source === "custom"
+            ? ("openai-compatible" as const)
+            : ("builtin" as const),
         providerId: provider.id,
         avatarId: provider.avatarId,
         displayName: provider.displayName,
         baseUrl: provider.baseUrl,
         api: null,
         authStatus:
-          provider.configuration && typeof provider.configuration.apiKey === "string" ? "configured" as const : provider.authStatus,
+          provider.configuration &&
+          typeof provider.configuration.apiKey === "string"
+            ? ("configured" as const)
+            : provider.authStatus,
         createdAt: now,
         updatedAt: now,
       }));
   }
 
-  private toLegacyEnabledModels(snapshot: ModelConfigurationSnapshot): EnabledModelRecord[] {
-    return snapshot.models.filter((model) => model.kind === "chat" && model.enabled).map((model) => ({
-      connectionId: model.providerId,
-      modelId: model.modelId,
-      displayName: model.displayName,
-      capabilities: {
-        supportsText: true,
-        supportsVision: model.supportsVision,
-        supportsToolUse: "unknown",
-        supportsReasoning: model.supportsReasoning,
-        supportedThinkingLevels: model.supportedThinkingLevels,
-        contextWindow: model.contextWindow ?? 128000,
-        maxOutputTokens: 16384,
-      },
-      enabled: model.enabled,
-      updatedAt: Date.now(),
-    }));
+  private toLegacyEnabledModels(
+    snapshot: ModelConfigurationSnapshot,
+  ): EnabledModelRecord[] {
+    return snapshot.models
+      .filter((model) => model.kind === "chat" && model.enabled)
+      .map((model) => ({
+        connectionId: model.providerId,
+        modelId: model.modelId,
+        displayName: model.displayName,
+        capabilities: {
+          supportsText: true,
+          supportsVision: model.supportsVision,
+          supportsToolUse: "unknown",
+          supportsReasoning: model.supportsReasoning,
+          supportedThinkingLevels: model.supportedThinkingLevels,
+          contextWindow: model.contextWindow ?? 128000,
+          maxOutputTokens: 16384,
+        },
+        enabled: model.enabled,
+        updatedAt: Date.now(),
+      }));
   }
 
   private emitConfigurationChanged(): void {
@@ -2730,21 +5391,41 @@ export class WordlessRuntime {
   }
 
   private removeProviderModelPreferences(providerId: string): void {
-    const defaultModel = this.preferences.defaultModel?.connectionId === providerId ? null : this.preferences.defaultModel;
-    const entryModels = Object.fromEntries(Object.entries(this.preferences.entryModels).filter(([, model]) => model.connectionId !== providerId));
-    if (defaultModel === this.preferences.defaultModel && Object.keys(entryModels).length === Object.keys(this.preferences.entryModels).length) return;
+    const defaultModel =
+      this.preferences.defaultModel?.connectionId === providerId
+        ? null
+        : this.preferences.defaultModel;
+    const entryModels = Object.fromEntries(
+      Object.entries(this.preferences.entryModels).filter(
+        ([, model]) => model.connectionId !== providerId,
+      ),
+    );
+    if (
+      defaultModel === this.preferences.defaultModel &&
+      Object.keys(entryModels).length ===
+        Object.keys(this.preferences.entryModels).length
+    )
+      return;
     this.preferences = { ...this.preferences, defaultModel, entryModels };
     this.database.savePreferences(this.preferences);
   }
 
   private rememberEntryModel(entryId: string, model: ModelReference): void {
-    this.preferences = { ...this.preferences, entryModels: { ...this.preferences.entryModels, [entryId]: model } };
+    this.preferences = {
+      ...this.preferences,
+      entryModels: { ...this.preferences.entryModels, [entryId]: model },
+    };
     this.database.savePreferences(this.preferences);
   }
 
-  private toConversationMessage(message: unknown, model: ModelReference, id: string): ConversationMessage | undefined {
+  private toConversationMessage(
+    message: unknown,
+    model: ModelReference,
+    id: string,
+  ): ConversationMessage | undefined {
     const value = asRecord(message);
-    if (!value || (value.role !== "user" && value.role !== "assistant")) return undefined;
+    if (!value || (value.role !== "user" && value.role !== "assistant"))
+      return undefined;
     const blocks: MessageBlock[] = [];
     if (value.role === "user") {
       blocks.push(...projectUserMessageContent(value.content));
@@ -2754,33 +5435,66 @@ export class WordlessRuntime {
       for (const item of value.content) {
         const block = asRecord(item);
         if (!block) continue;
-        if (block.type === "text" && typeof block.text === "string") blocks.push({ type: "text", text: block.text });
-        if (block.type === "thinking" && typeof block.thinking === "string") blocks.push({ type: "reasoning", text: block.thinking });
-        if (block.type === "toolCall" && typeof block.id === "string" && typeof block.name === "string") {
-          blocks.push({ type: "tool", callId: block.id, name: block.name, state: "pending", input: asRecord(block.arguments) });
+        if (block.type === "text" && typeof block.text === "string")
+          blocks.push({ type: "text", text: block.text });
+        if (block.type === "thinking" && typeof block.thinking === "string")
+          blocks.push({ type: "reasoning", text: block.thinking });
+        if (
+          block.type === "toolCall" &&
+          typeof block.id === "string" &&
+          typeof block.name === "string"
+        ) {
+          blocks.push({
+            type: "tool",
+            callId: block.id,
+            name: block.name,
+            state: "pending",
+            input: asRecord(block.arguments),
+          });
         }
       }
     }
-    const interrupted = value.stopReason === "error" || value.stopReason === "aborted";
+    const interrupted =
+      value.stopReason === "error" || value.stopReason === "aborted";
     const normalizedBlocks = interrupted
-      ? blocks.map((block) => block.type === "tool" && block.state === "pending"
-        ? {
-            ...block,
-            state: "error" as const,
-            output: typeof value.errorMessage === "string" ? value.errorMessage : "The agent run ended before the tool completed.",
-            details: terminalizeToolDetails(block.details, typeof value.errorMessage === "string" ? value.errorMessage : "The agent run ended before the tool completed."),
-          }
-        : block)
+      ? blocks.map((block) =>
+          block.type === "tool" && block.state === "pending"
+            ? {
+                ...block,
+                state: "error" as const,
+                output:
+                  typeof value.errorMessage === "string"
+                    ? value.errorMessage
+                    : "The agent run ended before the tool completed.",
+                details: terminalizeToolDetails(
+                  block.details,
+                  typeof value.errorMessage === "string"
+                    ? value.errorMessage
+                    : "The agent run ended before the tool completed.",
+                ),
+              }
+            : block,
+        )
       : blocks;
     return {
       id,
       role: value.role,
-      status: value.stopReason === "error" ? "error" : value.stopReason === "aborted" ? "aborted" : "complete",
+      status:
+        value.stopReason === "error"
+          ? "error"
+          : value.stopReason === "aborted"
+            ? "aborted"
+            : "complete",
       blocks: normalizedBlocks,
       model: value.role === "assistant" ? model : null,
-      timestamp: typeof value.timestamp === "number" ? value.timestamp : Date.now(),
-      usage: value.role === "assistant" ? toConversationUsage(value.usage) : undefined,
-      errorMessage: typeof value.errorMessage === "string" ? value.errorMessage : undefined,
+      timestamp:
+        typeof value.timestamp === "number" ? value.timestamp : Date.now(),
+      usage:
+        value.role === "assistant"
+          ? toConversationUsage(value.usage)
+          : undefined,
+      errorMessage:
+        typeof value.errorMessage === "string" ? value.errorMessage : undefined,
     };
   }
 
@@ -2798,7 +5512,9 @@ export class WordlessRuntime {
     const approval = persisted.resolution
       ? {
           ...persisted.approval,
-          status: persisted.resolution.approved ? "approved" as const : "rejected" as const,
+          status: persisted.resolution.approved
+            ? ("approved" as const)
+            : ("rejected" as const),
           feedback: persisted.resolution.feedback,
         }
       : { ...persisted.approval, status: "required" as const };
@@ -2807,11 +5523,29 @@ export class WordlessRuntime {
       ? persisted.resolution.approved
         ? isRunning
           ? { ...block, state: "running", approval }
-          : { ...block, state: "error", approval, output: "The operation was interrupted before the approved tool could finish. Start a new turn to retry it." }
-        : { ...block, state: "error", approval, output: persisted.resolution.feedback ?? "Operation rejected by the user" }
+          : {
+              ...block,
+              state: "error",
+              approval,
+              output:
+                "The operation was interrupted before the approved tool could finish. Start a new turn to retry it.",
+            }
+        : {
+            ...block,
+            state: "error",
+            approval,
+            output:
+              persisted.resolution.feedback ?? "Operation rejected by the user",
+          }
       : isRunning
         ? { ...block, state: "awaiting-approval", approval }
-        : { ...block, state: "error", approval, output: "The operation was interrupted before approval could be resolved. Start a new turn to retry it." };
+        : {
+            ...block,
+            state: "error",
+            approval,
+            output:
+              "The operation was interrupted before approval could be resolved. Start a new turn to retry it.",
+          };
     messages[location.messageIndex] = { ...message, blocks };
   }
 
@@ -2826,11 +5560,16 @@ export class WordlessRuntime {
     if (!message) return;
     const block = message.blocks[location.blockIndex];
     if (!block || block.type !== "tool") return;
-    const resolution = persisted.resolution ?? (isRunning ? undefined : {
-      requestId: persisted.request.requestId,
-      status: "cancelled" as const,
-      feedback: "The request was interrupted before a response was submitted",
-    });
+    const resolution =
+      persisted.resolution ??
+      (isRunning
+        ? undefined
+        : {
+            requestId: persisted.request.requestId,
+            status: "cancelled" as const,
+            feedback:
+              "The request was interrupted before a response was submitted",
+          });
     const blocks = [...message.blocks];
     blocks[location.blockIndex] = {
       ...block,
@@ -2879,12 +5618,19 @@ export class WordlessRuntime {
     const blocks = [...message.blocks];
     const output = contentToText(result.content);
     const detailsRecord = asRecord(result.details);
-    const details = result.isError ? terminalizeToolDetails(result.details, output || "Tool execution failed") : result.details;
+    const details = result.isError
+      ? terminalizeToolDetails(
+          result.details,
+          output || "Tool execution failed",
+        )
+      : result.details;
     const usage = conversationUsageFromUnknown(detailsRecord?.usage);
     const approval = persisted?.resolution
       ? {
           ...persisted.approval,
-          status: persisted.resolution.approved ? "approved" as const : "rejected" as const,
+          status: persisted.resolution.approved
+            ? ("approved" as const)
+            : ("rejected" as const),
           feedback: persisted.resolution.feedback,
         }
       : persisted
@@ -2898,21 +5644,30 @@ export class WordlessRuntime {
       ...(usage ? { usage } : block.usage ? { usage: block.usage } : {}),
       approval,
       userRequest: persistedUserRequest
-        ? { request: persistedUserRequest.request, resolution: persistedUserRequest.resolution }
+        ? {
+            request: persistedUserRequest.request,
+            resolution: persistedUserRequest.resolution,
+          }
         : block.userRequest,
     };
     blocks[location.blockIndex] = next;
     messages[location.messageIndex] = { ...message, blocks };
   }
 
-  private emit(sessionId: string, active: ActiveRun, event: RuntimeEvent): void {
+  private emit(
+    sessionId: string,
+    active: ActiveRun,
+    event: RuntimeEvent,
+  ): void {
     const envelope: RuntimeEventEnvelope = {
       protocolVersion: PROTOCOL_VERSION,
       runtimeInstanceId: this.runtimeInstanceId,
       eventId: randomUUID(),
       sessionId,
       runId: active.runId,
-      ...(active.userMessageId ? { turnId: `turn:${active.userMessageId}` } : {}),
+      ...(active.userMessageId
+        ? { turnId: `turn:${active.userMessageId}` }
+        : {}),
       sequence: ++active.sequence,
       timestamp: Date.now(),
       event,
@@ -2942,7 +5697,11 @@ export class WordlessRuntime {
         available = false;
       }
       if ((available ? "available" : "missing") !== workspace.availability) {
-        this.database.upsertWorkspace({ ...workspace, availability: available ? "available" : "missing", updatedAt: Date.now() });
+        this.database.upsertWorkspace({
+          ...workspace,
+          availability: available ? "available" : "missing",
+          updatedAt: Date.now(),
+        });
       }
     }
   }

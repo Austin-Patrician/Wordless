@@ -1,18 +1,19 @@
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue, cn } from "@wordless/ui-kit";
 import { useEffect, useMemo, useState } from "react";
-import type { AgentInteractionModeId, ModelReference, PresentationGenerationMode, SessionAccessLevel, ThinkingLevel, ToolApprovalMode, UserPromptPart, WorkbenchEntryDefinition, WorkbenchMode } from "@wordless/domain";
+import type { AgentInteractionModeId, ExpertSelection, ModelReference, PresentationGenerationMode, SessionAccessLevel, ThinkingLevel, ToolApprovalMode, UserPromptPart, WorkbenchEntryDefinition, WorkbenchMode } from "@wordless/domain";
 import type { PresentationTemplate } from "@wordless/protocol";
 import codeDevelopmentIcon from "../../../icons/common-icons/代码开发.svg";
 import everydayWorkIcon from "../../../icons/common-icons/everydaywork.svg";
 import uiDesignIcon from "../../../icons/common-icons/ui-design.svg";
 import { usePreferences } from "../../shared/preferences";
 import { useRuntime, useRuntimeClient } from "../../shared/runtime";
-import { Composer } from "../thread/Composer";
+import { Composer, EMPTY_INLINE_SKILL_COMPOSER_VALUE } from "../thread/Composer";
 import { createPendingThreadTurn, createUserMessageSubmission, type PendingThreadTurn } from "../thread/pending-thread-turn";
 import { ModelPicker, thinkingLevelForModelSelection } from "./ModelPicker";
 import { WorkspacePicker } from "./WorkspacePicker";
 import { AgentEntryIcon } from "./AgentEntryIcon";
 import { QuickModelSetup } from "./QuickModelSetup";
+import { ExpertPortrait } from "../experts/ExpertPortrait";
 import { hasEnabledChatModel } from "./quick-model-setup-model";
 
 type WelcomeViewProps = {
@@ -20,6 +21,8 @@ type WelcomeViewProps = {
   onOpenSkillImport: () => void;
   onOpenSkills: () => void;
   onSessionCreated: (sessionId: string, pendingTurn: PendingThreadTurn) => void;
+  initialExpertSelection?: ExpertSelection;
+  initialExpertPrompt?: string;
 };
 
 const modeOptions: { icon: string; id: WorkbenchMode; label: string }[] = [
@@ -89,7 +92,7 @@ function PresentationLaunchControls({
   );
 }
 
-export function WelcomeView({ onOpenModels, onOpenSkillImport, onOpenSkills, onSessionCreated }: WelcomeViewProps) {
+export function WelcomeView({ initialExpertPrompt, initialExpertSelection, onOpenModels, onOpenSkillImport, onOpenSkills, onSessionCreated }: WelcomeViewProps) {
   const client = useRuntimeClient();
   const { refresh, snapshot } = useRuntime();
   const { t } = usePreferences();
@@ -110,6 +113,8 @@ export function WelcomeView({ onOpenModels, onOpenSkillImport, onOpenSkills, onS
   const [submitting, setSubmitting] = useState(false);
   const [submissionError, setSubmissionError] = useState<string | null>(null);
   const [quickSetupDismissed, setQuickSetupDismissed] = useState(false);
+  const [expertSelection, setExpertSelection] = useState<ExpertSelection | undefined>(initialExpertSelection);
+  const initialDraft = initialExpertPrompt ? { ...EMPTY_INLINE_SKILL_COMPOSER_VALUE, parts: [{ type: "text" as const, text: initialExpertPrompt }], text: initialExpertPrompt } : undefined;
 
   const entries = snapshot?.entries ?? [];
   const modeEntries = useMemo(() => entries.filter((entry) => entry.mode === mode), [entries, mode]);
@@ -168,7 +173,7 @@ export function WelcomeView({ onOpenModels, onOpenSkillImport, onOpenSkills, onS
     const submission = createUserMessageSubmission();
     const pendingTurn = createPendingThreadTurn(parts, submission);
     try {
-      const session = await client.createAndPrompt({ mode, entryId: entry.id, workspaceId, accessLevel, model, thinkingLevel, connectorIds, interactionMode, toolApprovalMode, ...(entry.workbenchId === "presentation" ? { presentation: { generationMode: presentationMode, templateId: presentationTemplateId === "auto" ? null : presentationTemplateId } } : {}) }, parts, submission);
+      const session = await client.createAndPrompt({ mode, entryId: entry.id, workspaceId, accessLevel, model, thinkingLevel, connectorIds, interactionMode, toolApprovalMode, ...(expertSelection ? { expertSelection } : {}), ...(entry.workbenchId === "presentation" ? { presentation: { generationMode: presentationMode, templateId: presentationTemplateId === "auto" ? null : presentationTemplateId } } : {}) }, parts, submission);
       onSessionCreated(session.id, pendingTurn);
       void refresh();
     } catch (cause) {
@@ -250,6 +255,7 @@ export function WelcomeView({ onOpenModels, onOpenSkillImport, onOpenSkills, onS
               canPlan={canPlan}
               disabled={submitting}
               interactionMode={interactionMode}
+              initialDraft={initialDraft}
               modelLabel={selectedModel?.displayName ?? t("modelRequired")}
               modelProviderAvatarId={selectedConnection?.avatarId}
               modelProviderId={model?.connectionId}
@@ -257,6 +263,10 @@ export function WelcomeView({ onOpenModels, onOpenSkillImport, onOpenSkills, onS
               onToolApprovalModeChange={setToolApprovalMode}
               toolApprovalMode={toolApprovalMode}
               onConnectorIdsChange={setConnectorIds}
+              experts={snapshot?.experts ?? []}
+              selectedExpertSelection={expertSelection}
+              onExpertSelectionChange={(selection) => setExpertSelection(selection ?? undefined)}
+              showExpertPicker={entry?.id === "general-work"}
               onImportSkill={onOpenSkillImport}
               onInteractionModeChange={(nextMode) => {
                 if (nextMode === "clarify" && selectedModel?.capabilities.supportsToolUse === false) {

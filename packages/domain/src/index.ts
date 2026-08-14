@@ -6,9 +6,24 @@ export type AgentInteractionModeId = "default" | "clarify" | "plan";
 
 export type SessionJournalFormat = "wordless-agent-v1" | "wordless-coding-v1";
 
-export type WorkbenchId = "conversation" | "code" | "presentation" | "workbook" | "analysis" | "ui-preview" | "media-canvas";
+export type WorkbenchId =
+  | "conversation"
+  | "code"
+  | "presentation"
+  | "workbook"
+  | "analysis"
+  | "ui-preview"
+  | "media-canvas";
 
-export type ArtifactKind = "presentation" | "document" | "spreadsheet" | "browser" | "report" | "dataset" | "chart" | "image";
+export type ArtifactKind =
+  | "presentation"
+  | "document"
+  | "spreadsheet"
+  | "browser"
+  | "report"
+  | "dataset"
+  | "chart"
+  | "image";
 
 export type WorkspaceKind = "managed" | "linked";
 
@@ -31,9 +46,19 @@ export type ConnectorTransport = "stdio" | "streamable-http";
 
 export type ConnectorStatus = "disconnected" | "ready" | "needs-auth" | "error";
 
-export type ConnectorTemplateId = "feishu" | "dingtalk" | "wecom" | "postgresql" | "web-search" | "firecrawl" | "github" | null;
+export type ConnectorTemplateId =
+  | "feishu"
+  | "dingtalk"
+  | "wecom"
+  | "postgresql"
+  | "web-search"
+  | "firecrawl"
+  | "github"
+  | "ai-hot"
+  | null;
 
-export const CONNECTOR_OAUTH_REDIRECT_URI = "http://127.0.0.1:18191/oauth/callback";
+export const CONNECTOR_OAUTH_REDIRECT_URI =
+  "http://127.0.0.1:18191/oauth/callback";
 
 export interface ConnectorHeader {
   name: string;
@@ -206,7 +231,8 @@ export interface ModelReference {
   modelId: string;
 }
 
-export type ThinkingLevel = "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
+export type ThinkingLevel =
+  "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
 
 export interface ModelCapabilities {
   supportsText: true;
@@ -269,7 +295,204 @@ export interface SessionRecord {
   pinnedAt: number | null;
   createdAt: number;
   updatedAt: number;
+  expertSelection?: ExpertSelection;
 }
+
+export type ExpertSelection = {
+  kind: "expert" | "team";
+  id: string;
+  version: string;
+};
+
+export type AvataaarsTop =
+  | "hat" | "hijab" | "turban" | "winterHat1" | "winterHat02"
+  | "winterHat03" | "winterHat04" | "bob" | "bun" | "curly" | "curvy"
+  | "dreads" | "frida" | "fro" | "froBand" | "longButNotTooLong"
+  | "miaWallace" | "shavedSides" | "straight02" | "straight01"
+  | "straightAndStrand" | "dreads01" | "dreads02" | "frizzle" | "shaggy"
+  | "shaggyMullet" | "shortCurly" | "shortFlat" | "shortRound"
+  | "shortWaved" | "sides" | "theCaesar" | "theCaesarAndSidePart"
+  | "bigHair";
+
+export type AvataaarsClothing =
+  | "blazerAndShirt" | "blazerAndSweater" | "collarAndSweater"
+  | "graphicShirt" | "hoodie" | "overall" | "shirtCrewNeck"
+  | "shirtScoopNeck" | "shirtVNeck";
+
+export type AvataaarsEyes =
+  | "closed" | "cry" | "default" | "eyeRoll" | "happy" | "hearts"
+  | "side" | "squint" | "surprised" | "winkWacky" | "wink" | "xDizzy";
+
+export type AvataaarsEyebrows =
+  | "angryNatural" | "defaultNatural" | "flatNatural" | "frownNatural"
+  | "raisedExcitedNatural" | "sadConcernedNatural" | "unibrowNatural"
+  | "upDownNatural" | "angry" | "default" | "raisedExcited"
+  | "sadConcerned" | "upDown";
+
+export type AvataaarsMouth =
+  | "concerned" | "default" | "disbelief" | "eating" | "grimace" | "sad"
+  | "screamOpen" | "serious" | "smile" | "tongue" | "twinkle" | "vomit";
+
+export type AvataaarsFacialHair =
+  | "none" | "beardLight" | "beardMajestic" | "beardMedium"
+  | "moustacheFancy" | "moustacheMagnum";
+
+export type AvataaarsAccessories =
+  | "none" | "kurt" | "prescription01" | "prescription02" | "round"
+  | "sunglasses" | "wayfarers" | "eyepatch";
+
+export interface AvataaarsPortraitOptions {
+  backgroundColor: string;
+  skinColor: string;
+  top: AvataaarsTop;
+  hairColor: string;
+  hatColor: string;
+  eyes: AvataaarsEyes;
+  eyebrows: AvataaarsEyebrows;
+  mouth: AvataaarsMouth;
+  facialHair: AvataaarsFacialHair;
+  facialHairColor: string;
+  clothing: AvataaarsClothing;
+  clothesColor: string;
+  accessories: AvataaarsAccessories;
+  accessoriesColor: string;
+}
+
+export type ExpertPortrait =
+  | { kind: "builtin"; key: string }
+  | {
+      kind: "avataaars";
+      schemaVersion: 1;
+      options: AvataaarsPortraitOptions;
+    };
+
+export interface ExpertSummary {
+  id: string;
+  version: string;
+  name: string;
+  description: string;
+  portrait: ExpertPortrait;
+  kind: "expert" | "team";
+  memberCount?: number;
+  skillCount: number;
+  connectorCount: number;
+  source: "builtin" | "local" | "imported";
+  tags?: string[];
+  categories?: string[];
+  roleLabel?: string;
+}
+
+export interface ExpertDefinition extends ExpertSummary {
+  kind: "expert";
+  systemPrompt: string;
+  skillIds: string[];
+  connectorIds: string[];
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface ExpertDefinitionInput {
+  name: string;
+  description: string;
+  systemPrompt: string;
+  portrait: ExpertPortrait;
+  skillIds?: string[];
+  connectorIds?: string[];
+  tags?: string[];
+  categories?: string[];
+  roleLabel?: string;
+}
+
+export type ExpertExecutionProfile =
+  "read-only" | "review" | "research" | "workspace-write";
+
+export interface ExpertTeamMemberDefinition {
+  id: string;
+  expertId: string;
+  executionProfile: ExpertExecutionProfile;
+  responsibility: string;
+}
+export interface SessionExpertTeamMemberSnapshot extends ExpertTeamMemberDefinition {
+  expertName: string;
+  portrait: ExpertPortrait;
+  systemPrompt: string;
+  skillIds: string[];
+  connectorIds: string[];
+}
+
+export interface SessionExpertTeamLeaderSnapshot {
+  expertId: string;
+  expertName: string;
+  portrait: ExpertPortrait;
+  systemPrompt: string;
+  skillIds: string[];
+  connectorIds: string[];
+}
+
+export interface ExpertTeamDefinition extends ExpertSummary {
+  kind: "team";
+  leaderExpertId: string;
+  members: ExpertTeamMemberDefinition[];
+  systemPrompt: string;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface ExpertTeamDefinitionInput {
+  name: string;
+  description: string;
+  portraitKey: string;
+  leaderExpertId: string;
+  members: Omit<ExpertTeamMemberDefinition, "id">[];
+  systemPrompt: string;
+  tags?: string[];
+  categories?: string[];
+  roleLabel?: string;
+}
+
+export interface ExpertTeamDetailMember extends ExpertTeamMemberDefinition {
+  name: string;
+  portrait: ExpertPortrait;
+  available: boolean;
+}
+
+export interface ExpertTeamDetailLeader {
+  expertId: string;
+  name: string;
+  portrait: ExpertPortrait;
+  available: boolean;
+}
+
+/** A presentation-safe, resolved view of an expert team for the desktop UI. */
+export interface ExpertTeamDetail extends ExpertSummary {
+  kind: "team";
+  leader: ExpertTeamDetailLeader;
+  members: ExpertTeamDetailMember[];
+  suggestedPrompts: string[];
+}
+
+interface SessionExpertSnapshotBase {
+  selection: ExpertSelection;
+  name: string;
+  systemPrompt: string;
+  skillIds: string[];
+  connectorIds: string[];
+}
+
+export interface SessionIndividualExpertSnapshot extends SessionExpertSnapshotBase {
+  kind: "expert";
+}
+
+export interface SessionExpertTeamSnapshot extends SessionExpertSnapshotBase {
+  kind: "team";
+  teamName: string;
+  teamPortrait: ExpertPortrait;
+  leader: SessionExpertTeamLeaderSnapshot;
+  teamMembers: SessionExpertTeamMemberSnapshot[];
+}
+
+export type SessionExpertSnapshot =
+  SessionIndividualExpertSnapshot | SessionExpertTeamSnapshot;
 
 export type MediaKind = "image" | "video";
 
@@ -286,7 +509,8 @@ export type MediaOperationKind =
   | "remove-object"
   | "multi-view";
 
-export type MediaOperationStatus = "rendering" | "ready" | "partial" | "failed" | "cancelled";
+export type MediaOperationStatus =
+  "rendering" | "ready" | "partial" | "failed" | "cancelled";
 
 export type MediaAssetOrigin = "uploaded" | "generated";
 
@@ -447,7 +671,12 @@ export interface MediaCropRequest {
   targetPosition: MediaPosition;
 }
 
-export type MediaOperationRequest = MediaGenerationRequest | MediaLocalEditRequest | MediaBackgroundRemovalRequest | MediaMultiViewRequest | MediaCropRequest;
+export type MediaOperationRequest =
+  | MediaGenerationRequest
+  | MediaLocalEditRequest
+  | MediaBackgroundRemovalRequest
+  | MediaMultiViewRequest
+  | MediaCropRequest;
 
 export interface MediaLayoutUpdate {
   sessionId: string;
@@ -666,10 +895,17 @@ export interface SessionDraft {
   interactionMode?: AgentInteractionModeId;
   toolApprovalMode?: ToolApprovalMode;
   presentation?: PresentationLaunchOptions;
+  expertSelection?: ExpertSelection;
 }
 
 export type AutomationSchedule =
-  | { kind: "recurring"; cadence: "daily" | "weekdays" | "weekly" | "monthly"; time: string; weekdays?: number[]; dayOfMonth?: number }
+  | {
+      kind: "recurring";
+      cadence: "daily" | "weekdays" | "weekly" | "monthly";
+      time: string;
+      weekdays?: number[];
+      dayOfMonth?: number;
+    }
   | { kind: "interval"; every: number; unit: "minutes" | "hours" | "days" }
   | { kind: "once"; at: number };
 
@@ -696,7 +932,15 @@ export interface AutomationTask extends AutomationConfiguration {
   updatedAt: number;
 }
 
-export type AutomationRunStatus = "queued" | "running" | "waiting" | "completed" | "failed" | "cancelled" | "configuration-error" | "interrupted";
+export type AutomationRunStatus =
+  | "queued"
+  | "running"
+  | "waiting"
+  | "completed"
+  | "failed"
+  | "cancelled"
+  | "configuration-error"
+  | "interrupted";
 
 export interface AutomationRun {
   id: string;
@@ -812,7 +1056,13 @@ export interface MessageToolBlock {
   type: "tool";
   callId: string;
   name: string;
-  state: "pending" | "awaiting-approval" | "awaiting-user-input" | "running" | "complete" | "error";
+  state:
+    | "pending"
+    | "awaiting-approval"
+    | "awaiting-user-input"
+    | "running"
+    | "complete"
+    | "error";
   startedAt?: number;
   timeoutSeconds?: number;
   input?: Record<string, unknown>;
@@ -824,7 +1074,14 @@ export interface MessageToolBlock {
   userRequest?: MessageUserRequest;
 }
 
-export type ResearchDelegationTaskStatus = "queued" | "running" | "awaiting-approval" | "awaiting-user-input" | "completed" | "failed" | "cancelled";
+export type ResearchDelegationTaskStatus =
+  | "queued"
+  | "running"
+  | "awaiting-approval"
+  | "awaiting-user-input"
+  | "completed"
+  | "failed"
+  | "cancelled";
 
 export interface ResearchDelegationEvent {
   id: string;
@@ -1147,8 +1404,11 @@ export interface ConversationMessage {
   errorMessage?: string;
 }
 
-export function conversationUsageFromUnknown(value: unknown): ConversationUsage | undefined {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) return undefined;
+export function conversationUsageFromUnknown(
+  value: unknown,
+): ConversationUsage | undefined {
+  if (typeof value !== "object" || value === null || Array.isArray(value))
+    return undefined;
   const usage = value as Record<string, unknown>;
   if (
     typeof usage.inputTokens !== "number" ||
@@ -1170,7 +1430,10 @@ export function conversationUsageFromUnknown(value: unknown): ConversationUsage 
   };
 }
 
-export function mergeConversationUsage(current: ConversationUsage | undefined, next: ConversationUsage | undefined): ConversationUsage | undefined {
+export function mergeConversationUsage(
+  current: ConversationUsage | undefined,
+  next: ConversationUsage | undefined,
+): ConversationUsage | undefined {
   if (!current) return next ? { ...next } : undefined;
   if (!next) return { ...current };
   return {
@@ -1183,7 +1446,9 @@ export function mergeConversationUsage(current: ConversationUsage | undefined, n
   };
 }
 
-export function calculateCurrentTurnUsage(messages: readonly ConversationMessage[]): SessionTurnUsage | undefined {
+export function calculateCurrentTurnUsage(
+  messages: readonly ConversationMessage[],
+): SessionTurnUsage | undefined {
   let turnStart = -1;
   for (let index = messages.length - 1; index >= 0; index -= 1) {
     if (messages[index]?.role === "user") {

@@ -7,6 +7,7 @@ import webSearchIcon from "../../icons/mcp/websearch.svg";
 import wecomIcon from "../../icons/mcp/企业微信.svg";
 import firecrawlIcon from "../../icons/mcp/firecrawl-color.svg";
 import githubIcon from "../../icons/mcp/github-fill.svg";
+import aiHotIcon from "../../icons/mcp/AIHot.svg";
 
 const templateIcons: Partial<Record<NonNullable<ConnectorSummary["templateId"]>, string>> = {
   feishu: feishuIcon,
@@ -16,6 +17,7 @@ const templateIcons: Partial<Record<NonNullable<ConnectorSummary["templateId"]>,
   "web-search": webSearchIcon,
   firecrawl: firecrawlIcon,
   github: githubIcon,
+  "ai-hot": aiHotIcon,
 };
 
 type ConnectorIconProps = Pick<ConnectorSummary, "templateId" | "transport"> & {

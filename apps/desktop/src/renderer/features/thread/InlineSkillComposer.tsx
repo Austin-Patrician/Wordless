@@ -587,7 +587,7 @@ export const InlineSkillComposer = forwardRef<InlineSkillComposerHandle, InlineS
 
   return (
     <LexicalComposer initialConfig={initialConfig}>
-      <div className="relative min-h-0 flex-1">
+      <div className="relative flex min-h-0 flex-1 flex-col">
         <PlainTextPlugin
           ErrorBoundary={LexicalErrorBoundary}
           contentEditable={(

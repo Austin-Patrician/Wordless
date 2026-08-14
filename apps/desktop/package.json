@@ -40,6 +40,8 @@
     "@codemirror/search": "^6.7.1",
     "@codemirror/state": "^6.7.1",
     "@codemirror/view": "^6.43.8",
+    "@dicebear/avataaars": "9.4.2",
+    "@dicebear/core": "9.4.2",
     "@lexical/react": "0.48.0",
     "@lezer/highlight": "^1.2.3",
     "@radix-ui/react-popover": "1.1.21",

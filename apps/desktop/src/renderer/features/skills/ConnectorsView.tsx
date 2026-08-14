@@ -94,6 +94,12 @@ const templates: Array<{
     detail: "仓库、Issue、Pull request 与 Actions",
     transport: "streamable-http",
   },
+  {
+    id: "ai-hot",
+    label: "AI hot",
+    detail: "AI 热点信息与趋势查询",
+    transport: "streamable-http",
+  },
 ];
 
 const templateDefaults: Partial<Record<Exclude<ConnectorTemplateId, null>, Pick<ConnectorDraft, "url" | "oauth">>> = {
@@ -103,6 +109,10 @@ const templateDefaults: Partial<Record<Exclude<ConnectorTemplateId, null>, Pick<
   },
   github: {
     url: "https://api.githubcopilot.com/mcp/",
+    oauth: null,
+  },
+  "ai-hot": {
+    url: "https://aihot.virxact.com/api/mcp?aihot_actor=eea353c7-0f39-4f14-91b0-31c11deccb5a",
     oauth: null,
   },
 };
@@ -269,6 +279,7 @@ export function ConnectorsView({
         templateId: template.id,
         name: template.label,
         transport: template.transport,
+        ...defaults,
       });
       onDialogOpenChange(true);
       return;
