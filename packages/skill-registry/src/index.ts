@@ -5,7 +5,7 @@ import { basename, dirname, join, relative, resolve, sep } from "node:path";
 import { tmpdir } from "node:os";
 import extract from "extract-zip";
 import { parse } from "yaml";
-import type { SkillCatalogSnapshot, SkillDiagnostic, SkillSource, SkillSummary, WorkspaceRecord } from "@wordless/domain";
+import type { SkillCatalogSnapshot, SkillDiagnostic, SkillMarketplaceOrigin, SkillSource, SkillSummary, WorkspaceRecord } from "@wordless/domain";
 
 export interface ResolvedSkill {
   id: string;
@@ -78,6 +78,19 @@ function parseSkillFile(content: string): { name: string; description: string; b
   } catch (cause) {
     return { error: cause instanceof Error ? cause.message : "Unable to parse YAML frontmatter" };
   }
+}
+
+function marketplaceOrigin(value: unknown): SkillMarketplaceOrigin | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  const record = value as Record<string, unknown>;
+  return record.version === 1
+    && record.source === "skillsmp"
+    && typeof record.id === "string"
+    && typeof record.githubUrl === "string"
+    && typeof record.commitSha === "string"
+    && typeof record.installedAt === "number"
+    ? { source: "skillsmp", id: record.id, githubUrl: record.githubUrl, commitSha: record.commitSha, installedAt: record.installedAt }
+    : undefined;
 }
 
 export class SkillRegistry {
@@ -252,10 +265,11 @@ export class SkillRegistry {
         }
         const parsed = parseSkillFile(content);
         const id = stableId(canonicalPath);
+        const marketplace = source.source === "wordless" ? await this.readMarketplaceOrigin(dirname(canonicalPath)) : undefined;
         if ("error" in parsed) {
           candidates.push({
             resolved: { id, name: basename(dirname(canonicalPath)), description: "", content: "", filePath: canonicalPath, baseDir: dirname(canonicalPath), source: source.source, workspaceId, disableModelInvocation: false },
-            summary: { id, name: basename(dirname(canonicalPath)), description: "", source: source.source, workspaceId, filePath: canonicalPath, enabled: false, state: "invalid", diagnostic: parsed.error, contentBytes: Buffer.byteLength(content) },
+            summary: { id, name: basename(dirname(canonicalPath)), description: "", source: source.source, workspaceId, filePath: canonicalPath, enabled: false, state: "invalid", diagnostic: parsed.error, contentBytes: Buffer.byteLength(content), ...(marketplace ? { marketplace } : {}) },
           });
           continue;
         }
@@ -272,7 +286,7 @@ export class SkillRegistry {
         };
         candidates.push({
           resolved,
-          summary: { id, name: parsed.name, description: parsed.description, source: source.source, workspaceId, filePath: canonicalPath, enabled: !this.config.disabledSkillIds.includes(id), state: "active", contentBytes: Buffer.byteLength(content) },
+          summary: { id, name: parsed.name, description: parsed.description, source: source.source, workspaceId, filePath: canonicalPath, enabled: !this.config.disabledSkillIds.includes(id), state: "active", contentBytes: Buffer.byteLength(content), ...(marketplace ? { marketplace } : {}) },
         });
       }
     }
@@ -359,6 +373,14 @@ export class SkillRegistry {
       } catch {
         // A missing parent/source is covered by the next explicit refresh.
       }
+    }
+  }
+
+  private async readMarketplaceOrigin(skillRoot: string): Promise<SkillMarketplaceOrigin | undefined> {
+    try {
+      return marketplaceOrigin(JSON.parse(await readFile(join(skillRoot, ".wordless-marketplace.json"), "utf8")));
+    } catch {
+      return undefined;
     }
   }
 

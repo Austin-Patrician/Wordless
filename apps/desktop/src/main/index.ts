@@ -22,9 +22,12 @@ import { GoogleDriveAppData } from "./cloud-sync/google-drive-app-data";
 import { DesktopDataAnalysisService } from "./data-analysis/data-analysis-service";
 import { configureHttpDispatcher } from "./network/http-dispatcher";
 import { AutomationService } from "./automation/automation-service";
+import { McpRegistryService } from "./marketplace/mcp-registry-service";
+import { SkillsMpMarketplaceService } from "./marketplace/skillsmp-marketplace-service";
 
 declare const __WORDLESS_GOOGLE_CLIENT_ID__: string;
 declare const __WORDLESS_GOOGLE_CLIENT_SECRET__: string;
+declare const __WORDLESS_SKILLSMP_API_KEY__: string;
 
 app.setName("Wordless");
 app.setAppUserModelId("com.wordless.desktop");
@@ -141,6 +144,10 @@ app.whenReady().then(async () => {
     office,
     dataAnalysis,
     automation,
+    mcpMarketplace: new McpRegistryService(userData.path),
+    skillMarketplace: new SkillsMpMarketplaceService(userData.path, {
+      apiKey: process.env.WORDLESS_SKILLSMP_API_KEY?.trim() || __WORDLESS_SKILLSMP_API_KEY__,
+    }),
   });
   mainWindow = createMainWindow(path.join(__dirname, "preload.cjs"), runtime.getSnapshot().preferences);
   mainWindow.on("close", (event) => { if (!quitting) { event.preventDefault(); mainWindow?.hide(); } });

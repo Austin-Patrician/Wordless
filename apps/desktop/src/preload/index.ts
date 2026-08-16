@@ -385,6 +385,18 @@ const wordlessBridge: DesktopBridge = {
     ipcRenderer.invoke("wordless:skills:enabled", { skillId, enabled }),
   removeManagedSkill: (skillId) =>
     ipcRenderer.invoke("wordless:skills:remove", { skillId }),
+  searchMcpMarketplace: (query, cursor, refresh) =>
+    ipcRenderer.invoke("wordless:marketplace:mcp-search", { query, cursor, refresh }),
+  getMcpMarketplaceDetail: (name) =>
+    ipcRenderer.invoke("wordless:marketplace:mcp-detail", { name }),
+  installMcpMarketplaceEntry: (name) =>
+    ipcRenderer.invoke("wordless:marketplace:mcp-install", { name }),
+  searchSkillMarketplace: (query, page, sortBy, refresh) =>
+    ipcRenderer.invoke("wordless:marketplace:skill-search", { query, page, sortBy, refresh }),
+  previewSkillMarketplace: (skillId) =>
+    ipcRenderer.invoke("wordless:marketplace:skill-preview", { skillId }),
+  installSkillMarketplacePreview: (previewId) =>
+    ipcRenderer.invoke("wordless:marketplace:skill-install", { previewId }),
   saveConnector: (configuration) =>
     ipcRenderer.invoke("wordless:connectors:save", { configuration }),
   testConnector: (connectorId) =>

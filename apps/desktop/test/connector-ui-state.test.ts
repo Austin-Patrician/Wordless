@@ -15,6 +15,8 @@ test("maps connector failures to actionable UI categories", () => {
   assert.equal(connectorErrorKind("access_denied", "authorize"), "authorization-denied");
   assert.equal(connectorErrorKind("listen EADDRINUSE: 127.0.0.1:18191", "authorize"), "authorization-busy");
   assert.equal(connectorErrorKind("Existing OAuth client information is required", "authorize"), "authorization-failed");
+  assert.equal(connectorErrorKind("Incompatible auth server: does not support dynamic client registration", "authorize"), "oauth-client-required");
+  assert.equal(connectorErrorKind("OAuth dynamic client registration failed: a provider-issued OAuth client ID may be required", "authorize"), "oauth-client-required");
   assert.equal(connectorErrorKind("connection refused", "test"), "test-failed");
 });
 

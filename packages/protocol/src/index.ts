@@ -554,6 +554,12 @@ export const ConnectorConfigurationSchema = Type.Object({
     }),
     Type.Null(),
   ]),
+  marketplace: Type.Optional(Type.Object({
+    source: Type.Literal("official-mcp-registry"),
+    registryName: Type.String({ minLength: 1, maxLength: 240 }),
+    version: Type.String({ minLength: 1, maxLength: 120 }),
+    sourceUrl: Type.String({ minLength: 1, maxLength: 2_048 }),
+  })),
 });
 
 export const ConnectorIdSchema = Type.Object({

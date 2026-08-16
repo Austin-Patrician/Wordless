@@ -10,6 +10,11 @@ import type {
   ConnectorPromptSummary,
   ConnectorResourceSummary,
   ConnectorSummary,
+  McpMarketplaceEntry,
+  McpMarketplacePage,
+  SkillMarketplaceOrigin,
+  SkillMarketplacePage,
+  SkillMarketplacePreview,
   ExpertDefinition,
   ExpertDefinitionInput,
   ExpertTeamDefinition,
@@ -77,7 +82,7 @@ import type {
 } from "@wordless/protocol";
 import type { ToolApprovalMode } from "@wordless/domain";
 
-export const DESKTOP_BRIDGE_VERSION = 32;
+export const DESKTOP_BRIDGE_VERSION = 34;
 
 export interface DesktopBridge {
   readonly version: typeof DESKTOP_BRIDGE_VERSION;
@@ -359,6 +364,12 @@ export interface DesktopBridge {
   importSkillFile(file: File): Promise<void>;
   setSkillEnabled(skillId: string, enabled: boolean): Promise<void>;
   removeManagedSkill(skillId: string): Promise<void>;
+  searchMcpMarketplace(query?: string, cursor?: string, refresh?: boolean): Promise<McpMarketplacePage>;
+  getMcpMarketplaceDetail(name: string): Promise<McpMarketplaceEntry>;
+  installMcpMarketplaceEntry(name: string): Promise<ConnectorSummary>;
+  searchSkillMarketplace(query: string, page?: number, sortBy?: "stars" | "recent", refresh?: boolean): Promise<SkillMarketplacePage>;
+  previewSkillMarketplace(skillId: string): Promise<SkillMarketplacePreview>;
+  installSkillMarketplacePreview(previewId: string): Promise<SkillMarketplaceOrigin>;
   saveConnector(
     configuration: Omit<
       ConnectorConfiguration,
@@ -366,7 +377,7 @@ export interface DesktopBridge {
     > & { id?: string },
   ): Promise<ConnectorSummary>;
   testConnector(connectorId: string): Promise<void>;
-  authorizeConnector(connectorId: string): Promise<void>;
+  authorizeConnector(connectorId: string): Promise<ConnectorSummary>;
   trustConnector(connectorId: string): Promise<void>;
   setConnectorEnabled(connectorId: string, enabled: boolean): Promise<void>;
   removeConnector(connectorId: string): Promise<void>;
@@ -560,6 +571,12 @@ const requiredMethods: Array<Exclude<keyof DesktopBridge, "version">> = [
   "importSkillFile",
   "setSkillEnabled",
   "removeManagedSkill",
+  "searchMcpMarketplace",
+  "getMcpMarketplaceDetail",
+  "installMcpMarketplaceEntry",
+  "searchSkillMarketplace",
+  "previewSkillMarketplace",
+  "installSkillMarketplacePreview",
   "saveConnector",
   "testConnector",
   "authorizeConnector",

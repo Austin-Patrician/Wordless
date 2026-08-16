@@ -99,6 +99,8 @@ import { CloudSyncService } from "../cloud-sync/cloud-sync-service";
 import { updateTitleBarOverlays } from "../windows/main-window";
 import type { DesktopDataAnalysisService } from "../data-analysis/data-analysis-service";
 import type { AutomationService } from "../automation/automation-service";
+import { McpRegistryService } from "../marketplace/mcp-registry-service";
+import { SkillsMpMarketplaceService } from "../marketplace/skillsmp-marketplace-service";
 
 function parsePayload<T>(schema: TSchema, payload: unknown): T {
   if (!Value.Check(schema, payload)) throw new Error("Invalid request payload");
@@ -236,6 +238,8 @@ type DesktopIpcOptions = {
   office: OfficeCliService;
   dataAnalysis: DesktopDataAnalysisService;
   automation: AutomationService;
+  mcpMarketplace: McpRegistryService;
+  skillMarketplace: SkillsMpMarketplaceService;
 };
 
 function isDesktopMenuId(value: unknown): value is DesktopMenuId {
@@ -1484,6 +1488,78 @@ export function registerRuntimeIpc(
     );
     await runtime.removeManagedSkill(input.skillId);
   });
+  ipcMain.handle("wordless:marketplace:mcp-search", async (_event, payload: unknown) => {
+    const input = parsePayload<{ query?: string; cursor?: string; refresh?: boolean }>(Type.Object({
+      query: Type.Optional(Type.String({ maxLength: 200 })),
+      cursor: Type.Optional(Type.String({ maxLength: 500 })),
+      refresh: Type.Optional(Type.Boolean()),
+    }), payload);
+    return await options.mcpMarketplace.search(input.query, input.cursor, input.refresh === true);
+  });
+  ipcMain.handle("wordless:marketplace:mcp-detail", async (_event, payload: unknown) => {
+    const input = parsePayload<{ name: string }>(Type.Object({ name: Type.String({ minLength: 1, maxLength: 240 }) }), payload);
+    return await options.mcpMarketplace.getDetail(input.name);
+  });
+  ipcMain.handle("wordless:marketplace:mcp-install", async (_event, payload: unknown) => {
+    const input = parsePayload<{ name: string }>(Type.Object({ name: Type.String({ minLength: 1, maxLength: 240 }) }), payload);
+    const entry = await options.mcpMarketplace.getDetail(input.name);
+    if (!entry.installable || entry.transport !== "streamable-http" || !entry.url)
+      throw new Error("This MCP server requires local package setup and cannot be installed yet.");
+    const installed = runtime.getSnapshot().connectors.connectors.find((connector) => connector.marketplace?.registryName === entry.name);
+    if (installed) {
+      if (installed.marketplace?.version === entry.version) return installed;
+      const configuration = runtime.getConnectorConfiguration(installed.id);
+      if (!configuration) throw new Error("Installed MCP connector configuration was not found");
+      return await runtime.saveConnector({
+        ...configuration,
+        name: entry.title,
+        url: entry.url,
+        marketplace: {
+          source: entry.source,
+          registryName: entry.name,
+          version: entry.version,
+          sourceUrl: entry.sourceUrl,
+        },
+      });
+    }
+    return await runtime.saveConnector({
+      name: entry.title,
+      templateId: null,
+      transport: "streamable-http",
+      enabled: false,
+      trustedAt: null,
+      command: null,
+      args: [],
+      cwd: null,
+      environment: {},
+      url: entry.url,
+      headers: [],
+      oauth: null,
+      marketplace: {
+        source: entry.source,
+        registryName: entry.name,
+        version: entry.version,
+        sourceUrl: entry.sourceUrl,
+      },
+    });
+  });
+  ipcMain.handle("wordless:marketplace:skill-search", async (_event, payload: unknown) => {
+    const input = parsePayload<{ query: string; page?: number; sortBy?: "stars" | "recent"; refresh?: boolean }>(Type.Object({
+      query: Type.String({ minLength: 1, maxLength: 200 }),
+      page: Type.Optional(Type.Integer({ minimum: 1, maximum: 50 })),
+      sortBy: Type.Optional(Type.Union([Type.Literal("stars"), Type.Literal("recent")])),
+      refresh: Type.Optional(Type.Boolean()),
+    }), payload);
+    return await options.skillMarketplace.search(input.query, input.page, input.sortBy, input.refresh === true);
+  });
+  ipcMain.handle("wordless:marketplace:skill-preview", async (_event, payload: unknown) => {
+    const input = parsePayload<{ skillId: string }>(Type.Object({ skillId: Type.String({ minLength: 1, maxLength: 300 }) }), payload);
+    return await options.skillMarketplace.preview(input.skillId);
+  });
+  ipcMain.handle("wordless:marketplace:skill-install", async (_event, payload: unknown) => {
+    const input = parsePayload<{ previewId: string }>(Type.Object({ previewId: Type.String({ minLength: 36, maxLength: 36 }) }), payload);
+    return await options.skillMarketplace.install(input.previewId, async (directory) => await runtime.importSkill(directory));
+  });
   ipcMain.handle(
     "wordless:connectors:save",
     async (_event, payload: unknown) => {
@@ -1510,7 +1586,7 @@ export function registerRuntimeIpc(
         ConnectorIdSchema,
         payload,
       );
-      await runtime.authorizeConnector(input.connectorId, {
+      return await runtime.authorizeConnector(input.connectorId, {
         openExternal: async (url) => {
           await shell.openExternal(url);
         },

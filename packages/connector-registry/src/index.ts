@@ -190,6 +190,7 @@ function readConfiguration(value: unknown): ConnectorConfiguration | undefined {
   const templateId = record.templateId === "feishu" || record.templateId === "dingtalk" || record.templateId === "wecom" || record.templateId === "postgresql" || record.templateId === "web-search" || record.templateId === "firecrawl" || record.templateId === "github" || record.templateId === "ai-hot" ? record.templateId : null;
   const environment = asRecord(record.environment) ?? {};
   const oauth = asRecord(record.oauth);
+  const marketplace = asRecord(record.marketplace);
   return {
     id: record.id,
     name: record.name.trim(),
@@ -213,6 +214,9 @@ function readConfiguration(value: unknown): ConnectorConfiguration | undefined {
         ...(typeof oauth.expiresAt === "number" ? { expiresAt: oauth.expiresAt } : {}),
       }
       : null,
+    ...(marketplace?.source === "official-mcp-registry" && typeof marketplace.registryName === "string" && typeof marketplace.version === "string" && typeof marketplace.sourceUrl === "string"
+      ? { marketplace: { source: marketplace.source, registryName: marketplace.registryName, version: marketplace.version, sourceUrl: marketplace.sourceUrl } }
+      : {}),
     createdAt: typeof record.createdAt === "number" ? record.createdAt : Date.now(),
     updatedAt: typeof record.updatedAt === "number" ? record.updatedAt : Date.now(),
   };
@@ -251,6 +255,21 @@ function defined<T>(value: T | undefined): T[] {
   return value === undefined ? [] : [value];
 }
 
+function connectorAuthorizationError(cause: unknown): Error {
+  if (cause instanceof Error) {
+    const errorCode = asRecord(cause)?.errorCode;
+    if (!cause.message.trim() && (cause.name === "ServerError" || errorCode === "server_error")) {
+      return new Error("OAuth dynamic client registration failed: the authorization server returned server_error without details. A provider-issued OAuth client ID may be required.");
+    }
+    return cause;
+  }
+  return new Error(String(cause));
+}
+
+function requiresProviderOAuthClient(error: Error): boolean {
+  return /dynamic client registration|incompatible auth server|existing OAuth client information is required/i.test(error.message);
+}
+
 function summary(value: PersistedConnector): ConnectorSummary {
   return {
     id: value.configuration.id,
@@ -264,6 +283,7 @@ function summary(value: PersistedConnector): ConnectorSummary {
     tools: value.tools,
     resources: value.resources,
     prompts: value.prompts,
+    ...(value.configuration.marketplace ? { marketplace: value.configuration.marketplace } : {}),
     updatedAt: value.configuration.updatedAt,
   };
 }
@@ -424,12 +444,13 @@ export class ConnectorRegistry {
       this.publish();
       return summary(entry);
     } catch (cause) {
-      const message = cause instanceof Error ? cause.message : String(cause);
+      const failure = connectorAuthorizationError(cause);
       entry.status = "needs-auth";
-      entry.lastError = message;
+      entry.lastError = failure.message;
       await this.writeStore();
       this.publish();
-      throw cause;
+      if (requiresProviderOAuthClient(failure)) return summary(entry);
+      throw failure;
     }
   }
 

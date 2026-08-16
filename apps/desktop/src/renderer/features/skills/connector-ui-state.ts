@@ -5,6 +5,7 @@ export type ConnectorErrorKind =
   | "authorization-denied"
   | "authorization-expired"
   | "authorization-failed"
+  | "oauth-client-required"
   | "authorization-timeout"
   | "operation-failed"
   | "test-failed";
@@ -19,6 +20,7 @@ export function connectorErrorKind(detail: string, operation: ConnectorOperation
   if (/timed? out|timeout/i.test(detail)) return "authorization-timeout";
   if (/EADDRINUSE|address already in use|listen.*18191/i.test(detail)) return "authorization-busy";
   if (/state did not match|state mismatch/i.test(detail)) return "authorization-expired";
+  if (/does not support dynamic client registration|dynamic client registration failed|incompatible auth server|provider-issued OAuth client ID/i.test(detail)) return "oauth-client-required";
   if (operation === "authorize") return "authorization-failed";
   if (operation === "test" || operation === "trust") return "test-failed";
   return "operation-failed";

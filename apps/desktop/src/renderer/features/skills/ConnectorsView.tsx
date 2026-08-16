@@ -15,7 +15,6 @@ import {
   CheckCircle2,
   CircleAlert,
   CircleOff,
-  KeyRound,
   LoaderCircle,
   Plus,
   Trash2,
@@ -29,6 +28,7 @@ import {
   type ConnectorTemplateId,
 } from "@wordless/domain";
 import connectionIcon from "../../../icons/common-icons/connection.svg";
+import connectMcpIcon from "../../../icons/common-icons/connect-mcp.svg";
 import { ConnectorIcon } from "../../shared/ConnectorIcon";
 import type { MessageKey } from "../../shared/i18n";
 import { usePreferences } from "../../shared/preferences";
@@ -209,6 +209,7 @@ const connectorErrorMessages: Record<ConnectorErrorKind, MessageKey> = {
   "authorization-denied": "connectorAuthorizationDenied",
   "authorization-expired": "connectorAuthorizationExpired",
   "authorization-failed": "connectorAuthorizationFailed",
+  "oauth-client-required": "connectorOAuthClientRequired",
   "authorization-timeout": "connectorAuthorizationTimeout",
   "operation-failed": "connectorOperationFailed",
   "test-failed": "connectorTestFailed",
@@ -296,8 +297,8 @@ export function ConnectorsView({
         ...defaults,
       });
       await runConnector(saved.id, "authorize", async () => {
-        await client.authorizeConnector(saved.id);
-        await client.testConnector(saved.id);
+        const authorized = await client.authorizeConnector(saved.id);
+        if (authorized.status === "ready") await client.testConnector(saved.id);
       });
     } catch (cause) {
       const detail = connectorErrorDetail(cause);
@@ -328,7 +329,7 @@ export function ConnectorsView({
   const authorizationActive = hasActiveConnectorAuthorization(operations);
 
   return (
-    <section className="min-h-0 flex-1 overflow-y-auto pt-8">
+    <section className="min-h-0 flex-1 pt-8">
       <div className="grid grid-cols-1 gap-3 pb-8 sm:grid-cols-2 lg:grid-cols-3">
         {filteredConnectors.map((connector) => {
           const operation = operations[connector.id];
@@ -370,9 +371,11 @@ export function ConnectorsView({
                     <ConnectorEnabledBadge enabled={connector.enabled} />
                   </div>
                   <p className="mt-1 h-9 overflow-hidden text-[11px] leading-[18px] text-[#7d7d76] dark:text-muted-foreground">
-                    {connector.transport === "stdio"
-                      ? "Local command connector."
-                      : "Remote MCP connector."}{" "}
+                    {connector.marketplace
+                      ? `Official MCP Registry · v${connector.marketplace.version}. `
+                      : connector.transport === "stdio"
+                      ? "Local command connector. "
+                      : "Remote MCP connector. "}
                     {connector.tools.length} tools, {connector.resources.length}{" "}
                     resources.
                   </p>
@@ -404,22 +407,28 @@ export function ConnectorsView({
                       信任
                     </Button>
                   ) : connector.transport === "streamable-http" &&
-                    connector.status === "needs-auth" ? (
-                    <Button
-                      aria-label={operation === "authorize" ? t("connectorWaitingAuthorization") : "连接"}
-                      className="h-7 min-w-14 gap-1 px-2 text-[10px]"
-                      disabled={connectorBusy || authorizationActive}
-                      onClick={() =>
-                        void runConnector(connector.id, "authorize", async () => {
-                          await client?.authorizeConnector(connector.id);
-                          await client?.testConnector(connector.id);
-                        })
-                      }
-                      type="button"
-                      variant="outline"
-                    >
-                      {operation === "authorize" ? <LoaderCircle className="h-3 w-3 animate-spin" /> : <><KeyRound className="h-3 w-3" /><span>连接</span></>}
-                    </Button>
+                    (connector.status === "needs-auth" || connector.status === "disconnected") ? (
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <Button
+                          aria-label={operation === "authorize" ? t("connectorWaitingAuthorization") : t("connectorConnect")}
+                          className="h-7 w-7"
+                          disabled={connectorBusy || authorizationActive}
+                          onClick={() =>
+                            void runConnector(connector.id, "authorize", async () => {
+                              const authorized = await client?.authorizeConnector(connector.id);
+                              if (authorized?.status === "ready") await client?.testConnector(connector.id);
+                            })
+                          }
+                          size="icon"
+                          type="button"
+                          variant="outline"
+                        >
+                          {operation === "authorize" ? <LoaderCircle className="h-3.5 w-3.5 animate-spin" /> : <img alt="" className="h-4 w-4 object-contain dark:invert" src={connectMcpIcon} />}
+                        </Button>
+                      </TooltipTrigger>
+                      <TooltipContent>{operation === "authorize" ? t("connectorWaitingAuthorization") : t("connectorConnect")}</TooltipContent>
+                    </Tooltip>
                   ) : (
                     <Tooltip>
                       <TooltipTrigger asChild>

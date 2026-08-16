@@ -74,6 +74,13 @@ export interface ConnectorOAuthConfiguration {
   expiresAt?: number;
 }
 
+export interface ConnectorMarketplaceOrigin {
+  source: "official-mcp-registry";
+  registryName: string;
+  version: string;
+  sourceUrl: string;
+}
+
 export interface ConnectorConfiguration {
   id: string;
   name: string;
@@ -88,6 +95,7 @@ export interface ConnectorConfiguration {
   url: string | null;
   headers: ConnectorHeader[];
   oauth: ConnectorOAuthConfiguration | null;
+  marketplace?: ConnectorMarketplaceOrigin;
   createdAt: number;
   updatedAt: number;
 }
@@ -126,12 +134,99 @@ export interface ConnectorSummary {
   tools: ConnectorToolSummary[];
   resources: ConnectorResourceSummary[];
   prompts: ConnectorPromptSummary[];
+  marketplace?: ConnectorMarketplaceOrigin;
   updatedAt: number;
 }
 
 export interface ConnectorCatalogSnapshot {
   connectors: ConnectorSummary[];
   updatedAt: number;
+}
+
+export interface McpMarketplaceEntry {
+  id: string;
+  name: string;
+  title: string;
+  description: string;
+  version: string;
+  publisher: string;
+  repositoryUrl: string | null;
+  websiteUrl: string | null;
+  iconUrl: string | null;
+  transport: ConnectorTransport | "unsupported";
+  url: string | null;
+  packageName: string | null;
+  setup?: {
+    registryType: string | null;
+    packageVersion: string | null;
+    runtimeHint: string | null;
+    suggestedCommand: string | null;
+    requiredInputs: Array<{
+      name: string;
+      description: string;
+      secret: boolean;
+      kind: "header" | "environment";
+    }>;
+    documentationUrl: string | null;
+    documentationLabel: "Publisher website" | "Source repository" | null;
+  };
+  auth: "Server-defined" | "API key / headers" | "None specified";
+  capabilities: string[];
+  installable: boolean;
+  source: "official-mcp-registry";
+  sourceUrl: string;
+}
+
+export interface McpMarketplacePage {
+  entries: McpMarketplaceEntry[];
+  nextCursor: string | null;
+  stale: boolean;
+  fetchedAt: number;
+}
+
+export interface SkillMarketplaceEntry {
+  id: string;
+  name: string;
+  author: string;
+  description: string;
+  contentLanguage: string | null;
+  githubUrl: string;
+  skillUrl: string;
+  stars: number;
+  updatedAt: number;
+  source: "skillsmp";
+}
+
+export interface SkillMarketplacePage {
+  entries: SkillMarketplaceEntry[];
+  page: number;
+  totalPages: number;
+  hasNext: boolean;
+  total: number;
+  stale: boolean;
+  fetchedAt: number;
+}
+
+export interface SkillMarketplaceFile {
+  path: string;
+  size: number;
+}
+
+export interface SkillMarketplacePreview {
+  previewId: string;
+  entry: SkillMarketplaceEntry;
+  files: SkillMarketplaceFile[];
+  skillMarkdown: string;
+  commitSha: string;
+  expiresAt: number;
+}
+
+export interface SkillMarketplaceOrigin {
+  source: "skillsmp";
+  id: string;
+  githubUrl: string;
+  commitSha: string;
+  installedAt: number;
 }
 
 export interface SkillSummary {
@@ -146,6 +241,7 @@ export interface SkillSummary {
   shadowedBy?: string;
   diagnostic?: string;
   contentBytes: number;
+  marketplace?: SkillMarketplaceOrigin;
 }
 
 export interface SkillDiagnostic {

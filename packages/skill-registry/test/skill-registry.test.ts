@@ -89,4 +89,27 @@ describe("SkillRegistry", () => {
       registry.dispose();
     }
   });
+
+  it("exposes valid SkillsMP origin metadata for managed skills", async () => {
+    const root = await mkdtemp(join(tmpdir(), "wordless-marketplace-skill-"));
+    temporaryRoots.push(root);
+    const managed = join(root, "managed");
+    const skillRoot = join(managed, "market-skill");
+    await writeSkill(skillRoot, "market-skill");
+    await writeFile(join(skillRoot, ".wordless-marketplace.json"), JSON.stringify({
+      version: 1,
+      source: "skillsmp",
+      id: "owner-repo-market-skill",
+      githubUrl: "https://github.com/owner/repo/tree/main/market-skill",
+      commitSha: "1234567890abcdef1234567890abcdef12345678",
+      installedAt: 1_765_000_000_000,
+    }), "utf8");
+    const registry = new SkillRegistry({ paths: { configPath: join(root, "skills.json"), managedRoot: managed }, homeDir: join(root, "home") });
+    await registry.initialize([]);
+    try {
+      expect(registry.snapshot().skills[0]?.marketplace).toMatchObject({ source: "skillsmp", id: "owner-repo-market-skill" });
+    } finally {
+      registry.dispose();
+    }
+  });
 });

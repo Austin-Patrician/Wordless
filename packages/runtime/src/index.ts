@@ -1840,6 +1840,10 @@ export class WordlessRuntime {
     return await this.connectorRegistry.upsert(configuration);
   }
 
+  getConnectorConfiguration(connectorId: string): ConnectorConfiguration | undefined {
+    return this.connectorRegistry.configuration(connectorId);
+  }
+
   async testConnector(connectorId: string): Promise<void> {
     await this.connectorRegistry.test(connectorId);
   }
@@ -1847,8 +1851,8 @@ export class WordlessRuntime {
   async authorizeConnector(
     connectorId: string,
     callbacks: ConnectorAuthorizationCallbacks,
-  ): Promise<void> {
-    await this.connectorRegistry.authorize(connectorId, callbacks);
+  ) {
+    return await this.connectorRegistry.authorize(connectorId, callbacks);
   }
 
   async trustConnector(connectorId: string): Promise<void> {

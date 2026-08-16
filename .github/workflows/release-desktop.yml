@@ -107,6 +107,7 @@ jobs:
           CSC_IDENTITY_AUTO_DISCOVERY: "false"
           WORDLESS_GOOGLE_CLIENT_ID: ${{ vars.GOOGLE_OAUTH_CLIENT_ID }}
           WORDLESS_GOOGLE_CLIENT_SECRET: ${{ secrets.GOOGLE_OAUTH_CLIENT_SECRET }}
+          WORDLESS_SKILLSMP_API_KEY: ${{ secrets.SKILLSMP_API_KEY }}
         run: |
           node scripts/prepare-officecli-assets.mjs --platform darwin --arch ${{ matrix.arch }}
           npm run build:renderer
@@ -178,6 +179,7 @@ jobs:
           CSC_KEY_PASSWORD: ${{ secrets.WINDOWS_CSC_KEY_PASSWORD }}
           WORDLESS_GOOGLE_CLIENT_ID: ${{ vars.GOOGLE_OAUTH_CLIENT_ID }}
           WORDLESS_GOOGLE_CLIENT_SECRET: ${{ secrets.GOOGLE_OAUTH_CLIENT_SECRET }}
+          WORDLESS_SKILLSMP_API_KEY: ${{ secrets.SKILLSMP_API_KEY }}
         run: npm run dist:win --workspace=@wordless/desktop
       - name: Verify packaged FFF native search
         working-directory: apps/desktop

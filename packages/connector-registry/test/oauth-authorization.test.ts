@@ -135,6 +135,37 @@ describe("connector OAuth authorization", () => {
       .rejects.toThrow("OAuth authorization timed out");
   });
 
+  it("turns an empty OAuth server registration error into actionable guidance", async () => {
+    const serverError = new Error("");
+    serverError.name = "ServerError";
+    Object.assign(serverError, { errorCode: "server_error" });
+    authMock.mockRejectedValue(serverError);
+
+    temporaryDirectory = await mkdtemp(join(tmpdir(), "wordless-connector-oauth-"));
+    const registry = new ConnectorRegistry({ configPath: join(temporaryDirectory, "connectors.json") });
+    await registry.initialize();
+    const connector = await registry.upsert({
+      name: "Static client MCP",
+      templateId: null,
+      transport: "streamable-http",
+      enabled: false,
+      trustedAt: null,
+      command: null,
+      args: [],
+      cwd: null,
+      environment: {},
+      url: "https://mcp.example/service",
+      headers: [],
+      oauth: null,
+    });
+
+    const result = await registry.authorize(connector.id, { openExternal: async () => {} });
+    expect(result).toMatchObject({
+      status: "needs-auth",
+      lastError: expect.stringContaining("provider-issued OAuth client ID"),
+    });
+  });
+
   it("uses GitHub device authorization instead of dynamic client registration", async () => {
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(new Response(JSON.stringify({

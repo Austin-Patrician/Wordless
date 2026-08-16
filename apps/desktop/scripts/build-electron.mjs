@@ -28,6 +28,7 @@ async function buildEntry(entry, name, emptyOutDir) {
     define: {
       __WORDLESS_GOOGLE_CLIENT_ID__: JSON.stringify(process.env.WORDLESS_GOOGLE_CLIENT_ID?.trim() ?? ""),
       __WORDLESS_GOOGLE_CLIENT_SECRET__: JSON.stringify(process.env.WORDLESS_GOOGLE_CLIENT_SECRET?.trim() ?? ""),
+      __WORDLESS_SKILLSMP_API_KEY__: JSON.stringify(process.env.WORDLESS_SKILLSMP_API_KEY?.trim() ?? ""),
     },
     build: {
       emptyOutDir,
