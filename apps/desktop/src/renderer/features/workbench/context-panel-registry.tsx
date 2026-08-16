@@ -1,9 +1,10 @@
 import type { WorkbenchId } from "@wordless/domain";
-import { BookOpenCheck, LayoutDashboard, PanelTop, Presentation } from "lucide-react";
+import { BookOpenCheck, LayoutDashboard, PackageOpen, PanelTop, Presentation } from "lucide-react";
 import { CodingContextPanel } from "../artifacts/CodingContextPanel";
 import { PresentationContextPanel } from "../artifacts/PresentationContextPanel";
 import { SpreadsheetContextPanel } from "../artifacts/SpreadsheetContextPanel";
 import { AnalysisContextPanel } from "../artifacts/AnalysisContextPanel";
+import { GeneralWorkArtifactsPanel } from "../artifacts/GeneralWorkArtifactsPanel";
 import type { WorkbenchContextPanelDefinition, WorkbenchContextPanelProps } from "./context-panel-types";
 import changesIcon from "../../../icons/workspaces/changes.svg";
 import chartsIcon from "../../../icons/workspaces/charts.svg";
@@ -45,6 +46,11 @@ class WorkbenchContextPanelRegistry {
 }
 
 export const workbenchContextPanelRegistry = new WorkbenchContextPanelRegistry([
+  {
+    workbenchId: "conversation",
+    component: GeneralWorkArtifactsPanel,
+    tabs: [{ id: "artifacts", label: "Artifacts", icon: PackageOpen }],
+  },
   {
     workbenchId: "code",
     component: CodingContextPanel,

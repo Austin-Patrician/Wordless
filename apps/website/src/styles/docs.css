@@ -129,6 +129,32 @@ a:hover > .manual-arrow, .manual-reference a:hover > svg:last-child { color: var
 .doc-table { overflow-x: auto; margin-block: 1rem; }
 .doc-table table { min-width: 42rem; }
 
+.operational-blueprint { margin: 2.25rem 0 2rem; color: var(--sl-color-gray-1); }
+.operational-blueprint__heading { display: grid; grid-template-columns: 9.5rem minmax(0, 1fr); gap: 1rem; align-items: start; margin-bottom: 1rem; }
+.operational-blueprint__heading > p { margin: .25rem 0 0 !important; color: var(--sl-color-accent); font-size: .68rem; font-weight: 750; line-height: 1.35; letter-spacing: 0; text-transform: uppercase; }
+.operational-blueprint__heading h2 { max-width: 26ch; margin: 0; padding: 0; border: 0; color: var(--sl-color-white); font-size: 1.3rem; font-weight: 720; line-height: 1.38; }
+.operational-blueprint__heading div > span { display: block; max-width: 64ch; margin-top: .45rem; color: var(--sl-color-gray-2); font-size: .84rem; line-height: 1.65; }
+.operational-blueprint__board { overflow: hidden; border: 1px solid var(--sl-color-gray-5); border-radius: 8px; background: var(--sl-color-black); }
+.operational-blueprint__definition { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); border-bottom: 1px solid var(--sl-color-gray-5); }
+.operational-blueprint__definition > div { display: grid; grid-template-columns: 1.4rem minmax(0, 1fr); gap: .7rem; align-items: start; min-height: 4.55rem; padding: .95rem 1rem; }
+.operational-blueprint__definition > div + div { border-left: 1px solid var(--sl-color-gray-5); }
+.operational-blueprint__definition svg { margin-top: .08rem; color: var(--sl-color-accent); }
+.operational-blueprint__definition span, .operational-blueprint__flow li > span:last-child { display: flex; min-width: 0; flex-direction: column; }
+.operational-blueprint__definition small, .operational-blueprint__flow small { color: var(--sl-color-gray-3); font-size: .64rem; font-weight: 700; line-height: 1.35; letter-spacing: 0; text-transform: uppercase; }
+.operational-blueprint__definition strong { margin-top: .18rem; color: var(--sl-color-white); font-size: .78rem; font-weight: 660; line-height: 1.45; }
+.operational-blueprint__flow { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); margin: 0; padding: 0; list-style: none; }
+.operational-blueprint__flow li { display: grid; grid-template-columns: 1.25rem 1.75rem minmax(0, 1fr); gap: .45rem; min-height: 5.35rem; padding: .9rem .75rem; }
+.operational-blueprint__flow li + li { border-left: 1px solid var(--sl-color-gray-5); }
+.operational-blueprint__step { padding-top: .12rem; color: var(--sl-color-gray-3); font: 700 .62rem/1.2 ui-monospace, SFMono-Regular, Menlo, monospace; }
+.operational-blueprint__icon { display: grid; width: 1.75rem; height: 1.75rem; place-items: center; border: 1px solid color-mix(in srgb, var(--sl-color-accent) 42%, var(--sl-color-gray-5)); border-radius: 5px; color: var(--sl-color-accent-high); background: color-mix(in srgb, var(--sl-color-accent-low) 54%, var(--sl-color-black)); }
+.operational-blueprint__flow strong { color: var(--sl-color-white); font-size: .76rem; font-weight: 680; line-height: 1.35; }
+.operational-blueprint__flow small { margin-top: .22rem; font-size: .62rem; font-weight: 560; line-height: 1.45; text-transform: none; }
+.operational-blueprint__signal { display: grid; grid-template-columns: 1.4rem minmax(0, 1fr); gap: .65rem; margin: 0; padding: .85rem 1rem; border-top: 1px solid color-mix(in srgb, #be782b 35%, var(--sl-color-gray-5)); color: #a56520; background: color-mix(in srgb, #f6c968 10%, var(--sl-color-black)); }
+.operational-blueprint__signal svg { margin-top: .08rem; }
+.operational-blueprint__signal strong { display: block; color: var(--sl-color-white); font-size: .7rem; font-weight: 720; letter-spacing: 0; text-transform: uppercase; }
+.operational-blueprint__signal p { max-width: 72ch !important; margin: .2rem 0 0 !important; color: var(--sl-color-gray-2); font-size: .76rem; line-height: 1.55; }
+.operational-blueprint__footer { max-width: none !important; margin: 0 !important; padding: .62rem 1rem; border-top: 1px solid var(--sl-color-gray-5); color: var(--sl-color-gray-3); font: 650 .62rem/1.35 ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: 0; }
+
 /* Starlight's default pagination is intentionally display-sized; docs use a denser footer. */
 .pagination-links {
   grid-template-columns: repeat(auto-fit, minmax(min(15rem, 100%), 1fr));
@@ -270,6 +296,10 @@ a:hover > .manual-arrow, .manual-reference a:hover > svg:last-child { color: var
   .manual-workflow__code { display: none; }
   .doc-shot__placeholder::before { inset: 2.5rem 1rem; }
   .pagination-links > a { min-height: 3.25rem; }
+  .operational-blueprint__heading { grid-template-columns: 1fr; gap: .45rem; }
+  .operational-blueprint__definition, .operational-blueprint__flow { grid-template-columns: 1fr; }
+  .operational-blueprint__definition > div + div, .operational-blueprint__flow li + li { border-top: 1px solid var(--sl-color-gray-5); border-left: 0; }
+  .operational-blueprint__flow li { grid-template-columns: 1.25rem 1.75rem minmax(0, 1fr); min-height: 0; padding: .8rem .9rem; }
   .commercial-footer { grid-template-columns: 1fr; gap: .75rem; }
   .commercial-footer__actions { justify-content: flex-start; }
   .commercial-footer__actions a { flex: 1 1 10rem; }

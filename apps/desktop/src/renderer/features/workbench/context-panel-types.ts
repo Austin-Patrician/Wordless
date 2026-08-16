@@ -4,7 +4,7 @@ import type { ResearchDelegationDetails } from "@wordless/domain";
 import type { ArtifactSelection } from "@wordless/protocol";
 import type { InlineWorkspaceReferenceToken } from "../thread/InlineSkillComposer";
 
-export type ContextPanelView = "overview" | "files" | "changes" | "preview" | "slides" | "sheets" | "assets" | "issues" | "report" | "research" | "data" | "charts";
+export type ContextPanelView = "overview" | "files" | "changes" | "preview" | "slides" | "sheets" | "assets" | "artifacts" | "issues" | "report" | "research" | "data" | "charts";
 
 export type ContextPanelTab = {
   id: ContextPanelView;

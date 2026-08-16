@@ -1,3 +1,4 @@
+import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import {
   SubagentTaskPool,
@@ -18,6 +19,8 @@ import type {
   AgentProfileDefinition,
   AgentRuntimeSkill,
   ConnectorToolPolicy,
+  OperationApprovalRequest,
+  OperationApprovalResolution,
 } from "@wordless/agent-driver-sdk";
 import type { AgentTool, ExecutionEnv } from "@wordless/agent";
 import type { WorkspaceSearchProvider } from "@wordless/workspace-search";
@@ -29,11 +32,13 @@ import {
 } from "@wordless/ai";
 import {
   mergeConversationUsage,
+  type ConversationMessage,
   type ExpertExecutionProfile,
   type ModelCapabilities,
   type ModelReference,
   type SecurityPolicySnapshot,
   type SessionRecord,
+  type ThinkingLevel,
   type ToolApprovalMode,
 } from "@wordless/domain";
 import {
@@ -43,6 +48,7 @@ import {
 
 type SubagentTaskEntry = {
   session: AgentDriverSession;
+  memberId?: string;
   unsubscribe: () => void;
   approvals: Map<string, unknown>;
   userRequests: Map<string, unknown>;
@@ -58,6 +64,11 @@ export interface SessionSubagentRunnerOptions {
   driver: AgentDriver;
   models: Models;
   env: ExecutionEnv;
+  createExecutionEnv?: (
+    rootPath: string,
+    accessLevel: SessionRecord["accessLevel"],
+    readOnlyRoots: string[],
+  ) => ExecutionEnv;
   workspaceSearch: WorkspaceSearchProvider;
   skills: AgentRuntimeSkill[];
   connectorTools: AgentTool[];
@@ -68,6 +79,7 @@ export interface SessionSubagentRunnerOptions {
   resolveCapabilities(reference: ModelReference): ModelCapabilities;
   onFilesChanged(changes: SubagentFileChange[]): Promise<void>;
   toolApprovalMode: ToolApprovalMode;
+  onExpertMemberEvent?: (event: ExpertMemberStreamEvent) => void;
   expertTeamDelegates?: {
     id: string;
     name: string;
@@ -76,6 +88,8 @@ export interface SessionSubagentRunnerOptions {
     systemPrompt: string;
     skillIds: string[];
     connectorIds: string[];
+    model?: ModelReference;
+    thinkingLevel?: ThinkingLevel;
   }[];
 }
 
@@ -85,6 +99,24 @@ export interface SubagentFileChange {
   path: string;
   baseline: { path: string; existed: boolean; content: string | null };
   kind: "created" | "modified";
+}
+
+export type ExpertMemberStreamEvent =
+  | { type: "message.started"; memberId: string; taskId: string; message: ConversationMessage; revision: number }
+  | { type: "message.text.delta"; memberId: string; taskId: string; messageId: string; delta: string; revision: number }
+  | { type: "message.reasoning.delta"; memberId: string; taskId: string; messageId: string; delta: string; revision: number }
+  | { type: "message.completed"; memberId: string; taskId: string; message: ConversationMessage; revision: number }
+  | { type: "tool.started"; memberId: string; taskId: string; messageId: string; callId: string; name: string; input: Record<string, unknown> }
+  | { type: "tool.updated"; memberId: string; taskId: string; messageId: string; callId: string; output: string; details?: unknown }
+  | { type: "tool.completed"; memberId: string; taskId: string; messageId: string; callId: string; output: string; details?: unknown; isError: boolean }
+  | { type: "approval.requested"; memberId: string; taskId: string; messageId: string; approval: OperationApprovalRequest }
+  | { type: "approval.resolved"; memberId: string; taskId: string; messageId: string; resolution: OperationApprovalResolution };
+
+export interface ExpertMemberLiveMessage {
+  memberId: string;
+  taskId: string;
+  message: ConversationMessage;
+  revision: number;
 }
 
 const ROLE_PROMPTS: Record<SubagentRoleDefinition["id"], string> = {
@@ -201,7 +233,7 @@ function expertProfile(
           : READ_ONLY_TOOLS;
   return {
     ...profile,
-    systemPrompt: `${profile.systemPrompt}\n\nYou are ${member.name}, a member of the selected expert team. Stay in this expert identity throughout the task.\n\nExpert instructions:\n${member.systemPrompt}\n\nTeam responsibility:\n${member.responsibility}\n\nExecution constraints:\n${EXPERT_PROFILE_CONSTRAINTS[member.executionProfile]}`,
+    systemPrompt: `${profile.systemPrompt}\n\nYou are ${member.name}, a member of the selected expert team. Stay in this expert identity throughout the task.\n\nExpert instructions:\n${member.systemPrompt}\n\nTeam responsibility:\n${member.responsibility}\n\nExecution constraints:\n${EXPERT_PROFILE_CONSTRAINTS[member.executionProfile]}\n\nSession artifacts:\nWhen creating or editing files, use the current working directory and keep all deliverables inside it. Report paths relative to that directory. Do not write to absolute paths outside the current session artifact directory. Other members' artifact directories are available read-only through sibling paths when their files are needed.`,
     activeToolNames: [...new Set(activeToolNames)],
   };
 }
@@ -212,13 +244,91 @@ function asRecord(value: unknown): Record<string, unknown> | undefined {
     : undefined;
 }
 
+function safeArtifactDirectoryName(memberId: string): string {
+  const safe = memberId.replace(/[^a-zA-Z0-9._-]/g, "_");
+  return safe || "member";
+}
+
+function appendConversationDelta(
+  message: ConversationMessage,
+  type: "text" | "reasoning",
+  delta: string,
+): ConversationMessage {
+  const blocks = [...message.blocks];
+  const last = blocks.at(-1);
+  if (last?.type === type)
+    blocks[blocks.length - 1] = { ...last, text: last.text + delta };
+  else blocks.push({ type, text: delta });
+  return { ...message, blocks };
+}
+
+function recoverableSubagentError(message: string, output: string): boolean {
+  if (output.length > 0) return true;
+  return /(?:stream|finish_reason|terminated|timeout|timed out|rate.?limit|temporar|network|connection|token generation|internal error)/i.test(
+    message,
+  );
+}
+
 export function delegatedTaskModelReference(
   task: SubagentTask,
   parentModel: ModelReference,
+  memberModel?: ModelReference,
 ): ModelReference {
   return task.kind === "expert-member"
-    ? parentModel
+    ? (memberModel ?? parentModel)
     : (task.model ?? parentModel);
+}
+
+export function delegatedTaskThinkingLevelRequest(
+  memberLevel: ThinkingLevel | undefined,
+  parentLevel: ThinkingLevel,
+): ThinkingLevel {
+  return memberLevel ?? parentLevel;
+}
+
+export function resolveDelegatedTaskModel(
+  task: SubagentTask,
+  parentModel: ModelReference,
+  memberModel: ModelReference | undefined,
+  resolveModel: (reference: ModelReference) => Model<Api>,
+  resolveCapabilities: (reference: ModelReference) => ModelCapabilities,
+): {
+  reference: ModelReference;
+  model: Model<Api>;
+  capabilities: ModelCapabilities;
+  fallbackReason?: "unavailable" | "tools-unsupported";
+} {
+  const requested = delegatedTaskModelReference(task, parentModel, memberModel);
+  let reference = requested;
+  let model: Model<Api>;
+  let capabilities: ModelCapabilities;
+  let fallbackReason: "unavailable" | "tools-unsupported" | undefined;
+  try {
+    model = resolveModel(reference);
+    capabilities = resolveCapabilities(reference);
+  } catch (cause) {
+    if (!memberModel) throw cause;
+    fallbackReason = "unavailable";
+    reference = parentModel;
+    model = resolveModel(reference);
+    capabilities = resolveCapabilities(reference);
+  }
+  if (capabilities.supportsToolUse === false) {
+    if (!memberModel || fallbackReason)
+      throw new Error("The selected subagent model does not support tool use");
+    fallbackReason = "tools-unsupported";
+    reference = parentModel;
+    model = resolveModel(reference);
+    capabilities = resolveCapabilities(reference);
+    if (capabilities.supportsToolUse === false)
+      throw new Error("The selected subagent model does not support tool use");
+  }
+  return {
+    reference,
+    model,
+    capabilities,
+    ...(fallbackReason ? { fallbackReason } : {}),
+  };
 }
 
 export class SessionSubagentRunner
@@ -228,6 +338,8 @@ export class SessionSubagentRunner
   private readonly pool: SubagentTaskPool;
   private readonly active = new Map<string, SubagentTaskEntry>();
   private readonly memberQueues = new Map<string, Promise<void>>();
+  private readonly liveMessages = new Map<string, ExpertMemberLiveMessage>();
+  private readonly resolvedApprovalIds = new Map<string, boolean>();
   private readonly expertMembers: ReadonlyMap<string, ResolvedExpertMember>;
 
   constructor(options: SessionSubagentRunnerOptions) {
@@ -252,29 +364,55 @@ export class SessionSubagentRunner
     await this.pool.cancel(taskId);
   }
 
+  getExpertMemberLiveState(memberId: string): ExpertMemberLiveMessage | null {
+    const state = this.liveMessages.get(memberId);
+    return state ? structuredClone(state) : null;
+  }
+
   async resolveOperationApproval(
     approvalId: string,
     approved: boolean,
     feedback?: string,
   ): Promise<boolean> {
+    if (this.resolvedApprovalIds.has(approvalId)) return true;
     for (const entry of this.active.values()) {
       if (!entry.approvals.has(approvalId)) continue;
-      await entry.session.execute({
-        type: "resolve-approval",
-        resolution: { approvalId, approved, feedback },
-      });
+      this.rememberResolvedApproval(approvalId, approved);
+      try {
+        await entry.session.execute({
+          type: "resolve-approval",
+          resolution: { approvalId, approved, feedback },
+        });
+      } catch (cause) {
+        this.resolvedApprovalIds.delete(approvalId);
+        throw cause;
+      }
       return true;
     }
     return false;
   }
 
   async setToolApprovalMode(mode: ToolApprovalMode): Promise<void> {
+    const previous = this.options.toolApprovalMode;
     this.options.toolApprovalMode = mode;
-    await Promise.all(
-      [...this.active.values()].map((entry) =>
-        entry.session.execute({ type: "set-tool-approval-mode", mode }),
-      ),
-    );
+    try {
+      await Promise.all(
+        [...this.active.values()].map((entry) =>
+          entry.session.execute({ type: "set-tool-approval-mode", mode }),
+        ),
+      );
+    } catch (cause) {
+      this.options.toolApprovalMode = previous;
+      await Promise.allSettled(
+        [...this.active.values()].map((entry) =>
+          entry.session.execute({
+            type: "set-tool-approval-mode",
+            mode: previous,
+          }),
+        ),
+      );
+      throw cause;
+    }
   }
 
   async resolveUserRequest(
@@ -343,14 +481,23 @@ export class SessionSubagentRunner
     if (task.kind === "expert-member" && !member)
       throw new Error(`Unknown expert team member: ${task.memberId}`);
     const role = task.kind === "builtin-subagent" ? task.role : undefined;
-    const modelReference = delegatedTaskModelReference(
+    const modelResolution = resolveDelegatedTaskModel(
       task,
       this.options.parent.model,
+      member?.model,
+      this.options.resolveModel,
+      this.options.resolveCapabilities,
     );
-    const model = this.options.resolveModel(modelReference);
-    const modelCapabilities = this.options.resolveCapabilities(modelReference);
-    if (modelCapabilities.supportsToolUse === false)
-      throw new Error("The selected subagent model does not support tool use");
+    const modelReference = modelResolution.reference;
+    const model = modelResolution.model;
+    const modelCapabilities = modelResolution.capabilities;
+    const requestedThinkingLevel = delegatedTaskThinkingLevelRequest(
+      member?.thinkingLevel,
+      this.options.parent.thinkingLevel,
+    );
+    const thinkingLevel = model.reasoning
+      ? clampThinkingLevel(model, requestedThinkingLevel)
+      : "off";
     const memberConnectorPolicies = member
       ? connectorPoliciesForExpertMember(
           member,
@@ -382,20 +529,31 @@ export class SessionSubagentRunner
           this.options.parent.id,
           `${task.id}.jsonl`,
         );
+    const sessionArtifactsRoot = join(
+      this.options.parent.runtimeRootPath,
+      "artifacts",
+    );
+    const artifactRoot = member
+      ? join(sessionArtifactsRoot, safeArtifactDirectoryName(member.id))
+      : this.options.parent.workbenchId === "conversation" &&
+          task.kind === "builtin-subagent"
+        ? join(
+            sessionArtifactsRoot,
+            "subagents",
+            safeArtifactDirectoryName(task.role),
+            safeArtifactDirectoryName(task.id),
+          )
+        : undefined;
+    if (artifactRoot) await mkdir(artifactRoot, { recursive: true });
+    const childRoot = artifactRoot ?? this.options.parent.runtimeRootPath;
     const record: SessionRecord = {
       ...this.options.parent,
       id: task.id,
       title: `${member?.name ?? role}: ${task.prompt.slice(0, 54)}`,
       profile: profile.reference,
       model: modelReference,
-      thinkingLevel: model.reasoning
-        ? clampThinkingLevel(
-            model,
-            task.kind === "expert-member"
-              ? "medium"
-              : this.options.parent.thinkingLevel,
-          )
-        : "off",
+      thinkingLevel,
+      runtimeRootPath: childRoot,
       journalPath: path,
       connectorIds: member
         ? member.connectorIds
@@ -418,7 +576,7 @@ export class SessionSubagentRunner
             ? `${this.options.parent.id}:member:${member.id}`
             : task.id,
           createdAt: new Date(record.createdAt).toISOString(),
-          cwd: task.cwd,
+          cwd: childRoot,
           path,
           metadata: {
             parentSessionId: this.options.parent.id,
@@ -439,6 +597,19 @@ export class SessionSubagentRunner
       modelReference.modelId,
     );
     await journal.appendThinkingLevelChange(record.thinkingLevel);
+    onUpdate?.({
+      taskId: task.id,
+      status: "running",
+      modelResolution: {
+        requested:
+          task.kind === "expert-member" ? (member?.model ?? null) : task.model,
+        resolved: modelReference,
+        thinkingLevel: record.thinkingLevel,
+        ...(modelResolution.fallbackReason
+          ? { fallbackReason: modelResolution.fallbackReason }
+          : {}),
+      },
+    });
     const childContext: AgentDriverSessionContext = {
       record,
       profile,
@@ -446,7 +617,14 @@ export class SessionSubagentRunner
       modelCapabilities,
       models: this.options.models,
       session: journal,
-      env: this.options.env,
+      env:
+        member && this.options.createExecutionEnv
+          ? this.options.createExecutionEnv(
+              childRoot,
+              record.accessLevel,
+              [...this.options.skills.map((skill) => skill.baseDir), sessionArtifactsRoot],
+            )
+          : this.options.env,
       workspaceSearch: this.options.workspaceSearch,
       skills: member
         ? this.options.skills.filter((skill) =>
@@ -483,6 +661,7 @@ export class SessionSubagentRunner
     const session = await this.options.driver.createSession(childContext);
     const entry: SubagentTaskEntry = {
       session,
+      ...(member ? { memberId: member.id } : {}),
       unsubscribe: () => {},
       approvals: new Map(),
       userRequests: new Map(),
@@ -490,11 +669,88 @@ export class SessionSubagentRunner
     };
     let output = "";
     let usage: SubagentResult["usage"];
+    let finalAssistantMessage: ConversationMessage | undefined;
     entry.unsubscribe = session.subscribe((event) => {
+      if (task.kind === "expert-member") {
+        if (
+          event.type === "message.started" &&
+          event.message.role === "assistant"
+        ) {
+          const live = {
+            memberId: task.memberId,
+            taskId: task.id,
+            message: event.message,
+            revision: 0,
+          };
+          this.liveMessages.set(task.memberId, live);
+          this.options.onExpertMemberEvent?.({
+            type: "message.started",
+            memberId: task.memberId,
+            taskId: task.id,
+            message: event.message,
+            revision: live.revision,
+          });
+        } else if (
+          event.type === "message.text.delta" ||
+          event.type === "message.reasoning.delta"
+        ) {
+          const current = this.liveMessages.get(task.memberId);
+          const message =
+            current?.message.id === event.messageId
+              ? current.message
+              : {
+                  id: event.messageId,
+                  role: "assistant" as const,
+                  status: "streaming" as const,
+                  blocks: [],
+                  model: modelReference,
+                  timestamp: Date.now(),
+                };
+          const live = {
+            memberId: task.memberId,
+            taskId: task.id,
+            message: appendConversationDelta(
+              message,
+              event.type === "message.text.delta" ? "text" : "reasoning",
+              event.delta,
+            ),
+            revision: (current?.revision ?? 0) + 1,
+          };
+          this.liveMessages.set(task.memberId, live);
+          this.options.onExpertMemberEvent?.({
+            type: event.type,
+            memberId: task.memberId,
+            taskId: task.id,
+            messageId: event.messageId,
+            delta: event.delta,
+            revision: live.revision,
+          });
+        } else if (
+          event.type === "message.completed" &&
+          event.message.role === "assistant"
+        ) {
+          const current = this.liveMessages.get(task.memberId);
+          const live = {
+            memberId: task.memberId,
+            taskId: task.id,
+            message: event.message,
+            revision: (current?.revision ?? 0) + 1,
+          };
+          this.liveMessages.set(task.memberId, live);
+          this.options.onExpertMemberEvent?.({
+            type: "message.completed",
+            memberId: task.memberId,
+            taskId: task.id,
+            message: event.message,
+            revision: live.revision,
+          });
+        }
+      }
       if (
         event.type === "message.completed" &&
         event.message.role === "assistant"
       ) {
+        finalAssistantMessage = event.message;
         output = textFromMessage(event.message);
         usage = mergeConversationUsage(usage, event.message.usage);
         onUpdate?.({ taskId: task.id, status: "running", output, usage });
@@ -511,6 +767,12 @@ export class SessionSubagentRunner
             state: "running",
           },
         });
+        if (task.kind === "expert-member")
+          this.options.onExpertMemberEvent?.({
+            ...event,
+            memberId: task.memberId,
+            taskId: task.id,
+          });
       }
       if (event.type === "tool.updated") {
         const current = entry.tools.get(event.callId) ?? {
@@ -524,6 +786,12 @@ export class SessionSubagentRunner
           status: "running",
           tool: { callId: event.callId, ...next, state: "running" },
         });
+        if (task.kind === "expert-member")
+          this.options.onExpertMemberEvent?.({
+            ...event,
+            memberId: task.memberId,
+            taskId: task.id,
+          });
       }
       if (event.type === "tool.completed") {
         const current = entry.tools.get(event.callId) ?? {
@@ -541,6 +809,12 @@ export class SessionSubagentRunner
           },
         });
         entry.tools.delete(event.callId);
+        if (task.kind === "expert-member")
+          this.options.onExpertMemberEvent?.({
+            ...event,
+            memberId: task.memberId,
+            taskId: task.id,
+          });
       }
       if (event.type === "approval.requested") {
         entry.approvals.set(event.approval.approvalId, event.approval);
@@ -549,12 +823,22 @@ export class SessionSubagentRunner
           status: "awaiting-approval",
           approval: event.approval,
         });
+        if (task.kind === "expert-member")
+          this.options.onExpertMemberEvent?.({
+            ...event,
+            memberId: task.memberId,
+            taskId: task.id,
+          });
       }
       if (event.type === "approval.resolved") {
         const approval = asRecord(
           entry.approvals.get(event.resolution.approvalId),
         );
         entry.approvals.delete(event.resolution.approvalId);
+        this.rememberResolvedApproval(
+          event.resolution.approvalId,
+          event.resolution.approved,
+        );
         onUpdate?.({
           taskId: task.id,
           status: "running",
@@ -568,6 +852,12 @@ export class SessionSubagentRunner
               }
             : {}),
         });
+        if (task.kind === "expert-member")
+          this.options.onExpertMemberEvent?.({
+            ...event,
+            memberId: task.memberId,
+            taskId: task.id,
+          });
       }
       if (event.type === "user-request.requested") {
         entry.userRequests.set(event.request.requestId, event.request);
@@ -594,11 +884,33 @@ export class SessionSubagentRunner
     signal.addEventListener("abort", onAbort, { once: true });
     try {
       await session.execute({ type: "prompt", text: task.prompt });
+      const terminalError = finalAssistantMessage?.errorMessage;
+      const status: SubagentResult["status"] = signal.aborted
+        ? "cancelled"
+        : task.kind !== "expert-member"
+          ? "completed"
+          : finalAssistantMessage?.status === "aborted"
+            ? "cancelled"
+            : finalAssistantMessage?.status === "error"
+              ? recoverableSubagentError(terminalError ?? "", output)
+                ? "interrupted"
+                : "failed"
+              : finalAssistantMessage?.status === "complete"
+                ? "completed"
+                : "failed";
+      const error =
+        status === "completed"
+          ? undefined
+          : terminalError ??
+            (status === "cancelled"
+              ? "The expert task was cancelled"
+              : "The expert task ended without a complete assistant response");
       const result: SubagentResult = {
         taskId: task.id,
-        status: signal.aborted ? "cancelled" : "completed",
+        status,
         text: output,
         usage,
+        ...(error ? { error } : {}),
       };
       onUpdate?.({
         taskId: task.id,
@@ -609,7 +921,12 @@ export class SessionSubagentRunner
       return result;
     } catch (cause) {
       const error = cause instanceof Error ? cause.message : String(cause);
-      const status = signal.aborted ? "cancelled" : "failed";
+      const status: SubagentResult["status"] = signal.aborted
+        ? "cancelled"
+        : task.kind === "expert-member" &&
+            recoverableSubagentError(error, output)
+          ? "interrupted"
+          : "failed";
       onUpdate?.({ taskId: task.id, status, output, usage });
       return { taskId: task.id, status, text: output, usage, error };
     } finally {
@@ -620,7 +937,17 @@ export class SessionSubagentRunner
       entry.unsubscribe();
       session.dispose();
       this.active.delete(task.id);
+      if (member && this.liveMessages.get(member.id)?.taskId === task.id)
+        this.liveMessages.delete(member.id);
     }
+  }
+
+  private rememberResolvedApproval(approvalId: string, approved: boolean): void {
+    this.resolvedApprovalIds.delete(approvalId);
+    this.resolvedApprovalIds.set(approvalId, approved);
+    if (this.resolvedApprovalIds.size <= 256) return;
+    const oldest = this.resolvedApprovalIds.keys().next().value;
+    if (oldest) this.resolvedApprovalIds.delete(oldest);
   }
 
   private async collectFileChanges(

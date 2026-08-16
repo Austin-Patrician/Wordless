@@ -21,6 +21,11 @@ const zhSidebar = [
       'docs/workflows/code',
     ],
   },
+  {
+    label: '自动化与数字员工',
+    translations: { en: 'Automation & digital employees' },
+    items: ['docs/automation', 'docs/digital-employees'],
+  },
   { label: '扩展与连接', translations: { en: 'Extensions' }, items: ['docs/skills-mcp'] },
   { label: '安全与隐私', translations: { en: 'Security & privacy' }, items: ['docs/security-privacy'] },
   { label: '设置与更新', translations: { en: 'Settings & updates' }, items: ['docs/settings-updates'] },

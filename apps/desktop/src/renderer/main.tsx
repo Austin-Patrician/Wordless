@@ -3,6 +3,7 @@ import { createRoot } from "react-dom/client";
 import "@wordless/ui-kit/styles.css";
 import "./styles/app.css";
 import { App } from "./app/App";
+import { RendererErrorBoundary } from "./app/RendererErrorBoundary";
 
 const root = document.getElementById("root");
 
@@ -12,6 +13,8 @@ if (!root) {
 
 createRoot(root).render(
   <StrictMode>
-    <App />
+    <RendererErrorBoundary>
+      <App />
+    </RendererErrorBoundary>
   </StrictMode>,
 );

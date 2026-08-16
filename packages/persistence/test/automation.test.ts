@@ -6,7 +6,7 @@ import test from "node:test";
 import type { AutomationRun, AutomationTask, SessionRecord } from "@wordless/domain";
 import { WordlessDatabase } from "../src/index.ts";
 
-const configuration = { prompt: "Run", entryId: "general-work", workspaceId: null, accessLevel: "full" as const, model: { connectionId: "openai", modelId: "gpt" }, thinkingLevel: "medium" as const, skillIds: [], connectorIds: [] };
+const configuration = { prompt: "Run", entryId: "general-work", workspaceId: null, accessLevel: "full" as const, toolApprovalMode: "bypass" as const, model: { connectionId: "openai", modelId: "gpt" }, thinkingLevel: "medium" as const, skillIds: [], connectorIds: [] };
 
 test("automation migration preserves history after task deletion and cascades session deletion", async (context) => {
   const root = await mkdtemp(join(tmpdir(), "wordless-automation-"));
@@ -17,6 +17,7 @@ test("automation migration preserves history after task deletion and cascades se
   const run: AutomationRun = { id: "run-1", automationId: task.id, automationName: task.name, configuration, scheduledFor: 10, sessionId: session.id, status: "completed", error: null, createdAt: 10, startedAt: 10, completedAt: 20 };
 
   database.upsertAutomation(task);
+  assert.equal(database.getAutomation(task.id)?.toolApprovalMode, "bypass");
   database.upsertSession(session);
   assert.equal(database.insertAutomationRun(run), true);
   assert.equal(database.insertAutomationRun({ ...run, id: "duplicate" }), false);

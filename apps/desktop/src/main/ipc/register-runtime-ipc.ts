@@ -37,9 +37,11 @@ import {
   ImportAppearanceBackgroundSchema,
   SessionHistoryPageRequestSchema,
   ExpertMemberHistoryRequestSchema,
+  ExpertMemberLiveStateRequestSchema,
   ExpertMemberToolOutputRequestSchema,
   SessionMessageSearchRequestSchema,
   SessionToolOutputRequestSchema,
+  SessionArtifactRequestSchema,
   ListWorkspaceDirectorySchema,
   OpenExternalUrlSchema,
   OpenWorkspaceSchema,
@@ -650,6 +652,16 @@ export function registerRuntimeIpc(
       );
     },
   );
+  ipcMain.handle(
+    "wordless:session:expert-member-live-state",
+    (_event, payload: unknown) => {
+      const input = parsePayload<{ sessionId: string; memberId: string }>(
+        ExpertMemberLiveStateRequestSchema,
+        payload,
+      );
+      return runtime.getExpertMemberLiveState(input.sessionId, input.memberId);
+    },
+  );
   ipcMain.handle("wordless:experts:list", () => runtime.listExperts());
   ipcMain.handle("wordless:experts:save", (_event, payload: unknown) => {
     const input = parsePayload<{
@@ -709,6 +721,60 @@ export function registerRuntimeIpc(
   );
   ipcMain.handle("wordless:session:context", (_event, sessionId: unknown) =>
     runtime.getSessionContext(String(sessionId)),
+  );
+  ipcMain.handle("wordless:session:artifacts", (_event, sessionId: unknown) =>
+    runtime.getSessionArtifacts(String(sessionId)),
+  );
+  ipcMain.handle(
+    "wordless:session:artifact:read",
+    async (_event, payload: unknown) => {
+      const input = parsePayload<{ sessionId: string; artifactId: string }>(
+        SessionArtifactRequestSchema,
+        payload,
+      );
+      return await runtime.readSessionArtifact(input.sessionId, input.artifactId);
+    },
+  );
+  ipcMain.handle(
+    "wordless:session:artifact:open",
+    async (_event, payload: unknown) => {
+      const input = parsePayload<{ sessionId: string; artifactId: string }>(
+        SessionArtifactRequestSchema,
+        payload,
+      );
+      const failure = await shell.openPath(
+        await runtime.resolveSessionArtifact(input.sessionId, input.artifactId),
+      );
+      if (failure) throw new Error(failure);
+    },
+  );
+  ipcMain.handle(
+    "wordless:session:artifact:reveal",
+    async (_event, payload: unknown) => {
+      const input = parsePayload<{ sessionId: string; artifactId: string }>(
+        SessionArtifactRequestSchema,
+        payload,
+      );
+      shell.showItemInFolder(
+        await runtime.resolveSessionArtifact(input.sessionId, input.artifactId),
+      );
+    },
+  );
+  ipcMain.handle(
+    "wordless:session:artifact:save-as",
+    async (_event, payload: unknown) => {
+      const input = parsePayload<{ sessionId: string; artifactId: string }>(
+        SessionArtifactRequestSchema,
+        payload,
+      );
+      const source = await runtime.resolveSessionArtifact(
+        input.sessionId,
+        input.artifactId,
+      );
+      const result = await dialog.showSaveDialog({ defaultPath: path.basename(source) });
+      if (!result.canceled && result.filePath)
+        await copyFile(source, result.filePath);
+    },
   );
   ipcMain.handle("wordless:presentation:health", () => options.office.health());
   ipcMain.handle("wordless:presentation:templates", () =>

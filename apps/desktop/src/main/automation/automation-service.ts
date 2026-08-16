@@ -6,6 +6,7 @@ import type {
   AutomationTask,
   AutomationTaskInput,
   SessionDraft,
+  ToolApprovalMode,
 } from "@wordless/domain";
 import type { RuntimeEventEnvelope } from "@wordless/protocol";
 import { WordlessDatabase } from "@wordless/persistence";
@@ -19,6 +20,13 @@ import {
 const MAX_CONCURRENT_RUNS = 3;
 const MAX_TIMER_DELAY = 2_147_000_000;
 const AUTOMATION_SESSION_TITLE_PREFIX = "自动化 - ";
+const AUTOMATION_ENTRY_ID = "general-work";
+const DEFAULT_AUTOMATION_TOOL_APPROVAL_MODE: ToolApprovalMode = "bypass";
+const TOOL_APPROVAL_MODES = new Set<ToolApprovalMode>([
+  "manual",
+  "auto",
+  "bypass",
+]);
 
 function automationSessionTitle(name: string): string {
   return `${AUTOMATION_SESSION_TITLE_PREFIX}${name}`.slice(0, 120);
@@ -75,17 +83,18 @@ export class AutomationService {
   }
 
   createTask(input: AutomationTaskInput): AutomationTask {
-    this.validateInput(input);
+    const normalizedInput = this.normalizeInput(input);
+    this.validateInput(normalizedInput);
     const now = Date.now();
     const task: AutomationTask = {
-      ...input,
+      ...normalizedInput,
       id: randomUUID(),
-      nextRunAt: input.enabled
+      nextRunAt: normalizedInput.enabled
         ? nextAutomationRun(
-            input.schedule,
+            normalizedInput.schedule,
             now,
-            input.activeFrom,
-            input.activeUntil,
+            normalizedInput.activeFrom,
+            normalizedInput.activeUntil,
           )
         : null,
       createdAt: now,
@@ -98,20 +107,21 @@ export class AutomationService {
   }
 
   updateTask(id: string, input: AutomationTaskInput): AutomationTask {
-    this.validateInput(input);
+    const normalizedInput = this.normalizeInput(input);
+    this.validateInput(normalizedInput);
     const current = this.requireTask(id);
     const now = Date.now();
     const task: AutomationTask = {
-      ...input,
+      ...normalizedInput,
       id,
       createdAt: current.createdAt,
       updatedAt: now,
-      nextRunAt: input.enabled
+      nextRunAt: normalizedInput.enabled
         ? nextAutomationRun(
-            input.schedule,
+            normalizedInput.schedule,
             now,
-            input.activeFrom,
-            input.activeUntil,
+            normalizedInput.activeFrom,
+            normalizedInput.activeUntil,
           )
         : null,
     };
@@ -229,6 +239,8 @@ export class AutomationService {
         "Automation name is required and must be at most 120 characters",
       );
     if (!input.prompt.trim()) throw new Error("Prompt is required");
+    if (!TOOL_APPROVAL_MODES.has(input.toolApprovalMode))
+      throw new Error("Tool approval mode is invalid");
     if (input.schedule.kind === "recurring")
       validateAutomationClock(input.schedule.time);
     if (
@@ -242,6 +254,15 @@ export class AutomationService {
       input.activeFrom > input.activeUntil
     )
       throw new Error("Active date range is invalid");
+  }
+
+  private normalizeInput(input: AutomationTaskInput): AutomationTaskInput {
+    return {
+      ...input,
+      entryId: AUTOMATION_ENTRY_ID,
+      toolApprovalMode:
+        input.toolApprovalMode ?? DEFAULT_AUTOMATION_TOOL_APPROVAL_MODE,
+    };
   }
 
   private requireTask(id: string): AutomationTask {
@@ -329,6 +350,8 @@ export class AutomationService {
       entryId: task.entryId,
       workspaceId: task.workspaceId,
       accessLevel: task.accessLevel,
+      toolApprovalMode:
+        task.toolApprovalMode ?? DEFAULT_AUTOMATION_TOOL_APPROVAL_MODE,
       model: task.model,
       thinkingLevel: task.thinkingLevel,
       skillIds: [...task.skillIds],
@@ -377,6 +400,10 @@ export class AutomationService {
   private invalidConfiguration(
     configuration: AutomationConfiguration,
   ): string | null {
+    const toolApprovalMode =
+      configuration.toolApprovalMode ?? DEFAULT_AUTOMATION_TOOL_APPROVAL_MODE;
+    if (!TOOL_APPROVAL_MODES.has(toolApprovalMode))
+      return "Tool approval mode is unavailable";
     const snapshot = this.options.runtime.getSnapshot();
     if (
       !snapshot.entries.some(
@@ -460,7 +487,9 @@ export class AutomationService {
         thinkingLevel: run.configuration.thinkingLevel,
         connectorIds: run.configuration.connectorIds,
         interactionMode: "default",
-        toolApprovalMode: "bypass",
+        toolApprovalMode:
+          run.configuration.toolApprovalMode ??
+          DEFAULT_AUTOMATION_TOOL_APPROVAL_MODE,
       };
       const session = await this.options.runtime.createAndPrompt(
         draft,

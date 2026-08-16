@@ -7,7 +7,10 @@ import type {
 } from "@wordless/agent-extension-sdk";
 import { expertTeamExtension } from "../src/expert-team.ts";
 
-function fixture(options: { failingMember?: string } = {}) {
+function fixture(options: {
+  failingMember?: string;
+  interruptedMember?: string;
+} = {}) {
   const registered: AgentTool[] = [];
   const executed: SubagentTask[] = [];
   const states: Record<string, unknown>[] = [];
@@ -62,6 +65,13 @@ function fixture(options: { failingMember?: string } = {}) {
             text: "",
             error: "member failed",
           };
+        if (memberId === options.interruptedMember)
+          return {
+            taskId: task.id,
+            status: "interrupted" as const,
+            text: "partial draft",
+            error: "Stream ended without finish_reason",
+          };
         return {
           taskId: task.id,
           status: "completed" as const,
@@ -96,6 +106,10 @@ test("registers an expert-only tool and routes duplicate profiles by member id",
     ["delegate_expert"],
   );
   const tool = registered[0]!;
+  assert.match(tool.description, /writer-a: Writer A/);
+  assert.match(tool.description, /Draft the article/);
+  assert.match(tool.description, /writer-b: Writer B/);
+  assert.match(tool.description, /never search the filesystem/i);
   const result = await tool.execute(
     "call",
     {
@@ -186,7 +200,7 @@ test("persists ordered sequential transitions through writer completion and revi
   );
 });
 
-test("marks dependent tasks skipped when a sequential member fails", async () => {
+test("marks dependent tasks blocked when a sequential member fails", async () => {
   const { context, registered, states } = fixture({
     failingMember: "writer-a",
   });
@@ -209,7 +223,41 @@ test("marks dependent tasks skipped when a sequential member fails", async () =>
   );
   assert.deepEqual(
     runs.map((run) => run.status),
-    ["failed", "skipped"],
+    ["failed", "blocked"],
   );
   assert.match(String(runs[1]?.terminalReason), /did not complete/);
+});
+
+test("returns interrupted partial output to the Team Lead without running dependents", async () => {
+  const { context, executed, registered, states } = fixture({
+    interruptedMember: "writer-a",
+  });
+  await expertTeamExtension.create(context).activate();
+  const result = await registered[0]!.execute(
+    "interrupted-call",
+    {
+      mode: "sequential",
+      tasks: [
+        { memberId: "writer-a", task: "Draft" },
+        { memberId: "writer-b", task: "Review" },
+      ],
+    },
+    new AbortController().signal,
+  );
+
+  assert.equal(result.isError, true);
+  assert.equal(executed.length, 1);
+  const runs = Object.values(
+    states.at(-1)!.taskRuns as Record<string, Record<string, unknown>>,
+  );
+  assert.deepEqual(
+    runs.map((run) => run.status),
+    ["interrupted", "blocked"],
+  );
+  const text = result.content
+    .flatMap((item) => item.type === "text" ? [item.text] : [])
+    .join("\n");
+  assert.match(text, /partial draft/);
+  assert.match(text, /Stream ended without finish_reason/);
+  assert.match(text, /Team Lead, decide/);
 });

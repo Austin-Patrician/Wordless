@@ -196,6 +196,12 @@ export const SessionAccessLevelSchema = Type.Union([
   Type.Literal("full"),
 ]);
 
+export const ToolApprovalModeSchema = Type.Union([
+  Type.Literal("manual"),
+  Type.Literal("auto"),
+  Type.Literal("bypass"),
+]);
+
 export const AutomationScheduleSchema = Type.Union([
   Type.Object({
     kind: Type.Literal("recurring"),
@@ -229,6 +235,7 @@ export const AutomationTaskInputSchema = Type.Object({
   entryId: Type.String({ minLength: 1 }),
   workspaceId: Type.Union([Type.String({ minLength: 1 }), Type.Null()]),
   accessLevel: SessionAccessLevelSchema,
+  toolApprovalMode: ToolApprovalModeSchema,
   model: Type.Union([ModelReferenceSchema, Type.Null()]),
   thinkingLevel: ThinkingLevelSchema,
   skillIds: Type.Array(Type.String({ minLength: 1 }), { maxItems: 100 }),
@@ -245,12 +252,6 @@ export const AgentInteractionModeSchema = Type.Union([
   Type.Literal("default"),
   Type.Literal("clarify"),
   Type.Literal("plan"),
-]);
-
-export const ToolApprovalModeSchema = Type.Union([
-  Type.Literal("manual"),
-  Type.Literal("auto"),
-  Type.Literal("bypass"),
 ]);
 
 const SkillSourceSchema = Type.Union([
@@ -452,15 +453,23 @@ export const SaveExpertTeamSchema = Type.Object({
   input: Type.Object({
     name: Type.String({ minLength: 1, maxLength: 80 }),
     description: Type.String({ minLength: 1, maxLength: 500 }),
-    portraitKey: Type.String({ minLength: 1, maxLength: 128 }),
-    leaderExpertId: Type.String({ minLength: 1, maxLength: 128 }),
+    portrait: ExpertPortraitSchema,
+    leaderMemberId: Type.String({ minLength: 1, maxLength: 128 }),
     members: Type.Array(
       Type.Object({
-        expertId: Type.String({ minLength: 1, maxLength: 128 }),
+        id: Type.String({ minLength: 1, maxLength: 128 }),
+        name: Type.String({ minLength: 1, maxLength: 80 }),
+        portrait: ExpertPortraitSchema,
+        systemPrompt: Type.String({ minLength: 1, maxLength: 30000 }),
+        skillIds: Type.Array(Type.String({ minLength: 1 }), { maxItems: 64 }),
+        connectorIds: Type.Array(Type.String({ minLength: 1 }), { maxItems: 64 }),
+        model: Type.Optional(ModelReferenceSchema),
+        thinkingLevel: Type.Optional(ThinkingLevelSchema),
         executionProfile: ExpertExecutionProfileSchema,
         responsibility: Type.String({ minLength: 1, maxLength: 1000 }),
+        needsReview: Type.Optional(Type.Boolean()),
       }),
-      { minItems: 1, maxItems: 8 },
+      { minItems: 2, maxItems: 9 },
     ),
     systemPrompt: Type.String({ minLength: 1, maxLength: 30000 }),
     ...ExpertMetadataSchema,
@@ -605,6 +614,11 @@ export const ExpertMemberToolOutputRequestSchema = Type.Object({
   callId: Type.String({ minLength: 1 }),
 });
 
+export const ExpertMemberLiveStateRequestSchema = Type.Object({
+  sessionId: Type.String({ minLength: 1 }),
+  memberId: Type.String({ minLength: 1, maxLength: 120 }),
+});
+
 export const SessionMessageSearchRequestSchema = Type.Object({
   sessionId: Type.String({ minLength: 1 }),
   query: Type.String({ minLength: 1, maxLength: 500 }),
@@ -622,6 +636,11 @@ export const SessionToolOutputRequestSchema = Type.Object({
 export const WorkspaceFileRequestSchema = Type.Object({
   sessionId: Type.String({ minLength: 1 }),
   path: Type.String({ minLength: 1, maxLength: 1024 }),
+});
+
+export const SessionArtifactRequestSchema = Type.Object({
+  sessionId: Type.String({ minLength: 1 }),
+  artifactId: Type.String({ minLength: 1, maxLength: 128 }),
 });
 
 export const ListWorkspaceDirectorySchema = Type.Object({
@@ -1202,9 +1221,18 @@ export type ExpertCollaborationStatus =
   | "awaiting-approval"
   | "awaiting-user-input"
   | "completed"
+  | "interrupted"
   | "failed"
   | "cancelled"
+  | "blocked"
   | "skipped";
+
+export interface ExpertMemberLiveMessage {
+  memberId: string;
+  taskId: string;
+  message: ConversationMessage;
+  revision: number;
+}
 
 export type ExpertTaskPhase =
   | "queued"
@@ -1345,6 +1373,47 @@ export interface SessionContextSnapshot {
   artifacts: SessionArtifactFile[];
   changes: SessionArtifactFile[];
 }
+
+export interface SessionArtifactProducer {
+  kind: "primary" | "expert-member" | "builtin-subagent";
+  id?: string;
+  name: string;
+  portrait?: ExpertPortrait;
+}
+
+export interface SessionGeneratedArtifact {
+  id: string;
+  path: string;
+  name: string;
+  size: number;
+  mtimeMs: number;
+  previewKind: "text" | "markdown" | "image" | "external";
+  producer: SessionArtifactProducer;
+}
+
+export interface SessionArtifactsSnapshot {
+  revision: string;
+  artifacts: SessionGeneratedArtifact[];
+}
+
+export type SessionArtifactPreview =
+  | {
+      status: "available";
+      kind: "text";
+      name: string;
+      content: string;
+    }
+  | {
+      status: "available";
+      kind: "image";
+      name: string;
+      mimeType: "image/png" | "image/jpeg" | "image/webp" | "image/gif";
+      data: string;
+    }
+  | {
+      status: "unavailable";
+      reason: "binary" | "missing" | "too-large" | "unsupported";
+    };
 
 export type ArtifactKind =
   | "presentation"
@@ -1639,6 +1708,7 @@ export type RuntimeEvent =
       revision: number;
       affectedLocators: string[];
     }
+  | { type: "session.artifacts.changed"; revision: string; count: number }
   | { type: "run.started"; runId: string }
   | { type: "run.completed"; runId: string }
   | { type: "run.failed"; runId: string; message: string }
@@ -1661,6 +1731,89 @@ export type RuntimeEvent =
   | { type: "message.text.delta"; messageId: string; delta: string }
   | { type: "message.reasoning.delta"; messageId: string; delta: string }
   | { type: "message.completed"; message: ConversationMessage }
+  | {
+      type: "expert-member.message.started";
+      memberId: string;
+      taskId: string;
+      message: ConversationMessage;
+      revision: number;
+    }
+  | {
+      type: "expert-member.message.text.delta";
+      memberId: string;
+      taskId: string;
+      messageId: string;
+      delta: string;
+      revision: number;
+    }
+  | {
+      type: "expert-member.message.reasoning.delta";
+      memberId: string;
+      taskId: string;
+      messageId: string;
+      delta: string;
+      revision: number;
+    }
+  | {
+      type: "expert-member.message.completed";
+      memberId: string;
+      taskId: string;
+      message: ConversationMessage;
+      revision: number;
+    }
+  | {
+      type: "expert-member.tool.started";
+      memberId: string;
+      taskId: string;
+      messageId: string;
+      callId: string;
+      name: string;
+      input: Record<string, unknown>;
+    }
+  | {
+      type: "expert-member.tool.updated";
+      memberId: string;
+      taskId: string;
+      messageId: string;
+      callId: string;
+      output: string;
+      details?: unknown;
+    }
+  | {
+      type: "expert-member.tool.completed";
+      memberId: string;
+      taskId: string;
+      messageId: string;
+      callId: string;
+      output: string;
+      details?: unknown;
+      isError: boolean;
+    }
+  | {
+      type: "expert-member.approval.requested";
+      memberId: string;
+      taskId: string;
+      messageId: string;
+      approval: {
+        approvalId: string;
+        callId: string;
+        toolName: string;
+        input: Record<string, unknown>;
+        risk: ToolOperationApproval["risk"];
+        severity: ToolOperationApproval["severity"];
+        summary: string;
+        preview: ToolOperationApproval["preview"];
+        matchedRules: ToolOperationApproval["matchedRules"];
+        requiresElevation?: boolean;
+      };
+    }
+  | {
+      type: "expert-member.approval.resolved";
+      memberId: string;
+      taskId: string;
+      messageId: string;
+      resolution: { approvalId: string; approved: boolean; feedback?: string };
+    }
   | {
       type: "tool.started";
       messageId: string;

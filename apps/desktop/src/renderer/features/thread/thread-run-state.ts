@@ -191,6 +191,22 @@ export function runEventCursor(event: RuntimeEventEnvelope): RunEventCursor {
   return { runId: event.runId, sequence: event.sequence };
 }
 
+export function isExpertMemberMessageEvent(
+  event: RuntimeEventEnvelope,
+): boolean {
+  return (
+    event.event.type === "expert-member.message.started" ||
+    event.event.type === "expert-member.message.text.delta" ||
+    event.event.type === "expert-member.message.reasoning.delta" ||
+    event.event.type === "expert-member.message.completed" ||
+    event.event.type === "expert-member.tool.started" ||
+    event.event.type === "expert-member.tool.updated" ||
+    event.event.type === "expert-member.tool.completed" ||
+    event.event.type === "expert-member.approval.requested" ||
+    event.event.type === "expert-member.approval.resolved"
+  );
+}
+
 export function shouldRefreshSnapshotAfterEvent(event: RuntimeEventEnvelope): boolean {
   return event.event.type === "session.idle";
 }

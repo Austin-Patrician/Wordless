@@ -49,8 +49,10 @@ type TaskDetails = {
     | "awaiting-approval"
     | "awaiting-user-input"
     | "completed"
+    | "interrupted"
     | "failed"
     | "cancelled"
+    | "blocked"
     | "skipped";
   output?: string;
   usage?: ConversationUsage;

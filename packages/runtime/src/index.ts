@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { access, mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { access, mkdir, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import {
   basename,
@@ -110,6 +110,7 @@ import type {
   ExpertTeamDefinitionInput,
   ExpertTeamDetail,
   ExpertTeamDetailMember,
+  ExpertTeamMemberDefinition,
 } from "@wordless/domain";
 import type { ProfileDefinition, ProfileRegistry } from "@wordless/profile-sdk";
 import {
@@ -119,11 +120,15 @@ import {
   type RuntimeEventEnvelope,
   type SessionArtifactDiff,
   type SessionArtifactFile,
+  type SessionArtifactPreview,
+  type SessionArtifactsSnapshot,
   type SessionContextSnapshot,
+  type SessionGeneratedArtifact,
   type SessionHistoryPage,
   type SessionHistoryPageRequest,
   type ExpertCollaborationSnapshot,
   type ExpertCollaborationStatus,
+  type ExpertMemberLiveMessage,
   type ExpertTaskPhase,
   type SessionMessageSearchRequest,
   type SessionMessageSearchResponse,
@@ -152,6 +157,7 @@ import {
 } from "./model-configuration.ts";
 import {
   SessionSubagentRunner,
+  type ExpertMemberStreamEvent,
   type SubagentFileChange,
 } from "./subagent-runner.ts";
 import { estimateSessionContextUsage } from "./context-usage.ts";
@@ -169,6 +175,8 @@ import {
 
 const SUBAGENT_FILE_CHANGE_JOURNAL_TYPE = "wordless.subagent-file-change";
 const CLARIFICATION_ANSWER_JOURNAL_TYPE = "wordless.clarification-answer";
+const SESSION_ARTIFACTS_DIRECTORY = "artifacts";
+const PRIMARY_ARTIFACTS_DIRECTORY = "primary";
 
 const BUILTIN_EXPERTS: ExpertSummary[] = [
   {
@@ -217,17 +225,21 @@ const BUILTIN_TEAM_MEMBERS: Record<
   "content-studio": [
     {
       id: "content-writer",
-      expertId: "content-writer",
       name: "内容撰稿人",
       portrait: { kind: "builtin", key: "product-strategist" },
-      executionProfile: "read-only",
+      systemPrompt: "You are the Content Writer. Write the complete deliverable from the assigned brief and upstream material. Maintain a consistent voice, concrete argument flow, and clear evidence boundaries. Do not replace missing facts with invention, and do not switch into reviewer or coordinator voice.",
+      skillIds: [],
+      connectorIds: [],
+      executionProfile: "workspace-write",
       responsibility: "把研究和大纲转化为符合受众、语气与渠道要求的完整初稿。",
     },
     {
       id: "content-reviewer",
-      expertId: "content-reviewer",
       name: "内容审校",
       portrait: { kind: "builtin", key: "research-analyst" },
+      systemPrompt: "You are the Content Reviewer. Independently inspect the draft for factual support, logical gaps, audience fit, structure, tone, repetition, and publication risk. Cite exact passages when raising issues and provide prioritized, directly actionable revisions. Do not merely summarize the draft or assume the writer's voice.",
+      skillIds: [],
+      connectorIds: [],
       executionProfile: "review",
       responsibility: "检查逻辑、事实、表达与一致性，给出可执行的修改建议。",
     },
@@ -236,16 +248,17 @@ const BUILTIN_TEAM_MEMBERS: Record<
 
 const BUILTIN_TEAM_LEADERS: Record<
   string,
-  {
-    expertId: string;
-    name: string;
-    portrait: ExpertPortrait;
-  }
+  Omit<ExpertTeamDetailMember, "available">
 > = {
   "content-studio": {
-    expertId: "content-lead",
+    id: "content-lead",
     name: "内容主理人",
     portrait: { kind: "builtin", key: "content-studio" },
+    systemPrompt: "You are the Content Lead and the accountable editor speaking directly with the user. Lead with a clear editorial judgment, define the audience and promise, separate verified evidence from interpretation, and use precise, confident language rather than a generic assistant voice.",
+    skillIds: [],
+    connectorIds: [],
+    executionProfile: "workspace-write",
+    responsibility: "负责主对话、任务调度和最终交付。",
   },
 };
 
@@ -610,8 +623,10 @@ const EXPERT_COLLABORATION_STATUSES = new Set<ExpertCollaborationStatus>([
   "awaiting-approval",
   "awaiting-user-input",
   "completed",
+  "interrupted",
   "failed",
   "cancelled",
+  "blocked",
   "skipped",
 ]);
 const EXPERT_TASK_PHASES = new Set<ExpertTaskPhase>([
@@ -743,6 +758,20 @@ export function createExpertCollaborationSnapshot(
     },
     members,
   };
+}
+
+export function activeExpertSystemPrompt(
+  expert: SessionExpertSnapshot,
+): string {
+  const identity = `[ACTIVE EXPERT ROLE]\nYou are operating as ${expert.name}. Treat this role as the primary identity for the session. Keep your decisions, tone, terminology, and deliverables aligned with this expert role. Do not fall back to a generic assistant voice when the request is within this role's responsibility.\n\n${expert.systemPrompt}`;
+  if (expert.kind !== "team") return identity;
+  const roster = expert.teamMembers
+    .map(
+      (member) =>
+        `- memberId=${member.id}; name=${member.expertName}; responsibility=${member.responsibility}`,
+    )
+    .join("\n");
+  return `${identity}\n\n[AUTHORITATIVE EXPERT TEAM]\nTeam: ${expert.teamName}\nTeam Lead: ${expert.leader.expertName} (not delegable)\nDelegable members:\n${roster}\n\nThis roster comes directly from the Wordless runtime and is authoritative for this session. When asked who is on the team, answer directly with the Team Lead and these members. Use the listed memberId values for delegate_expert. Never search the workspace, user home directory, environment variables, skills, plugins, or unrelated configuration files for team membership.`;
 }
 
 export function expertConnectorScopes(
@@ -955,6 +984,41 @@ function persistedSubagentFileChange(
       content: baseline.content,
     },
   };
+}
+
+function artifactDirectoryName(id: string): string {
+  const safe = id.replace(/[^a-zA-Z0-9._-]/g, "_");
+  return safe || "member";
+}
+
+function artifactPreviewKind(
+  name: string,
+): SessionGeneratedArtifact["previewKind"] {
+  const extension = extname(name).toLowerCase();
+  if ([".md", ".markdown", ".mdx"].includes(extension)) return "markdown";
+  if (
+    [
+      ".txt",
+      ".json",
+      ".jsonl",
+      ".csv",
+      ".tsv",
+      ".html",
+      ".css",
+      ".js",
+      ".jsx",
+      ".ts",
+      ".tsx",
+      ".yaml",
+      ".yml",
+      ".xml",
+      ".log",
+    ].includes(extension)
+  )
+    return "text";
+  if ([".png", ".jpg", ".jpeg", ".webp", ".gif"].includes(extension))
+    return "image";
+  return "external";
 }
 
 function persistedUserRequest(
@@ -1291,6 +1355,7 @@ export class WordlessRuntime {
   private readonly usageReport: UsageReportService;
   private readonly listeners = new Set<(event: RuntimeEventEnvelope) => void>();
   private readonly historyCache = new Map<string, CachedSessionHistory>();
+  private readonly artifactRevisions = new Map<string, string>();
   private readonly runs = new Map<string, ActiveRun>();
   private readonly mediaOperations = new Map<string, AbortController>();
   private readonly runtimeInstanceId = randomUUID();
@@ -1406,7 +1471,7 @@ export class WordlessRuntime {
       experts: [
         ...BUILTIN_EXPERTS,
         ...this.database.listExperts().map(expertSummary),
-        ...this.database.listExpertTeams().map(teamSummary),
+        ...this.listExpertTeams().map(teamSummary),
       ],
     };
   }
@@ -1453,12 +1518,90 @@ export class WordlessRuntime {
   }
 
   listExpertTeams(): ExpertTeamDefinition[] {
-    return this.database.listExpertTeams();
+    return this.database.listExpertTeams().map((stored) => {
+      const team = this.normalizeExpertTeam(stored);
+      if (team !== stored) this.database.upsertExpertTeam(team);
+      return team;
+    });
+  }
+
+  private getExpertTeam(id: string): ExpertTeamDefinition | undefined {
+    const stored = this.database.getExpertTeam(id);
+    if (!stored) return undefined;
+    const team = this.normalizeExpertTeam(stored);
+    if (team !== stored) this.database.upsertExpertTeam(team);
+    return team;
+  }
+
+  private snapshotTeamMember(
+    expertId: string,
+    id: string,
+    responsibility: string,
+    executionProfile: ExpertTeamMemberDefinition["executionProfile"],
+  ): ExpertTeamMemberDefinition {
+    const local = this.database.getExpert(expertId);
+    const builtin = BUILTIN_EXPERTS.find(
+      (candidate) => candidate.kind === "expert" && candidate.id === expertId,
+    );
+    const name = local?.name ?? builtin?.name;
+    return {
+      id,
+      name: name ?? "待补全成员",
+      portrait: structuredClone(local?.portrait ?? builtin?.portrait ?? { kind: "builtin", key: "research-analyst" }),
+      systemPrompt: local?.systemPrompt ?? BUILTIN_EXPERT_PROMPTS[expertId] ?? `You are a team member responsible for: ${responsibility}`,
+      skillIds: [...new Set(local?.skillIds ?? [])],
+      connectorIds: [...new Set(local?.connectorIds ?? [])],
+      executionProfile,
+      responsibility,
+      ...(!name ? { needsReview: true } : {}),
+    };
+  }
+
+  private normalizeExpertTeam(stored: ExpertTeamDefinition): ExpertTeamDefinition {
+    const record = stored as unknown as {
+      leaderMemberId?: string;
+      leaderExpertId?: string;
+      members: Array<{
+        id?: string;
+        expertId?: string;
+        name?: string;
+        systemPrompt?: string;
+        responsibility?: string;
+        executionProfile?: ExpertTeamMemberDefinition["executionProfile"];
+      }>;
+    };
+    if (typeof record.leaderMemberId === "string" && record.members.every((member) => typeof member.name === "string" && typeof member.systemPrompt === "string")) return stored;
+    if (!record.leaderExpertId) return stored;
+    const leader = this.snapshotTeamMember(
+      record.leaderExpertId,
+      `${stored.id}:leader`,
+      "负责主对话、任务调度和最终交付。",
+      "workspace-write",
+    );
+    const collaborators = record.members.flatMap((member) => member.expertId
+      ? [this.snapshotTeamMember(
+          member.expertId,
+          member.id ?? randomUUID(),
+          member.responsibility ?? "协助团队完成目标。",
+          member.executionProfile ?? "read-only",
+        )]
+      : []);
+    const members = [leader, ...collaborators].slice(0, 9);
+    const { leaderExpertId: _legacyLeaderExpertId, ...base } = stored as unknown as ExpertTeamDefinition & { leaderExpertId: string };
+    void _legacyLeaderExpertId;
+    return {
+      ...base,
+      leaderMemberId: leader.id,
+      members,
+      memberCount: members.length,
+      skillCount: new Set(members.flatMap((member) => member.skillIds)).size,
+      connectorCount: new Set(members.flatMap((member) => member.connectorIds)).size,
+    };
   }
   getExpertTeamDetail(id: string): ExpertTeamDetail {
     const summary = [
       ...BUILTIN_EXPERTS,
-      ...this.database.listExpertTeams().map(teamSummary),
+      ...this.listExpertTeams().map(teamSummary),
     ].find((candidate) => candidate.kind === "team" && candidate.id === id);
     if (!summary || summary.kind !== "team")
       throw new Error("Expert team not found");
@@ -1477,45 +1620,17 @@ export class WordlessRuntime {
           resolvedSummary.description,
         ],
       };
-    const team = this.database.getExpertTeam(id);
+    const team = this.getExpertTeam(id);
     if (!team) throw new Error("Expert team not found");
-    const experts = [
-      ...BUILTIN_EXPERTS,
-      ...this.database.listExperts().map(expertSummary),
-    ];
-    const leader = experts.find(
-      (candidate) =>
-        candidate.kind === "expert" && candidate.id === team.leaderExpertId,
-    );
+    const leader = team.members.find((member) => member.id === team.leaderMemberId);
+    if (!leader) throw new Error("Expert team leader is unavailable");
     const members = team.members
-      .filter((member) => member.expertId !== team.leaderExpertId)
-      .map((member) => {
-        const expert = experts.find(
-          (candidate) =>
-            candidate.kind === "expert" && candidate.id === member.expertId,
-        );
-        return {
-          ...member,
-          name: expert?.name ?? "Unavailable expert",
-          portrait: expert?.portrait ?? {
-            kind: "builtin" as const,
-            key: "research-analyst",
-          },
-          available: Boolean(expert),
-        };
-      });
+      .filter((member) => member.id !== team.leaderMemberId)
+      .map((member) => ({ ...member, available: !member.needsReview }));
     const focus = team.tags?.slice(0, 2).join("、") || team.description;
     return {
       ...resolvedSummary,
-      leader: {
-        expertId: team.leaderExpertId,
-        name: leader?.name ?? "Unavailable expert",
-        portrait: leader?.portrait ?? {
-          kind: "builtin",
-          key: "research-analyst",
-        },
-        available: Boolean(leader),
-      },
+      leader: { ...leader, available: !leader.needsReview },
       members,
       suggestedPrompts: [
         team.description,
@@ -1529,41 +1644,38 @@ export class WordlessRuntime {
     id?: string,
   ): ExpertTeamDefinition {
     const now = Date.now();
-    const existing = id ? this.database.getExpertTeam(id) : undefined;
+    const existing = id ? this.getExpertTeam(id) : undefined;
     if (id && !existing) throw new Error("Expert team not found");
-    const experts = new Set([
-      ...BUILTIN_EXPERTS.filter((item) => item.kind === "expert").map(
-        (item) => item.id,
-      ),
-      ...this.database.listExperts().map((item) => item.id),
-    ]);
-    if (
-      !experts.has(input.leaderExpertId) ||
-      input.members.some((member) => !experts.has(member.expertId))
-    )
-      throw new Error("One or more team experts are unavailable");
-    if (
-      input.members.some((member) => member.expertId === input.leaderExpertId)
-    )
-      throw new Error("The Team Lead cannot also be a delegated member");
-    const members = input.members
-      .slice(0, 8)
-      .map((member) => ({ ...member, id: randomUUID() }));
-    if (!members.length)
-      throw new Error("An expert team requires at least one member");
+    if (input.members.length > 9)
+      throw new Error("An expert team supports at most nine members");
+    const members = input.members.map((member) => ({
+      ...member,
+      name: member.name.trim(),
+      systemPrompt: member.systemPrompt.trim(),
+      responsibility: member.responsibility.trim(),
+      portrait: structuredClone(member.portrait),
+      skillIds: [...new Set(member.skillIds)],
+      connectorIds: [...new Set(member.connectorIds)],
+      model: member.model ? { ...member.model } : undefined,
+      needsReview: undefined,
+    }));
+    if (members.length < 2) throw new Error("An expert team requires at least two members");
+    if (new Set(members.map((member) => member.id)).size !== members.length) throw new Error("Team member IDs must be unique");
+    if (!members.some((member) => member.id === input.leaderMemberId)) throw new Error("The team leader must be a team member");
+    if (members.some((member) => !member.name || !member.systemPrompt || !member.responsibility)) throw new Error("Each team member requires a name, responsibility, and instructions");
     const team: ExpertTeamDefinition = {
       id: existing?.id ?? randomUUID(),
       version: String((Number(existing?.version ?? "0") || 0) + 1),
       kind: "team",
       name: input.name.trim(),
       description: input.description.trim(),
-      portrait: { kind: "builtin", key: input.portraitKey },
-      leaderExpertId: input.leaderExpertId,
+      portrait: structuredClone(input.portrait),
+      leaderMemberId: input.leaderMemberId,
       members,
       systemPrompt: input.systemPrompt.trim(),
-      memberCount: members.length + 1,
-      skillCount: 0,
-      connectorCount: 0,
+      memberCount: members.length,
+      skillCount: new Set(members.flatMap((member) => member.skillIds)).size,
+      connectorCount: new Set(members.flatMap((member) => member.connectorIds)).size,
       source: "local",
       createdAt: existing?.createdAt ?? now,
       updatedAt: now,
@@ -1589,7 +1701,7 @@ export class WordlessRuntime {
     const expert = [
       ...BUILTIN_EXPERTS,
       ...this.database.listExperts().map(expertSummary),
-      ...this.database.listExpertTeams().map(teamSummary),
+      ...this.listExpertTeams().map(teamSummary),
     ].find(
       (candidate) =>
         candidate.kind === selection.kind &&
@@ -1617,19 +1729,8 @@ export class WordlessRuntime {
     team?: ExpertTeamDefinition,
   ): SessionExpertTeamLeaderSnapshot | undefined {
     const builtin = BUILTIN_TEAM_LEADERS[id];
-    const expertId = team?.leaderExpertId ?? builtin?.expertId;
-    if (!expertId) return undefined;
-    const summary = [
-      ...BUILTIN_EXPERTS,
-      ...this.database.listExperts().map(expertSummary),
-    ].find(
-      (candidate) => candidate.kind === "expert" && candidate.id === expertId,
-    );
-    const definition =
-      summary?.source === "local"
-        ? this.database.getExpert(expertId)
-        : undefined;
-    if (!builtin && !summary) return undefined;
+    const leader = team?.members.find((member) => member.id === team.leaderMemberId) ?? builtin;
+    if (!leader) return undefined;
     const contentResearchSkill =
       id === "content-studio"
         ? this.skillRegistry
@@ -1651,21 +1752,12 @@ export class WordlessRuntime {
             .map((connector) => connector.id)
         : [];
     return {
-      expertId,
-      expertName: builtin?.name ?? summary?.name ?? expertId,
-      portrait: builtin?.portrait ??
-        summary?.portrait ?? {
-          kind: "builtin",
-          key: "research-analyst",
-        },
-      systemPrompt:
-        definition?.systemPrompt ??
-        BUILTIN_EXPERT_PROMPTS[expertId] ??
-        `You are the ${builtin?.name ?? summary?.name ?? expertId} expert.`,
-      skillIds:
-        definition?.skillIds ??
-        (contentResearchSkill ? [contentResearchSkill.id] : []),
-      connectorIds: definition?.connectorIds ?? contentResearchConnectorIds,
+      expertId: leader.id,
+      expertName: leader.name,
+      portrait: leader.portrait,
+      systemPrompt: leader.systemPrompt,
+      skillIds: team ? leader.skillIds : (contentResearchSkill ? [contentResearchSkill.id] : leader.skillIds),
+      connectorIds: team ? leader.connectorIds : contentResearchConnectorIds,
     };
   }
 
@@ -1674,45 +1766,10 @@ export class WordlessRuntime {
     team?: ExpertTeamDefinition,
   ): SessionExpertTeamMemberSnapshot[] | undefined {
     const definitions = (team?.members ?? BUILTIN_TEAM_MEMBERS[id])?.filter(
-      (member) => member.expertId !== team?.leaderExpertId,
+      (member) => member.id !== team?.leaderMemberId,
     );
     if (!definitions) return undefined;
-    const experts = [
-      ...BUILTIN_EXPERTS,
-      ...this.database.listExperts().map(expertSummary),
-    ];
-    return definitions.map((member) => {
-      const summary = experts.find(
-        (candidate) =>
-          candidate.id === member.expertId && candidate.kind === "expert",
-      );
-      const definition =
-        summary?.source === "local"
-          ? this.database.getExpert(member.expertId)
-          : undefined;
-      const presentation = member as typeof member & {
-        name?: string;
-        portrait?: ExpertPortrait;
-      };
-      return {
-        id: member.id,
-        expertId: member.expertId,
-        executionProfile: member.executionProfile,
-        responsibility: member.responsibility,
-        expertName: presentation.name ?? summary?.name ?? member.expertId,
-        portrait: presentation.portrait ??
-          summary?.portrait ?? {
-            kind: "builtin" as const,
-            key: "research-analyst",
-          },
-        systemPrompt:
-          definition?.systemPrompt ??
-          BUILTIN_EXPERT_PROMPTS[member.expertId] ??
-          `You are the ${presentation.name ?? member.expertId} expert. Fulfill the assigned responsibility: ${member.responsibility}`,
-        skillIds: definition?.skillIds ?? [],
-        connectorIds: definition?.connectorIds ?? [],
-      };
-    });
+    return definitions.map((member) => ({ ...member, expertName: member.name }));
   }
 
   private createSessionExpertSnapshot(
@@ -1734,7 +1791,7 @@ export class WordlessRuntime {
         connectorIds: definition?.connectorIds ?? [],
       };
     }
-    const team = this.database.getExpertTeam(expert.id);
+    const team = this.getExpertTeam(expert.id);
     const leader = this.resolveTeamLeader(expert.id, team);
     if (!leader) throw new Error(`Team Lead is unavailable: ${expert.id}`);
     const members = this.resolveTeamMembers(expert.id, team) ?? [];
@@ -2209,6 +2266,17 @@ export class WordlessRuntime {
     );
   }
 
+  getExpertMemberLiveState(
+    sessionId: string,
+    memberId: string,
+  ): ExpertMemberLiveMessage | null {
+    this.requireSession(sessionId);
+    return (
+      this.runs.get(sessionId)?.subagents.getExpertMemberLiveState(memberId) ??
+      null
+    );
+  }
+
   async getExpertMemberToolOutput(
     sessionId: string,
     memberId: string,
@@ -2262,9 +2330,31 @@ export class WordlessRuntime {
       string,
       { messageIndex: number; blockIndex: number }
     >();
+    const approvals = new Map<string, PersistedOperationApproval>();
+    const isRunning = this.runs.has(sessionId);
     let model = record.model;
     for (const entry of await journal.getEntries()) {
       const value = asRecord(entry);
+      const customEntry = entry as unknown as {
+        type: string;
+        customType?: string;
+        data?: unknown;
+      };
+      if (
+        customEntry.type === "custom" &&
+        customEntry.customType === OPERATION_APPROVAL_JOURNAL_TYPE
+      ) {
+        const approval = persistedApproval(customEntry.data);
+        if (!approval) continue;
+        approvals.set(approval.callId, approval);
+        this.applyApproval(
+          messages,
+          tools.get(approval.callId),
+          approval,
+          isRunning,
+        );
+        continue;
+      }
       if (
         entry.type === "model_change" &&
         typeof value?.provider === "string" &&
@@ -2301,7 +2391,12 @@ export class WordlessRuntime {
         stored?.role === "toolResult" &&
         typeof stored.toolCallId === "string"
       ) {
-        this.applyToolResult(messages, tools.get(stored.toolCallId), stored);
+        this.applyToolResult(
+          messages,
+          tools.get(stored.toolCallId),
+          stored,
+          approvals.get(stored.toolCallId),
+        );
         continue;
       }
       const message = this.toConversationMessage(
@@ -2472,6 +2567,199 @@ export class WordlessRuntime {
       artifacts: sortedChanges.filter((change) => change.kind === "created"),
       changes: sortedChanges,
     };
+  }
+
+  async getSessionArtifacts(sessionId: string): Promise<SessionArtifactsSnapshot> {
+    const snapshot = await this.scanSessionArtifacts(this.requireSession(sessionId));
+    this.artifactRevisions.set(sessionId, snapshot.revision);
+    return snapshot;
+  }
+
+  async readSessionArtifact(
+    sessionId: string,
+    artifactId: string,
+  ): Promise<SessionArtifactPreview> {
+    const record = this.requireSession(sessionId);
+    const artifact = await this.requireSessionArtifact(record, artifactId);
+    const source = await this.pathService.resolveWorkspaceFile(
+      record.runtimeRootPath,
+      artifact.path,
+    );
+    const details = await stat(source);
+    const maximumBytes = artifact.previewKind === "image" ? 12_582_912 : 1_048_576;
+    if (details.size > maximumBytes)
+      return { status: "unavailable", reason: "too-large" };
+    if (artifact.previewKind === "external")
+      return { status: "unavailable", reason: "unsupported" };
+    try {
+      const data = await readFile(source);
+      if (artifact.previewKind === "image") {
+        const extension = extname(artifact.name).toLowerCase();
+        const mimeType =
+          extension === ".png"
+            ? "image/png"
+            : extension === ".webp"
+              ? "image/webp"
+              : extension === ".gif"
+                ? "image/gif"
+                : "image/jpeg";
+        return {
+          status: "available",
+          kind: "image",
+          name: artifact.name,
+          mimeType,
+          data: data.toString("base64"),
+        };
+      }
+      if (data.includes(0))
+        return { status: "unavailable", reason: "binary" };
+      return {
+        status: "available",
+        kind: "text",
+        name: artifact.name,
+        content: data.toString("utf8"),
+      };
+    } catch (cause) {
+      const code = asRecord(cause)?.code;
+      if (code === "ENOENT") return { status: "unavailable", reason: "missing" };
+      throw cause;
+    }
+  }
+
+  async resolveSessionArtifact(
+    sessionId: string,
+    artifactId: string,
+  ): Promise<string> {
+    const record = this.requireSession(sessionId);
+    const artifact = await this.requireSessionArtifact(record, artifactId);
+    return await this.pathService.resolveWorkspaceFile(
+      record.runtimeRootPath,
+      artifact.path,
+    );
+  }
+
+  private async requireSessionArtifact(
+    record: SessionRecord,
+    artifactId: string,
+  ): Promise<SessionGeneratedArtifact> {
+    const snapshot = await this.scanSessionArtifacts(record);
+    const artifact = snapshot.artifacts.find((candidate) => candidate.id === artifactId);
+    if (!artifact) throw new Error("Session artifact is unavailable");
+    return artifact;
+  }
+
+  private artifactProducer(
+    record: SessionRecord,
+    artifactPath: string,
+  ): SessionGeneratedArtifact["producer"] {
+    const [directory, role] = artifactPath.split("/");
+    if (directory === "subagents" && role) {
+      const names: Record<string, string> = {
+        scout: "Scout",
+        planner: "Planner",
+        reviewer: "Reviewer",
+        worker: "Worker",
+        researcher: "Researcher",
+        "research-reviewer": "Research reviewer",
+      };
+      return {
+        kind: "builtin-subagent",
+        id: role,
+        name: names[role] ?? "Subagent",
+      };
+    }
+    const expert = this.sessionExpertSnapshot(record);
+    if (expert?.kind === "team") {
+      const member = expert.teamMembers.find(
+        (candidate) => artifactDirectoryName(candidate.id) === directory,
+      );
+      if (member)
+        return {
+          kind: "expert-member",
+          id: member.id,
+          name: member.expertName,
+          portrait: member.portrait,
+        };
+      return {
+        kind: "primary",
+        id: expert.leader.expertId,
+        name: expert.leader.expertName,
+        portrait: expert.leader.portrait,
+      };
+    }
+    return {
+      kind: "primary",
+      ...(expert ? { id: expert.selection.id } : {}),
+      name: expert?.name ?? "General Work",
+    };
+  }
+
+  private async scanSessionArtifacts(
+    record: SessionRecord,
+  ): Promise<SessionArtifactsSnapshot> {
+    const root = join(record.runtimeRootPath, SESSION_ARTIFACTS_DIRECTORY);
+    const artifacts: SessionGeneratedArtifact[] = [];
+    const visit = async (directory: string, relativeDirectory: string): Promise<void> => {
+      if (artifacts.length >= 1_000) return;
+      let entries;
+      try {
+        entries = await readdir(directory, { withFileTypes: true });
+      } catch (cause) {
+        if (asRecord(cause)?.code === "ENOENT") return;
+        throw cause;
+      }
+      for (const entry of entries) {
+        if (artifacts.length >= 1_000 || entry.isSymbolicLink()) continue;
+        const relativePath = relativeDirectory
+          ? `${relativeDirectory}/${entry.name}`
+          : entry.name;
+        const absolutePath = join(directory, entry.name);
+        if (entry.isDirectory()) {
+          await visit(absolutePath, relativePath);
+          continue;
+        }
+        if (!entry.isFile()) continue;
+        const details = await stat(absolutePath);
+        const path = `${SESSION_ARTIFACTS_DIRECTORY}/${relativePath}`;
+        artifacts.push({
+          id: createHash("sha256").update(path).digest("hex").slice(0, 24),
+          path,
+          name: entry.name,
+          size: details.size,
+          mtimeMs: details.mtimeMs,
+          previewKind: artifactPreviewKind(entry.name),
+          producer: this.artifactProducer(record, relativePath),
+        });
+      }
+    };
+    await visit(root, "");
+    artifacts.sort(
+      (left, right) => right.mtimeMs - left.mtimeMs || left.path.localeCompare(right.path),
+    );
+    const revision = createHash("sha256")
+      .update(
+        JSON.stringify(
+          artifacts.map(({ id, size, mtimeMs }) => [id, size, mtimeMs]),
+        ),
+      )
+      .digest("hex")
+      .slice(0, 20);
+    return { revision, artifacts };
+  }
+
+  private async refreshSessionArtifacts(
+    sessionId: string,
+    active: ActiveRun,
+  ): Promise<void> {
+    const snapshot = await this.scanSessionArtifacts(this.requireSession(sessionId));
+    const previous = this.artifactRevisions.get(sessionId);
+    this.artifactRevisions.set(sessionId, snapshot.revision);
+    if (previous === snapshot.revision) return;
+    this.emit(sessionId, active, {
+      type: "session.artifacts.changed",
+      revision: snapshot.revision,
+      count: snapshot.artifacts.length,
+    });
   }
 
   async readSessionWorkspaceTextFile(
@@ -2954,18 +3242,22 @@ export class WordlessRuntime {
     this.database.upsertSession(next);
     if (!active) return;
     try {
-      await active.driverSession.execute({
-        type: "set-tool-approval-mode",
-        mode,
-      });
+      await Promise.all([
+        active.driverSession.execute({
+          type: "set-tool-approval-mode",
+          mode,
+        }),
+        active.subagents.setToolApprovalMode(mode),
+      ]);
     } catch (error) {
       this.database.upsertSession(previous);
-      await active.driverSession
-        .execute({
+      await Promise.allSettled([
+        active.driverSession.execute({
           type: "set-tool-approval-mode",
           mode: previous.toolApprovalMode,
-        })
-        .catch(() => {});
+        }),
+        active.subagents.setToolApprovalMode(previous.toolApprovalMode),
+      ]);
       throw error;
     }
   }
@@ -3160,6 +3452,7 @@ export class WordlessRuntime {
       this.database.deleteMediaProject(sessionId);
     this.database.deleteSession(sessionId);
     this.historyCache.delete(sessionId);
+    this.artifactRevisions.delete(sessionId);
     if (session.workbenchId === "media-canvas")
       this.emitApp({ type: "media.project.changed", sessionId });
   }
@@ -4242,18 +4535,37 @@ export class WordlessRuntime {
       throw new Error("The session is already running");
     const baseProfile = this.requireProfile(record);
     const expertSnapshot = this.sessionExpertSnapshot(record);
-    const expertPrompt = expertSnapshot?.systemPrompt;
-    const profile = expertPrompt
+    const identityProfile = expertSnapshot
       ? {
           ...baseProfile,
-          systemPrompt: `${baseProfile.systemPrompt}\n\n[ACTIVE EXPERT ROLE]\nYou are operating as ${expertSnapshot.name}. Treat this role as the primary identity for the session. Keep your decisions, tone, terminology, and deliverables aligned with this expert role. Do not fall back to a generic assistant voice when the request is within this role's responsibility.\n\n${expertPrompt}`,
+          systemPrompt: `${baseProfile.systemPrompt}\n\n${activeExpertSystemPrompt(expertSnapshot)}`,
         }
       : baseProfile;
+    const profile =
+      record.workbenchId === "conversation"
+        ? {
+            ...identityProfile,
+            systemPrompt: `${identityProfile.systemPrompt}\n\n[SESSION ARTIFACTS]\nPlace finished deliverables in artifacts/primary/ so they appear in the user's Artifacts panel. Keep temporary files outside that directory. When you create a deliverable, report its path relative to the session root.`,
+          }
+        : identityProfile;
     const driver = this.drivers.get(record.driverId);
     if (!driver)
       throw new Error(`Agent Driver is unavailable: ${record.driverId}`);
     const model = this.requireRuntimeModel(record.model);
     const journal = await openWordlessSession(record.journalPath);
+    if (record.workbenchId === "conversation")
+      await mkdir(
+        join(
+          record.runtimeRootPath,
+          SESSION_ARTIFACTS_DIRECTORY,
+          PRIMARY_ARTIFACTS_DIRECTORY,
+        ),
+        { recursive: true },
+      );
+    if (record.workbenchId === "conversation") {
+      const artifactSnapshot = await this.scanSessionArtifacts(record);
+      this.artifactRevisions.set(sessionId, artifactSnapshot.revision);
+    }
     const skills = this.skillRegistry.getSessionSkills(record.workspaceId);
     const env = this.pathService.createExecutionEnv(
       record.runtimeRootPath,
@@ -4291,10 +4603,26 @@ export class WordlessRuntime {
       security: this.securityPolicy(),
       journalsRoot: this.options.paths.journalsRoot,
       resolveModel: (reference) => this.requireRuntimeModel(reference),
-      resolveCapabilities: (reference) =>
-        this.requireEnabledModel(reference).capabilities,
-      onFilesChanged: async (changes) =>
-        await this.persistSubagentFileChanges(record, changes),
+      resolveCapabilities: (reference) => {
+        const provider = this.modelConfiguration.snapshot().providers.find(
+          (candidate) =>
+            candidate.kind === "chat" && candidate.id === reference.connectionId,
+        );
+        if (provider?.authStatus !== "configured")
+          throw new Error("The selected model connection is not configured");
+        return this.requireEnabledModel(reference).capabilities;
+      },
+      onFilesChanged: async (changes) => {
+        await this.persistSubagentFileChanges(record, changes);
+        const active = this.runs.get(sessionId);
+        if (active) await this.refreshSessionArtifacts(sessionId, active);
+      },
+      createExecutionEnv: (rootPath, accessLevel, readOnlyRoots) =>
+        this.pathService.createExecutionEnv(rootPath, accessLevel, {
+          readOnlyRoots,
+        }),
+      onExpertMemberEvent: (event) =>
+        this.emitExpertMemberEvent(sessionId, event),
       toolApprovalMode: record.toolApprovalMode,
       expertTeamDelegates:
         expertSnapshot?.kind === "team"
@@ -4307,6 +4635,8 @@ export class WordlessRuntime {
               systemPrompt: member.systemPrompt,
               skillIds: member.skillIds,
               connectorIds: member.connectorIds,
+              model: member.model,
+              thinkingLevel: member.thinkingLevel,
             }))
           : undefined,
     });
@@ -4501,6 +4831,8 @@ export class WordlessRuntime {
       this.invalidateSessionWorkspaceSearch(sessionId);
       this.historyCache.delete(sessionId);
       this.emit(sessionId, active, event);
+      if (this.requireSession(sessionId).workbenchId === "conversation")
+        void this.refreshSessionArtifacts(sessionId, active);
       const details = asRecord(event.details);
       const artifact = asRecord(details?.artifact);
       if (
@@ -5673,6 +6005,88 @@ export class WordlessRuntime {
       event,
     };
     for (const listener of this.listeners) listener(envelope);
+  }
+
+  private emitExpertMemberEvent(
+    sessionId: string,
+    event: ExpertMemberStreamEvent,
+  ): void {
+    const active = this.runs.get(sessionId);
+    if (!active) return;
+    if (event.type === "message.started") {
+      this.emit(sessionId, active, {
+        type: "expert-member.message.started",
+        memberId: event.memberId,
+        taskId: event.taskId,
+        message: event.message,
+        revision: event.revision,
+      });
+      return;
+    }
+    if (event.type === "message.text.delta") {
+      this.emit(sessionId, active, {
+        type: "expert-member.message.text.delta",
+        memberId: event.memberId,
+        taskId: event.taskId,
+        messageId: event.messageId,
+        delta: event.delta,
+        revision: event.revision,
+      });
+      return;
+    }
+    if (event.type === "message.reasoning.delta") {
+      this.emit(sessionId, active, {
+        type: "expert-member.message.reasoning.delta",
+        memberId: event.memberId,
+        taskId: event.taskId,
+        messageId: event.messageId,
+        delta: event.delta,
+        revision: event.revision,
+      });
+      return;
+    }
+    if (event.type === "message.completed") {
+      this.emit(sessionId, active, {
+        type: "expert-member.message.completed",
+        memberId: event.memberId,
+        taskId: event.taskId,
+        message: event.message,
+        revision: event.revision,
+      });
+      return;
+    }
+    if (event.type === "tool.started") {
+      this.emit(sessionId, active, {
+        ...event,
+        type: "expert-member.tool.started",
+      });
+      return;
+    }
+    if (event.type === "tool.updated") {
+      this.emit(sessionId, active, {
+        ...event,
+        type: "expert-member.tool.updated",
+      });
+      return;
+    }
+    if (event.type === "tool.completed") {
+      this.emit(sessionId, active, {
+        ...event,
+        type: "expert-member.tool.completed",
+      });
+      return;
+    }
+    if (event.type === "approval.requested") {
+      this.emit(sessionId, active, {
+        ...event,
+        type: "expert-member.approval.requested",
+      });
+      return;
+    }
+    this.emit(sessionId, active, {
+      ...event,
+      type: "expert-member.approval.resolved",
+    });
   }
 
   private emitApp(event: RuntimeEvent): void {

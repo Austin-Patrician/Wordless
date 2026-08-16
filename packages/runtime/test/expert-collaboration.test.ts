@@ -5,6 +5,7 @@ import type {
   SessionExpertSnapshot,
 } from "@wordless/domain";
 import {
+  activeExpertSystemPrompt,
   createExpertCollaborationSnapshot,
   expertConnectorScopes,
 } from "../src/index.ts";
@@ -33,7 +34,7 @@ const expert: SessionExpertSnapshot = {
   teamMembers: [
     {
       id: "writer",
-      expertId: "content-writer",
+      name: "Writer",
       expertName: "Writer",
       portrait: { kind: "builtin", key: "content-writer" },
       executionProfile: "workspace-write",
@@ -156,6 +157,16 @@ test("exposes the Team Lead before any member is delegated", () => {
   assert.equal(collaboration?.leader?.name, "Content Lead");
   assert.equal(collaboration?.teamName, "Content Studio");
   assert.deepEqual(collaboration?.members, []);
+});
+
+test("injects the authoritative team roster into every Team Lead run", () => {
+  const prompt = activeExpertSystemPrompt(expert);
+  assert.match(prompt, /Team: Content Studio/);
+  assert.match(prompt, /Team Lead: Content Lead \(not delegable\)/);
+  assert.match(prompt, /memberId=writer; name=Writer/);
+  assert.match(prompt, /responsibility=Write the draft/);
+  assert.match(prompt, /answer directly/i);
+  assert.match(prompt, /Never search the workspace, user home directory/i);
 });
 
 test("keeps delegated member connectors out of the primary scope", () => {

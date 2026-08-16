@@ -74,6 +74,7 @@ export type InlineSkillComposerHandle = {
 
 type InlineSkillComposerProps = {
   ariaLabel: string;
+  ariaInvalid?: boolean;
   className: string;
   disabled?: boolean;
   onChange(value: InlineSkillComposerValue): void;
@@ -430,7 +431,7 @@ const initialConfig = {
 };
 
 export const InlineSkillComposer = forwardRef<InlineSkillComposerHandle, InlineSkillComposerProps>(function InlineSkillComposer(
-  { ariaLabel, className, disabled = false, onChange, onStop, onSubmit, placeholder, placeholderClassName, readOnly = false, stopEnabled = false, submitDisabled = false, onReferencePickerKeyDown },
+  { ariaInvalid = false, ariaLabel, className, disabled = false, onChange, onStop, onSubmit, placeholder, placeholderClassName, readOnly = false, stopEnabled = false, submitDisabled = false, onReferencePickerKeyDown },
   ref,
 ) {
   const editorRef = useRef<LexicalEditor | null>(null);
@@ -593,6 +594,7 @@ export const InlineSkillComposer = forwardRef<InlineSkillComposerHandle, InlineS
           contentEditable={(
             <ContentEditable
               aria-label={ariaLabel}
+              aria-invalid={ariaInvalid || undefined}
               className={className}
               onKeyDownCapture={(event) => {
                 if (onReferencePickerKeyDown?.(event)) {

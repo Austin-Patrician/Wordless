@@ -57,7 +57,10 @@ import type {
   OfficeEngineHealth,
   PresentationTemplate,
   RuntimeEventEnvelope,
+  ExpertMemberLiveMessage,
   SessionArtifactDiff,
+  SessionArtifactPreview,
+  SessionArtifactsSnapshot,
   SessionContextSnapshot,
   SessionHistoryPage,
   SessionHistoryPageRequest,
@@ -74,7 +77,7 @@ import type {
 } from "@wordless/protocol";
 import type { ToolApprovalMode } from "@wordless/domain";
 
-export const DESKTOP_BRIDGE_VERSION = 31;
+export const DESKTOP_BRIDGE_VERSION = 32;
 
 export interface DesktopBridge {
   readonly version: typeof DESKTOP_BRIDGE_VERSION;
@@ -137,6 +140,10 @@ export interface DesktopBridge {
     memberId: string,
     request: SessionHistoryPageRequest,
   ): Promise<SessionHistoryPage>;
+  getExpertMemberLiveState(
+    sessionId: string,
+    memberId: string,
+  ): Promise<ExpertMemberLiveMessage | null>;
   getExpertMemberToolOutput(
     sessionId: string,
     memberId: string,
@@ -189,6 +196,14 @@ export interface DesktopBridge {
   ): Promise<void>;
   compactSession(sessionId: string): Promise<void>;
   getSessionContext(sessionId: string): Promise<SessionContextSnapshot>;
+  getSessionArtifacts(sessionId: string): Promise<SessionArtifactsSnapshot>;
+  readSessionArtifact(
+    sessionId: string,
+    artifactId: string,
+  ): Promise<SessionArtifactPreview>;
+  openSessionArtifact(sessionId: string, artifactId: string): Promise<void>;
+  revealSessionArtifact(sessionId: string, artifactId: string): Promise<void>;
+  saveSessionArtifactAs(sessionId: string, artifactId: string): Promise<void>;
   getOfficeEngineHealth(): Promise<OfficeEngineHealth>;
   listPresentationTemplates(): Promise<PresentationTemplate[]>;
   listPresentationArtifacts(sessionId: string): Promise<ArtifactDescriptor[]>;
@@ -460,6 +475,7 @@ const requiredMethods: Array<Exclude<keyof DesktopBridge, "version">> = [
   "getSessionView",
   "getSessionHistoryPage",
   "getExpertMemberHistory",
+  "getExpertMemberLiveState",
   "getExpertMemberToolOutput",
   "searchSessionMessages",
   "getSessionToolOutput",
@@ -486,6 +502,11 @@ const requiredMethods: Array<Exclude<keyof DesktopBridge, "version">> = [
   "promptSession",
   "compactSession",
   "getSessionContext",
+  "getSessionArtifacts",
+  "readSessionArtifact",
+  "openSessionArtifact",
+  "revealSessionArtifact",
+  "saveSessionArtifactAs",
   "getOfficeEngineHealth",
   "listPresentationTemplates",
   "listPresentationArtifacts",

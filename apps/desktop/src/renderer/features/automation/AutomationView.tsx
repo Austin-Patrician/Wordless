@@ -19,6 +19,7 @@ import {
   Plus,
   Search,
   ShieldAlert,
+  ShieldCheck,
   Trash2,
   X,
 } from "lucide-react";
@@ -35,6 +36,7 @@ import type {
   SessionAccessLevel,
   SkillSummary,
   ThinkingLevel,
+  ToolApprovalMode,
   UserPromptPart,
 } from "@wordless/domain";
 import { useRuntime, useRuntimeClient } from "../../shared/runtime";
@@ -46,7 +48,6 @@ import {
   type InlineSkillComposerValue,
 } from "../thread/InlineSkillComposer";
 import { ConnectorSwitchMenu, SkillInsertMenu } from "../thread/PromptCapabilityControls";
-import toolApprovalIcon from "../../../icons/common-icons/tool-approval.svg";
 
 type Page =
   | { kind: "list" }
@@ -68,10 +69,13 @@ type RunGroup = {
   name: string;
   runs: AutomationRun[];
 };
+type AutomationField = "name" | "prompt" | "model" | "schedule" | "activeDates";
+type AutomationFieldErrors = Partial<Record<AutomationField, string>>;
 const control =
   "h-9 w-full rounded-[7px] border border-border bg-card px-3 pr-9 text-[12px] outline-none focus:border-[#9aaf61] focus:ring-1 focus:ring-[#9aaf61]/30";
 const automationSwitchClass =
   "data-[state=checked]:border-accent data-[state=checked]:bg-accent dark:data-[state=checked]:border-accent dark:data-[state=checked]:bg-accent";
+const AUTOMATION_ENTRY_ID = "general-work";
 const EMPTY_PROMPT_VALUE: InlineSkillComposerValue = {
   parts: [],
   skillIds: [],
@@ -992,9 +996,6 @@ function AutomationForm({
   const client = useRuntimeClient();
   const { snapshot } = useRuntime();
   const { locale, t } = usePreferences();
-  const defaultEntry =
-    snapshot?.entries.find((entry) => entry.id === "general-work") ??
-    snapshot?.entries.find((entry) => entry.availability === "available");
   const defaultModel =
     snapshot?.preferences.defaultModel ??
     (snapshot?.models.find((item) => item.enabled)
@@ -1011,9 +1012,6 @@ function AutomationForm({
   );
   const promptRef = useRef<InlineSkillComposerHandle>(null);
   const promptHydrated = useRef(false);
-  const [entryId, setEntryId] = useState(
-    initial?.entryId ?? defaultEntry?.id ?? "general-work",
-  );
   const [workspaceId, setWorkspaceId] = useState<string | null>(
     initial?.workspaceId ?? null,
   );
@@ -1025,6 +1023,9 @@ function AutomationForm({
   );
   const [accessLevel, setAccessLevel] = useState<SessionAccessLevel>(
     initial?.accessLevel ?? "full",
+  );
+  const [toolApprovalMode, setToolApprovalMode] = useState<ToolApprovalMode>(
+    initial?.toolApprovalMode ?? "bypass",
   );
   const [connectorIds, setConnectorIds] = useState<string[]>(
     initial?.connectorIds ?? [],
@@ -1046,8 +1047,14 @@ function AutomationForm({
   );
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [fullAccessConfirmOpen, setFullAccessConfirmOpen] = useState(false);
-  const [fullAccessAcknowledged, setFullAccessAcknowledged] = useState(false);
+  const [fieldErrors, setFieldErrors] = useState<AutomationFieldErrors>({});
+  const [permissionConfirmOpen, setPermissionConfirmOpen] = useState(false);
+  const [permissionAcknowledged, setPermissionAcknowledged] = useState(false);
+  useEffect(() => {
+    if (!error) return;
+    const timeout = window.setTimeout(() => setError(null), 5000);
+    return () => window.clearTimeout(timeout);
+  }, [error]);
   const availableSkills =
     snapshot?.skills.skills.filter(
       (item) => item.enabled && item.state === "active",
@@ -1088,6 +1095,14 @@ function AutomationForm({
     promptRef.current?.setValue(parts, { focus: false });
     promptHydrated.current = true;
   }, [allSkills, initial?.skillIds, snapshot, source?.prompt]);
+  const clearFieldError = (field: AutomationField) => {
+    setFieldErrors((current) => {
+      if (!current[field]) return current;
+      const next = { ...current };
+      delete next[field];
+      return next;
+    });
+  };
   const selectModel = (next: ModelReference) => {
     const nextModel = snapshot?.models.find(
       (item) =>
@@ -1095,6 +1110,11 @@ function AutomationForm({
     );
     setModel(next);
     setThinkingLevel((current) => thinkingLevelForModel(nextModel, current));
+    clearFieldError("model");
+  };
+  const updateSchedule = (next: AutomationSchedule) => {
+    setSchedule(next);
+    clearFieldError("schedule");
   };
   const insertSkill = (skill: SkillSummary) => {
     promptRef.current?.insertSkill(skill);
@@ -1103,9 +1123,10 @@ function AutomationForm({
   const input: AutomationTaskInput = {
     name: name.trim(),
     prompt: promptValue.text.trim(),
-    entryId,
+    entryId: AUTOMATION_ENTRY_ID,
     workspaceId,
     accessLevel,
+    toolApprovalMode,
     model,
     thinkingLevel,
     skillIds: promptValue.skillIds,
@@ -1115,15 +1136,40 @@ function AutomationForm({
     activeUntil,
     enabled,
   };
-  const hasRequiredFields = () => {
-    if (!name.trim() || !promptValue.text.trim() || !entryId || !model) {
-      setError(t("automationRequiredFields"));
+  const validateForm = () => {
+    const next: AutomationFieldErrors = {};
+    if (!name.trim()) next.name = t("automationNameRequired");
+    if (!promptValue.text.trim()) next.prompt = t("automationPromptRequired");
+    if (!model) next.model = t("automationModelRequired");
+    if (
+      (schedule.kind === "recurring" &&
+        (!/^([01]\d|2[0-3]):[0-5]\d$/.test(schedule.time) ||
+          (schedule.cadence === "monthly" &&
+            (!Number.isInteger(schedule.dayOfMonth) ||
+              (schedule.dayOfMonth ?? 0) < 1 ||
+              (schedule.dayOfMonth ?? 0) > 31)))) ||
+      (schedule.kind === "interval" &&
+        (!Number.isInteger(schedule.every) || schedule.every < 1)) ||
+      (schedule.kind === "once" &&
+        (!Number.isFinite(schedule.at) || schedule.at < 0))
+    ) {
+      next.schedule = t("automationScheduleInvalid");
+    }
+    if (activeFrom !== null && activeUntil !== null && activeFrom > activeUntil) {
+      next.activeDates = t("automationActiveDatesInvalid");
+    }
+    setFieldErrors(next);
+    setError(null);
+    if (Object.keys(next).length) {
+      window.setTimeout(() => {
+        document.querySelector<HTMLElement>('[aria-invalid="true"]')?.focus();
+      }, 0);
       return false;
     }
     return true;
   };
   const save = async () => {
-    if (!hasRequiredFields()) return;
+    if (!validateForm()) return;
     setSaving(true);
     setError(null);
     try {
@@ -1138,16 +1184,16 @@ function AutomationForm({
     }
   };
   const requestSave = () => {
-    if (!hasRequiredFields()) return;
-    if (accessLevel === "full") {
-      setFullAccessConfirmOpen(true);
+    if (!validateForm()) return;
+    if (accessLevel === "full" || toolApprovalMode === "bypass") {
+      setPermissionConfirmOpen(true);
       return;
     }
     void save();
   };
-  const confirmFullAccessSave = () => {
-    if (!fullAccessAcknowledged) return;
-    setFullAccessConfirmOpen(false);
+  const confirmPermissionSave = () => {
+    if (!permissionAcknowledged) return;
+    setPermissionConfirmOpen(false);
     void save();
   };
   return (
@@ -1194,56 +1240,47 @@ function AutomationForm({
             requestSave();
           }}
         >
-          <Field label={t("automationName")}>
+          <Field error={fieldErrors.name} label={t("automationName")}>
             <input
               autoFocus
-              className={control}
+              aria-invalid={Boolean(fieldErrors.name)}
+              className={`${control} ${fieldErrors.name ? "border-destructive focus:border-destructive focus:ring-destructive/30" : ""}`}
               maxLength={120}
-              onChange={(event) => setName(event.target.value)}
+              onChange={(event) => {
+                setName(event.target.value);
+                clearFieldError("name");
+              }}
               placeholder={t("automationNamePlaceholder")}
               value={name}
             />
           </Field>
-          <div className="grid gap-4 md:grid-cols-2">
-            <Field label={t("automationAgent")}>
-              <select
-                className={control}
-                onChange={(event) => setEntryId(event.target.value)}
-                value={entryId}
-              >
-                {snapshot?.entries
-                  .filter((item) => item.availability === "available")
-                  .map((item) => (
-                    <option key={item.id} value={item.id}>
-                      {item.id}
-                    </option>
-                  ))}
-              </select>
-            </Field>
-            <Field label={t("automationWorkspaceOptional")}>
-              <select
-                className={control}
-                onChange={(event) => setWorkspaceId(event.target.value || null)}
-                value={workspaceId ?? ""}
-              >
-                <option value="">{t("automationNoWorkspace")}</option>
-                {snapshot?.workspaces
-                  .filter((item) => item.availability === "available")
-                  .map((item) => (
-                    <option key={item.id} value={item.id}>
-                      {item.name}
-                    </option>
-                  ))}
-              </select>
-            </Field>
-          </div>
-          <Field compound label={t("automationPrompt")}>
-            <div className="rounded-[10px] border border-[#cfcfca] bg-card shadow-[0_1px_2px_rgba(0,0,0,.025)] focus-within:border-[#96968f] dark:border-border">
+          <Field label={t("automationWorkspaceOptional")}>
+            <select
+              className={control}
+              onChange={(event) => setWorkspaceId(event.target.value || null)}
+              value={workspaceId ?? ""}
+            >
+              <option value="">{t("automationNoWorkspace")}</option>
+              {snapshot?.workspaces
+                .filter((item) => item.availability === "available")
+                .map((item) => (
+                  <option key={item.id} value={item.id}>
+                    {item.name}
+                  </option>
+                ))}
+            </select>
+          </Field>
+          <Field compound error={fieldErrors.prompt} label={t("automationPrompt")}>
+            <div className={`rounded-[10px] border bg-card shadow-[0_1px_2px_rgba(0,0,0,.025)] focus-within:border-[#96968f] dark:border-border ${fieldErrors.prompt ? "border-destructive focus-within:border-destructive" : "border-[#cfcfca]"}`}>
               <InlineSkillComposer
+                ariaInvalid={Boolean(fieldErrors.prompt)}
                 ariaLabel={t("automationPrompt")}
                 className="min-h-[150px] w-full resize-y overflow-y-auto bg-transparent px-3.5 py-3 text-[16px] font-medium leading-7 text-[#353532] caret-[#252624] outline-none selection:bg-[#dff09b] dark:text-foreground dark:caret-foreground dark:selection:bg-[#4a5a26]"
-                onChange={setPromptValue}
-                onSubmit={() => void save()}
+                onChange={(value) => {
+                  setPromptValue(value);
+                  clearFieldError("prompt");
+                }}
+                onSubmit={requestSave}
                 placeholder={t("automationPromptPlaceholder")}
                 placeholderClassName="left-3.5 top-3 text-[16px] font-normal leading-7"
                 ref={promptRef}
@@ -1261,7 +1298,40 @@ function AutomationForm({
                     selected={connectorIds}
                   />
                   <SingleSelectMenu
-                    icon={<img alt="" className="h-3.5 w-3.5 shrink-0 object-contain" src={toolApprovalIcon} />}
+                    danger={toolApprovalMode === "bypass"}
+                    icon={<ShieldAlert className="h-3.5 w-3.5 shrink-0" />}
+                    items={[
+                      {
+                        description: t("automationApprovalBypassHelp"),
+                        id: "bypass",
+                        label: t("automationApprovalBypass"),
+                      },
+                      {
+                        description: t("automationApprovalAutoHelp"),
+                        id: "auto",
+                        label: t("automationApprovalAuto"),
+                      },
+                      {
+                        description: t("automationApprovalManualHelp"),
+                        id: "manual",
+                        label: t("automationApprovalManual"),
+                      },
+                    ]}
+                    label={
+                      toolApprovalMode === "bypass"
+                        ? t("automationApprovalBypass")
+                        : toolApprovalMode === "auto"
+                          ? t("automationApprovalAuto")
+                          : t("automationApprovalManual")
+                    }
+                    onChange={(value) =>
+                      setToolApprovalMode(value as ToolApprovalMode)
+                    }
+                    value={toolApprovalMode}
+                  />
+                  <SingleSelectMenu
+                    danger={accessLevel === "full"}
+                    icon={<ShieldCheck className="h-3.5 w-3.5 shrink-0" />}
                     items={[
                       {
                         description: t("automationFullAccessHelp"),
@@ -1290,6 +1360,7 @@ function AutomationForm({
                     onChange={setThinkingLevel}
                   />
                   <ModelSelectMenu
+                    invalid={Boolean(fieldErrors.model)}
                     model={model}
                     connections={snapshot?.connections ?? []}
                     models={
@@ -1303,28 +1374,39 @@ function AutomationForm({
                 </div>
               </div>
             </div>
+            {fieldErrors.model ? (
+              <p className="mt-1 text-[10px] text-destructive" role="alert">
+                {fieldErrors.model}
+              </p>
+            ) : null}
           </Field>
           {accessLevel === "default" ? (
             <p className="rounded-[7px] border border-[#d8c787] bg-[#fff9e7] px-3 py-2 text-[10px] leading-4 text-[#79611b] dark:bg-[#302b1c] dark:text-[#e2ca77]">
               {t("automationAccessWarning")}
             </p>
           ) : null}
-          <Field label={t("automationFrequency")}>
-            <ScheduleEditor schedule={schedule} setSchedule={setSchedule} />
+          <Field error={fieldErrors.schedule} label={t("automationFrequency")}>
+            <ScheduleEditor
+              invalid={Boolean(fieldErrors.schedule)}
+              schedule={schedule}
+              setSchedule={updateSchedule}
+            />
           </Field>
-          <Field label={t("automationActiveDates")}>
+          <Field error={fieldErrors.activeDates} label={t("automationActiveDates")}>
             <div className="grid gap-2 sm:grid-cols-2">
               <input
                 aria-label={t("automationStartDate")}
-                className={control}
+                aria-invalid={fieldErrors.activeDates ? true : undefined}
+                className={`${control} ${fieldErrors.activeDates ? "border-destructive focus:border-destructive focus:ring-destructive/30" : ""}`}
                 lang={locale}
-                onChange={(event) =>
+                onChange={(event) => {
                   setActiveFrom(
                     event.target.value
                       ? new Date(`${event.target.value}T00:00:00`).getTime()
                       : null,
-                  )
-                }
+                  );
+                  clearFieldError("activeDates");
+                }}
                 type="date"
                 value={
                   activeFrom === null
@@ -1339,15 +1421,17 @@ function AutomationForm({
               />
               <input
                 aria-label={t("automationEndDate")}
-                className={control}
+                aria-invalid={fieldErrors.activeDates ? true : undefined}
+                className={`${control} ${fieldErrors.activeDates ? "border-destructive focus:border-destructive focus:ring-destructive/30" : ""}`}
                 lang={locale}
-                onChange={(event) =>
+                onChange={(event) => {
                   setActiveUntil(
                     event.target.value
                       ? new Date(`${event.target.value}T23:59:59.999`).getTime()
                       : null,
-                  )
-                }
+                  );
+                  clearFieldError("activeDates");
+                }}
                 type="date"
                 value={
                   activeUntil === null
@@ -1377,51 +1461,60 @@ function AutomationForm({
             />
           </div>
           {error ? (
-            <p className="text-[11px] text-destructive">{error}</p>
+            <p aria-live="polite" className="text-[11px] text-destructive" role="alert">
+              {error}
+            </p>
           ) : null}
         </form>
       </div>
-      <AutomationFullAccessConfirmDialog
-        acknowledged={fullAccessAcknowledged}
+      <AutomationPermissionConfirmDialog
+        acknowledged={permissionAcknowledged}
+        accessLevel={accessLevel}
         isEditing={Boolean(initial)}
         onCancel={() => {
           if (saving) return;
-          setFullAccessConfirmOpen(false);
-          setFullAccessAcknowledged(false);
+          setPermissionConfirmOpen(false);
+          setPermissionAcknowledged(false);
         }}
-        onConfirm={confirmFullAccessSave}
-        onUseDefault={() => {
+        onConfirm={confirmPermissionSave}
+        onUseSaferSettings={() => {
           if (saving) return;
           setAccessLevel("default");
-          setFullAccessConfirmOpen(false);
-          setFullAccessAcknowledged(false);
+          setToolApprovalMode("auto");
+          setPermissionConfirmOpen(false);
+          setPermissionAcknowledged(false);
         }}
-        onAcknowledgedChange={setFullAccessAcknowledged}
-        open={fullAccessConfirmOpen}
+        onAcknowledgedChange={setPermissionAcknowledged}
+        open={permissionConfirmOpen}
         saving={saving}
+        toolApprovalMode={toolApprovalMode}
       />
     </section>
   );
 }
 
-function AutomationFullAccessConfirmDialog({
+function AutomationPermissionConfirmDialog({
   acknowledged,
+  accessLevel,
   isEditing,
   onAcknowledgedChange,
   onCancel,
   onConfirm,
-  onUseDefault,
+  onUseSaferSettings,
   open,
   saving,
+  toolApprovalMode,
 }: {
   acknowledged: boolean;
+  accessLevel: SessionAccessLevel;
   isEditing: boolean;
   onAcknowledgedChange: (acknowledged: boolean) => void;
   onCancel: () => void;
   onConfirm: () => void;
-  onUseDefault: () => void;
+  onUseSaferSettings: () => void;
   open: boolean;
   saving: boolean;
+  toolApprovalMode: ToolApprovalMode;
 }) {
   const { t } = usePreferences();
   useEffect(() => {
@@ -1442,28 +1535,35 @@ function AutomationFullAccessConfirmDialog({
       }}
     >
       <section
-        aria-describedby="automation-full-access-description"
-        aria-labelledby="automation-full-access-title"
+        aria-describedby="automation-permission-description"
+        aria-labelledby="automation-permission-title"
         aria-modal="true"
         className="w-full max-w-[440px] rounded-[18px] border border-white/60 bg-white p-5 text-[#242421] shadow-[0_24px_64px_rgba(0,0,0,0.22)] dark:border-border dark:bg-card dark:text-foreground"
         role="alertdialog"
       >
         <div className="flex items-start gap-3">
           <ShieldAlert className="mt-0.5 h-5 w-5 shrink-0 text-[#b34b42]" />
-          <h2 className="text-[15px] font-semibold" id="automation-full-access-title">
-            {t("automationFullAccessConfirmTitle")}
+          <h2 className="text-[15px] font-semibold" id="automation-permission-title">
+            {t("automationPermissionConfirmTitle")}
           </h2>
         </div>
         <p
           className="mt-4 text-[12px] leading-5 text-[#5c5c56] dark:text-muted-foreground"
-          id="automation-full-access-description"
+          id="automation-permission-description"
         >
-          {t("automationFullAccessConfirmIntro")}
+          {t("automationPermissionConfirmIntro")}
         </p>
         <ul className="mt-3 list-disc space-y-1.5 pl-5 text-[12px] leading-5 text-[#3f3f3a] dark:text-foreground">
-          <li>{t("automationFullAccessConfirmFile")}</li>
-          <li>{t("automationFullAccessConfirmConnector")}</li>
-          <li>{t("automationFullAccessConfirmCommand")}</li>
+          {accessLevel === "full" ? (
+            <>
+              <li>{t("automationFullAccessConfirmFile")}</li>
+              <li>{t("automationFullAccessConfirmConnector")}</li>
+              <li>{t("automationFullAccessConfirmCommand")}</li>
+            </>
+          ) : null}
+          {toolApprovalMode === "bypass" ? (
+            <li>{t("automationBypassApprovalConfirm")}</li>
+          ) : null}
         </ul>
         <label className="mt-5 flex cursor-pointer items-center gap-2 text-[12px] text-[#4e4e49] dark:text-muted-foreground">
           <input
@@ -1476,8 +1576,8 @@ function AutomationFullAccessConfirmDialog({
           <span>{t("fullAccessAcknowledgement")}</span>
         </label>
         <div className="mt-5 flex flex-wrap items-center justify-end gap-2">
-          <Button className="mr-auto h-8 whitespace-nowrap text-[11px]" disabled={saving} onClick={onUseDefault} type="button" variant="ghost">
-            {t("automationUseDefaultAccess")}
+          <Button className="mr-auto h-8 whitespace-nowrap text-[11px]" disabled={saving} onClick={onUseSaferSettings} type="button" variant="ghost">
+            {t("automationUseSaferSettings")}
           </Button>
           <Button className="h-8 text-[11px]" disabled={saving} onClick={onCancel} type="button" variant="outline">
             {t("cancel")}
@@ -1500,10 +1600,12 @@ function AutomationFullAccessConfirmDialog({
 function Field({
   children,
   compound = false,
+  error,
   label,
 }: {
   children: React.ReactNode;
   compound?: boolean;
+  error?: string;
   label: string;
 }) {
   if (compound) {
@@ -1513,6 +1615,11 @@ function Field({
           {label}
         </span>
         {children}
+        {error ? (
+          <p className="mt-1 text-[10px] text-destructive" role="alert">
+            {error}
+          </p>
+        ) : null}
       </div>
     );
   }
@@ -1522,6 +1629,11 @@ function Field({
         {label}
       </span>
       {children}
+      {error ? (
+        <p className="mt-1 text-[10px] text-destructive" role="alert">
+          {error}
+        </p>
+      ) : null}
     </label>
   );
 }
@@ -1533,31 +1645,38 @@ type MenuOption = {
 };
 
 function MenuTrigger({
+  danger = false,
+  invalid = false,
   icon,
   label,
 }: {
+  danger?: boolean;
+  invalid?: boolean;
   icon: React.ReactNode;
   label: string;
 }) {
   return (
     <DropdownMenuTrigger
-      className="inline-flex h-8 max-w-[180px] items-center justify-center gap-1.5 whitespace-nowrap rounded-lg px-2 text-[11px] font-medium text-[#555650] outline-none transition-colors hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring dark:text-foreground"
+      aria-invalid={invalid || undefined}
+      className={`inline-flex h-8 max-w-[180px] items-center justify-center gap-1.5 whitespace-nowrap rounded-lg px-2 text-[11px] font-medium outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring ${danger || invalid ? "text-[#b34b42] hover:bg-[#fff0ed] hover:text-[#963d35] dark:text-[#efaaa1] dark:hover:bg-[#4b2b28] dark:hover:text-[#ffc1ba]" : "text-[#555650] hover:bg-muted hover:text-foreground dark:text-foreground"}`}
       type="button"
     >
       {icon}
       <span className="truncate">{label}</span>
-      <ChevronDown className="h-3 w-3 shrink-0 text-muted-foreground" />
+      <ChevronDown className={`h-3 w-3 shrink-0 ${danger || invalid ? "text-current" : "text-muted-foreground"}`} />
     </DropdownMenuTrigger>
   );
 }
 
 function SingleSelectMenu({
+  danger = false,
   icon,
   items,
   label,
   onChange,
   value,
 }: {
+  danger?: boolean;
   icon: React.ReactNode;
   items: MenuOption[];
   label: string;
@@ -1567,7 +1686,7 @@ function SingleSelectMenu({
   const { t } = usePreferences();
   return (
     <DropdownMenu>
-      <MenuTrigger icon={icon} label={label} />
+      <MenuTrigger danger={danger} icon={icon} label={label} />
       <DropdownMenuContent align="start" className="w-[296px] max-w-[calc(100vw-24px)] p-1.5">
         {items.map((item) => (
           <DropdownMenuItem
@@ -1576,12 +1695,12 @@ function SingleSelectMenu({
             onSelect={() => onChange(item.id)}
           >
             <span
-              className={`mt-0.5 grid h-3.5 w-3.5 shrink-0 place-items-center rounded-full border text-[9px] ${value === item.id ? "border-[#6d8438] bg-[#6d8438] text-white" : "border-[#bdbdb6] text-transparent"}`}
+              className={`mt-0.5 grid h-3.5 w-3.5 shrink-0 place-items-center rounded-full border text-[9px] ${value === item.id ? danger ? "border-[#b34b42] bg-[#b34b42] text-white" : "border-[#6d8438] bg-[#6d8438] text-white" : "border-[#bdbdb6] text-transparent"}`}
             >
               ✓
             </span>
             <span className="min-w-0 flex-1">
-              <span className="block truncate text-[12px] font-medium">
+              <span className={`block truncate text-[12px] font-medium ${danger && value === item.id ? "text-[#b34b42] dark:text-[#efaaa1]" : ""}`}>
                 {item.label}
               </span>
               {item.description ? (
@@ -1637,6 +1756,7 @@ function ThinkingLevelMenu({
 
 function ModelSelectMenu({
   connections,
+  invalid = false,
   model,
   models,
   onChange,
@@ -1645,6 +1765,7 @@ function ModelSelectMenu({
   selectedLabel,
 }: {
   connections: ProviderConnectionRecord[];
+  invalid?: boolean;
   model: ModelReference | null;
   models: EnabledModelRecord[];
   onChange: (model: ModelReference) => void;
@@ -1656,6 +1777,7 @@ function ModelSelectMenu({
   return (
     <DropdownMenu>
       <MenuTrigger
+        invalid={invalid}
         icon={
           <ProviderIcon
             avatarId={providerAvatarId}
@@ -1713,19 +1835,34 @@ function ModelSelectMenu({
 }
 
 function ScheduleEditor({
+  invalid = false,
   schedule,
   setSchedule,
 }: {
+  invalid?: boolean;
   schedule: AutomationSchedule;
   setSchedule: (schedule: AutomationSchedule) => void;
 }) {
   const { locale, t } = usePreferences();
   const kind = schedule.kind;
+  const onceValue =
+    schedule.kind === "once" && Number.isFinite(schedule.at)
+      ? new Date(
+          schedule.at - new Date(schedule.at).getTimezoneOffset() * 60_000,
+        )
+          .toISOString()
+          .slice(0, 16)
+      : "";
   const weekdays = locale === "zh-CN"
     ? ["日", "一", "二", "三", "四", "五", "六"]
     : ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
   return (
-    <div>
+    <div
+      aria-invalid={invalid || undefined}
+      className={invalid ? "rounded-[8px] border border-destructive/60 p-2" : ""}
+      role="group"
+      tabIndex={invalid ? -1 : undefined}
+    >
       <div className="inline-flex rounded-[8px] bg-[#eeeeeb] p-1 dark:bg-muted">
         {(["recurring", "interval", "once"] as const).map((item) => (
           <button
@@ -1861,11 +1998,7 @@ function ScheduleEditor({
               })
             }
             type="datetime-local"
-            value={new Date(
-              schedule.at - new Date(schedule.at).getTimezoneOffset() * 60_000,
-            )
-              .toISOString()
-              .slice(0, 16)}
+            value={onceValue}
           />
         )}
       </div>

@@ -24,12 +24,18 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import { Virtuoso, type VirtuosoHandle } from "react-virtuoso";
+import {
+  Virtuoso,
+  type Components,
+  type ListRange,
+  type VirtuosoHandle,
+} from "react-virtuoso";
 import type {
   ArtifactSelection,
   ConversationMessage,
   ExpertCollaborationLeader,
   ExpertCollaborationMember,
+  ExpertMemberLiveMessage,
   RuntimeEventEnvelope,
   SessionHistoryPage,
   SessionSnapshot,
@@ -79,7 +85,9 @@ import {
   advanceAssistantRunPresentation,
   assistantRunActivityAt,
   assistantRunPresentationFromMessages,
+  assistantToolActivity,
   createAssistantRunPresentation,
+  isExpertMemberMessageEvent,
   isNewerRunEvent,
   mergeCompletedAssistantMessage,
   nextAssistantRunActivityUpdateAt,
@@ -133,6 +141,68 @@ export type ThreadMessageNavigationTarget = {
 
 const SESSION_VIEW_CACHE_LIMIT = 3;
 const sessionViewCache = new Map<string, SessionViewSnapshot>();
+
+type ThreadVirtuosoContext = {
+  compactionError?: string;
+  compactionTrigger?: ContextCompactionRecord["trigger"];
+  densityRail: boolean;
+  isCompacting: boolean;
+  onRetryCompaction: () => void;
+  planMode: "off" | "planning" | "executing";
+  planState?: Record<string, unknown>;
+};
+
+function ThreadVirtuosoHeader({
+  context,
+}: {
+  context: ThreadVirtuosoContext;
+}) {
+  return context.planMode !== "off" ? (
+    <ThreadContentFrame className="pb-7 pt-6" densityRail={context.densityRail}>
+      <PlanModePanel mode={context.planMode} state={context.planState} />
+    </ThreadContentFrame>
+  ) : (
+    <div className="h-6" />
+  );
+}
+
+function ThreadVirtuosoFooter({
+  context,
+}: {
+  context: ThreadVirtuosoContext;
+}) {
+  return (
+    <ThreadContentFrame className="pb-10" densityRail={context.densityRail}>
+      {context.isCompacting ? (
+        <ContextCompactionPending trigger={context.compactionTrigger} />
+      ) : null}
+      {context.compactionError ? (
+        <ContextCompactionFailure
+          message={context.compactionError}
+          onRetry={context.onRetryCompaction}
+          trigger={context.compactionTrigger}
+        />
+      ) : null}
+    </ThreadContentFrame>
+  );
+}
+
+const THREAD_VIRTUOSO_COMPONENTS: Components<
+  ThreadTimelineItem,
+  ThreadVirtuosoContext
+> = {
+  Footer: ThreadVirtuosoFooter,
+  Header: ThreadVirtuosoHeader,
+};
+
+function threadTimelineItemKey(_index: number, item: ThreadTimelineItem) {
+  return item.type === "compaction"
+    ? item.compaction.id
+    : item.type === "assistant-run" ||
+        item.messages[0]?.role === "assistant"
+      ? `assistant:${item.turnId}`
+      : item.messages[0]!.id;
+}
 
 type ExpertTaskView = {
   id: string;
@@ -387,8 +457,10 @@ function expertMemberStatus(
     value === "awaiting-approval" ||
     value === "awaiting-user-input" ||
     value === "completed" ||
+    value === "interrupted" ||
     value === "failed" ||
     value === "cancelled" ||
+    value === "blocked" ||
     value === "skipped"
     ? value
     : undefined;
@@ -508,14 +580,49 @@ function expertActivityLabel(
     return t("threadAwaitingInput");
   if (member.latestStatus === "completed")
     return t("threadCompleted");
+  if (member.latestStatus === "interrupted")
+    return t("threadInterrupted");
   if (member.latestStatus === "failed") return t("threadFailed");
   if (member.latestStatus === "cancelled")
     return t("threadCancelled");
+  if (member.latestStatus === "blocked")
+    return t("threadBlocked");
   if (member.latestStatus === "skipped")
     return t("threadSkipped");
   if (member.phase === "tool" && member.activeToolName)
     return t("threadUsingTool").replace("{tool}", member.activeToolName);
   return t("threadModelThinking");
+}
+
+function expertMemberActivityFromMessage(
+  message: ConversationMessage,
+  since: number,
+): AssistantRunActivity {
+  const tool = [...message.blocks]
+    .reverse()
+    .find((block): block is MessageToolBlock => block.type === "tool");
+  if (tool?.state === "awaiting-approval")
+    return { type: "awaiting-approval", since };
+  if (tool?.state === "awaiting-user-input")
+    return { type: "awaiting-user-input", since };
+  if (tool?.state === "running" || tool?.state === "pending")
+    return {
+      type: "tool",
+      tool: assistantToolActivity(tool.name),
+      phase: "running",
+      since,
+    };
+  const last = message.blocks.at(-1);
+  if (last?.type === "text") return { type: "generating", since };
+  if (last?.type === "reasoning") return { type: "thinking", since };
+  if (tool?.state === "complete" || tool?.state === "error")
+    return {
+      type: "tool-result",
+      tool: assistantToolActivity(tool.name),
+      outcome: tool.state === "error" ? "failure" : "success",
+      since,
+    };
+  return { type: "thinking", since };
 }
 
 function ExpertMemberAssistantBlocks({
@@ -609,10 +716,17 @@ function ExpertMemberStream({
   const followLatestRef = useRef(true);
   const loadingBeforeRef = useRef(false);
   const [messages, setMessages] = useState<ConversationMessage[]>([]);
+  const [liveMessage, setLiveMessage] =
+    useState<ExpertMemberLiveMessage | null>(null);
+  const liveMessageRef = useRef<ExpertMemberLiveMessage | null>(null);
   const [history, setHistory] = useState<SessionHistoryPage | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [isAtBottom, setIsAtBottom] = useState(true);
+  const [runActivity, setRunActivity] = useState<AssistantRunActivity>(() => ({
+    type: "thinking",
+    since: member.startedAt ?? Date.now(),
+  }));
 
   const scrollToLatest = useCallback((behavior: ScrollBehavior = "smooth") => {
     const element = scrollRef.current;
@@ -629,9 +743,20 @@ function ExpertMemberStream({
         member.memberId,
         {},
       );
+      const historyMessages = messagesFromHistoryPage(page);
       setMessages((current) =>
-        mergeMessages(current, messagesFromHistoryPage(page)),
+        mergeMessages(current, historyMessages),
       );
+      const currentLive = liveMessageRef.current;
+      if (
+        currentLive &&
+        historyMessages.some((message) =>
+          expertMemberMessagesCorrelate(message, currentLive.message),
+        )
+      ) {
+        liveMessageRef.current = null;
+        setLiveMessage(null);
+      }
       setHistory(page);
       setError(null);
     } catch (cause) {
@@ -645,6 +770,8 @@ function ExpertMemberStream({
     followLatestRef.current = true;
     setIsAtBottom(true);
     setMessages([]);
+    liveMessageRef.current = null;
+    setLiveMessage(null);
     setHistory(null);
     setLoading(true);
     setError(null);
@@ -652,8 +779,216 @@ function ExpertMemberStream({
   }, [loadLatest]);
 
   useEffect(() => {
+    setRunActivity({
+      type: "thinking",
+      since: member.startedAt ?? Date.now(),
+    });
+  }, [member.memberId, member.startedAt]);
+
+  useEffect(() => {
+    const since = member.lastActiveAt || member.startedAt || Date.now();
+    if (member.latestStatus === "awaiting-approval")
+      setRunActivity({ type: "awaiting-approval", since });
+    else if (member.latestStatus === "awaiting-user-input")
+      setRunActivity({ type: "awaiting-user-input", since });
+    else if (member.phase === "tool" && member.activeToolName)
+      setRunActivity({
+        type: "tool",
+        tool: assistantToolActivity(member.activeToolName),
+        phase: "running",
+        since,
+      });
+  }, [
+    member.activeToolName,
+    member.lastActiveAt,
+    member.latestStatus,
+    member.phase,
+    member.startedAt,
+  ]);
+
+  useEffect(() => {
+    let mounted = true;
+    const mergeLive = (incoming: ExpertMemberLiveMessage) => {
+      if (!mounted || incoming.memberId !== member.memberId) return;
+      const current = liveMessageRef.current;
+      if (
+        current?.taskId === incoming.taskId &&
+        incoming.revision <= current.revision
+      )
+        return;
+      setRunActivity(
+        expertMemberActivityFromMessage(incoming.message, Date.now()),
+      );
+      liveMessageRef.current = incoming;
+      setLiveMessage(incoming);
+    };
+    const unsubscribe = client.subscribe((envelope) => {
+      if (envelope.sessionId !== sessionId) return;
+      const payload = envelope.event;
+      if (
+        payload.type === "expert-member.message.started" &&
+        payload.memberId === member.memberId
+      ) {
+        mergeLive({
+          memberId: payload.memberId,
+          taskId: payload.taskId,
+          message: payload.message,
+          revision: payload.revision,
+        });
+        return;
+      }
+      if (
+        (payload.type === "expert-member.message.text.delta" ||
+          payload.type === "expert-member.message.reasoning.delta") &&
+        payload.memberId === member.memberId
+      ) {
+        const current = liveMessageRef.current;
+        if (
+          current?.taskId === payload.taskId &&
+          payload.revision <= current.revision
+        )
+          return;
+        setRunActivity({
+          type:
+            payload.type === "expert-member.message.text.delta"
+              ? "generating"
+              : "thinking",
+          since: envelope.timestamp,
+        });
+        const message = appendExpertMemberMessageDelta(
+            current?.taskId === payload.taskId
+              ? current.message
+              : {
+                  id: payload.messageId,
+                  role: "assistant",
+                  status: "streaming",
+                  blocks: [],
+                  model: null,
+                  timestamp: envelope.timestamp,
+                },
+            payload.messageId,
+            payload.type === "expert-member.message.text.delta"
+              ? "text"
+              : "reasoning",
+            payload.delta,
+          );
+        const next = {
+          memberId: payload.memberId,
+          taskId: payload.taskId,
+          message,
+          revision: payload.revision,
+        };
+        liveMessageRef.current = next;
+        setLiveMessage(next);
+        return;
+      }
+      if (
+        payload.type === "expert-member.message.completed" &&
+        payload.memberId === member.memberId
+      ) {
+        setRunActivity(
+          expertMemberActivityFromMessage(
+            payload.message,
+            envelope.timestamp,
+          ),
+        );
+        const completed = {
+          memberId: payload.memberId,
+          taskId: payload.taskId,
+          message: payload.message,
+          revision: payload.revision,
+        };
+        liveMessageRef.current = completed;
+        setLiveMessage(completed);
+        void loadLatest();
+        return;
+      }
+      if (
+        (payload.type === "expert-member.tool.started" ||
+          payload.type === "expert-member.tool.updated" ||
+          payload.type === "expert-member.tool.completed" ||
+          payload.type === "expert-member.approval.requested" ||
+          payload.type === "expert-member.approval.resolved") &&
+        payload.memberId === member.memberId
+      ) {
+        if (payload.type === "expert-member.tool.started")
+          setRunActivity({
+            type: "tool",
+            tool: assistantToolActivity(payload.name),
+            phase: "running",
+            since: envelope.timestamp,
+          });
+        else if (payload.type === "expert-member.tool.updated")
+          setRunActivity((current) => ({
+            type: "tool",
+            tool:
+              current.type === "tool" || current.type === "tool-result"
+                ? current.tool
+                : "tool",
+            phase: "running",
+            since: envelope.timestamp,
+          }));
+        else if (payload.type === "expert-member.tool.completed")
+          setRunActivity((current) => ({
+            type: "tool-result",
+            tool:
+              current.type === "tool" || current.type === "tool-result"
+                ? current.tool
+                : "tool",
+            outcome: payload.isError ? "failure" : "success",
+            since: envelope.timestamp,
+          }));
+        else if (payload.type === "expert-member.approval.requested")
+          setRunActivity({
+            type: "awaiting-approval",
+            since: envelope.timestamp,
+          });
+        else
+          setRunActivity({ type: "thinking", since: envelope.timestamp });
+        setMessages((current) =>
+          applyExpertMemberActivity(current, payload),
+        );
+        setLiveMessage((current) => {
+          if (!current || current.taskId !== payload.taskId) return current;
+          const [message] = applyExpertMemberActivity(
+            [current.message],
+            payload,
+          );
+          const next = message ? { ...current, message } : current;
+          liveMessageRef.current = next;
+          return next;
+        });
+      }
+    });
+    void client
+      .getExpertMemberLiveState(sessionId, member.memberId)
+      .then((snapshot) => {
+        if (snapshot) mergeLive(snapshot);
+      })
+      .catch((cause) => {
+        if (mounted)
+          setError(cause instanceof Error ? cause.message : String(cause));
+      });
+    return () => {
+      mounted = false;
+      unsubscribe();
+    };
+  }, [client, loadLatest, member.memberId, sessionId]);
+
+  const renderedMessages = useMemo(
+    () =>
+      liveMessage &&
+      !messages.some((message) =>
+        expertMemberMessagesCorrelate(message, liveMessage.message),
+      )
+        ? [...messages, liveMessage.message]
+        : messages,
+    [liveMessage, messages],
+  );
+
+  useEffect(() => {
     if (followLatestRef.current) scrollToLatest("auto");
-  }, [messages.length, scrollToLatest]);
+  }, [renderedMessages, scrollToLatest]);
 
   useEffect(() => {
     if (!active) {
@@ -774,12 +1109,12 @@ function ExpertMemberStream({
                 </button>
               </div>
             ) : null}
-            {!loading && !error && messages.length === 0 ? (
+            {!loading && !error && renderedMessages.length === 0 ? (
               <p className="py-10 text-center text-[12px] text-[#8d8d85]">
                 {t("threadNoSavedEmployeeMessages")}
               </p>
             ) : null}
-            {messages.map((message) =>
+            {renderedMessages.map((message) =>
               message.role === "user" ? (
                 <div className="flex justify-end" key={message.id}>
                   <div className="flex max-w-[88%] flex-col items-end sm:max-w-[560px]">
@@ -810,16 +1145,18 @@ function ExpertMemberStream({
                   </div>
                 </div>
               ) : (
-                <div className="flex items-start gap-3" key={message.id}>
-                  <ExpertPortrait
-                    className="mt-0.5 h-7 w-7 shrink-0"
-                    name={member.name}
-                    portrait={member.portrait}
-                  />
-                  <div className="min-w-0 flex-1">
-                    <p className="mb-1.5 text-[10px] font-semibold text-[#66675f] dark:text-muted-foreground">
+                <div key={message.id}>
+                  <div className="flex h-7 items-center gap-3">
+                    <ExpertPortrait
+                      className="h-7 w-7 shrink-0"
+                      name={member.name}
+                      portrait={member.portrait}
+                    />
+                    <p className="text-[10px] font-semibold text-[#66675f] dark:text-muted-foreground">
                       {member.name}
                     </p>
+                  </div>
+                  <div className="mt-2 min-w-0">
                     <ExpertMemberAssistantBlocks
                       message={message}
                       onEnableAutoApprove={onEnableAutoApprove}
@@ -832,10 +1169,10 @@ function ExpertMemberStream({
               ),
             )}
             {active ? (
-              <div className="flex items-center gap-2 text-[12px] text-[#78835e]">
-                <LoaderCircle className="h-4 w-4 animate-spin" />
-                {activityLabel}{elapsed ? ` · ${elapsed}` : ""}
-              </div>
+              <AssistantRunStatus
+                activity={runActivity}
+                detail={elapsed || undefined}
+              />
             ) : null}
           </section>
         </ThreadContentFrame>
@@ -994,7 +1331,9 @@ function ExpertCollaborationBar({
                       <LoaderCircle className="h-3 w-3 animate-spin text-[#7a8f4f] dark:text-[#c7df7c]" />
                     ) : member.latestStatus === "completed" ? (
                       <Check className="h-3 w-3 text-[#6d8d3b]" />
-                    ) : member.latestStatus === "failed" ||
+                    ) : member.latestStatus === "interrupted" ||
+                      member.latestStatus === "failed" ||
+                      member.latestStatus === "blocked" ||
                       member.latestStatus === "skipped" ? (
                       <CircleAlert className="h-3 w-3 text-destructive" />
                     ) : (
@@ -1148,8 +1487,10 @@ function terminalizeToolDetails(details: unknown, reason: string): unknown {
       const task = value as Record<string, unknown>;
       if (
         task.status === "completed" ||
+        task.status === "interrupted" ||
         task.status === "failed" ||
-        task.status === "cancelled"
+        task.status === "cancelled" ||
+        task.status === "blocked"
       )
         return task;
       return {
@@ -1577,16 +1918,13 @@ function ThinkingBlock({ text }: { text: string }) {
 }
 
 function PlanModePanel({
-  snapshot,
   mode,
+  state,
 }: {
-  snapshot: SessionSnapshot;
   mode: "planning" | "executing";
+  state?: Record<string, unknown>;
 }) {
   const { t } = usePreferences();
-  const state = snapshot.extensions.find(
-    (item) => item.extensionId === "wordless.plan-mode",
-  )?.state;
   const plan = Array.isArray(state?.plan)
     ? state.plan.flatMap((item) => {
         const value = asObject(item);
@@ -2077,7 +2415,13 @@ function AssistantIdentityHeader({
   );
 }
 
-function AssistantRunStatus({ activity }: { activity: AssistantRunActivity }) {
+function AssistantRunStatus({
+  activity,
+  detail,
+}: {
+  activity: AssistantRunActivity;
+  detail?: string;
+}) {
   const { t } = usePreferences();
   const [now, setNow] = useState(() => Date.now());
 
@@ -2153,6 +2497,7 @@ function AssistantRunStatus({ activity }: { activity: AssistantRunActivity }) {
         }
       >
         {label}
+        {detail ? <span className="text-[#92928b]"> · {detail}</span> : null}
       </p>
     </div>
   );
@@ -2744,6 +3089,166 @@ function mergeMessages(
   );
 }
 
+type ExpertMemberActivityEvent = Extract<
+  RuntimeEventEnvelope["event"],
+  {
+    type:
+      | "expert-member.tool.started"
+      | "expert-member.tool.updated"
+      | "expert-member.tool.completed"
+      | "expert-member.approval.requested"
+      | "expert-member.approval.resolved";
+  }
+>;
+
+function expertMemberMessagesCorrelate(
+  canonical: ConversationMessage,
+  live: ConversationMessage,
+): boolean {
+  if (canonical.id === live.id) return true;
+  if (canonical.role !== live.role) return false;
+  const canonicalCalls = new Set(
+    canonical.blocks.flatMap((block) =>
+      block.type === "tool" ? [block.callId] : [],
+    ),
+  );
+  const liveCalls = live.blocks.flatMap((block) =>
+    block.type === "tool" ? [block.callId] : [],
+  );
+  if (
+    liveCalls.length > 0 &&
+    liveCalls.every((callId) => canonicalCalls.has(callId))
+  )
+    return true;
+  if (Math.abs(canonical.timestamp - live.timestamp) > 30_000) return false;
+  const visibleContent = (message: ConversationMessage) => {
+    const text = message.blocks
+      .flatMap((block) => (block.type === "text" ? [block.text] : []))
+      .join("\n");
+    if (text.length > 0) return text;
+    return message.blocks
+      .flatMap((block) =>
+        block.type === "reasoning" ? [block.text] : [],
+      )
+      .join("\n");
+  };
+  const liveContent = visibleContent(live);
+  return liveContent.length > 0 && visibleContent(canonical) === liveContent;
+}
+
+function applyExpertMemberActivity(
+  messages: ConversationMessage[],
+  event: ExpertMemberActivityEvent,
+): ConversationMessage[] {
+  let changed = false;
+  const next = messages.map((message) => {
+    if (
+      message.id !== event.messageId &&
+      !message.blocks.some(
+        (block) =>
+          block.type === "tool" &&
+          (event.type === "expert-member.approval.requested"
+            ? block.callId === event.approval.callId
+            : event.type === "expert-member.approval.resolved"
+              ? block.approval?.approvalId === event.resolution.approvalId
+              : block.callId === event.callId),
+      )
+    )
+      return message;
+    const callId =
+      event.type === "expert-member.approval.requested"
+        ? event.approval.callId
+        : event.type === "expert-member.approval.resolved"
+          ? undefined
+          : event.callId;
+    let found = false;
+    let created = false;
+    const blocks = message.blocks.map((block) => {
+      if (block.type !== "tool") return block;
+      if (
+        event.type === "expert-member.approval.resolved"
+          ? block.approval?.approvalId !== event.resolution.approvalId
+          : block.callId !== callId
+      )
+        return block;
+      found = true;
+      changed = true;
+      if (event.type === "expert-member.tool.started")
+        return {
+          ...block,
+          name: event.name,
+          input: event.input,
+          state: "running" as const,
+        };
+      if (event.type === "expert-member.tool.updated")
+        return {
+          ...block,
+          output: event.output,
+          details: event.details,
+          state: "running" as const,
+        };
+      if (event.type === "expert-member.tool.completed")
+        return {
+          ...block,
+          output: event.output,
+          details: event.details,
+          state: event.isError ? ("error" as const) : ("complete" as const),
+        };
+      if (event.type === "expert-member.approval.requested")
+        return {
+          ...block,
+          state: "awaiting-approval" as const,
+          approval: { ...event.approval, status: "required" as const },
+        };
+      return {
+        ...block,
+        state: event.resolution.approved
+          ? ("running" as const)
+          : ("error" as const),
+        approval: {
+          ...block.approval!,
+          status: event.resolution.approved
+            ? ("approved" as const)
+            : ("rejected" as const),
+          feedback: event.resolution.feedback,
+        },
+      };
+    });
+    if (
+      !found &&
+      event.type === "expert-member.tool.started" &&
+      message.id === event.messageId
+    ) {
+      changed = true;
+      created = true;
+      blocks.push({
+        type: "tool",
+        callId: event.callId,
+        name: event.name,
+        input: event.input,
+        state: "running",
+      });
+    }
+    return found || created ? { ...message, blocks } : message;
+  });
+  return changed ? next : messages;
+}
+
+function appendExpertMemberMessageDelta(
+  message: ConversationMessage,
+  messageId: string,
+  type: "text" | "reasoning",
+  delta: string,
+): ConversationMessage {
+  if (message.id !== messageId) return message;
+  const blocks = [...message.blocks];
+  const last = blocks.at(-1);
+  if (last?.type === type)
+    blocks[blocks.length - 1] = { ...last, text: last.text + delta };
+  else blocks.push({ type, text: delta });
+  return { ...message, blocks };
+}
+
 function mergeCompactions(
   current: ContextCompactionRecord[],
   incoming: ContextCompactionRecord[],
@@ -2865,7 +3370,6 @@ export function ThreadView({
   const [selectedExpertMemberId, setSelectedExpertMemberId] = useState<
     string | null
   >(null);
-  const followLatestRef = useRef(true);
   const virtuosoRef = useRef<VirtuosoHandle>(null);
   const hydratedRef = useRef(false);
   const pendingEventsRef = useRef<RuntimeEventEnvelope[]>([]);
@@ -2875,6 +3379,7 @@ export function ThreadView({
   const loadingBeforeRef = useRef(false);
   const loadingAfterRef = useRef(false);
   const navigationSequenceRef = useRef(0);
+  const firstItemIndexRef = useRef(firstItemIndex);
   const searchHighlightCleanupRef = useRef<(() => void) | null>(null);
   const searchHighlightTimerRef = useRef<number | null>(null);
   const updateComposerDraft = useCallback(
@@ -2885,7 +3390,6 @@ export function ThreadView({
 
   const scrollToBottom = useCallback(
     (behavior: "auto" | "smooth" = "smooth") => {
-      followLatestRef.current = true;
       setIsAtBottom(true);
       const count = timelineRef.current.length;
       if (count > 0)
@@ -2904,9 +3408,29 @@ export function ThreadView({
   );
   const timelineRef = useRef<ThreadTimelineItem[]>([]);
   timelineRef.current = timeline;
+  firstItemIndexRef.current = firstItemIndex;
+
+  const handleAtBottomStateChange = useCallback((atBottom: boolean) => {
+    setIsAtBottom((current) => (current === atBottom ? current : atBottom));
+  }, []);
+
+  const handleVisibleRangeChange = useCallback((range: ListRange) => {
+    const middleReportedIndex =
+      range.startIndex + Math.floor((range.endIndex - range.startIndex) / 2);
+    const item =
+      timelineRef.current[
+        dataIndexFromReportedIndex(
+          middleReportedIndex,
+          firstItemIndexRef.current,
+        )
+      ];
+    if (item?.type === "messages" || item?.type === "assistant-run")
+      setActiveTurnId((current) =>
+        current === item.turnId ? current : item.turnId,
+      );
+  }, []);
 
   useEffect(() => {
-    followLatestRef.current = true;
     setIsAtBottom(true);
     setActiveTurnId(null);
     setFirstItemIndex(100_000);
@@ -2978,6 +3502,7 @@ export function ThreadView({
         );
     };
     const applyRuntimeEvent = (event: RuntimeEventEnvelope) => {
+      if (isExpertMemberMessageEvent(event)) return;
       if (!isNewerRunEvent(event, lastSequenceRef.current)) return;
       lastSequenceRef.current = runEventCursor(event);
       if (
@@ -3025,6 +3550,7 @@ export function ThreadView({
     };
     const unsubscribe = client.subscribe((event) => {
       if (event.sessionId !== sessionId) return;
+      if (isExpertMemberMessageEvent(event)) return;
       if (!hydratedRef.current) pendingEventsRef.current.push(event);
       else applyRuntimeEvent(event);
     });
@@ -3107,7 +3633,6 @@ export function ThreadView({
         `turn:${item.messages[0]!.id}` === pendingNavigation.turnId,
     );
     if (index === -1) return;
-    followLatestRef.current = false;
     setIsAtBottom(false);
     setActiveTurnId(pendingNavigation.turnId);
     virtuosoRef.current?.scrollToIndex({
@@ -3186,15 +3711,6 @@ export function ThreadView({
       searchHighlightCleanupRef.current?.();
     };
   }, []);
-
-  useEffect(() => {
-    if (!followLatestRef.current || timeline.length === 0) return;
-    virtuosoRef.current?.scrollToIndex({
-      index: timeline.length - 1,
-      align: "end",
-      behavior: "auto",
-    });
-  }, [timeline.length, snapshot?.messages, virtualListVersion]);
 
   const currentModel = snapshot?.session.model ?? null;
   const currentEnabledModel = appSnapshot?.models.find(
@@ -3554,7 +4070,7 @@ export function ThreadView({
     ]);
   };
 
-  const compactContext = async () => {
+  const compactContext = useCallback(async () => {
     setSnapshot((current) =>
       current
         ? {
@@ -3579,7 +4095,7 @@ export function ThreadView({
           : current,
       );
     }
-  };
+  }, [client, sessionId]);
 
   const loadOlder = useCallback(async () => {
     if (
@@ -3589,7 +4105,6 @@ export function ThreadView({
     )
       return;
     loadingBeforeRef.current = true;
-    followLatestRef.current = false;
     setIsAtBottom(false);
     try {
       const page = await client.getSessionHistoryPage(sessionId, {
@@ -3680,7 +4195,6 @@ export function ThreadView({
         (item) =>
           item.type === "messages" && `turn:${item.messages[0]!.id}` === turnId,
       );
-      followLatestRef.current = false;
       setIsAtBottom(false);
       if (searchHighlightTimerRef.current !== null)
         window.clearTimeout(searchHighlightTimerRef.current);
@@ -3739,6 +4253,33 @@ export function ThreadView({
     sessionId,
   ]);
 
+  const threadVirtuosoContext = useMemo<ThreadVirtuosoContext>(
+    () => ({
+      compactionError: snapshot?.compactionError,
+      compactionTrigger: snapshot?.compactionTrigger,
+      densityRail: showDensityRail,
+      isCompacting: snapshot?.isCompacting ?? false,
+      onRetryCompaction: compactContext,
+      planMode:
+        planExtensionEnabled && planMode !== "off" ? planMode : "off",
+      planState: asObject(
+        snapshot?.extensions.find(
+          (item) => item.extensionId === "wordless.plan-mode",
+        )?.state,
+      ),
+    }),
+    [
+      compactContext,
+      planExtensionEnabled,
+      planMode,
+      showDensityRail,
+      snapshot?.compactionError,
+      snapshot?.compactionTrigger,
+      snapshot?.extensions,
+      snapshot?.isCompacting,
+    ],
+  );
+
   if (!snapshot || snapshot.session.id !== sessionId || !appSnapshot || !entry)
     return (
       <div className="grid min-h-0 flex-1 place-items-center text-[13px] text-muted-foreground">
@@ -3747,7 +4288,6 @@ export function ThreadView({
     );
 
   const composerUserMessageHistory = userMessageHistory(snapshot.messages);
-
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <div className="relative min-h-0 flex-1">
@@ -3772,55 +4312,17 @@ export function ThreadView({
           <>
             <Virtuoso
               key={`${sessionId}:${virtualListVersion}`}
-              atBottomStateChange={(atBottom) => {
-                followLatestRef.current = atBottom;
-                setIsAtBottom(atBottom);
-              }}
+              atBottomStateChange={handleAtBottomStateChange}
+              atBottomThreshold={24}
               className="h-full"
-              components={{
-                Header: () =>
-                  planExtensionEnabled && planMode !== "off" ? (
-                    <ThreadContentFrame
-                      className="pb-7 pt-6"
-                      densityRail={showDensityRail}
-                    >
-                      <PlanModePanel mode={planMode} snapshot={snapshot} />
-                    </ThreadContentFrame>
-                  ) : (
-                    <div className="h-6" />
-                  ),
-                Footer: () => (
-                  <ThreadContentFrame
-                    className="pb-10"
-                    densityRail={showDensityRail}
-                  >
-                    {snapshot.isCompacting ? (
-                      <ContextCompactionPending
-                        trigger={snapshot.compactionTrigger}
-                      />
-                    ) : null}
-                    {snapshot.compactionError ? (
-                      <ContextCompactionFailure
-                        message={snapshot.compactionError}
-                        onRetry={() => void compactContext()}
-                        trigger={snapshot.compactionTrigger}
-                      />
-                    ) : null}
-                  </ThreadContentFrame>
-                ),
-              }}
-              computeItemKey={(_index, item) =>
-                item.type === "compaction"
-                  ? item.compaction.id
-                  : item.type === "assistant-run" ||
-                      item.messages[0]?.role === "assistant"
-                    ? `assistant:${item.turnId}`
-                    : item.messages[0]!.id
-              }
+              components={THREAD_VIRTUOSO_COMPONENTS}
+              computeItemKey={threadTimelineItemKey}
+              context={threadVirtuosoContext}
               data={timeline}
-              endReached={() => void loadNewer()}
+              endReached={loadNewer}
               firstItemIndex={firstItemIndex}
-              followOutput={isAtBottom ? "auto" : false}
+              followOutput="auto"
+              initialTopMostItemIndex={{ index: "LAST", align: "end" }}
               itemContent={(index, item) => {
                 const dataIndex = dataIndexFromReportedIndex(
                   index,
@@ -3881,22 +4383,9 @@ export function ThreadView({
                   </ThreadContentFrame>
                 );
               }}
-              rangeChanged={(range) => {
-                const middleReportedIndex =
-                  range.startIndex +
-                  Math.floor((range.endIndex - range.startIndex) / 2);
-                const item =
-                  timeline[
-                    dataIndexFromReportedIndex(
-                      middleReportedIndex,
-                      firstItemIndex,
-                    )
-                  ];
-                if (item?.type === "messages" || item?.type === "assistant-run")
-                  setActiveTurnId(item.turnId);
-              }}
+              rangeChanged={handleVisibleRangeChange}
               ref={virtuosoRef}
-              startReached={() => void loadOlder()}
+              startReached={loadOlder}
             />
             <ConversationDensityRail
               activeTurnId={activeTurnId}

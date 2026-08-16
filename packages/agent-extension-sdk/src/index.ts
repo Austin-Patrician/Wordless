@@ -9,7 +9,9 @@ import type {
   ConversationUsage,
   ExpertExecutionProfile,
   ExpertPortrait,
+  ModelReference,
   SessionRecord,
+  ThinkingLevel,
   ToolApprovalMode,
 } from "@wordless/domain";
 
@@ -158,8 +160,10 @@ export type SubagentTaskStatus =
   | "awaiting-approval"
   | "awaiting-user-input"
   | "completed"
+  | "interrupted"
   | "failed"
   | "cancelled"
+  | "blocked"
   | "skipped";
 
 export type SubagentTaskPhase =
@@ -183,13 +187,19 @@ export interface SubagentTaskProgress {
     state: "running" | "complete" | "error";
   };
   usage?: ConversationUsage;
+  modelResolution?: {
+    requested: ModelReference | null;
+    resolved: ModelReference;
+    thinkingLevel: ThinkingLevel;
+    fallbackReason?: "unavailable" | "tools-unsupported";
+  };
   approval?: unknown;
   userRequest?: unknown;
 }
 
 export interface SubagentResult {
   taskId: string;
-  status: "completed" | "failed" | "cancelled";
+  status: "completed" | "interrupted" | "failed" | "cancelled";
   text: string;
   usage?: ConversationUsage;
   files?: string[];

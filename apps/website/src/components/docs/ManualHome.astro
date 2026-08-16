@@ -3,6 +3,7 @@ import {
   ArrowUpRight,
   Blocks,
   BookOpenCheck,
+  CalendarClock,
   ChartNoAxesCombined,
   Code2,
   Download,
@@ -11,6 +12,7 @@ import {
   Presentation,
   ShieldCheck,
   TableProperties,
+  UsersRound,
   Wrench,
 } from 'lucide-react';
 
@@ -59,6 +61,8 @@ const workflows = english ? [
   { title: 'Spreadsheets', description: 'Select exact ranges, apply formulas or charts, and review changes.', href: `${prefix}/workflows/spreadsheet/`, icon: TableProperties, code: 'XLSX' },
   { title: 'Data analysis', description: 'Validate local data, delegate research, and trace claims to evidence.', href: `${prefix}/workflows/data-analysis/`, icon: ChartNoAxesCombined, code: 'DATA' },
   { title: 'Coding', description: 'Inspect a repository, apply a focused patch, and verify with tests.', href: `${prefix}/workflows/code/`, icon: Code2, code: 'CODE' },
+  { title: 'Automation', description: 'Schedule bounded General Work tasks and inspect every fresh run.', href: `${prefix}/automation/`, icon: CalendarClock, code: 'AUTO' },
+  { title: 'Digital employees', description: 'Summon a stable role or delegate separable work to a team.', href: `${prefix}/digital-employees/`, icon: UsersRound, code: 'TEAM' },
   { title: 'Skills & MCP', description: 'Add reusable instructions and explicitly enabled external tools.', href: `${prefix}/skills-mcp/`, icon: Blocks, code: 'EXTEND' },
 ] : [
   { title: 'General Work', description: '研究、整理、写作并验证日常工作交付物。', href: `${prefix}/workflows/general/`, icon: BookOpenCheck, code: 'GENERAL' },
@@ -66,6 +70,8 @@ const workflows = english ? [
   { title: '电子表格', description: '选择精确范围，应用公式或图表，并核对实际变更。', href: `${prefix}/workflows/spreadsheet/`, icon: TableProperties, code: 'XLSX' },
   { title: '数据分析', description: '验证本地数据、委派深度研究，并将结论追溯到证据。', href: `${prefix}/workflows/data-analysis/`, icon: ChartNoAxesCombined, code: 'DATA' },
   { title: '代码工作流', description: '检查仓库、实施聚焦修改，并通过测试验证结果。', href: `${prefix}/workflows/code/`, icon: Code2, code: 'CODE' },
+  { title: '自动化', description: '按计划运行边界明确的 General Work 任务，并检查每次新运行。', href: `${prefix}/automation/`, icon: CalendarClock, code: 'AUTO' },
+  { title: '数字员工', description: '召唤稳定角色，或让团队分工处理可拆分的任务。', href: `${prefix}/digital-employees/`, icon: UsersRound, code: 'TEAM' },
   { title: 'Skills & MCP', description: '添加可复用指令与显式启用的外部工具。', href: `${prefix}/skills-mcp/`, icon: Blocks, code: 'EXTEND' },
 ];
 

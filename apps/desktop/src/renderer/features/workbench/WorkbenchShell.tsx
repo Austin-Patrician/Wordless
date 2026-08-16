@@ -1,5 +1,5 @@
 import { Button } from "@wordless/ui-kit";
-import { AlertTriangle, ChevronLeft, LoaderCircle, Search, Settings, Workflow } from "lucide-react";
+import { AlertTriangle, ChevronLeft, LoaderCircle, PackageOpen, Search, Settings } from "lucide-react";
 import { useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
 import { SessionContextPanel } from "../artifacts/SessionContextPanel";
 import { SettingsDialog, type SettingsPage } from "../settings/SettingsDialog";
@@ -50,8 +50,10 @@ export function WorkbenchShell() {
   const [messageNavigationTarget, setMessageNavigationTarget] = useState<ThreadMessageNavigationTarget | null>(null);
   const [pendingInitialTurn, setPendingInitialTurn] = useState<{ sessionId: string; turn: PendingThreadTurn } | null>(null);
   const [runningSessionIds, setRunningSessionIds] = useState<ReadonlySet<string>>(() => new Set());
+  const [unreadArtifactSessionIds, setUnreadArtifactSessionIds] = useState<ReadonlySet<string>>(() => new Set());
   const messageNavigationSequenceRef = useRef(0);
   const autoOpenedAnalysisSessionsRef = useRef(new Set<string>());
+  const autoOpenedArtifactSessionsRef = useRef(new Set<string>());
   const sessionDraftsRef = useRef(new Map<string, InlineSkillComposerValue>());
   const deletedSessionIdsRef = useRef(new Set<string>());
   const sessionRunEventRevisionsRef = useRef(new Map<string, number>());
@@ -81,6 +83,57 @@ export function WorkbenchShell() {
       updateSessionRunningState(event.sessionId, type === "run.started");
     });
   }, [client, updateSessionRunningState]);
+
+  useEffect(() => {
+    if (!client) return;
+    return client.subscribe((event) => {
+      if (
+        !event.sessionId ||
+        event.event.type !== "session.artifacts.changed" ||
+        event.event.count === 0
+      )
+        return;
+      const sessionId = event.sessionId;
+      if (
+        sessionId === selectedSessionId &&
+        selectedWorkbenchId === "conversation" &&
+        !autoOpenedArtifactSessionsRef.current.has(sessionId)
+      ) {
+        autoOpenedArtifactSessionsRef.current.add(sessionId);
+        setContextView("artifacts");
+        setRightOpen(true);
+        setUnreadArtifactSessionIds((current) => {
+          if (!current.has(sessionId)) return current;
+          const next = new Set(current);
+          next.delete(sessionId);
+          return next;
+        });
+        return;
+      }
+      setUnreadArtifactSessionIds((current) => {
+        if (current.has(sessionId)) return current;
+        return new Set(current).add(sessionId);
+      });
+    });
+  }, [client, selectedSessionId, selectedWorkbenchId]);
+
+  useEffect(() => {
+    if (
+      !selectedSessionId ||
+      selectedWorkbenchId !== "conversation" ||
+      !unreadArtifactSessionIds.has(selectedSessionId) ||
+      autoOpenedArtifactSessionsRef.current.has(selectedSessionId)
+    )
+      return;
+    autoOpenedArtifactSessionsRef.current.add(selectedSessionId);
+    setContextView("artifacts");
+    setRightOpen(true);
+    setUnreadArtifactSessionIds((current) => {
+      const next = new Set(current);
+      next.delete(selectedSessionId);
+      return next;
+    });
+  }, [selectedSessionId, selectedWorkbenchId, unreadArtifactSessionIds]);
 
   useEffect(() => {
     if (!client || !snapshot) return;
@@ -257,9 +310,9 @@ export function WorkbenchShell() {
         setRightFullscreen(false);
         setRightOpen(false);
       }}
-      contentClassName={selectedWorkbenchId === "analysis" ? "overflow-hidden" : undefined}
-      showFooter={selectedWorkbenchId !== "analysis"}
-      showMenu={selectedWorkbenchId !== "analysis"}
+      contentClassName={selectedWorkbenchId === "analysis" || selectedWorkbenchId === "conversation" ? "overflow-hidden" : undefined}
+      showFooter={selectedWorkbenchId !== "analysis" && selectedWorkbenchId !== "conversation"}
+      showMenu={selectedWorkbenchId !== "analysis" && selectedWorkbenchId !== "conversation"}
       tabs={contextPanelDefinition.tabs}
       renderContent={(view) => activeSession
         ? <ContextPanelContent onArtifactSelection={(selection) => { setPendingArtifactSelection(selection); setRightOpen(true); }} onAttachFile={addWorkspaceReference} onClearResearchSelection={() => setResearchTaskSelection(null)} onViewChange={setContextView} researchSelection={researchTaskSelection} sessionId={activeSession.id} view={view} />
@@ -287,7 +340,7 @@ export function WorkbenchShell() {
             </div>
             <div className="flex items-center gap-1.5">
               <Button aria-label={t("messageSearch")} onClick={() => setConversationSearchOpen(true)} size="icon" type="button" variant="ghost"><Search className="h-4 w-4" /></Button>
-              <Button aria-label={t("generatedItems")} onClick={() => setRightOpen((value) => !value)} size="icon" type="button" variant="ghost"><Workflow className="h-4 w-4" /></Button>
+              <span className="relative"><Button aria-label={t("artifacts")} onClick={() => { if (activeSession) setUnreadArtifactSessionIds((current) => { if (!current.has(activeSession.id)) return current; const next = new Set(current); next.delete(activeSession.id); return next; }); setRightOpen((value) => !value); }} size="icon" type="button" variant="ghost"><PackageOpen className="h-4 w-4" /></Button>{activeSession && unreadArtifactSessionIds.has(activeSession.id) && !rightOpen ? <span aria-hidden className="pointer-events-none absolute right-1.5 top-1.5 h-1.5 w-1.5 rounded-full bg-[#d56e4b] ring-2 ring-[var(--wordless-shell-workspace)]" /> : null}</span>
               <Button aria-label={t("settings")} onClick={() => openSettings()} size="icon" type="button" variant="ghost"><Settings className="h-4 w-4" /></Button>
             </div>
           </header> : null}

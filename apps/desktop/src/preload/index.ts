@@ -78,6 +78,11 @@ const wordlessBridge: DesktopBridge = {
       memberId,
       ...request,
     }),
+  getExpertMemberLiveState: (sessionId, memberId) =>
+    ipcRenderer.invoke("wordless:session:expert-member-live-state", {
+      sessionId,
+      memberId,
+    }),
   getExpertMemberToolOutput: (sessionId, memberId, callId) =>
     ipcRenderer.invoke("wordless:session:expert-member-tool-output", {
       sessionId,
@@ -163,6 +168,28 @@ const wordlessBridge: DesktopBridge = {
     ipcRenderer.invoke("wordless:session:compact", { sessionId }),
   getSessionContext: (sessionId) =>
     ipcRenderer.invoke("wordless:session:context", sessionId),
+  getSessionArtifacts: (sessionId) =>
+    ipcRenderer.invoke("wordless:session:artifacts", sessionId),
+  readSessionArtifact: (sessionId, artifactId) =>
+    ipcRenderer.invoke("wordless:session:artifact:read", {
+      sessionId,
+      artifactId,
+    }),
+  openSessionArtifact: (sessionId, artifactId) =>
+    ipcRenderer.invoke("wordless:session:artifact:open", {
+      sessionId,
+      artifactId,
+    }),
+  revealSessionArtifact: (sessionId, artifactId) =>
+    ipcRenderer.invoke("wordless:session:artifact:reveal", {
+      sessionId,
+      artifactId,
+    }),
+  saveSessionArtifactAs: (sessionId, artifactId) =>
+    ipcRenderer.invoke("wordless:session:artifact:save-as", {
+      sessionId,
+      artifactId,
+    }),
   getOfficeEngineHealth: () =>
     ipcRenderer.invoke("wordless:presentation:health"),
   listPresentationTemplates: () =>

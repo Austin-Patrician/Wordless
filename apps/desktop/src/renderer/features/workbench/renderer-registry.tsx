@@ -558,8 +558,10 @@ type SubagentTaskDetails = {
     | "awaiting-approval"
     | "awaiting-user-input"
     | "completed"
+    | "interrupted"
     | "failed"
     | "cancelled"
+    | "blocked"
     | "skipped";
   phase?: "queued" | "thinking" | "tool" | "approval" | "user-input" | "finished";
   revision?: number;
@@ -580,6 +582,12 @@ type SubagentTaskDetails = {
   };
   approval?: unknown;
   userRequest?: unknown;
+  modelResolution?: {
+    requested: { connectionId: string; modelId: string } | null;
+    resolved: { connectionId: string; modelId: string };
+    thinkingLevel: string;
+    fallbackReason?: "unavailable" | "tools-unsupported";
+  };
 };
 
 type SubagentDetails = {
@@ -614,13 +622,18 @@ function subagentDetails(value: unknown): SubagentDetails | undefined {
       task.status !== "awaiting-approval" &&
       task.status !== "awaiting-user-input" &&
       task.status !== "completed" &&
+      task.status !== "interrupted" &&
       task.status !== "failed" &&
       task.status !== "cancelled" &&
+      task.status !== "blocked" &&
       task.status !== "skipped"
     )
       return [];
     const usage = readRecord(task.usage);
     const tool = readRecord(task.tool);
+    const modelResolution = readRecord(task.modelResolution);
+    const requestedModel = readRecord(modelResolution?.requested);
+    const resolvedModel = readRecord(modelResolution?.resolved);
     const memberPortrait = readRecord(task.memberPortrait);
     const parsedPortrait = parseExpertPortrait(memberPortrait);
     return [
@@ -695,6 +708,34 @@ function subagentDetails(value: unknown): SubagentDetails | undefined {
         ...(task.userRequest !== undefined
           ? { userRequest: task.userRequest }
           : {}),
+        ...(modelResolution &&
+        resolvedModel &&
+        typeof resolvedModel.connectionId === "string" &&
+        typeof resolvedModel.modelId === "string" &&
+        typeof modelResolution.thinkingLevel === "string"
+          ? {
+              modelResolution: {
+                requested:
+                  requestedModel &&
+                  typeof requestedModel.connectionId === "string" &&
+                  typeof requestedModel.modelId === "string"
+                    ? {
+                        connectionId: requestedModel.connectionId,
+                        modelId: requestedModel.modelId,
+                      }
+                    : null,
+                resolved: {
+                  connectionId: resolvedModel.connectionId,
+                  modelId: resolvedModel.modelId,
+                },
+                thinkingLevel: modelResolution.thinkingLevel,
+                ...(modelResolution.fallbackReason === "unavailable" ||
+                modelResolution.fallbackReason === "tools-unsupported"
+                  ? { fallbackReason: modelResolution.fallbackReason }
+                  : {}),
+              },
+            }
+          : {}),
       },
     ];
   });
@@ -759,8 +800,10 @@ function subagentState(task: SubagentTaskDetails) {
   if (task.status === "completed")
     return <Check className="h-3.5 w-3.5 text-[#6c8542] dark:text-[#c3df75]" />;
   if (
+    task.status === "interrupted" ||
     task.status === "failed" ||
     task.status === "cancelled" ||
+    task.status === "blocked" ||
     task.status === "skipped"
   )
     return <CircleAlert className="h-3.5 w-3.5 text-destructive" />;
@@ -784,8 +827,10 @@ function subagentActivityLabel(task: SubagentTaskDetails, t: Translate): string 
   if (task.status === "awaiting-approval") return t("toolAwaitingApproval");
   if (task.status === "awaiting-user-input") return t("toolAwaitingInput");
   if (task.status === "completed") return t("toolCompleted");
+  if (task.status === "interrupted") return t("threadInterrupted");
   if (task.status === "failed") return t("toolFailed");
   if (task.status === "cancelled") return t("threadCancelled");
+  if (task.status === "blocked") return t("threadBlocked");
   if (task.status === "skipped") return t("threadSkipped");
   if (task.phase === "tool" && task.activeToolName)
     return formatMessage(t, "threadUsingTool", { tool: task.activeToolName });
@@ -879,7 +924,10 @@ function SubagentToolActivity({
                 ? "awaiting-approval"
                 : task.status === "awaiting-user-input"
                   ? "awaiting-user-input"
-                  : task.status === "failed" || task.status === "skipped"
+                  : task.status === "interrupted" ||
+                      task.status === "failed" ||
+                      task.status === "blocked" ||
+                      task.status === "skipped"
                     ? "error"
                     : task.status === "completed"
                       ? "complete"
@@ -940,6 +988,16 @@ function SubagentToolActivity({
               {task.error ? (
                 <p className="mt-2 text-[11px] text-destructive">
                   {task.error}
+                </p>
+              ) : null}
+              {task.modelResolution?.fallbackReason ? (
+                <p className="mt-2 flex items-center gap-1.5 text-[10px] text-[#9a6a35] dark:text-[#d6aa72]">
+                  <CircleAlert className="h-3 w-3 shrink-0" />
+                  {formatMessage(t, task.modelResolution.fallbackReason === "tools-unsupported" ? "threadMemberModelToolsFallback" : "threadMemberModelFallback", {
+                    requested:
+                      task.modelResolution.requested?.modelId ?? t("expertsFollowComposer"),
+                    resolved: task.modelResolution.resolved.modelId,
+                  })}
                 </p>
               ) : null}
               {task.usage ? (

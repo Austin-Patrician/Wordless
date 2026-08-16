@@ -13,6 +13,8 @@ import {
   type ConversationUsage,
   type ExpertExecutionProfile,
   type ExpertPortrait,
+  type ModelReference,
+  type ThinkingLevel,
 } from "@wordless/domain";
 import { Type, type Static } from "typebox";
 
@@ -52,6 +54,12 @@ type TaskDetails = {
   tool?: SubagentTaskProgress["tool"];
   approval?: unknown;
   userRequest?: unknown;
+  modelResolution?: {
+    requested: ModelReference | null;
+    resolved: ModelReference;
+    thinkingLevel: ThinkingLevel;
+    fallbackReason?: "unavailable" | "tools-unsupported";
+  };
   events: Array<
     | { id: string; type: "delegated"; text: string; at: number }
     | {
@@ -112,8 +120,10 @@ type TaskStateController = {
 
 const TERMINAL_TASK_STATUSES = new Set<SubagentTaskStatus>([
   "completed",
+  "interrupted",
   "failed",
   "cancelled",
+  "blocked",
   "skipped",
 ]);
 
@@ -244,12 +254,13 @@ function createTaskStateController(
       let changed = false;
       for (const run of taskRuns.values()) {
         if (TERMINAL_TASK_STATUSES.has(run.status)) continue;
-        run.status = "cancelled";
+        run.status = "interrupted";
         run.phase = "finished";
         run.revision += 1;
         run.updatedAt = now;
         run.finishedAt = now;
-        run.terminalReason = "The expert task was interrupted before it finished";
+        run.terminalReason =
+          "The expert task was interrupted before it finished. Its member conversation is preserved for Team Lead follow-up.";
         delete run.activeToolName;
         changed = true;
       }
@@ -341,8 +352,7 @@ function createExpertDelegateTool(
   return {
     name: "delegate_expert",
     label: "Delegate to expert",
-    description:
-      "Delegate work to exact members of the selected expert team using { mode, tasks: [{ memberId, task }] }. Use memberId exactly as listed in the team roster.",
+    description: `Delegate work to exact members of the selected expert team using { mode, tasks: [{ memberId, task }] }. The following roster is authoritative; use memberId exactly as listed and never search the filesystem or environment for team configuration.\n\nAvailable members:\n${expertRoster(members.values())}`,
     parameters: ExpertDelegationSchema,
     async execute(toolCallId, params, signal, onUpdate) {
       validateDelegation(params, members);
@@ -395,6 +405,8 @@ function createExpertDelegateTool(
         });
         if (progress.output !== undefined) current.output = progress.output;
         if (progress.usage !== undefined) current.usage = progress.usage;
+        if (progress.modelResolution !== undefined)
+          current.modelResolution = progress.modelResolution;
         if (progress.tool !== undefined) {
           current.tool = progress.tool;
           const event = {
@@ -485,9 +497,9 @@ function createExpertDelegateTool(
           results.push(result);
           if (result.status !== "completed") {
             for (const remaining of details.tasks.slice(index + 1)) {
-              const reason = `${task.memberName} did not complete, so this dependent task was not started`;
+              const reason = `${task.memberName} did not complete. This dependent task is blocked until the Team Lead decides whether to continue the member, take over, or delegate differently.`;
               taskStates.transition(toolCallId, remaining, {
-                status: "skipped",
+                status: "blocked",
                 phase: "finished",
                 terminalReason: reason,
               });
@@ -548,14 +560,18 @@ function validateDelegation(
     );
 }
 
-function expertDelegationPolicy(members: Iterable<ExpertMember>): string {
-  const roster = [...members]
+function expertRoster(members: Iterable<ExpertMember>): string {
+  return [...members]
     .map(
       (member) =>
         `- ${member.id}: ${member.name}; responsibility: ${member.responsibility}`,
     )
     .join("\n");
-  return `You are the selected team's Team Lead, the primary conversational identity, and the only agent responsible for the final answer. Stay in the Team Lead role in tone, judgment, terminology, and delivery. Before responding to a substantive request, decide whether delegation creates material value: use a named member when the work contains a separable specialty, benefits from independent verification or perspective, the user explicitly expects team collaboration, or the quality gain outweighs the added latency and context cost. Do not delegate simple questions, clarification, formatting, or work you can already complete to a high standard. This is a judgment rule, not a requirement to delegate every turn.\n\nWhen delegation is worthwhile, use delegate_expert with exactly { mode, tasks: [{ memberId, task }] }; memberId must match the roster and every task must be self-contained with relevant evidence, constraints, and acceptance criteria. Different members may work in parallel only when independent. Use sequential mode when a later member needs an earlier result. Read and evaluate every result, resolve conflicts yourself, and synthesize the final answer in your own Team Lead voice. Never present raw member output as the final response. Child experts cannot delegate further work.\n\nExpert team roster:\n${roster}`;
+}
+
+function expertDelegationPolicy(members: Iterable<ExpertMember>): string {
+  const roster = expertRoster(members);
+  return `You are the selected team's Team Lead, the primary conversational identity, and the only agent responsible for the final answer. Stay in the Team Lead role in tone, judgment, terminology, and delivery. Before responding to a substantive request, decide whether delegation creates material value: use a named member when the work contains a separable specialty, benefits from independent verification or perspective, the user explicitly expects team collaboration, or the quality gain outweighs the added latency and context cost. Do not delegate simple questions, clarification, formatting, or work you can already complete to a high standard. This is a judgment rule, not a requirement to delegate every turn.\n\nWhen delegation is worthwhile, use delegate_expert with exactly { mode, tasks: [{ memberId, task }] }; memberId must match the roster and every task must be self-contained with relevant evidence, constraints, and acceptance criteria. Different members may work in parallel only when independent. Use sequential mode when a later member needs an earlier result. Read and evaluate every result, resolve conflicts yourself, and synthesize the final answer in your own Team Lead voice. Never present raw member output as the final response. Child experts cannot delegate further work.\n\nThe roster below is authoritative runtime configuration. Answer roster questions directly from it. Never search the workspace, user home directory, environment variables, skills, plugins, or unrelated configuration files to discover team members.\n\nIf a member is interrupted or fails, inspect the preserved partial output and error before deciding what to do. You may delegate the same member again with precise continuation instructions, revise the assignment, complete the work yourself, delegate another member, or stop. Reusing a member continues that member's existing conversation history. Do not treat partial output as complete and do not automatically continue a blocked dependent task until its dependency is resolved.\n\nExpert team roster:\n${roster}`;
 }
 
 function memberPresentation(member: ExpertMember): JsonObject {
@@ -573,16 +589,22 @@ function expectedOutput(member: ExpertMember): string {
 }
 
 function formatSummary(details: DelegationDetails): string {
-  return details.tasks
+  const summary = details.tasks
     .map((task) => {
-      const text = task.output
-        ? `\n${task.output.slice(0, 50_000)}`
-        : task.error
-          ? `\n${task.error}`
-          : "";
-      return `### ${task.memberName} (${task.status})\n${text}`;
+      const output = task.output
+        ? `\n\nPartial or final output:\n${task.output.slice(0, 50_000)}`
+        : "";
+      const error = task.error ? `\n\nError:\n${task.error}` : "";
+      return `### ${task.memberName} (${task.status})${output}${error}`;
     })
     .join("\n\n---\n\n");
+  if (
+    details.tasks.some(
+      (task) => task.status === "interrupted" || task.status === "failed",
+    )
+  )
+    return `${summary}\n\nThe member conversation and any partial output are preserved. As Team Lead, decide whether to delegate the same member again to continue, revise the assignment, complete the work yourself, delegate another member, or stop. Do not treat partial output as a completed deliverable.`;
+  return summary;
 }
 
 function cloneDetails(details: DelegationDetails): DelegationDetails {

@@ -49,7 +49,11 @@ function formatResearchProgress(details: ResearchDelegationDetails): string {
 
 function updateResearchTask(task: ResearchDelegationTask, next: SubagentTaskProgress): void {
   const now = Date.now();
-  const status = next.status === "skipped" ? "cancelled" : next.status;
+  const status = next.status === "interrupted"
+    ? "failed"
+    : next.status === "blocked" || next.status === "skipped"
+      ? "cancelled"
+      : next.status;
   task.status = status;
   if (status !== "queued" && task.startedAt === undefined) task.startedAt = now;
   if (["completed", "failed", "cancelled"].includes(status)) task.completedAt = now;

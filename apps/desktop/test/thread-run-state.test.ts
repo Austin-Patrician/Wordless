@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { ConversationMessage, RuntimeEventEnvelope } from "@wordless/protocol";
-import { advanceAssistantRunPresentation, assistantRunActivityAt, assistantRunPresentationFromMessages, createAssistantRunPresentation, isNewerRunEvent, mergeCompletedAssistantMessage, MODEL_RESPONSE_WAIT_DELAY_MS, runEventCursor, shouldRefreshSnapshotAfterEvent } from "../src/renderer/features/thread/thread-run-state.ts";
+import { advanceAssistantRunPresentation, assistantRunActivityAt, assistantRunPresentationFromMessages, createAssistantRunPresentation, isExpertMemberMessageEvent, isNewerRunEvent, mergeCompletedAssistantMessage, MODEL_RESPONSE_WAIT_DELAY_MS, runEventCursor, shouldRefreshSnapshotAfterEvent } from "../src/renderer/features/thread/thread-run-state.ts";
 
 function event(sequence: number, runId: string, payload: RuntimeEventEnvelope["event"]): RuntimeEventEnvelope {
   return { event: payload, eventId: `event-${sequence}`, protocolVersion: 10, runId, runtimeInstanceId: "test", sequence, sessionId: "session-1", timestamp: 1_700_000_000_000 };
@@ -98,6 +98,92 @@ test("ignores stale events and refreshes only after session idle", () => {
   assert.equal(isNewerRunEvent(event(2, "run-2", { type: "message.completed", message: assistant("assistant-2", []) }), runEventCursor(firstRun)), false);
   assert.equal(shouldRefreshSnapshotAfterEvent(event(4, "run-1", { type: "message.completed", message: assistant("assistant-1", []) })), false);
   assert.equal(shouldRefreshSnapshotAfterEvent(event(5, "run-1", { type: "session.idle" })), true);
+});
+
+test("isolates member transcript events without hiding Team Lead tool updates", () => {
+  const member = {
+    memberId: "writer",
+    taskId: "task-1",
+    revision: 1,
+  };
+  assert.equal(isExpertMemberMessageEvent(event(1, "run-1", {
+    type: "expert-member.message.started",
+    ...member,
+    message: assistant("member-message", []),
+  })), true);
+  assert.equal(isExpertMemberMessageEvent(event(2, "run-1", {
+    type: "expert-member.message.text.delta",
+    ...member,
+    messageId: "member-message",
+    delta: "Draft",
+  })), true);
+  assert.equal(isExpertMemberMessageEvent(event(3, "run-1", {
+    type: "expert-member.message.reasoning.delta",
+    ...member,
+    messageId: "member-message",
+    delta: "Reasoning",
+  })), true);
+  assert.equal(isExpertMemberMessageEvent(event(4, "run-1", {
+    type: "expert-member.message.completed",
+    ...member,
+    message: { ...assistant("member-message", []), status: "complete" },
+  })), true);
+  assert.equal(isExpertMemberMessageEvent(event(5, "run-1", {
+    type: "expert-member.tool.started",
+    memberId: "writer",
+    taskId: "task-1",
+    messageId: "member-message",
+    callId: "read-call",
+    name: "read",
+    input: { path: "draft.md" },
+  })), true);
+  assert.equal(isExpertMemberMessageEvent(event(6, "run-1", {
+    type: "expert-member.tool.completed",
+    memberId: "writer",
+    taskId: "task-1",
+    messageId: "member-message",
+    callId: "read-call",
+    output: "done",
+    isError: false,
+  })), true);
+  assert.equal(isExpertMemberMessageEvent(event(7, "run-1", {
+    type: "expert-member.approval.requested",
+    memberId: "writer",
+    taskId: "task-1",
+    messageId: "member-message",
+    approval: {
+      approvalId: "approval-1",
+      callId: "write-call",
+      toolName: "write",
+      input: { path: "draft.md" },
+      risk: "file-write",
+      severity: "normal",
+      summary: "Write draft",
+      preview: { kind: "file", path: "draft.md", operation: "write" },
+      matchedRules: [],
+    },
+  })), true);
+  assert.equal(isExpertMemberMessageEvent(event(8, "run-1", {
+    type: "expert-member.approval.resolved",
+    memberId: "writer",
+    taskId: "task-1",
+    messageId: "member-message",
+    resolution: { approvalId: "approval-1", approved: true },
+  })), true);
+
+  assert.equal(isExpertMemberMessageEvent(event(9, "run-1", {
+    type: "tool.updated",
+    messageId: "lead-message",
+    callId: "delegate-call",
+    output: "Writer completed",
+  })), false);
+  assert.equal(isExpertMemberMessageEvent(event(10, "run-1", {
+    type: "tool.completed",
+    messageId: "lead-message",
+    callId: "delegate-call",
+    output: "Writer result",
+    isError: false,
+  })), false);
 });
 
 test("accepts a standalone context compaction as a new run", () => {

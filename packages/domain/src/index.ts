@@ -408,16 +408,19 @@ export type ExpertExecutionProfile =
 
 export interface ExpertTeamMemberDefinition {
   id: string;
-  expertId: string;
-  executionProfile: ExpertExecutionProfile;
-  responsibility: string;
-}
-export interface SessionExpertTeamMemberSnapshot extends ExpertTeamMemberDefinition {
-  expertName: string;
+  name: string;
   portrait: ExpertPortrait;
   systemPrompt: string;
   skillIds: string[];
   connectorIds: string[];
+  model?: ModelReference;
+  thinkingLevel?: ThinkingLevel;
+  executionProfile: ExpertExecutionProfile;
+  responsibility: string;
+  needsReview?: boolean;
+}
+export interface SessionExpertTeamMemberSnapshot extends ExpertTeamMemberDefinition {
+  expertName: string;
 }
 
 export interface SessionExpertTeamLeaderSnapshot {
@@ -431,7 +434,7 @@ export interface SessionExpertTeamLeaderSnapshot {
 
 export interface ExpertTeamDefinition extends ExpertSummary {
   kind: "team";
-  leaderExpertId: string;
+  leaderMemberId: string;
   members: ExpertTeamMemberDefinition[];
   systemPrompt: string;
   createdAt: number;
@@ -441,9 +444,9 @@ export interface ExpertTeamDefinition extends ExpertSummary {
 export interface ExpertTeamDefinitionInput {
   name: string;
   description: string;
-  portraitKey: string;
-  leaderExpertId: string;
-  members: Omit<ExpertTeamMemberDefinition, "id">[];
+  portrait: ExpertPortrait;
+  leaderMemberId: string;
+  members: ExpertTeamMemberDefinition[];
   systemPrompt: string;
   tags?: string[];
   categories?: string[];
@@ -456,10 +459,7 @@ export interface ExpertTeamDetailMember extends ExpertTeamMemberDefinition {
   available: boolean;
 }
 
-export interface ExpertTeamDetailLeader {
-  expertId: string;
-  name: string;
-  portrait: ExpertPortrait;
+export interface ExpertTeamDetailLeader extends ExpertTeamMemberDefinition {
   available: boolean;
 }
 
@@ -914,6 +914,7 @@ export interface AutomationConfiguration {
   entryId: string;
   workspaceId: string | null;
   accessLevel: SessionAccessLevel;
+  toolApprovalMode: ToolApprovalMode;
   model: ModelReference | null;
   thinkingLevel: ThinkingLevel;
   skillIds: string[];
