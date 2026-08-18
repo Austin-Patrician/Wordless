@@ -3,6 +3,8 @@ dist/
 apps/desktop/release/
 out/
 coverage/
+apps/desktop/.vitest-attachments/
+apps/desktop/test/__screenshots__/
 .vite/
 .astro/
 .electron-vite/

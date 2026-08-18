@@ -152,6 +152,8 @@ export type SubagentTask =
       memberId: string;
       prompt: string;
       cwd: string;
+      inputs?: string[];
+      outputs?: string[];
     };
 
 export type SubagentTaskStatus =
@@ -203,6 +205,7 @@ export interface SubagentResult {
   text: string;
   usage?: ConversationUsage;
   files?: string[];
+  resultPath?: string;
   error?: string;
 }
 

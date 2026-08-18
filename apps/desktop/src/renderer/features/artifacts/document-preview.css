@@ -1,0 +1,46 @@
+.artifact-markdown-preview .message-markdown p,
+.artifact-markdown-preview .message-markdown li {
+  font-size: 12px;
+  line-height: 20px;
+}
+
+.artifact-markdown-preview .message-markdown h1 {
+  margin-top: 20px;
+  font-size: 16px;
+  line-height: 24px;
+}
+
+.artifact-markdown-preview .message-markdown h2 {
+  margin-top: 18px;
+  font-size: 14px;
+  line-height: 22px;
+}
+
+.artifact-markdown-preview .message-markdown h3,
+.artifact-markdown-preview .message-markdown h4,
+.artifact-markdown-preview .message-markdown h5,
+.artifact-markdown-preview .message-markdown h6 {
+  margin-top: 16px;
+  font-size: 13px;
+  line-height: 20px;
+}
+
+.artifact-markdown-preview .message-markdown :is(ol, ul) {
+  padding-left: 20px;
+}
+
+.artifact-markdown-preview .message-code-block,
+.artifact-markdown-preview .message-markdown-table {
+  margin-block: 12px;
+}
+
+.artifact-markdown-preview .message-code-scroll {
+  font-size: 11px;
+  line-height: 18px;
+}
+
+.artifact-markdown-preview .message-markdown td,
+.artifact-markdown-preview .message-markdown th {
+  padding: 7px 9px;
+  font-size: 11px;
+}

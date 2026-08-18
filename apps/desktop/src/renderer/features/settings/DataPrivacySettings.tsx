@@ -9,7 +9,6 @@ import { useRuntimeClient } from "../../shared/runtime";
 import { useDesktopAccount } from "../../shared/account";
 import githubIcon from "../../../icons/common-icons/github.svg";
 import syncIcon from "../../../icons/common-icons/立即同步.svg";
-import modelRequestIcon from "../../../icons/common-icons/模型请求.svg";
 import deleteCloudIcon from "../../../icons/common-icons/删除云端数据.svg";
 import googleCloudIcon from "../../../icons/common-icons/google_cloud-icon.svg";
 
@@ -34,21 +33,6 @@ function InfoSection({ description, icon: Icon, items, title }: InfoSectionProps
         </div>
       </div>
     </section>
-  );
-}
-
-type FlowStepProps = {
-  detail: string;
-  icon: typeof Database | string;
-  label: string;
-};
-
-function FlowStep({ detail, icon: Icon, label }: FlowStepProps) {
-  return (
-    <li className="relative grid grid-cols-[30px_minmax(0,1fr)] gap-3 py-3 first:pt-0 last:pb-0 last:[&>div]:border-b-0 sm:block sm:py-0">
-      <span className="relative z-10 grid h-[30px] w-[30px] place-items-center rounded-[7px] border border-[#cfd9b8] bg-[#f5f8eb] text-[#60753a] dark:border-[#53663a] dark:bg-[#303b1d] dark:text-[#c8df89]">{typeof Icon === "string" ? <img alt="" aria-hidden="true" className="h-4 w-4 object-contain dark:invert" src={Icon} /> : <Icon aria-hidden="true" className="h-3.5 w-3.5" />}</span>
-      <div className="min-w-0 border-b border-border/70 pb-3 sm:border-b-0 sm:pb-0 sm:pt-3"><p className="text-[11px] font-semibold text-foreground">{label}</p><p className="mt-0.5 text-[10px] leading-4 text-muted-foreground">{detail}</p></div>
-    </li>
   );
 }
 
@@ -110,16 +94,6 @@ export function DataPrivacySettings() {
           <div className="mt-4 flex flex-wrap gap-2 border-t border-border/70 pt-3"><Button className="gap-1.5" disabled={busy || !sync?.enabled} onClick={() => void run(() => client.syncCloudNow())} size="sm" type="button" variant="outline">{busy ? <LoaderCircle className="h-3.5 w-3.5 animate-spin" /> : <img alt="" aria-hidden="true" className="h-3.5 w-3.5 object-contain" src={syncIcon} />}{t("cloudSyncSyncNow")}</Button><Button className="gap-1.5 text-destructive hover:text-destructive" disabled={busy || !sync?.enabled} onClick={() => { if (window.confirm(t("cloudSyncDeleteConfirm"))) void run(() => client.deleteCloudSyncRemote()); }} size="sm" type="button" variant="ghost"><span className="grid h-5 w-5 place-items-center rounded-[4px] bg-destructive"><img alt="" aria-hidden="true" className="h-3 w-3 object-contain" src={deleteCloudIcon} /></span>{t("cloudSyncDeleteRemote")}</Button></div>
           {notice ? <p className="mt-2 text-[11px] text-destructive">{notice}</p> : null}
           {strategyOpen ? <div className="mt-4 rounded-[8px] border border-border bg-muted/20 p-3"><p className="text-[11px] font-medium">{t("cloudSyncChooseStrategy")}</p><div className="mt-2 flex flex-wrap gap-2"><Button disabled={busy} onClick={() => enable("merge")} size="sm" type="button"><Check className="h-3.5 w-3.5" />{t("cloudSyncMerge")}</Button><Button disabled={busy} onClick={() => enable("local")} size="sm" type="button" variant="outline">{t("cloudSyncLocal")}</Button><Button disabled={busy} onClick={() => enable("remote")} size="sm" type="button" variant="outline">{t("cloudSyncRemote")}</Button><Button disabled={busy} onClick={() => setStrategyOpen(false)} size="sm" type="button" variant="ghost">{t("cloudSyncCancel")}</Button></div></div> : null}
-        </section>
-
-        <section className="border-b border-border py-6">
-          <div className="flex items-end justify-between gap-4"><div><h2 className="text-[13px] font-semibold">{t("dataPrivacyFlowTitle")}</h2><p className="mt-1 max-w-[620px] text-[11px] leading-5 text-muted-foreground">{t("dataPrivacyFlowBody")}</p></div><span className="hidden rounded-full border border-border bg-muted/30 px-2 py-1 font-mono text-[9px] uppercase tracking-[0.12em] text-muted-foreground sm:inline-flex">local-first</span></div>
-          <ol className="relative mt-5 after:absolute after:bottom-[15px] after:left-[15px] after:top-[15px] after:w-px after:bg-border/70 sm:grid sm:grid-cols-4 sm:gap-5 sm:before:absolute sm:before:left-[15px] sm:before:right-[15px] sm:before:top-[15px] sm:before:h-px sm:before:bg-border/70 sm:after:hidden" aria-label={t("dataPrivacyFlowTitle")}>
-            <FlowStep detail={t("dataPrivacyFlowLocalDetail")} icon={Database} label={t("dataPrivacyFlowLocal")} />
-            <FlowStep detail={t("dataPrivacyFlowAgentDetail")} icon={ShieldCheck} label={t("dataPrivacyFlowAgent")} />
-            <FlowStep detail={t("dataPrivacyFlowProviderDetail")} icon={modelRequestIcon} label={t("dataPrivacyFlowProvider")} />
-            <FlowStep detail={t("dataPrivacyFlowGithubDetail")} icon={githubIcon} label={t("dataPrivacyFlowGithub")} />
-          </ol>
         </section>
 
         <section className="flex flex-col gap-3 border-b border-border py-5 sm:flex-row sm:items-center sm:justify-between">

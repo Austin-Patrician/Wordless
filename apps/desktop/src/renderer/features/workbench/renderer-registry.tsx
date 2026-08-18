@@ -20,10 +20,10 @@ import {
 } from "lucide-react";
 import { useEffect, useState } from "react";
 import type {
-  ConnectorSummary,
   ExpertPortrait as ExpertPortraitValue,
   MessageArtifactBlock,
   MessageToolBlock,
+  MessageToolSource,
   WorkbenchId,
 } from "@wordless/domain";
 import dataAnalysisIcon from "../../../icons/common-icons/数据分析.svg";
@@ -52,7 +52,6 @@ import { ExpertPortrait } from "../experts/ExpertPortrait";
 import { parseExpertPortrait } from "../experts/avataaars-portrait";
 import type { MessageKey } from "../../shared/i18n";
 import { usePreferences } from "../../shared/preferences";
-import { useRuntime } from "../../shared/runtime";
 import {
   ClarificationBriefToolActivity,
   ClarificationQuestionToolActivity,
@@ -60,6 +59,7 @@ import {
 import { ResearchDelegateToolActivity } from "./ResearchDelegateToolActivity";
 import { UserRequestToolActivity } from "./UserRequestToolActivity";
 import type { ResearchTaskSelection } from "./context-panel-types";
+import { formatToolInput, summarizeToolInput } from "./tool-input-preview";
 
 type StandardToolIconSource = {
   path: string;
@@ -185,39 +185,17 @@ function textValue(value: unknown): string | undefined {
   return typeof value === "string" && value.length > 0 ? value : undefined;
 }
 
-function connectorToolSegment(value: string): string {
-  return value
-    .replace(/[^a-zA-Z0-9_]/g, "_")
-    .replace(/_+/g, "_")
-    .replace(/^_+|_+$/g, "");
-}
-
-function connectorForMcpTool(
-  block: MessageToolBlock,
-  connectors: readonly ConnectorSummary[],
-): ConnectorSummary | undefined {
-  if (!block.name.startsWith("mcp_")) return undefined;
-  const connectorId = textValue(readRecord(block.details)?.connectorId);
-  if (connectorId)
-    return connectors.find((connector) => connector.id === connectorId);
-  return connectors.find((connector) =>
-    block.name.startsWith(`mcp_${connectorToolSegment(connector.id)}_`),
-  );
-}
-
-function McpToolIcon({ block }: { block: MessageToolBlock }) {
-  const { snapshot } = useRuntime();
-  const connector = connectorForMcpTool(
-    block,
-    snapshot?.connectors.connectors ?? [],
-  );
-  if (!connector) return <Wrench className="h-3.5 w-3.5" />;
+function McpToolIcon({ source }: { source: MessageToolSource }) {
   return (
-    <span aria-label={connector.name} role="img" title={connector.name}>
+    <span
+      aria-label={source.connectorName}
+      role="img"
+      title={source.connectorName}
+    >
       <ConnectorIcon
         className="h-3.5 w-3.5"
-        templateId={connector.templateId}
-        transport={connector.transport}
+        templateId={source.templateId}
+        transport={source.transport}
       />
     </span>
   );
@@ -404,6 +382,7 @@ function GrepToolOutput({
 }) {
   const { t } = usePreferences();
   const [loading, setLoading] = useState(false);
+  const [expanded, setExpanded] = useState(false);
   const details = readRecord(block.details);
   const count = typeof details?.count === "number" ? details.count : undefined;
   const hasMore = textValue(details?.nextCursor) !== undefined;
@@ -434,7 +413,9 @@ function GrepToolOutput({
     <details
       className="group mt-2"
       onToggle={(event) => {
-        if (event.currentTarget.open) load();
+        const open = event.currentTarget.open;
+        setExpanded(open);
+        if (open) load();
       }}
     >
       <summary className="flex w-fit cursor-pointer list-none items-center gap-1 font-mono text-[11px] text-[#777770] outline-none focus-visible:ring-2 focus-visible:ring-ring [&::-webkit-details-marker]:hidden">
@@ -444,7 +425,7 @@ function GrepToolOutput({
           className="h-3.5 w-3.5 text-[#999991] transition-transform duration-150 group-open:rotate-180"
         />
       </summary>
-      <div className="mt-2 border-y border-[#e1e1dc] bg-[#fafaf9] font-mono text-[11px] text-[#4d4d47] dark:border-border dark:bg-muted dark:text-muted-foreground">
+      {expanded ? <div className="mt-2 border-y border-[#e1e1dc] bg-[#fafaf9] font-mono text-[11px] text-[#4d4d47] dark:border-border dark:bg-muted dark:text-muted-foreground">
         <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-4 gap-y-1 px-3 py-2.5">
           <dt className="text-[#96968e]">{t("toolQuery")}</dt>
           <dd className="min-w-0 break-all text-[#3f3f3a] dark:text-foreground">
@@ -469,7 +450,7 @@ function GrepToolOutput({
             {t("toolSearchNoMatches")}
           </p>
         ) : null}
-      </div>
+      </div> : null}
     </details>
   );
 }
@@ -480,6 +461,7 @@ function ToolOutput({
 }: Pick<ToolActivityProps, "block" | "onLoadToolOutput">) {
   const { t } = usePreferences();
   const [loading, setLoading] = useState(false);
+  const [expanded, setExpanded] = useState(false);
   const load = () => {
     if (!block.outputTruncated || !onLoadToolOutput || loading) return;
     setLoading(true);
@@ -492,7 +474,9 @@ function ToolOutput({
     <details
       className="group mt-2"
       onToggle={(event) => {
-        if ((event.currentTarget as HTMLDetailsElement).open) load();
+        const open = event.currentTarget.open;
+        setExpanded(open);
+        if (open) load();
       }}
     >
       <summary className="flex w-fit cursor-pointer list-none items-center gap-1 font-mono text-[11px] text-[#777770] outline-none focus-visible:ring-2 focus-visible:ring-ring [&::-webkit-details-marker]:hidden">
@@ -502,9 +486,38 @@ function ToolOutput({
           className="h-3.5 w-3.5 text-[#999991] transition-transform duration-150 group-open:rotate-180"
         />
       </summary>
-      <pre className="m-0 mt-2 max-h-52 overflow-auto bg-[#fafaf9] px-3 py-2 font-mono text-[11px] leading-5 text-[#4d4d47] dark:bg-muted dark:text-muted-foreground">
+      {expanded ? <pre className="m-0 mt-2 max-h-52 overflow-auto bg-[#fafaf9] px-3 py-2 font-mono text-[11px] leading-5 text-[#4d4d47] dark:bg-muted dark:text-muted-foreground">
         {block.output}
-      </pre>
+      </pre> : null}
+    </details>
+  );
+}
+
+function ToolInputDetails({
+  input,
+}: {
+  input: Record<string, unknown> | undefined;
+}) {
+  const { t } = usePreferences();
+  const [expanded, setExpanded] = useState(false);
+  if (!input || Object.keys(input).length === 0) return null;
+  return (
+    <details
+      className="group mt-2"
+      onToggle={(event) => setExpanded(event.currentTarget.open)}
+    >
+      <summary className="flex w-fit cursor-pointer list-none items-center gap-1 font-mono text-[11px] text-[#777770] outline-none focus-visible:ring-2 focus-visible:ring-ring [&::-webkit-details-marker]:hidden">
+        {t("toolViewParameters")}
+        <ChevronDown
+          aria-hidden
+          className="h-3.5 w-3.5 text-[#999991] transition-transform duration-150 group-open:rotate-180"
+        />
+      </summary>
+      {expanded ? (
+        <pre className="m-0 mt-2 max-h-60 overflow-auto border-y border-[#e1e1dc] bg-[#fafaf9] px-3 py-2 font-mono text-[11px] leading-5 text-[#4d4d47] whitespace-pre-wrap break-words dark:border-border dark:bg-muted dark:text-muted-foreground">
+          {formatToolInput(input)}
+        </pre>
+      ) : null}
     </details>
   );
 }
@@ -527,14 +540,16 @@ function GenericToolActivity({
     <section className="py-3">
       <ToolActivityRow
         block={block}
+        detail={summarizeToolInput(block.input)}
         icon={
-          block.name.startsWith("mcp_") ? (
-            <McpToolIcon block={block} />
+          block.source?.kind === "mcp" ? (
+            <McpToolIcon source={block.source} />
           ) : (
             (standardToolIcon(block.name) ?? <Wrench className="h-3.5 w-3.5" />)
           )
         }
       />
+      <ToolInputDetails input={block.input} />
       <ToolOutput block={block} onLoadToolOutput={onLoadToolOutput} />
     </section>
   );
@@ -1835,6 +1850,13 @@ export const workbenchRendererRegistry = createWorkbenchRendererRegistry(
     { toolName: "research_delegate", component: ResearchDelegateToolActivity },
     { toolName: "delegate_task", component: SubagentToolActivity },
     { toolName: "delegate_expert", component: SubagentToolActivity },
+    { toolName: "bash", component: CodeToolActivity },
+    { toolName: "edit", component: CodeToolActivity },
+    { toolName: "find", component: CodeToolActivity },
+    { toolName: "grep", component: CodeToolActivity },
+    { toolName: "ls", component: CodeToolActivity },
+    { toolName: "read", component: CodeToolActivity },
+    { toolName: "write", component: CodeToolActivity },
     { workbenchId: "code", component: CodeToolActivity },
     { workbenchId: "presentation", component: PresentationToolActivity },
     { workbenchId: "workbook", component: SpreadsheetToolActivity },

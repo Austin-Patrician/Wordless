@@ -42,6 +42,7 @@ test("streams a complete prefix, interrupts provider errors, and reuses member J
   };
   const contexts: AgentDriverSessionContext[] = [];
   const priorAssistantCounts: number[] = [];
+  const promptSubmissionIds: string[] = [];
   const approvalModes: string[] = [];
   let notifySecondPromptStarted!: () => void;
   const secondPromptStarted = new Promise<void>((resolve) => {
@@ -74,6 +75,7 @@ test("streams a complete prefix, interrupts provider errors, and reuses member J
             return;
           }
           if (command.type !== "prompt") return;
+          promptSubmissionIds.push(command.submission?.messageId ?? "");
           const id = `assistant-${currentRun}`;
           const started: ConversationMessage = {
             id,
@@ -85,6 +87,12 @@ test("streams a complete prefix, interrupts provider errors, and reuses member J
           };
           for (const listener of listeners)
             listener({ type: "message.started", message: started });
+          for (const listener of listeners)
+            listener({ type: "tool.started", messageId: id, callId: `call-${currentRun}`, name: "bash", input: { command: "echo ok" } });
+          for (const listener of listeners)
+            listener({ type: "tool.updated", messageId: id, callId: `call-${currentRun}`, output: "ok" });
+          for (const listener of listeners)
+            listener({ type: "tool.completed", messageId: id, callId: `call-${currentRun}`, output: "ok", isError: false });
           if (currentRun === 1) {
             notifySecondPromptStarted();
             await new Promise<void>((resolve) => {
@@ -128,6 +136,7 @@ test("streams a complete prefix, interrupts provider errors, and reuses member J
   let runner!: SessionSubagentRunner;
   const revisions: number[] = [];
   const liveTexts: string[] = [];
+  const liveToolStates: string[] = [];
   const options = {
     parent,
     profile: {
@@ -164,13 +173,19 @@ test("streams a complete prefix, interrupts provider errors, and reuses member J
       connectorIds: [],
     }],
     onExpertMemberEvent: (event) => {
-      revisions.push(event.revision);
       const live = runner.getExpertMemberLiveState("writer");
-      liveTexts.push(
-        live?.message.blocks
-          .flatMap((block) => block.type === "text" ? [block.text] : [])
-          .join("") ?? "",
-      );
+      if (event.type.startsWith("message.")) {
+        revisions.push(event.revision);
+        liveTexts.push(
+          live?.message.blocks
+            .flatMap((block) => block.type === "text" ? [block.text] : [])
+            .join("") ?? "",
+        );
+      }
+      if (event.type === "tool.completed") {
+        const tool = live?.message.blocks.find((block) => block.type === "tool");
+        liveToolStates.push(tool?.state ?? "missing");
+      }
     },
   } as unknown as SessionSubagentRunnerOptions;
   runner = new SessionSubagentRunner(options);
@@ -186,8 +201,9 @@ test("streams a complete prefix, interrupts provider errors, and reuses member J
   assert.equal(first.status, "interrupted");
   assert.equal(first.text, "prefix partial");
   assert.match(first.error ?? "", /finish_reason/);
-  assert.deepEqual(revisions.slice(0, 4), [0, 1, 2, 3]);
+  assert.deepEqual(revisions.slice(0, 4), [0, 4, 5, 6]);
   assert.deepEqual(liveTexts.slice(0, 4), ["", "prefix ", "prefix partial", "prefix partial"]);
+  assert.equal(liveToolStates[0], "complete");
 
   const secondRun = runner.run({
     kind: "expert-member",
@@ -205,4 +221,5 @@ test("streams a complete prefix, interrupts provider errors, and reuses member J
   assert.equal(contexts[0]?.record.journalPath, contexts[1]?.record.journalPath);
   assert.equal(contexts[1]?.toolApprovalMode, "manual");
   assert.deepEqual(priorAssistantCounts, [0, 1]);
+  assert.deepEqual(promptSubmissionIds, ["task-1", "task-2"]);
 });

@@ -463,6 +463,14 @@ export class ConnectorRegistry {
         label: `${entry.configuration.name}: ${tool.title}`,
         description: tool.description || `Run ${tool.name} through ${entry.configuration.name}.`,
         parameters: Type.Unsafe<Record<string, unknown>>({ type: "object", additionalProperties: true }),
+        source: {
+          kind: "mcp" as const,
+          connectorId: entry.configuration.id,
+          connectorName: entry.configuration.name,
+          toolName: tool.name,
+          templateId: entry.configuration.templateId,
+          transport: entry.configuration.transport,
+        },
         execute: async (_callId: string, params: unknown, signal?: AbortSignal) => {
           const argumentsValue = asRecord(params);
           if (!argumentsValue) {
@@ -471,7 +479,7 @@ export class ConnectorRegistry {
           const result = await this.callTool(entry.configuration.id, tool.name, argumentsValue, signal);
           return {
             content: [{ type: "text", text: textFromToolResult(result) }],
-            details: { connectorId: entry.configuration.id, connectorName: entry.configuration.name, toolName: tool.name, result },
+            details: { result },
             isError: asRecord(result)?.isError === true,
           };
         },

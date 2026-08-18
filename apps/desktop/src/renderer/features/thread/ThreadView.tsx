@@ -16,12 +16,18 @@ import {
   UsersRound,
 } from "lucide-react";
 import {
+  forwardRef,
+  memo,
   useCallback,
   useEffect,
+  useImperativeHandle,
   useLayoutEffect,
   useMemo,
   useRef,
   useState,
+  useSyncExternalStore,
+  type ComponentProps,
+  type ForwardedRef,
   type ReactNode,
 } from "react";
 import {
@@ -35,22 +41,15 @@ import type {
   ConversationMessage,
   ExpertCollaborationLeader,
   ExpertCollaborationMember,
-  ExpertMemberLiveMessage,
-  RuntimeEventEnvelope,
   SessionHistoryPage,
   SessionSnapshot,
-  SessionTurnSummary,
-  SessionViewSnapshot,
 } from "@wordless/protocol";
 import {
-  calculateCurrentTurnUsage,
   type ContextCompactionRecord,
   type ExpertPortrait as ExpertPortraitDefinition,
   type MessageToolBlock,
-  type MessageUserRequest,
   type ModelReference,
   type ToolApprovalMode,
-  type ToolOperationApproval,
   type UserPromptPart,
   type UserRequestAnswer,
   type WorkbenchId,
@@ -63,7 +62,6 @@ import type { ResearchTaskSelection } from "../workbench/context-panel-types";
 import { workbenchRendererRegistry } from "../workbench/renderer-registry";
 import { groupResearchDelegationBlocks } from "../workbench/research-delegation";
 import { Composer } from "./Composer";
-import { completeContextCompaction } from "./context-compaction-state";
 import type {
   InlineSkillComposerValue,
   InlineWorkspaceReferenceToken,
@@ -75,26 +73,14 @@ import {
   type PendingThreadTurn,
 } from "./pending-thread-turn";
 import {
-  createThreadTimeline,
   dataIndexFromReportedIndex,
-  firstItemIndexAfterPrepend,
-  threadTimelineItemCount,
-  type ThreadTimelineItem,
 } from "./thread-virtual-list";
 import {
-  advanceAssistantRunPresentation,
   assistantRunActivityAt,
-  assistantRunPresentationFromMessages,
   assistantToolActivity,
-  createAssistantRunPresentation,
-  isExpertMemberMessageEvent,
-  isNewerRunEvent,
-  mergeCompletedAssistantMessage,
   nextAssistantRunActivityUpdateAt,
-  runEventCursor,
   type AssistantRunActivity,
   type AssistantRunPresentation,
-  type RunEventCursor,
 } from "./thread-run-state";
 import { assistantToolSequenceContinuations } from "./tool-sequence-layout";
 import { TurnTokenUsageRow } from "./TurnTokenUsageRow";
@@ -104,6 +90,15 @@ import {
   RESPONSE_ERROR_COLLAPSED_HEIGHT,
   shouldCollapseResponseError,
 } from "./response-error-collapse";
+import { supportsGeneralWorkAccessSelection } from "./access-control";
+import {
+  ThreadSessionStore,
+  type ThreadHistorySnapshot,
+  type ThreadTimelineDescriptor,
+} from "./thread-session-store";
+import { getThreadSessionStore } from "./thread-session-store-registry";
+import type { ExpertMemberSessionStore } from "./expert-member-session-store";
+import { ThreadViewportStore } from "./thread-viewport-store";
 import wordlessIcon from "../../../icons/common-icons/wordless.png";
 import thinkingIcon from "../../../icons/common-icons/深度思考.svg";
 import { skillIconText } from "../../shared/skill-icon";
@@ -138,9 +133,6 @@ export type ThreadMessageNavigationTarget = {
   sessionId: string;
   turnId: string;
 };
-
-const SESSION_VIEW_CACHE_LIMIT = 3;
-const sessionViewCache = new Map<string, SessionViewSnapshot>();
 
 type ThreadVirtuosoContext = {
   compactionError?: string;
@@ -187,21 +179,45 @@ function ThreadVirtuosoFooter({
   );
 }
 
-const THREAD_VIRTUOSO_COMPONENTS: Components<
-  ThreadTimelineItem,
-  ThreadVirtuosoContext
-> = {
-  Footer: ThreadVirtuosoFooter,
-  Header: ThreadVirtuosoHeader,
-};
+function ThreadJumpToLatest({
+  store,
+  label,
+  onJump,
+}: {
+  store: ThreadViewportStore;
+  label: string;
+  onJump: () => void;
+}) {
+  const viewport = useSyncExternalStore(
+    store.subscribe,
+    store.getSnapshot,
+    store.getSnapshot,
+  );
+  if (!viewport.showJumpToLatest) return null;
+  return (
+    <button
+      aria-label={label}
+      className="absolute bottom-4 left-1/2 grid h-8 w-8 -translate-x-1/2 place-items-center rounded-full border border-[#deded8] bg-white text-[#4d4d48] shadow-[0_4px_12px_rgba(0,0,0,0.10)] hover:bg-[#f5f5f2] dark:border-border dark:bg-card dark:text-foreground dark:hover:bg-muted"
+      onClick={onJump}
+      type="button"
+    >
+      <ArrowDown className="h-4 w-4" />
+    </button>
+  );
+}
 
-function threadTimelineItemKey(_index: number, item: ThreadTimelineItem) {
-  return item.type === "compaction"
-    ? item.compaction.id
-    : item.type === "assistant-run" ||
-        item.messages[0]?.role === "assistant"
-      ? `assistant:${item.turnId}`
-      : item.messages[0]!.id;
+function ThreadDensityRail({
+  store,
+  ...props
+}: Omit<ComponentProps<typeof ConversationDensityRail>, "activeTurnId"> & {
+  store: ThreadViewportStore;
+}) {
+  const viewport = useSyncExternalStore(
+    store.subscribe,
+    store.getSnapshot,
+    store.getSnapshot,
+  );
+  return <ConversationDensityRail {...props} activeTurnId={viewport.activeTurnId} />;
 }
 
 type ExpertTaskView = {
@@ -291,12 +307,11 @@ function overlayExpertTaskRuns(
   }));
 }
 
-function expertTasksFromMessages(
-  messages: ConversationMessage[],
+function expertTasksFromTools(
+  blocks: readonly MessageToolBlock[],
 ): ExpertTaskView[] {
   const tasks = new Map<string, ExpertTaskView>();
-  for (const message of messages)
-    for (const block of message.blocks) {
+  for (const block of blocks) {
       if (
         block.type !== "tool" ||
         block.name !== "delegate_expert" ||
@@ -434,7 +449,7 @@ function expertTasksFromMessages(
           events,
         });
       }
-    }
+  }
   return [...tasks.values()];
 }
 
@@ -608,7 +623,7 @@ function expertMemberActivityFromMessage(
   if (tool?.state === "running" || tool?.state === "pending")
     return {
       type: "tool",
-      tool: assistantToolActivity(tool.name),
+      tool: assistantToolActivity(tool.name, tool.source),
       phase: "running",
       since,
     };
@@ -618,7 +633,7 @@ function expertMemberActivityFromMessage(
   if (tool?.state === "complete" || tool?.state === "error")
     return {
       type: "tool-result",
-      tool: assistantToolActivity(tool.name),
+      tool: assistantToolActivity(tool.name, tool.source),
       outcome: tool.state === "error" ? "failure" : "success",
       since,
     };
@@ -646,11 +661,11 @@ function ExpertMemberAssistantBlocks({
     if (block.type === "text")
       return (
         <div className="message-markdown" key={`text-${index}`}>
-          <MessageMarkdown text={block.text} />
+          <MessageMarkdown streaming={message.status === "streaming"} text={block.text} />
         </div>
       );
     if (block.type === "reasoning")
-      return <ThinkingBlock key={`reasoning-${index}`} text={block.text} />;
+      return <ThinkingBlock key={`reasoning-${index}`} streaming={message.status === "streaming"} text={block.text} />;
     if (block.type === "tool") {
       const ToolActivity = workbenchRendererRegistry.resolveTool(
         workbenchId,
@@ -683,6 +698,317 @@ function ExpertMemberAssistantBlocks({
   });
 }
 
+type ExpertMemberChromeSnapshot = {
+  densityRail: boolean;
+  expertName: string;
+  member: ExpertCollaborationMember;
+};
+
+type ExpertMemberRowEnvironmentSnapshot = {
+  canEnableAutoApprove: boolean;
+  densityRail: boolean;
+  leadExpert: Pick<ExpertCollaborationLeader, "name" | "portrait">;
+  member: Pick<ExpertCollaborationMember, "name" | "portrait">;
+  workbenchId: WorkbenchId;
+};
+
+type ExpertMemberActionTargets = {
+  onEnableAutoApprove?: () => Promise<void>;
+  onResolveApproval: (approvalId: string, approved: boolean, feedback?: string) => void;
+};
+
+class ExpertMemberEnvironment {
+  private actionTargets: ExpertMemberActionTargets | null = null;
+  private readonly chromeListeners = new Set<() => void>();
+  private readonly rowListeners = new Set<() => void>();
+  private chromeSnapshot: ExpertMemberChromeSnapshot;
+  private rowSnapshot: ExpertMemberRowEnvironmentSnapshot;
+
+  readonly actions = {
+    enableAutoApprove: () => this.requireActions().onEnableAutoApprove?.() ?? Promise.resolve(),
+    resolveApproval: (...args: Parameters<ExpertMemberActionTargets["onResolveApproval"]>) =>
+      this.requireActions().onResolveApproval(...args),
+  };
+
+  constructor(
+    rowSnapshot: ExpertMemberRowEnvironmentSnapshot,
+    chromeSnapshot: ExpertMemberChromeSnapshot,
+  ) {
+    this.rowSnapshot = rowSnapshot;
+    this.chromeSnapshot = chromeSnapshot;
+  }
+
+  readonly getChromeSnapshot = (): ExpertMemberChromeSnapshot => this.chromeSnapshot;
+  readonly getRowSnapshot = (): ExpertMemberRowEnvironmentSnapshot => this.rowSnapshot;
+  readonly subscribeChrome = (listener: () => void): (() => void) => {
+    this.chromeListeners.add(listener);
+    return () => this.chromeListeners.delete(listener);
+  };
+  readonly subscribeRow = (listener: () => void): (() => void) => {
+    this.rowListeners.add(listener);
+    return () => this.rowListeners.delete(listener);
+  };
+
+  setActions(actions: ExpertMemberActionTargets): void {
+    this.actionTargets = actions;
+  }
+
+  update(
+    row: ExpertMemberRowEnvironmentSnapshot,
+    chrome: ExpertMemberChromeSnapshot,
+  ): void {
+    if (
+      this.rowSnapshot.canEnableAutoApprove !== row.canEnableAutoApprove ||
+      this.rowSnapshot.densityRail !== row.densityRail ||
+      this.rowSnapshot.leadExpert.name !== row.leadExpert.name ||
+      this.rowSnapshot.leadExpert.portrait !== row.leadExpert.portrait ||
+      this.rowSnapshot.member.name !== row.member.name ||
+      this.rowSnapshot.member.portrait !== row.member.portrait ||
+      this.rowSnapshot.workbenchId !== row.workbenchId
+    ) {
+      this.rowSnapshot = row;
+      for (const listener of this.rowListeners) listener();
+    }
+    if (
+      this.chromeSnapshot.densityRail !== chrome.densityRail ||
+      this.chromeSnapshot.expertName !== chrome.expertName ||
+      this.chromeSnapshot.member !== chrome.member
+    ) {
+      this.chromeSnapshot = chrome;
+      for (const listener of this.chromeListeners) listener();
+    }
+  }
+
+  private requireActions(): ExpertMemberActionTargets {
+    if (!this.actionTargets) throw new Error("Expert member actions are unavailable");
+    return this.actionTargets;
+  }
+}
+
+type ExpertMemberVirtuosoContext = {
+  environment: ExpertMemberEnvironment;
+  store: ExpertMemberSessionStore;
+  viewportStore: ThreadViewportStore;
+};
+
+const THREAD_INITIAL_BOTTOM_LOCATION = {
+  align: "end" as const,
+  index: "LAST" as const,
+};
+
+function isScrollbarPointerDown(
+  event: Parameters<NonNullable<ComponentProps<"div">["onPointerDown"]>>[0],
+): boolean {
+  if (event.target !== event.currentTarget) return false;
+  const element = event.currentTarget;
+  const gutter = Math.max(12, element.offsetWidth - element.clientWidth);
+  return event.clientX >= element.getBoundingClientRect().right - gutter;
+}
+
+function ExpertMemberScroller({
+  context,
+  onKeyDown,
+  onPointerCancel,
+  onPointerDown,
+  onPointerUp,
+  onTouchCancel,
+  onTouchEnd,
+  onTouchMove,
+  onTouchStart,
+  onWheel,
+  ...props
+}: ComponentProps<"div"> & { context?: ExpertMemberVirtuosoContext }, ref: ForwardedRef<HTMLDivElement>) {
+  const touchYRef = useRef<number | null>(null);
+  return (
+    <div
+      {...props}
+      onKeyDown={(event) => {
+        if (["ArrowUp", "PageUp", "Home"].includes(event.key)) context?.viewportStore.markUserScrollIntent();
+        onKeyDown?.(event);
+      }}
+      onPointerDown={(event) => {
+        if (isScrollbarPointerDown(event))
+          context?.viewportStore.markUserScrollIntent();
+        onPointerDown?.(event);
+      }}
+      onPointerCancel={(event) => {
+        context?.viewportStore.clearUserScrollIntent();
+        onPointerCancel?.(event);
+      }}
+      onPointerUp={(event) => {
+        context?.viewportStore.clearUserScrollIntent();
+        onPointerUp?.(event);
+      }}
+      onTouchStart={(event) => {
+        touchYRef.current = event.touches[0]?.clientY ?? null;
+        onTouchStart?.(event);
+      }}
+      onTouchMove={(event) => {
+        const nextY = event.touches[0]?.clientY ?? null;
+        if (nextY !== null && touchYRef.current !== null && nextY > touchYRef.current)
+          context?.viewportStore.markUserScrollIntent();
+        touchYRef.current = nextY;
+        onTouchMove?.(event);
+      }}
+      onTouchCancel={(event) => {
+        touchYRef.current = null;
+        context?.viewportStore.clearUserScrollIntent();
+        onTouchCancel?.(event);
+      }}
+      onTouchEnd={(event) => {
+        touchYRef.current = null;
+        context?.viewportStore.clearUserScrollIntent();
+        onTouchEnd?.(event);
+      }}
+      onWheel={(event) => {
+        if (event.deltaY < 0) context?.viewportStore.markUserScrollIntent();
+        onWheel?.(event);
+      }}
+      ref={ref}
+    />
+  );
+}
+
+const ExpertMemberVirtuosoScroller = forwardRef(ExpertMemberScroller);
+
+function ExpertMemberVirtuosoHeader({ context }: { context: ExpertMemberVirtuosoContext }) {
+  const { t } = usePreferences();
+  const environment = useSyncExternalStore(
+    context.environment.subscribeChrome,
+    context.environment.getChromeSnapshot,
+    context.environment.getChromeSnapshot,
+  );
+  const metadata = useSyncExternalStore(
+    context.store.subscribeMetadata,
+    context.store.getMetadataSnapshot,
+    context.store.getMetadataSnapshot,
+  );
+  if (!metadata.loading && !metadata.error) return null;
+  return (
+    <ThreadContentFrame className="pt-3" densityRail={environment.densityRail}>
+      {metadata.loading ? (
+        <div className="flex items-center gap-2 py-5 text-[12px] text-[#78835e]">
+          <LoaderCircle className="h-4 w-4 animate-spin" />
+          {t("threadLoadingEmployeeMessages")}
+        </div>
+      ) : null}
+      {metadata.error ? (
+        <div className="my-5 flex items-center justify-between gap-3 rounded-[7px] border border-destructive/25 bg-destructive/5 px-3 py-2 text-[11px] text-destructive">
+          <span className="min-w-0 truncate">{metadata.error}</span>
+          <button className="shrink-0 font-semibold" onClick={() => void context.store.rehydrate()} type="button">{t("retry")}</button>
+        </div>
+      ) : null}
+    </ThreadContentFrame>
+  );
+}
+
+function ExpertMemberVirtuosoEmpty({ context }: { context: ExpertMemberVirtuosoContext }) {
+  const { t } = usePreferences();
+  const environment = useSyncExternalStore(context.environment.subscribeRow, context.environment.getRowSnapshot, context.environment.getRowSnapshot);
+  const metadata = useSyncExternalStore(
+    context.store.subscribeMetadata,
+    context.store.getMetadataSnapshot,
+    context.store.getMetadataSnapshot,
+  );
+  if (metadata.loading || metadata.error) return null;
+  return (
+    <ThreadContentFrame densityRail={environment.densityRail}>
+      <p className="py-10 text-center text-[12px] text-[#8d8d85]">{t("threadNoSavedEmployeeMessages")}</p>
+    </ThreadContentFrame>
+  );
+}
+
+function ExpertMemberVirtuosoFooter({ context }: { context: ExpertMemberVirtuosoContext }) {
+  const environment = useSyncExternalStore(
+    context.environment.subscribeChrome,
+    context.environment.getChromeSnapshot,
+    context.environment.getChromeSnapshot,
+  );
+  const metadata = useSyncExternalStore(
+    context.store.subscribeMetadata,
+    context.store.getMetadataSnapshot,
+    context.store.getMetadataSnapshot,
+  );
+  const active = expertMemberIsActive(environment.member);
+  const now = useExpertActivityClock(active);
+  const elapsed = active ? compactElapsed(environment.member.startedAt, now) : "";
+  if (!active) return <div className="h-8" />;
+  return (
+    <ThreadContentFrame className="pb-8 pt-5" densityRail={environment.densityRail}>
+      <AssistantRunStatus activity={metadata.activity} detail={elapsed || undefined} />
+    </ThreadContentFrame>
+  );
+}
+
+const EXPERT_MEMBER_VIRTUOSO_COMPONENTS: Components<ThreadTimelineDescriptor, ExpertMemberVirtuosoContext> = {
+  EmptyPlaceholder: ExpertMemberVirtuosoEmpty,
+  Footer: ExpertMemberVirtuosoFooter,
+  Header: ExpertMemberVirtuosoHeader,
+  Scroller: ExpertMemberVirtuosoScroller,
+};
+
+function ExpertMemberRow({ descriptor, context }: { descriptor: ThreadTimelineDescriptor; context: ExpertMemberVirtuosoContext }) {
+  const environment = useSyncExternalStore(
+    context.environment.subscribeRow,
+    context.environment.getRowSnapshot,
+    context.environment.getRowSnapshot,
+  );
+  const row = useSyncExternalStore(
+    useCallback((listener) => context.store.subscribeRow(descriptor.key, listener), [context.store, descriptor.key]),
+    useCallback(() => context.store.getRowSnapshot(descriptor.key), [context.store, descriptor.key]),
+    useCallback(() => context.store.getRowSnapshot(descriptor.key), [context.store, descriptor.key]),
+  );
+  if (row.key === "missing") return null;
+  const assistantMessages = row.messages.filter((message) => message.role === "assistant");
+  return (
+    <ThreadContentFrame className="py-3" densityRail={environment.densityRail}>
+      {row.messages.map((message) => message.role === "user" ? (
+        <div className="flex justify-end" key={message.id}>
+          <div className="flex max-w-[88%] flex-col items-end sm:max-w-[560px]">
+            <div className="mb-1.5 flex items-center gap-1.5 pr-0.5">
+              <span className="text-[10px] font-semibold text-[#66675f] dark:text-muted-foreground">{environment.leadExpert.name}</span>
+              <ExpertPortrait className="h-6 w-6 shrink-0" name={environment.leadExpert.name} portrait={environment.leadExpert.portrait} />
+            </div>
+            <div className="w-fit max-w-full break-words rounded-[10px] bg-[#f0f0ed] px-3.5 py-2.5 text-[14px] leading-6 text-[#343431] dark:bg-muted dark:text-foreground">
+              <CollapsibleUserMessage contentKey={message.id}>
+                {message.blocks.map((block, index) => block.type === "text" ? (
+                  <span className="whitespace-pre-wrap break-words" key={`text-${index}`}>{block.text}</span>
+                ) : null)}
+              </CollapsibleUserMessage>
+            </div>
+          </div>
+        </div>
+      ) : null)}
+      {assistantMessages.length > 0 ? (
+        <div>
+          <AssistantIdentityHeader identity={environment.member} />
+          <div className="mt-2 min-w-0">
+            {assistantMessages.map((message, index) => (
+              <section className={index > 0 ? "mt-5" : undefined} key={message.id}>
+                <ExpertMemberAssistantBlocks
+                  message={message}
+                  onEnableAutoApprove={environment.canEnableAutoApprove ? context.environment.actions.enableAutoApprove : undefined}
+                  onLoadToolOutput={context.store.loadToolOutput.bind(context.store)}
+                  onResolveApproval={context.environment.actions.resolveApproval}
+                  workbenchId={environment.workbenchId}
+                />
+              </section>
+            ))}
+          </div>
+        </div>
+      ) : null}
+    </ThreadContentFrame>
+  );
+}
+
+function expertMemberItemContent(_index: number, descriptor: ThreadTimelineDescriptor, context: ExpertMemberVirtuosoContext) {
+  return <ExpertMemberRow context={context} descriptor={descriptor} />;
+}
+
+function expertMemberItemKey(_index: number, descriptor: ThreadTimelineDescriptor) {
+  return descriptor.key;
+}
+
 function ExpertMemberStream({
   densityRail,
   expertName,
@@ -690,7 +1016,7 @@ function ExpertMemberStream({
   member,
   onEnableAutoApprove,
   onResolveApproval,
-  sessionId,
+  threadStore,
   workbenchId,
 }: {
   densityRail: boolean;
@@ -698,496 +1024,108 @@ function ExpertMemberStream({
   leadExpert: Pick<ExpertCollaborationLeader, "name" | "portrait">;
   member: ExpertCollaborationMember;
   onEnableAutoApprove?: () => Promise<void>;
-  onResolveApproval: (
-    approvalId: string,
-    approved: boolean,
-    feedback?: string,
-  ) => void;
-  sessionId: string;
+  onResolveApproval: (approvalId: string, approved: boolean, feedback?: string) => void;
+  threadStore: ThreadSessionStore;
   workbenchId: WorkbenchId;
 }) {
-  const client = useRuntimeClient();
   const { t } = usePreferences();
-  const active = expertMemberIsActive(member);
-  const now = useExpertActivityClock(active);
-  const activityLabel = expertActivityLabel(member, t);
-  const elapsed = active ? compactElapsed(member.startedAt, now) : "";
-  const scrollRef = useRef<HTMLDivElement>(null);
-  const followLatestRef = useRef(true);
-  const loadingBeforeRef = useRef(false);
-  const [messages, setMessages] = useState<ConversationMessage[]>([]);
-  const [liveMessage, setLiveMessage] =
-    useState<ExpertMemberLiveMessage | null>(null);
-  const liveMessageRef = useRef<ExpertMemberLiveMessage | null>(null);
-  const [history, setHistory] = useState<SessionHistoryPage | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [isAtBottom, setIsAtBottom] = useState(true);
-  const [runActivity, setRunActivity] = useState<AssistantRunActivity>(() => ({
-    type: "thinking",
-    since: member.startedAt ?? Date.now(),
-  }));
-
-  const scrollToLatest = useCallback((behavior: ScrollBehavior = "smooth") => {
-    const element = scrollRef.current;
-    if (!element) return;
-    followLatestRef.current = true;
-    setIsAtBottom(true);
-    element.scrollTo({ top: element.scrollHeight, behavior });
-  }, []);
-
-  const loadLatest = useCallback(async () => {
-    try {
-      const page = await client.getExpertMemberHistory(
-        sessionId,
-        member.memberId,
-        {},
-      );
-      const historyMessages = messagesFromHistoryPage(page);
-      setMessages((current) =>
-        mergeMessages(current, historyMessages),
-      );
-      const currentLive = liveMessageRef.current;
-      if (
-        currentLive &&
-        historyMessages.some((message) =>
-          expertMemberMessagesCorrelate(message, currentLive.message),
-        )
-      ) {
-        liveMessageRef.current = null;
-        setLiveMessage(null);
-      }
-      setHistory(page);
-      setError(null);
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause));
-    } finally {
-      setLoading(false);
-    }
-  }, [client, member.memberId, sessionId]);
-
-  useEffect(() => {
-    followLatestRef.current = true;
-    setIsAtBottom(true);
-    setMessages([]);
-    liveMessageRef.current = null;
-    setLiveMessage(null);
-    setHistory(null);
-    setLoading(true);
-    setError(null);
-    void loadLatest();
-  }, [loadLatest]);
-
-  useEffect(() => {
-    setRunActivity({
-      type: "thinking",
-      since: member.startedAt ?? Date.now(),
-    });
-  }, [member.memberId, member.startedAt]);
-
-  useEffect(() => {
-    const since = member.lastActiveAt || member.startedAt || Date.now();
-    if (member.latestStatus === "awaiting-approval")
-      setRunActivity({ type: "awaiting-approval", since });
-    else if (member.latestStatus === "awaiting-user-input")
-      setRunActivity({ type: "awaiting-user-input", since });
-    else if (member.phase === "tool" && member.activeToolName)
-      setRunActivity({
-        type: "tool",
-        tool: assistantToolActivity(member.activeToolName),
-        phase: "running",
-        since,
-      });
-  }, [
-    member.activeToolName,
-    member.lastActiveAt,
-    member.latestStatus,
-    member.phase,
-    member.startedAt,
-  ]);
-
-  useEffect(() => {
-    let mounted = true;
-    const mergeLive = (incoming: ExpertMemberLiveMessage) => {
-      if (!mounted || incoming.memberId !== member.memberId) return;
-      const current = liveMessageRef.current;
-      if (
-        current?.taskId === incoming.taskId &&
-        incoming.revision <= current.revision
-      )
-        return;
-      setRunActivity(
-        expertMemberActivityFromMessage(incoming.message, Date.now()),
-      );
-      liveMessageRef.current = incoming;
-      setLiveMessage(incoming);
-    };
-    const unsubscribe = client.subscribe((envelope) => {
-      if (envelope.sessionId !== sessionId) return;
-      const payload = envelope.event;
-      if (
-        payload.type === "expert-member.message.started" &&
-        payload.memberId === member.memberId
-      ) {
-        mergeLive({
-          memberId: payload.memberId,
-          taskId: payload.taskId,
-          message: payload.message,
-          revision: payload.revision,
-        });
-        return;
-      }
-      if (
-        (payload.type === "expert-member.message.text.delta" ||
-          payload.type === "expert-member.message.reasoning.delta") &&
-        payload.memberId === member.memberId
-      ) {
-        const current = liveMessageRef.current;
-        if (
-          current?.taskId === payload.taskId &&
-          payload.revision <= current.revision
-        )
-          return;
-        setRunActivity({
-          type:
-            payload.type === "expert-member.message.text.delta"
-              ? "generating"
-              : "thinking",
-          since: envelope.timestamp,
-        });
-        const message = appendExpertMemberMessageDelta(
-            current?.taskId === payload.taskId
-              ? current.message
-              : {
-                  id: payload.messageId,
-                  role: "assistant",
-                  status: "streaming",
-                  blocks: [],
-                  model: null,
-                  timestamp: envelope.timestamp,
-                },
-            payload.messageId,
-            payload.type === "expert-member.message.text.delta"
-              ? "text"
-              : "reasoning",
-            payload.delta,
-          );
-        const next = {
-          memberId: payload.memberId,
-          taskId: payload.taskId,
-          message,
-          revision: payload.revision,
-        };
-        liveMessageRef.current = next;
-        setLiveMessage(next);
-        return;
-      }
-      if (
-        payload.type === "expert-member.message.completed" &&
-        payload.memberId === member.memberId
-      ) {
-        setRunActivity(
-          expertMemberActivityFromMessage(
-            payload.message,
-            envelope.timestamp,
-          ),
-        );
-        const completed = {
-          memberId: payload.memberId,
-          taskId: payload.taskId,
-          message: payload.message,
-          revision: payload.revision,
-        };
-        liveMessageRef.current = completed;
-        setLiveMessage(completed);
-        void loadLatest();
-        return;
-      }
-      if (
-        (payload.type === "expert-member.tool.started" ||
-          payload.type === "expert-member.tool.updated" ||
-          payload.type === "expert-member.tool.completed" ||
-          payload.type === "expert-member.approval.requested" ||
-          payload.type === "expert-member.approval.resolved") &&
-        payload.memberId === member.memberId
-      ) {
-        if (payload.type === "expert-member.tool.started")
-          setRunActivity({
-            type: "tool",
-            tool: assistantToolActivity(payload.name),
-            phase: "running",
-            since: envelope.timestamp,
-          });
-        else if (payload.type === "expert-member.tool.updated")
-          setRunActivity((current) => ({
-            type: "tool",
-            tool:
-              current.type === "tool" || current.type === "tool-result"
-                ? current.tool
-                : "tool",
-            phase: "running",
-            since: envelope.timestamp,
-          }));
-        else if (payload.type === "expert-member.tool.completed")
-          setRunActivity((current) => ({
-            type: "tool-result",
-            tool:
-              current.type === "tool" || current.type === "tool-result"
-                ? current.tool
-                : "tool",
-            outcome: payload.isError ? "failure" : "success",
-            since: envelope.timestamp,
-          }));
-        else if (payload.type === "expert-member.approval.requested")
-          setRunActivity({
-            type: "awaiting-approval",
-            since: envelope.timestamp,
-          });
-        else
-          setRunActivity({ type: "thinking", since: envelope.timestamp });
-        setMessages((current) =>
-          applyExpertMemberActivity(current, payload),
-        );
-        setLiveMessage((current) => {
-          if (!current || current.taskId !== payload.taskId) return current;
-          const [message] = applyExpertMemberActivity(
-            [current.message],
-            payload,
-          );
-          const next = message ? { ...current, message } : current;
-          liveMessageRef.current = next;
-          return next;
-        });
-      }
-    });
-    void client
-      .getExpertMemberLiveState(sessionId, member.memberId)
-      .then((snapshot) => {
-        if (snapshot) mergeLive(snapshot);
-      })
-      .catch((cause) => {
-        if (mounted)
-          setError(cause instanceof Error ? cause.message : String(cause));
-      });
-    return () => {
-      mounted = false;
-      unsubscribe();
-    };
-  }, [client, loadLatest, member.memberId, sessionId]);
-
-  const renderedMessages = useMemo(
-    () =>
-      liveMessage &&
-      !messages.some((message) =>
-        expertMemberMessagesCorrelate(message, liveMessage.message),
-      )
-        ? [...messages, liveMessage.message]
-        : messages,
-    [liveMessage, messages],
+  const store = useMemo(
+    () => threadStore.getExpertMemberStore(member.memberId, member.startedAt),
+    [member.memberId, member.startedAt, threadStore],
   );
-
-  useEffect(() => {
-    if (followLatestRef.current) scrollToLatest("auto");
-  }, [renderedMessages, scrollToLatest]);
-
-  useEffect(() => {
-    if (!active) {
-      void loadLatest();
-      return;
-    }
-    const timer = window.setInterval(() => void loadLatest(), 1_500);
-    return () => window.clearInterval(timer);
-  }, [active, loadLatest]);
-
-  const loadOlder = useCallback(async () => {
-    if (
-      loadingBeforeRef.current ||
-      !history?.hasMoreBefore ||
-      !history.nextBeforeCursor
-    )
-      return;
-    const element = scrollRef.current;
-    const previousHeight = element?.scrollHeight ?? 0;
-    loadingBeforeRef.current = true;
-    try {
-      const page = await client.getExpertMemberHistory(
-        sessionId,
-        member.memberId,
-        { before: history.nextBeforeCursor },
-      );
-      setMessages((current) =>
-        mergeMessages(messagesFromHistoryPage(page), current),
-      );
-      setHistory((current) =>
-        current
-          ? {
-              ...current,
-              hasMoreBefore: page.hasMoreBefore,
-              nextBeforeCursor: page.nextBeforeCursor,
-              revision: page.revision,
-            }
-          : page,
-      );
-      window.requestAnimationFrame(() => {
-        if (element) element.scrollTop += element.scrollHeight - previousHeight;
-      });
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause));
-    } finally {
-      loadingBeforeRef.current = false;
-    }
-  }, [client, history, member.memberId, sessionId]);
-
-  const loadToolOutput = useCallback(
-    async (callId: string) => {
-      const output = await client.getExpertMemberToolOutput(
-        sessionId,
-        member.memberId,
-        callId,
-      );
-      setMessages((current) =>
-        current.map((message) => ({
-          ...message,
-          blocks: message.blocks.map((block) =>
-            block.type === "tool" && block.callId === callId
-              ? { ...block, output, outputTruncated: false }
-              : block,
-          ),
-        })),
-      );
-    },
-    [client, member.memberId, sessionId],
+  const viewportStore = useMemo(() => new ThreadViewportStore(), [store]);
+  const timeline = useSyncExternalStore(store.subscribeTimeline, store.getTimelineSnapshot, store.getTimelineSnapshot);
+  const loading = useSyncExternalStore(store.subscribeLoading, store.getLoadingSnapshot, store.getLoadingSnapshot);
+  const virtuosoRef = useRef<VirtuosoHandle>(null);
+  const environment = useMemo(
+    () => new ExpertMemberEnvironment(
+      {
+        canEnableAutoApprove: Boolean(onEnableAutoApprove),
+        densityRail,
+        leadExpert,
+        member: { name: member.name, portrait: member.portrait },
+        workbenchId,
+      },
+      { densityRail, expertName, member },
+    ),
+    [store],
   );
-
+  environment.setActions({ onEnableAutoApprove, onResolveApproval });
+  useLayoutEffect(() => {
+    environment.update(
+      {
+        canEnableAutoApprove: Boolean(onEnableAutoApprove),
+        densityRail,
+        leadExpert,
+        member: { name: member.name, portrait: member.portrait },
+        workbenchId,
+      },
+      { densityRail, expertName, member },
+    );
+  }, [densityRail, environment, expertName, leadExpert, member, onEnableAutoApprove, workbenchId]);
+  useEffect(() => {
+    void store.start();
+    return () => viewportStore.dispose();
+  }, [store, viewportStore]);
+  const context = useMemo<ExpertMemberVirtuosoContext>(() => ({
+    environment,
+    store,
+    viewportStore,
+  }), [environment, store, viewportStore]);
+  const jumpToLatest = useCallback(() => {
+    viewportStore.resumeFollowing();
+    const timeline = store.getTimelineSnapshot();
+    if (timeline.items.length) virtuosoRef.current?.scrollToIndex({ index: timeline.items.length - 1, align: "end", behavior: "smooth" });
+  }, [store, viewportStore]);
+  const atBottomChanged = useCallback((atBottom: boolean) => {
+    viewportStore.setAtBottom(timeline.items.length === 0 ? true : atBottom);
+  }, [timeline.items.length, viewportStore]);
+  const followMode = useSyncExternalStore(
+    viewportStore.subscribe,
+    useCallback(() => viewportStore.getSnapshot().followMode, [viewportStore]),
+    useCallback(() => viewportStore.getSnapshot().followMode, [viewportStore]),
+  );
+  useEffect(
+    () => store.subscribeTailGrowth(() => {
+      if (viewportStore.shouldFollowTailGrowth())
+        virtuosoRef.current?.autoscrollToBottom();
+    }),
+    [store, viewportStore],
+  );
+  if (loading && timeline.items.length === 0) {
+    return (
+      <ThreadContentFrame className="pb-3 pt-8" densityRail={densityRail}>
+        <AssistantIdentityHeader identity={member} />
+      </ThreadContentFrame>
+    );
+  }
   return (
     <div className="relative flex h-full min-h-0 flex-col">
-      <div
-        className="min-h-0 flex-1 overflow-y-auto py-8"
-        onScroll={(event) => {
-          const element = event.currentTarget;
-          const atBottom =
-            element.scrollHeight - element.scrollTop - element.clientHeight <
-            24;
-          followLatestRef.current = atBottom;
-          setIsAtBottom(atBottom);
-          if (element.scrollTop < 80) void loadOlder();
-        }}
-        ref={scrollRef}
-      >
-        <ThreadContentFrame densityRail={densityRail}>
-          <header className="flex items-center gap-3 border-b border-[#ecece7] pb-4 dark:border-border">
-            <ExpertPortrait
-              className="h-10 w-10 shrink-0"
-              name={member.name}
-              portrait={member.portrait}
-            />
-            <div className="min-w-0">
-              <p className="text-[13px] font-semibold text-[#353530] dark:text-foreground">
-                {member.name}
-              </p>
-              <p className="mt-0.5 text-[10px] text-[#8d8d85]">
-                {expertName} · {activityLabel}{elapsed ? ` · ${elapsed}` : ""}
-              </p>
-            </div>
-          </header>
-          <section className="space-y-6 py-5">
-            {loading ? (
-              <div className="flex items-center gap-2 text-[12px] text-[#78835e]">
-                <LoaderCircle className="h-4 w-4 animate-spin" />
-                {t("threadLoadingEmployeeMessages")}
-              </div>
-            ) : null}
-            {error ? (
-              <div className="flex items-center justify-between gap-3 rounded-[7px] border border-destructive/25 bg-destructive/5 px-3 py-2 text-[11px] text-destructive">
-                <span className="min-w-0 truncate">{error}</span>
-                <button
-                  className="shrink-0 font-semibold"
-                  onClick={() => void loadLatest()}
-                  type="button"
-                >
-                  {t("retry")}
-                </button>
-              </div>
-            ) : null}
-            {!loading && !error && renderedMessages.length === 0 ? (
-              <p className="py-10 text-center text-[12px] text-[#8d8d85]">
-                {t("threadNoSavedEmployeeMessages")}
-              </p>
-            ) : null}
-            {renderedMessages.map((message) =>
-              message.role === "user" ? (
-                <div className="flex justify-end" key={message.id}>
-                  <div className="flex max-w-[88%] flex-col items-end sm:max-w-[560px]">
-                    <div className="mb-1.5 flex items-center gap-1.5 pr-0.5">
-                      <span className="text-[10px] font-semibold text-[#66675f] dark:text-muted-foreground">
-                        {leadExpert.name}
-                      </span>
-                      <ExpertPortrait
-                        className="h-6 w-6 shrink-0"
-                        name={leadExpert.name}
-                        portrait={leadExpert.portrait}
-                      />
-                    </div>
-                    <div className="w-fit max-w-full break-words rounded-[10px] bg-[#f0f0ed] px-3.5 py-2.5 text-[14px] leading-6 text-[#343431] dark:bg-muted dark:text-foreground">
-                      <CollapsibleUserMessage contentKey={message.id}>
-                        {message.blocks.map((block, index) =>
-                          block.type === "text" ? (
-                            <span
-                              className="whitespace-pre-wrap break-words"
-                              key={`text-${index}`}
-                            >
-                              {block.text}
-                            </span>
-                          ) : null,
-                        )}
-                      </CollapsibleUserMessage>
-                    </div>
-                  </div>
-                </div>
-              ) : (
-                <div key={message.id}>
-                  <div className="flex h-7 items-center gap-3">
-                    <ExpertPortrait
-                      className="h-7 w-7 shrink-0"
-                      name={member.name}
-                      portrait={member.portrait}
-                    />
-                    <p className="text-[10px] font-semibold text-[#66675f] dark:text-muted-foreground">
-                      {member.name}
-                    </p>
-                  </div>
-                  <div className="mt-2 min-w-0">
-                    <ExpertMemberAssistantBlocks
-                      message={message}
-                      onEnableAutoApprove={onEnableAutoApprove}
-                      onLoadToolOutput={loadToolOutput}
-                      onResolveApproval={onResolveApproval}
-                      workbenchId={workbenchId}
-                    />
-                  </div>
-                </div>
-              ),
-            )}
-            {active ? (
-              <AssistantRunStatus
-                activity={runActivity}
-                detail={elapsed || undefined}
-              />
-            ) : null}
-          </section>
+      {timeline.items.length === 0 ? (
+        <ThreadContentFrame className="pb-3 pt-8" densityRail={densityRail}>
+          <AssistantIdentityHeader identity={member} />
         </ThreadContentFrame>
-      </div>
-      {!isAtBottom ? (
-        <button
-          aria-label={t("threadJumpToLatest")}
-          className="absolute bottom-4 left-1/2 z-10 grid h-8 w-8 -translate-x-1/2 place-items-center rounded-full border border-[#deded8] bg-white text-[#4d4d48] shadow-[0_4px_12px_rgba(0,0,0,0.10)] hover:bg-[#f5f5f2] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring dark:border-border dark:bg-card dark:text-foreground dark:hover:bg-muted"
-          onClick={() => scrollToLatest()}
-          title={t("threadJumpToLatest")}
-          type="button"
-        >
-          <ArrowDown className="h-4 w-4" />
-        </button>
       ) : null}
+      <div className="min-h-0 flex-1">
+        <Virtuoso
+          key={`${store.sessionId}:${store.memberId}`}
+          alignToBottom={false}
+          atBottomStateChange={atBottomChanged}
+          atBottomThreshold={24}
+          className="h-full"
+          components={EXPERT_MEMBER_VIRTUOSO_COMPONENTS}
+          computeItemKey={expertMemberItemKey}
+          context={context}
+          data={timeline.items}
+          firstItemIndex={timeline.firstItemIndex}
+          followOutput={followMode === "following" ? "auto" : false}
+          initialTopMostItemIndex={THREAD_INITIAL_BOTTOM_LOCATION}
+          itemContent={expertMemberItemContent}
+          ref={virtuosoRef}
+          startReached={() => void store.loadOlder()}
+        />
+      </div>
+      <ThreadJumpToLatest label={t("threadJumpToLatest")} onJump={jumpToLatest} store={viewportStore} />
     </div>
   );
 }
@@ -1375,81 +1313,6 @@ function ExpertCollaborationBar({
   );
 }
 
-function rememberSessionView(view: SessionViewSnapshot): void {
-  sessionViewCache.delete(view.session.id);
-  sessionViewCache.set(view.session.id, view);
-  while (sessionViewCache.size > SESSION_VIEW_CACHE_LIMIT) {
-    const oldest = sessionViewCache.keys().next().value;
-    if (!oldest) break;
-    sessionViewCache.delete(oldest);
-  }
-}
-
-function normalizeApproval(
-  approval: ToolOperationApproval | undefined,
-): ToolOperationApproval | undefined {
-  if (!approval) return undefined;
-  return {
-    ...approval,
-    severity: approval.severity === "high" ? "high" : "normal",
-    matchedRules: Array.isArray(approval.matchedRules)
-      ? approval.matchedRules
-      : [],
-  };
-}
-
-function approvalFromDetails(
-  details: unknown,
-  existing: ToolOperationApproval | undefined,
-): ToolOperationApproval | undefined {
-  if (
-    typeof details !== "object" ||
-    details === null ||
-    Array.isArray(details) ||
-    !("approval" in details)
-  )
-    return normalizeApproval(existing);
-  const approval = details.approval;
-  if (
-    typeof approval !== "object" ||
-    approval === null ||
-    Array.isArray(approval)
-  )
-    return normalizeApproval(existing);
-  return normalizeApproval(approval as ToolOperationApproval);
-}
-
-function userRequestFromDetails(
-  details: unknown,
-  existing: MessageUserRequest | undefined,
-): MessageUserRequest | undefined {
-  if (
-    typeof details !== "object" ||
-    details === null ||
-    Array.isArray(details) ||
-    !("userRequest" in details)
-  )
-    return existing;
-  const userRequest = details.userRequest;
-  if (
-    typeof userRequest !== "object" ||
-    userRequest === null ||
-    Array.isArray(userRequest) ||
-    !("request" in userRequest)
-  )
-    return existing;
-  const request = userRequest.request;
-  if (
-    typeof request !== "object" ||
-    request === null ||
-    Array.isArray(request) ||
-    !("requestId" in request) ||
-    typeof request.requestId !== "string"
-  )
-    return existing;
-  return userRequest as MessageUserRequest;
-}
-
 function formatTokenCount(value: number): string {
   if (value < 1_000) return value.toLocaleString();
   const compact = Math.round((value / 1_000) * 10) / 10;
@@ -1462,10 +1325,10 @@ function asObject(value: unknown): Record<string, unknown> | undefined {
     : undefined;
 }
 
-function planModeFromSnapshot(
-  snapshot: SessionSnapshot,
+function planModeFromExtensions(
+  extensions: SessionSnapshot["extensions"],
 ): "off" | "planning" | "executing" {
-  const state = snapshot.extensions.find(
+  const state = extensions.find(
     (item) => item.extensionId === "wordless.plan-mode",
   )?.state;
   return state?.mode === "planning" || state?.mode === "executing"
@@ -1473,410 +1336,7 @@ function planModeFromSnapshot(
     : "off";
 }
 
-function terminalizeToolDetails(details: unknown, reason: string): unknown {
-  if (typeof details !== "object" || details === null || Array.isArray(details))
-    return details;
-  const record = details as Record<string, unknown>;
-  if (!Array.isArray(record.tasks)) return details;
-  return {
-    ...record,
-    updatedAt: Date.now(),
-    tasks: record.tasks.map((value) => {
-      if (typeof value !== "object" || value === null || Array.isArray(value))
-        return value;
-      const task = value as Record<string, unknown>;
-      if (
-        task.status === "completed" ||
-        task.status === "interrupted" ||
-        task.status === "failed" ||
-        task.status === "cancelled" ||
-        task.status === "blocked"
-      )
-        return task;
-      return {
-        ...task,
-        status: "cancelled",
-        completedAt: Date.now(),
-        error: typeof task.error === "string" ? task.error : reason,
-        ...(typeof task.activeTool === "object" &&
-        task.activeTool !== null &&
-        !Array.isArray(task.activeTool)
-          ? {
-              activeTool: {
-                ...(task.activeTool as Record<string, unknown>),
-                state: "error",
-              },
-            }
-          : {}),
-      };
-    }),
-  };
-}
-
-function terminalizeActiveTools(
-  messages: ConversationMessage[],
-  reason: string,
-): ConversationMessage[] {
-  return messages.map((message) => ({
-    ...message,
-    blocks: message.blocks.map((block) => {
-      if (block.type !== "tool" || ["complete", "error"].includes(block.state))
-        return block;
-      return {
-        ...block,
-        state: "error" as const,
-        output: block.output ? `${block.output}\n\n${reason}` : reason,
-        details: terminalizeToolDetails(block.details, reason),
-      };
-    }),
-  }));
-}
-
-function applyEvent(
-  snapshot: SessionSnapshot,
-  event: RuntimeEventEnvelope,
-  t: (key: MessageKey) => string,
-): SessionSnapshot {
-  const messages = [...snapshot.messages];
-  const payload = event.event;
-  if (
-    payload.type === "extension.event" &&
-    payload.event.type === "state.changed"
-  ) {
-    const state = asObject(payload.event.payload);
-    if (
-      typeof state?.extensionId !== "string" ||
-      typeof state.updatedAt !== "number" ||
-      !asObject(state.state)
-    )
-      return snapshot;
-    const next = {
-      extensionId: state.extensionId,
-      updatedAt: state.updatedAt,
-      state: asObject(state.state)!,
-    };
-    const extensions = snapshot.extensions.filter(
-      (item) => item.extensionId !== next.extensionId,
-    );
-    const nextExtensions = [...extensions, next];
-    return {
-      ...snapshot,
-      extensions: nextExtensions,
-      messages: overlayExpertTaskRuns(messages, nextExtensions),
-    };
-  }
-  if (payload.type === "context.compaction.started") {
-    return {
-      ...snapshot,
-      isCompacting: true,
-      compactionTrigger: payload.trigger,
-      compactionError: undefined,
-    };
-  }
-  if (payload.type === "context.compaction.completed") {
-    const completed = completeContextCompaction(
-      messages,
-      snapshot.contextCompactions,
-      payload.compaction,
-      payload.recoveredFailureMessageId,
-    );
-    return {
-      ...snapshot,
-      ...completed,
-      isCompacting: false,
-      compactionTrigger: undefined,
-      compactionError: undefined,
-    };
-  }
-  if (payload.type === "context.compaction.failed") {
-    return {
-      ...snapshot,
-      isCompacting: false,
-      compactionTrigger: payload.trigger,
-      compactionError: payload.message,
-    };
-  }
-  if (payload.type === "message.started") {
-    const existingIndex = messages.findIndex(
-      (message) => message.id === payload.message.id,
-    );
-    if (existingIndex !== -1) {
-      if (payload.message.role === "user")
-        messages[existingIndex] = payload.message;
-      return { ...snapshot, messages, isRunning: true };
-    }
-    const nextMessages = [...messages, payload.message];
-    return {
-      ...snapshot,
-      messages: nextMessages,
-      turnUsage: calculateCurrentTurnUsage(nextMessages) ?? snapshot.turnUsage,
-      isRunning: true,
-    };
-  }
-  if (payload.type === "message.text.delta") {
-    const index = messages.findIndex(
-      (message) => message.id === payload.messageId,
-    );
-    if (index === -1) return snapshot;
-    const message = messages[index]!;
-    const blocks = [...message.blocks];
-    const last = blocks.at(-1);
-    if (last?.type === "text")
-      blocks[blocks.length - 1] = {
-        type: "text",
-        text: last.text + payload.delta,
-      };
-    else blocks.push({ type: "text", text: payload.delta });
-    messages[index] = { ...message, blocks };
-    return { ...snapshot, messages, isRunning: true };
-  }
-  if (payload.type === "message.reasoning.delta") {
-    const index = messages.findIndex(
-      (message) => message.id === payload.messageId,
-    );
-    if (index === -1) return snapshot;
-    const message = messages[index]!;
-    const blocks = [...message.blocks];
-    const last = blocks.at(-1);
-    if (last?.type === "reasoning")
-      blocks[blocks.length - 1] = {
-        type: "reasoning",
-        text: last.text + payload.delta,
-      };
-    else blocks.push({ type: "reasoning", text: payload.delta });
-    messages[index] = { ...message, blocks };
-    return { ...snapshot, messages, isRunning: true };
-  }
-  if (payload.type === "message.completed") {
-    const index = messages.findIndex(
-      (message) => message.id === payload.message.id,
-    );
-    if (index === -1) {
-      const nextMessages = [...messages, payload.message];
-      return {
-        ...snapshot,
-        messages: nextMessages,
-        turnUsage:
-          calculateCurrentTurnUsage(nextMessages) ?? snapshot.turnUsage,
-      };
-    }
-    const previous = messages[index]!;
-    messages[index] = mergeCompletedAssistantMessage(previous, payload.message);
-    return {
-      ...snapshot,
-      messages,
-      turnUsage: calculateCurrentTurnUsage(messages) ?? snapshot.turnUsage,
-    };
-  }
-  if (
-    payload.type === "tool.started" ||
-    payload.type === "tool.updated" ||
-    payload.type === "tool.completed"
-  ) {
-    const index = messages.findIndex(
-      (message) => message.id === payload.messageId,
-    );
-    if (index === -1) return snapshot;
-    const message = messages[index]!;
-    const existing = message.blocks.find(
-      (block): block is MessageToolBlock =>
-        block.type === "tool" && block.callId === payload.callId,
-    );
-    const next: MessageToolBlock =
-      payload.type === "tool.started"
-        ? {
-            type: "tool",
-            callId: payload.callId,
-            name: payload.name,
-            input: payload.input,
-            state: "running",
-            startedAt: event.timestamp,
-            ...(payload.name === "bash"
-              ? {
-                  timeoutSeconds:
-                    typeof payload.input.timeout === "number"
-                      ? payload.input.timeout
-                      : 30,
-                }
-              : {}),
-          }
-        : {
-            type: "tool",
-            callId: payload.callId,
-            name: existing?.name ?? "tool",
-            startedAt: existing?.startedAt,
-            timeoutSeconds: existing?.timeoutSeconds,
-            input: existing?.input,
-            output:
-              payload.type === "tool.updated"
-                ? `${existing?.output ?? ""}${payload.output}`
-                : payload.output,
-            details:
-              payload.type === "tool.completed"
-                ? payload.details
-                : payload.type === "tool.updated"
-                  ? (payload.details ?? existing?.details)
-                  : existing?.details,
-            usage: payload.usage ?? existing?.usage,
-            approval:
-              payload.type === "tool.completed"
-                ? approvalFromDetails(payload.details, existing?.approval)
-                : existing?.approval,
-            userRequest:
-              payload.type === "tool.completed"
-                ? userRequestFromDetails(payload.details, existing?.userRequest)
-                : existing?.userRequest,
-            state:
-              payload.type === "tool.completed"
-                ? payload.isError
-                  ? "error"
-                  : "complete"
-                : "running",
-          };
-    const blocks = existing
-      ? message.blocks.map((block) =>
-          block.type === "tool" && block.callId === payload.callId
-            ? next
-            : block,
-        )
-      : [...message.blocks, next];
-    messages[index] = { ...message, blocks };
-    return {
-      ...snapshot,
-      messages,
-      turnUsage: calculateCurrentTurnUsage(messages) ?? snapshot.turnUsage,
-      isRunning: true,
-    };
-  }
-  if (payload.type === "approval.requested") {
-    const index = messages.findIndex(
-      (message) => message.id === payload.messageId,
-    );
-    if (index === -1) return snapshot;
-    const message = messages[index]!;
-    const blocks = message.blocks.map((block) =>
-      block.type === "tool" && block.callId === payload.approval.callId
-        ? {
-            ...block,
-            state: "awaiting-approval" as const,
-            approval: { ...payload.approval, status: "required" as const },
-          }
-        : block,
-    );
-    messages[index] = { ...message, blocks };
-    return { ...snapshot, messages, isRunning: true };
-  }
-  if (payload.type === "approval.resolved") {
-    const index = messages.findIndex(
-      (message) => message.id === payload.messageId,
-    );
-    if (index === -1) return snapshot;
-    const message = messages[index]!;
-    const blocks = message.blocks.map((block) =>
-      block.type === "tool" &&
-      block.approval?.approvalId === payload.resolution.approvalId
-        ? {
-            ...block,
-            state: payload.resolution.approved
-              ? ("running" as const)
-              : ("error" as const),
-            approval: {
-              ...block.approval,
-              status: payload.resolution.approved
-                ? ("approved" as const)
-                : ("rejected" as const),
-              feedback: payload.resolution.feedback,
-            },
-            ...(!payload.resolution.approved
-              ? {
-                  output:
-                    payload.resolution.feedback ??
-                    t("threadOperationRejected"),
-                }
-              : {}),
-          }
-        : block,
-    );
-    messages[index] = { ...message, blocks };
-    return { ...snapshot, messages, isRunning: true };
-  }
-  if (payload.type === "user-request.requested") {
-    const index = messages.findIndex(
-      (message) => message.id === payload.messageId,
-    );
-    if (index === -1) return snapshot;
-    const message = messages[index]!;
-    const blocks = message.blocks.map((block) =>
-      block.type === "tool" && block.callId === payload.request.callId
-        ? {
-            ...block,
-            state: "awaiting-user-input" as const,
-            userRequest: { request: payload.request },
-          }
-        : block,
-    );
-    messages[index] = { ...message, blocks };
-    return { ...snapshot, messages, isRunning: true };
-  }
-  if (payload.type === "user-request.resolved") {
-    const index = messages.findIndex(
-      (message) => message.id === payload.messageId,
-    );
-    if (index === -1) return snapshot;
-    const message = messages[index]!;
-    const blocks = message.blocks.map((block) =>
-      block.type === "tool" &&
-      block.userRequest?.request.requestId === payload.resolution.requestId
-        ? {
-            ...block,
-            state: "running" as const,
-            userRequest: {
-              ...block.userRequest,
-              resolution: payload.resolution,
-            },
-          }
-        : block,
-    );
-    messages[index] = { ...message, blocks };
-    return { ...snapshot, messages, isRunning: true };
-  }
-  if (payload.type === "run.failed" || payload.type === "run.cancelled") {
-    const reason =
-      payload.type === "run.failed"
-        ? t("threadAgentRunFailed").replace("{message}", payload.message)
-        : t("threadAgentRunCancelled");
-    return {
-      ...snapshot,
-      messages: terminalizeActiveTools(messages, reason),
-      isRunning: false,
-      isCompacting: false,
-      toolApprovalMode: "manual",
-    };
-  }
-  if (payload.type === "session.idle") {
-    return {
-      ...snapshot,
-      messages: terminalizeActiveTools(
-        messages,
-        t("threadAgentRunEndedBeforeToolCompleted"),
-      ),
-      isRunning: false,
-      isCompacting: false,
-      toolApprovalMode: "manual",
-    };
-  }
-  if (payload.type === "run.started") {
-    return {
-      ...snapshot,
-      isRunning: true,
-      compactionTrigger: undefined,
-      compactionError: undefined,
-    };
-  }
-  return snapshot;
-}
-
-function ThinkingBlock({ text }: { text: string }) {
+function ThinkingBlock({ streaming = false, text }: { streaming?: boolean; text: string }) {
   const { t } = usePreferences();
   const [expanded, setExpanded] = useState(false);
   return (
@@ -1909,7 +1369,7 @@ function ThinkingBlock({ text }: { text: string }) {
         </button>
         {expanded ? (
           <div className="message-markdown-reasoning mt-2 text-[12px] leading-5 text-[#74746d] dark:text-muted-foreground">
-            <MessageMarkdown text={text} />
+            <MessageMarkdown streaming={streaming} text={text} />
           </div>
         ) : null}
       </div>
@@ -2270,13 +1730,13 @@ function AssistantMessageBlocks({
           className={followsReasoning ? "pt-3" : undefined}
           key={`text-${index}`}
         >
-          <MessageMarkdown text={block.text} />
+          <MessageMarkdown streaming={message.status === "streaming"} text={block.text} />
         </div>,
       );
     }
     if (block.type === "reasoning")
       rendered.push(
-        <ThinkingBlock key={`reasoning-${index}`} text={block.text} />,
+        <ThinkingBlock key={`reasoning-${index}`} streaming={message.status === "streaming"} text={block.text} />,
       );
     if (block.type === "artifact")
       rendered.push(
@@ -2503,23 +1963,6 @@ function AssistantRunStatus({
   );
 }
 
-function AssistantRunPlaceholder({
-  identity,
-  presentation,
-}: {
-  identity?: Pick<ExpertCollaborationLeader, "name" | "portrait">;
-  presentation: AssistantRunPresentation;
-}) {
-  return (
-    <article>
-      <AssistantIdentityHeader identity={identity} />
-      <div className="mt-2">
-        <AssistantRunStatus activity={presentation.activity} />
-      </div>
-    </article>
-  );
-}
-
 function PlanResultActions({
   onResolve,
 }: {
@@ -2644,6 +2087,17 @@ function AssistantMessageBody({
   const showRunStatus =
     presentedAssistantMessageId !== null &&
     messages.some((candidate) => candidate.id === presentedAssistantMessageId);
+  if (!message)
+    return (
+      <article>
+        <AssistantIdentityHeader identity={assistantIdentity} />
+        <div className="mt-2 min-w-0">
+          {runPresentation ? (
+            <AssistantRunStatus activity={runPresentation.activity} />
+          ) : null}
+        </div>
+      </article>
+    );
   return (
     <article>
       <AssistantIdentityHeader identity={assistantIdentity} />
@@ -2788,6 +2242,7 @@ function MessageBody({
   onResolvePlanResult,
   canPlan,
   isFirstMessage,
+  pendingAssistant = false,
   planMode,
   runPresentation,
   showFooter,
@@ -2821,13 +2276,34 @@ function MessageBody({
   onResolvePlanResult: (action: "implement" | "stay") => Promise<void>;
   canPlan: boolean;
   isFirstMessage: boolean;
+  pendingAssistant?: boolean;
   planMode: "off" | "planning" | "executing";
   runPresentation: AssistantRunPresentation | null;
   showFooter: boolean;
   workbenchId: WorkbenchId;
 }) {
   const { t } = usePreferences();
-  const message = messages[0]!;
+  const message = messages[0];
+  if (!message)
+    return pendingAssistant ? (
+      <AssistantMessageBody
+        assistantIdentity={assistantIdentity}
+        canPlan={canPlan}
+        messages={messages}
+        onEnableAutoApprove={onEnableAutoApprove}
+        onHandoffClarification={onHandoffClarification}
+        onLoadToolOutput={onLoadToolOutput}
+        onOpenResearchTask={onOpenResearchTask}
+        onResolveApproval={onResolveApproval}
+        onResolveClarificationQuestion={onResolveClarificationQuestion}
+        onResolvePlanResult={onResolvePlanResult}
+        onResolveUserRequest={onResolveUserRequest}
+        planMode={planMode}
+        runPresentation={runPresentation}
+        showFooter={false}
+        workbenchId={workbenchId}
+      />
+    ) : null;
   if (message.role === "user") {
     const contentBlocks = message.blocks.filter(
       (block) =>
@@ -2963,325 +2439,536 @@ function MessageBody({
   );
 }
 
-function createTimeline(
-  snapshot: SessionSnapshot,
-  runPresentation: AssistantRunPresentation | null,
-): ThreadTimelineItem[] {
-  return createThreadTimeline(
-    snapshot.messages,
-    snapshot.contextCompactions,
-    runPresentation,
-  );
-}
-
-function withPendingTurn(
-  snapshot: SessionSnapshot,
-  pendingTurn: PendingThreadTurn | null | undefined,
-): SessionSnapshot {
-  if (
-    !pendingTurn ||
-    snapshot.messages.some((message) => message.id === pendingTurn.message.id)
-  )
-    return snapshot;
-  return {
-    ...snapshot,
-    messages: [...snapshot.messages, pendingTurn.message],
-    isRunning: true,
-  };
-}
-
-type LoadedHistory = {
-  hasMoreAfter: boolean;
-  hasMoreBefore: boolean;
-  nextAfterCursor?: string;
-  nextBeforeCursor?: string;
-  revision: string;
-  turnSummaries: SessionTurnSummary[];
+type ThreadRowActions = {
+  handoffClarification: (
+    interactionMode: "default" | "clarify" | "plan",
+  ) => Promise<void>;
+  loadToolOutput: (callId: string) => Promise<void>;
+  onOpenResearchTask?: (selection: ResearchTaskSelection) => void;
+  resolveApproval: (
+    approvalId: string,
+    approved: boolean,
+    feedback?: string,
+  ) => void;
+  resolveClarificationQuestion: (
+    callId: string,
+    value: string | boolean,
+  ) => Promise<void>;
+  resolvePlanResult: (action: "implement" | "stay") => Promise<void>;
+  resolveUserRequest: (
+    requestId: string,
+    resolution: {
+      status: "submitted" | "cancelled";
+      answers?: Record<string, UserRequestAnswer>;
+      feedback?: string;
+    },
+  ) => void;
+  setToolApprovalMode: (mode: ToolApprovalMode) => Promise<void>;
 };
 
-function messagesFromHistoryPage(
-  page: SessionHistoryPage,
-): ConversationMessage[] {
-  return page.items.flatMap((item) =>
-    item.type === "turn" ? item.turn.messages : [],
+type ThreadRowEnvironmentSnapshot = {
+  canPlan: boolean;
+  densityRail: boolean;
+  planMode: "off" | "planning" | "executing";
+};
+
+class ThreadRowEnvironment {
+  private actionTargets: ThreadRowActions | null = null;
+  private readonly chromeListeners = new Set<() => void>();
+  private readonly rowListeners = new Set<() => void>();
+  private chromeSnapshot: ThreadVirtuosoContext;
+  private rowSnapshot: ThreadRowEnvironmentSnapshot;
+
+  readonly actions: ThreadRowActions = {
+    handoffClarification: (...args) => this.requireActions().handoffClarification(...args),
+    loadToolOutput: (...args) => this.requireActions().loadToolOutput(...args),
+    onOpenResearchTask: (...args) => this.requireActions().onOpenResearchTask?.(...args),
+    resolveApproval: (...args) => this.requireActions().resolveApproval(...args),
+    resolveClarificationQuestion: (...args) => this.requireActions().resolveClarificationQuestion(...args),
+    resolvePlanResult: (...args) => this.requireActions().resolvePlanResult(...args),
+    resolveUserRequest: (...args) => this.requireActions().resolveUserRequest(...args),
+    setToolApprovalMode: (...args) => this.requireActions().setToolApprovalMode(...args),
+  };
+
+  constructor(rowSnapshot: ThreadRowEnvironmentSnapshot, chromeSnapshot: ThreadVirtuosoContext) {
+    this.rowSnapshot = rowSnapshot;
+    this.chromeSnapshot = chromeSnapshot;
+  }
+
+  readonly getChromeSnapshot = (): ThreadVirtuosoContext => this.chromeSnapshot;
+  readonly getRowSnapshot = (): ThreadRowEnvironmentSnapshot => this.rowSnapshot;
+  readonly subscribeChrome = (listener: () => void): (() => void) => {
+    this.chromeListeners.add(listener);
+    return () => this.chromeListeners.delete(listener);
+  };
+  readonly subscribeRow = (listener: () => void): (() => void) => {
+    this.rowListeners.add(listener);
+    return () => this.rowListeners.delete(listener);
+  };
+
+  setActions(actions: ThreadRowActions): void {
+    this.actionTargets = actions;
+  }
+
+  update(row: ThreadRowEnvironmentSnapshot, chrome: ThreadVirtuosoContext): void {
+    if (
+      this.rowSnapshot.canPlan !== row.canPlan ||
+      this.rowSnapshot.densityRail !== row.densityRail ||
+      this.rowSnapshot.planMode !== row.planMode
+    ) {
+      this.rowSnapshot = row;
+      for (const listener of this.rowListeners) listener();
+    }
+    if (this.chromeSnapshot !== chrome) {
+      this.chromeSnapshot = chrome;
+      for (const listener of this.chromeListeners) listener();
+    }
+  }
+
+  private requireActions(): ThreadRowActions {
+    if (!this.actionTargets) throw new Error("Thread row actions are unavailable");
+    return this.actionTargets;
+  }
+}
+
+type ThreadStoreVirtuosoContext = {
+  environment: ThreadRowEnvironment;
+  store: ThreadSessionStore;
+  viewportStore: ThreadViewportStore;
+};
+
+const ThreadStoreScroller = forwardRef<
+  HTMLDivElement,
+  ComponentProps<"div"> & { context?: ThreadStoreVirtuosoContext }
+>(function ThreadStoreScroller({
+  context,
+  onKeyDown,
+  onPointerCancel,
+  onPointerDown,
+  onPointerUp,
+  onTouchCancel,
+  onTouchEnd,
+  onTouchMove,
+  onTouchStart,
+  onWheel,
+  ...props
+}, ref) {
+  const touchYRef = useRef<number | null>(null);
+  return (
+    <div
+      {...props}
+      onKeyDown={(event) => {
+        if (["ArrowUp", "PageUp", "Home"].includes(event.key))
+          context?.viewportStore.markUserScrollIntent();
+        onKeyDown?.(event);
+      }}
+      onPointerDown={(event) => {
+        if (isScrollbarPointerDown(event))
+          context?.viewportStore.markUserScrollIntent();
+        onPointerDown?.(event);
+      }}
+      onPointerCancel={(event) => {
+        context?.viewportStore.clearUserScrollIntent();
+        onPointerCancel?.(event);
+      }}
+      onPointerUp={(event) => {
+        context?.viewportStore.clearUserScrollIntent();
+        onPointerUp?.(event);
+      }}
+      onTouchStart={(event) => {
+        touchYRef.current = event.touches[0]?.clientY ?? null;
+        onTouchStart?.(event);
+      }}
+      onTouchMove={(event) => {
+        const nextY = event.touches[0]?.clientY ?? null;
+        if (nextY !== null && touchYRef.current !== null && nextY > touchYRef.current)
+          context?.viewportStore.markUserScrollIntent();
+        touchYRef.current = nextY;
+        onTouchMove?.(event);
+      }}
+      onTouchCancel={(event) => {
+        touchYRef.current = null;
+        context?.viewportStore.clearUserScrollIntent();
+        onTouchCancel?.(event);
+      }}
+      onTouchEnd={(event) => {
+        touchYRef.current = null;
+        context?.viewportStore.clearUserScrollIntent();
+        onTouchEnd?.(event);
+      }}
+      onWheel={(event) => {
+        if (event.deltaY < 0) context?.viewportStore.markUserScrollIntent();
+        onWheel?.(event);
+      }}
+      ref={ref}
+    />
+  );
+});
+
+function ThreadStoreVirtuosoHeader({
+  context,
+}: {
+  context: ThreadStoreVirtuosoContext;
+}) {
+  const environment = useSyncExternalStore(
+    context.environment.subscribeChrome,
+    context.environment.getChromeSnapshot,
+    context.environment.getChromeSnapshot,
+  );
+  return <ThreadVirtuosoHeader context={environment} />;
+}
+
+function ThreadStoreVirtuosoFooter({
+  context,
+}: {
+  context: ThreadStoreVirtuosoContext;
+}) {
+  const environment = useSyncExternalStore(
+    context.environment.subscribeChrome,
+    context.environment.getChromeSnapshot,
+    context.environment.getChromeSnapshot,
+  );
+  return <ThreadVirtuosoFooter context={environment} />;
+}
+
+const THREAD_STORE_VIRTUOSO_COMPONENTS: Components<
+  ThreadTimelineDescriptor,
+  ThreadStoreVirtuosoContext
+> = {
+  Footer: ThreadStoreVirtuosoFooter,
+  Header: ThreadStoreVirtuosoHeader,
+  Scroller: ThreadStoreScroller,
+};
+
+function ThreadStoreRow({
+  descriptor,
+  context,
+}: {
+  descriptor: ThreadTimelineDescriptor;
+  context: ThreadStoreVirtuosoContext;
+}) {
+  const row = useSyncExternalStore(
+    useCallback(
+      (listener) => context.store.subscribeRow(descriptor.key, listener),
+      [context.store, descriptor.key],
+    ),
+    useCallback(
+      () => context.store.getRowSnapshot(descriptor.key),
+      [context.store, descriptor.key],
+    ),
+    useCallback(
+      () => context.store.getRowSnapshot(descriptor.key),
+      [context.store, descriptor.key],
+    ),
+  );
+  const timeline = context.store.getTimelineSnapshot();
+  const timelineIndex = context.store.getTimelineIndex(descriptor.key);
+  const isFirstMessage = timelineIndex === 0;
+  const isLastMessage = timelineIndex === timeline.items.length - 1;
+  const followsCompaction = timeline.items[timelineIndex - 1]?.type === "compaction";
+  const hasPendingApproval = row.messages.some((message) =>
+    message.blocks.some((block) => block.type === "tool" && block.state === "awaiting-approval"),
+  );
+  const environment = useSyncExternalStore(
+    context.environment.subscribeRow,
+    context.environment.getRowSnapshot,
+    context.environment.getRowSnapshot,
+  );
+  const assistantIdentity = useSyncExternalStore(
+    context.store.subscribeMetadata,
+    useCallback(() => context.store.getMetadataSnapshot().expertCollaboration?.leader, [context.store]),
+    useCallback(() => context.store.getMetadataSnapshot().expertCollaboration?.leader, [context.store]),
+  );
+  const isRunning = useSyncExternalStore(
+    context.store.subscribeMetadata,
+    useCallback(
+      () => isLastMessage ? context.store.getMetadataSnapshot().isRunning : false,
+      [context.store, isLastMessage],
+    ),
+    useCallback(
+      () => isLastMessage ? context.store.getMetadataSnapshot().isRunning : false,
+      [context.store, isLastMessage],
+    ),
+  );
+  const toolApprovalMode = useSyncExternalStore(
+    context.store.subscribeMetadata,
+    useCallback(
+      () => hasPendingApproval ? context.store.getMetadataSnapshot().toolApprovalMode : "auto",
+      [context.store, hasPendingApproval],
+    ),
+    useCallback(
+      () => hasPendingApproval ? context.store.getMetadataSnapshot().toolApprovalMode : "auto",
+      [context.store, hasPendingApproval],
+    ),
+  );
+  const workbenchId = useSyncExternalStore(
+    context.store.subscribeMetadata,
+    useCallback(() => context.store.getMetadataSnapshot().session?.workbenchId ?? "conversation", [context.store]),
+    useCallback(() => context.store.getMetadataSnapshot().session?.workbenchId ?? "conversation", [context.store]),
+  );
+  if (row.key === "missing") return null;
+  return (
+    <ThreadContentFrame
+      className={followsCompaction ? "pt-[26px]" : ""}
+      densityRail={environment.densityRail}
+    >
+      {descriptor.type === "compaction" && row.compaction ? (
+        <ContextCompactionActivity compaction={row.compaction} />
+      ) : (
+        <MessageBody
+          assistantIdentity={assistantIdentity}
+          canPlan={environment.canPlan}
+          isFirstMessage={isFirstMessage}
+          messages={[...row.messages]}
+          onEnableAutoApprove={
+            toolApprovalMode === "manual"
+              ? () => context.environment.actions.setToolApprovalMode("auto")
+              : undefined
+          }
+          onHandoffClarification={context.environment.actions.handoffClarification}
+          onLoadToolOutput={context.environment.actions.loadToolOutput}
+          onOpenResearchTask={context.environment.actions.onOpenResearchTask}
+          onResolveApproval={context.environment.actions.resolveApproval}
+          onResolveClarificationQuestion={context.environment.actions.resolveClarificationQuestion}
+          onResolvePlanResult={context.environment.actions.resolvePlanResult}
+          onResolveUserRequest={context.environment.actions.resolveUserRequest}
+          pendingAssistant={descriptor.type === "assistant"}
+          planMode={environment.planMode}
+          runPresentation={row.presentation}
+          showFooter={!isRunning && isLastMessage}
+          workbenchId={workbenchId}
+        />
+      )}
+    </ThreadContentFrame>
   );
 }
 
-function userMessageHistory(
-  messages: readonly ConversationMessage[],
-): Array<{ id: string; parts: UserPromptPart[] }> {
+function threadStoreItemContent(
+  _index: number,
+  descriptor: ThreadTimelineDescriptor,
+  context: ThreadStoreVirtuosoContext,
+) {
+  return (
+    <ThreadStoreRow
+      context={context}
+      descriptor={descriptor}
+    />
+  );
+}
+
+function threadStoreItemKey(
+  _index: number,
+  descriptor: ThreadTimelineDescriptor,
+) {
+  return descriptor.key;
+}
+
+type ThreadTimelineViewportHandle = {
+  jumpToLatest: (behavior?: "auto" | "smooth") => void;
+  navigateToTurn: (turnId: string, messageId?: string, matchText?: string) => Promise<void>;
+};
+
+type ThreadTimelineViewportProps = {
+  context: ThreadStoreVirtuosoContext;
+  fallbackExcerpt: string;
+  jumpLabel: string;
+  navigationLabel: string;
+  reduceMotion: boolean;
+  store: ThreadSessionStore;
+  summaries: ThreadHistorySnapshot["turnSummaries"];
+  viewportStore: ThreadViewportStore;
+};
+
+const ThreadTimelineViewport = memo(forwardRef<ThreadTimelineViewportHandle, ThreadTimelineViewportProps>(
+  function ThreadTimelineViewport({
+    context,
+    fallbackExcerpt,
+    jumpLabel,
+    navigationLabel,
+    reduceMotion,
+    store,
+    summaries,
+    viewportStore,
+  }, ref) {
+    const timeline = useSyncExternalStore(store.subscribeTimeline, store.getTimelineSnapshot, store.getTimelineSnapshot);
+    const loading = useSyncExternalStore(store.subscribeLoading, store.getLoadingSnapshot, store.getLoadingSnapshot);
+    const virtuosoRef = useRef<VirtuosoHandle>(null);
+    const timelineRef = useRef(timeline);
+    timelineRef.current = timeline;
+    const [pendingNavigation, setPendingNavigation] = useState<{
+      matchText?: string;
+      messageId?: string;
+      turnId: string;
+    } | null>(null);
+    const navigationSequenceRef = useRef(0);
+    const searchHighlightCleanupRef = useRef<(() => void) | null>(null);
+    const searchHighlightTimerRef = useRef<number | null>(null);
+
+    const jumpToLatest = useCallback((behavior: "auto" | "smooth" = "smooth") => {
+      viewportStore.resumeFollowing();
+      const current = store.getTimelineSnapshot();
+      if (current.items.length) virtuosoRef.current?.scrollToIndex({ index: current.items.length - 1, align: "end", behavior });
+    }, [store, viewportStore]);
+
+    const navigateToTurn = useCallback(async (turnId: string, messageId?: string, matchText?: string) => {
+      const sequence = ++navigationSequenceRef.current;
+      viewportStore.pauseFollowing();
+      if (searchHighlightTimerRef.current !== null) window.clearTimeout(searchHighlightTimerRef.current);
+      searchHighlightTimerRef.current = null;
+      searchHighlightCleanupRef.current?.();
+      searchHighlightCleanupRef.current = null;
+      setPendingNavigation({ turnId, messageId, matchText });
+      await store.ensureTurnLoaded(turnId);
+      if (sequence === navigationSequenceRef.current)
+        setPendingNavigation({ turnId, messageId, matchText });
+    }, [store, viewportStore]);
+
+    useImperativeHandle(ref, () => ({ jumpToLatest, navigateToTurn }), [jumpToLatest, navigateToTurn]);
+
+    useEffect(() => {
+      if (!pendingNavigation) return;
+      const index = timeline.items.findIndex((item) => item.type !== "compaction" && item.turnId === pendingNavigation.turnId);
+      if (index === -1) return;
+      viewportStore.setActiveTurn(pendingNavigation.turnId);
+      virtuosoRef.current?.scrollToIndex({ index, align: "start", behavior: reduceMotion ? "auto" : "smooth" });
+      if (!pendingNavigation.messageId) {
+        setPendingNavigation(null);
+        return;
+      }
+      const messageId = pendingNavigation.messageId;
+      const matchText = pendingNavigation.matchText;
+      let frame = 0;
+      let attempts = 0;
+      let cancelWaitForScroll = () => {};
+      const focusMessage = () => {
+        const element = document.querySelector<HTMLElement>(`[data-thread-message-id="${CSS.escape(messageId)}"]`);
+        if (!element && attempts++ < 20) {
+          frame = window.requestAnimationFrame(focusMessage);
+          return;
+        }
+        if (!element) {
+          setPendingNavigation((current) => current?.messageId === messageId ? null : current);
+          return;
+        }
+        element.scrollIntoView({ block: "center", behavior: reduceMotion ? "auto" : "smooth" });
+        element.focus({ preventScroll: true });
+        cancelWaitForScroll = waitForScrollSettled(element, reduceMotion, () => {
+          if (searchHighlightTimerRef.current !== null) window.clearTimeout(searchHighlightTimerRef.current);
+          searchHighlightCleanupRef.current?.();
+          const cleanup = matchText ? applySearchHighlight(element, matchText) : null;
+          searchHighlightCleanupRef.current = cleanup;
+          if (cleanup)
+            searchHighlightTimerRef.current = window.setTimeout(() => {
+              if (searchHighlightCleanupRef.current !== cleanup) return;
+              cleanup();
+              searchHighlightCleanupRef.current = null;
+              searchHighlightTimerRef.current = null;
+            }, reduceMotion ? 1_400 : 2_800);
+          setPendingNavigation((current) => current?.messageId === messageId ? null : current);
+        });
+      };
+      frame = window.requestAnimationFrame(focusMessage);
+      return () => {
+        window.cancelAnimationFrame(frame);
+        cancelWaitForScroll();
+      };
+    }, [pendingNavigation, reduceMotion, timeline, viewportStore]);
+
+    useEffect(() => () => {
+      if (searchHighlightTimerRef.current !== null) window.clearTimeout(searchHighlightTimerRef.current);
+      searchHighlightCleanupRef.current?.();
+    }, []);
+
+    const atBottomChanged = useCallback((atBottom: boolean) => {
+      viewportStore.setAtBottom(timeline.items.length === 0 ? true : atBottom);
+    }, [timeline.items.length, viewportStore]);
+    const followMode = useSyncExternalStore(
+      viewportStore.subscribe,
+      useCallback(() => viewportStore.getSnapshot().followMode, [viewportStore]),
+      useCallback(() => viewportStore.getSnapshot().followMode, [viewportStore]),
+    );
+    useEffect(
+      () => store.subscribeTailGrowth(() => {
+        if (viewportStore.shouldFollowTailGrowth())
+          virtuosoRef.current?.autoscrollToBottom();
+      }),
+      [store, viewportStore],
+    );
+    const rangeChanged = useCallback((range: ListRange) => {
+      const current = timelineRef.current;
+      const middle = range.startIndex + Math.floor((range.endIndex - range.startIndex) / 2);
+      const item = current.items[dataIndexFromReportedIndex(middle, current.firstItemIndex)];
+      if (item && item.type !== "compaction") viewportStore.setActiveTurn(item.turnId);
+    }, [viewportStore]);
+    const loadOlder = useCallback(() => {
+      viewportStore.pauseFollowing();
+      void store.loadOlder();
+    }, [store, viewportStore]);
+    const loadNewer = useCallback(() => void store.loadNewer(), [store]);
+
+    // The store owns hydration state. Keeping this gate next to Virtuoso is
+    // important when the parent changes sessionId: its metadata snapshot may
+    // still belong to the previous session for one render.
+    if (loading && timeline.items.length === 0) return <div className="h-full" />;
+    return (
+      <>
+        <Virtuoso
+          key={store.sessionId}
+          atBottomStateChange={atBottomChanged}
+          atBottomThreshold={24}
+          className="h-full"
+          components={THREAD_STORE_VIRTUOSO_COMPONENTS}
+          computeItemKey={threadStoreItemKey}
+          context={context}
+          data={timeline.items}
+          endReached={loadNewer}
+          firstItemIndex={timeline.firstItemIndex}
+          followOutput={followMode === "following" ? "auto" : false}
+          initialTopMostItemIndex={THREAD_INITIAL_BOTTOM_LOCATION}
+          itemContent={threadStoreItemContent}
+          rangeChanged={rangeChanged}
+          ref={virtuosoRef}
+          startReached={loadOlder}
+        />
+        <ThreadDensityRail
+          fallbackExcerpt={fallbackExcerpt}
+          navigationLabel={navigationLabel}
+          onNavigate={(turnId) => void navigateToTurn(turnId)}
+          store={viewportStore}
+          summaries={summaries}
+        />
+        <ThreadJumpToLatest label={jumpLabel} onJump={() => jumpToLatest()} store={viewportStore} />
+      </>
+    );
+  },
+));
+
+function messagesFromHistoryPage(page: SessionHistoryPage): ConversationMessage[] {
+  return page.items.flatMap((item) => item.type === "turn" ? item.turn.messages : []);
+}
+
+function userMessageHistory(messages: readonly ConversationMessage[]): Array<{ id: string; parts: UserPromptPart[] }> {
   return messages.flatMap((message) => {
     if (message.role !== "user") return [];
     const parts = message.blocks.flatMap((block): UserPromptPart[] => {
       if (block.type === "text") return [{ type: "text", text: block.text }];
-      if (block.type === "skill-reference")
-        return [
-          {
-            type: "skill-reference",
-            skillId: block.skillId,
-            name: block.name,
-            source: block.source,
-          },
-        ];
-      if (block.type === "workspace-reference")
-        return [
-          {
-            type: "workspace-reference",
-            path: block.path,
-            name: block.name,
-            kind: block.kind,
-          },
-        ];
+      if (block.type === "skill-reference") return [{ type: "skill-reference", skillId: block.skillId, name: block.name, source: block.source }];
+      if (block.type === "workspace-reference") return [{ type: "workspace-reference", path: block.path, name: block.name, kind: block.kind }];
       return [];
     });
-    return parts.length > 0 ? [{ id: message.id, parts }] : [];
+    return parts.length ? [{ id: message.id, parts }] : [];
   });
 }
 
-function compactionsFromHistoryPage(
-  page: SessionHistoryPage,
-): ContextCompactionRecord[] {
-  return page.items.flatMap((item) =>
-    item.type === "compaction" ? [item.compaction] : [],
-  );
-}
-
-function snapshotFromSessionView(view: SessionViewSnapshot): SessionSnapshot {
-  const messages = overlayExpertTaskRuns(
-    messagesFromHistoryPage(view.history),
-    view.extensions,
-  );
-  return {
-    session: view.session,
-    messages,
-    contextUsage: view.contextUsage,
-    turnUsage: view.turnUsage,
-    contextCompactions: compactionsFromHistoryPage(view.history),
-    isRunning: view.isRunning,
-    isCompacting: view.isCompacting,
-    compactionTrigger: view.compactionTrigger,
-    compactionError: view.compactionError,
-    extensions: view.extensions,
-    toolApprovalMode: view.toolApprovalMode,
-    expertCollaboration: view.expertCollaboration,
-  };
-}
-
-function loadedHistoryFromView(view: SessionViewSnapshot): LoadedHistory {
-  return {
-    hasMoreAfter: view.history.hasMoreAfter,
-    hasMoreBefore: view.history.hasMoreBefore,
-    nextAfterCursor: view.history.nextAfterCursor,
-    nextBeforeCursor: view.history.nextBeforeCursor,
-    revision: view.history.revision,
-    turnSummaries: view.turnSummaries,
-  };
-}
-
-function mergeMessages(
-  current: ConversationMessage[],
-  incoming: ConversationMessage[],
-): ConversationMessage[] {
-  const messages = new Map(current.map((message) => [message.id, message]));
-  for (const message of incoming) messages.set(message.id, message);
-  return [...messages.values()].sort(
-    (left, right) => left.timestamp - right.timestamp,
-  );
-}
-
-type ExpertMemberActivityEvent = Extract<
-  RuntimeEventEnvelope["event"],
-  {
-    type:
-      | "expert-member.tool.started"
-      | "expert-member.tool.updated"
-      | "expert-member.tool.completed"
-      | "expert-member.approval.requested"
-      | "expert-member.approval.resolved";
-  }
->;
-
-function expertMemberMessagesCorrelate(
-  canonical: ConversationMessage,
-  live: ConversationMessage,
-): boolean {
-  if (canonical.id === live.id) return true;
-  if (canonical.role !== live.role) return false;
-  const canonicalCalls = new Set(
-    canonical.blocks.flatMap((block) =>
-      block.type === "tool" ? [block.callId] : [],
-    ),
-  );
-  const liveCalls = live.blocks.flatMap((block) =>
-    block.type === "tool" ? [block.callId] : [],
-  );
-  if (
-    liveCalls.length > 0 &&
-    liveCalls.every((callId) => canonicalCalls.has(callId))
-  )
-    return true;
-  if (Math.abs(canonical.timestamp - live.timestamp) > 30_000) return false;
-  const visibleContent = (message: ConversationMessage) => {
-    const text = message.blocks
-      .flatMap((block) => (block.type === "text" ? [block.text] : []))
-      .join("\n");
-    if (text.length > 0) return text;
-    return message.blocks
-      .flatMap((block) =>
-        block.type === "reasoning" ? [block.text] : [],
-      )
-      .join("\n");
-  };
-  const liveContent = visibleContent(live);
-  return liveContent.length > 0 && visibleContent(canonical) === liveContent;
-}
-
-function applyExpertMemberActivity(
-  messages: ConversationMessage[],
-  event: ExpertMemberActivityEvent,
-): ConversationMessage[] {
-  let changed = false;
-  const next = messages.map((message) => {
-    if (
-      message.id !== event.messageId &&
-      !message.blocks.some(
-        (block) =>
-          block.type === "tool" &&
-          (event.type === "expert-member.approval.requested"
-            ? block.callId === event.approval.callId
-            : event.type === "expert-member.approval.resolved"
-              ? block.approval?.approvalId === event.resolution.approvalId
-              : block.callId === event.callId),
-      )
-    )
-      return message;
-    const callId =
-      event.type === "expert-member.approval.requested"
-        ? event.approval.callId
-        : event.type === "expert-member.approval.resolved"
-          ? undefined
-          : event.callId;
-    let found = false;
-    let created = false;
-    const blocks = message.blocks.map((block) => {
-      if (block.type !== "tool") return block;
-      if (
-        event.type === "expert-member.approval.resolved"
-          ? block.approval?.approvalId !== event.resolution.approvalId
-          : block.callId !== callId
-      )
-        return block;
-      found = true;
-      changed = true;
-      if (event.type === "expert-member.tool.started")
-        return {
-          ...block,
-          name: event.name,
-          input: event.input,
-          state: "running" as const,
-        };
-      if (event.type === "expert-member.tool.updated")
-        return {
-          ...block,
-          output: event.output,
-          details: event.details,
-          state: "running" as const,
-        };
-      if (event.type === "expert-member.tool.completed")
-        return {
-          ...block,
-          output: event.output,
-          details: event.details,
-          state: event.isError ? ("error" as const) : ("complete" as const),
-        };
-      if (event.type === "expert-member.approval.requested")
-        return {
-          ...block,
-          state: "awaiting-approval" as const,
-          approval: { ...event.approval, status: "required" as const },
-        };
-      return {
-        ...block,
-        state: event.resolution.approved
-          ? ("running" as const)
-          : ("error" as const),
-        approval: {
-          ...block.approval!,
-          status: event.resolution.approved
-            ? ("approved" as const)
-            : ("rejected" as const),
-          feedback: event.resolution.feedback,
-        },
-      };
-    });
-    if (
-      !found &&
-      event.type === "expert-member.tool.started" &&
-      message.id === event.messageId
-    ) {
-      changed = true;
-      created = true;
-      blocks.push({
-        type: "tool",
-        callId: event.callId,
-        name: event.name,
-        input: event.input,
-        state: "running",
-      });
-    }
-    return found || created ? { ...message, blocks } : message;
-  });
-  return changed ? next : messages;
-}
-
-function appendExpertMemberMessageDelta(
-  message: ConversationMessage,
-  messageId: string,
-  type: "text" | "reasoning",
-  delta: string,
-): ConversationMessage {
-  if (message.id !== messageId) return message;
-  const blocks = [...message.blocks];
-  const last = blocks.at(-1);
-  if (last?.type === type)
-    blocks[blocks.length - 1] = { ...last, text: last.text + delta };
-  else blocks.push({ type, text: delta });
-  return { ...message, blocks };
-}
-
-function mergeCompactions(
-  current: ContextCompactionRecord[],
-  incoming: ContextCompactionRecord[],
-): ContextCompactionRecord[] {
-  const compactions = new Map(
-    current.map((compaction) => [compaction.id, compaction]),
-  );
-  for (const compaction of incoming) compactions.set(compaction.id, compaction);
-  return [...compactions.values()].sort(
-    (left, right) => left.timestamp - right.timestamp,
-  );
-}
-
-function applySearchHighlight(
-  element: HTMLElement,
-  matchText: string,
-): () => void {
+function applySearchHighlight(element: HTMLElement, matchText: string): () => void {
   const query = matchText.trim();
   if (!query) return () => {};
   const normalizedQuery = query.toLocaleLowerCase();
   const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT, {
     acceptNode(node) {
       const parent = node.parentElement;
-      if (
-        !parent ||
-        parent.closest(
-          "script, style, [data-thread-search-highlight], [data-thread-search-exclude]",
-        )
-      )
-        return NodeFilter.FILTER_REJECT;
-      return node.textContent?.toLocaleLowerCase().includes(normalizedQuery)
-        ? NodeFilter.FILTER_ACCEPT
-        : NodeFilter.FILTER_SKIP;
+      if (!parent || parent.closest("button, [data-thread-search-highlight]")) return NodeFilter.FILTER_REJECT;
+      return (node.textContent ?? "").toLocaleLowerCase().includes(normalizedQuery) ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_SKIP;
     },
   });
   const match = walker.nextNode();
@@ -3291,26 +2978,19 @@ function applySearchHighlight(
   if (start === -1) return () => {};
   const mark = document.createElement("mark");
   mark.dataset.threadSearchHighlight = "true";
-  mark.className =
-    "rounded-[2px] bg-[#dfe9b7] px-0.5 text-inherit shadow-[inset_0_-1px_0_rgba(113,136,57,0.5)] dark:bg-[#687b39]";
+  mark.className = "rounded-[2px] bg-[#dfe9b7] px-0.5 text-inherit shadow-[inset_0_-1px_0_rgba(113,136,57,0.5)] dark:bg-[#687b39]";
   mark.textContent = text.slice(start, start + query.length);
   const fragment = document.createDocumentFragment();
   if (start > 0) fragment.append(document.createTextNode(text.slice(0, start)));
   fragment.append(mark);
-  if (start + query.length < text.length)
-    fragment.append(document.createTextNode(text.slice(start + query.length)));
+  if (start + query.length < text.length) fragment.append(document.createTextNode(text.slice(start + query.length)));
   (match as Text).replaceWith(fragment);
   return () => {
-    if (mark.isConnected)
-      mark.replaceWith(document.createTextNode(mark.textContent ?? ""));
+    if (mark.isConnected) mark.replaceWith(document.createTextNode(mark.textContent ?? ""));
   };
 }
 
-function waitForScrollSettled(
-  element: HTMLElement,
-  reduceMotion: boolean,
-  onSettled: () => void,
-): () => void {
+function waitForScrollSettled(element: HTMLElement, reduceMotion: boolean, onSettled: () => void): () => void {
   let frame = 0;
   let cancelled = false;
   let stableFrames = 0;
@@ -3353,366 +3033,34 @@ export function ThreadView({
   const client = useRuntimeClient();
   const { snapshot: appSnapshot } = useRuntime();
   const { reduceMotion, t } = usePreferences();
-  const [snapshot, setSnapshot] = useState<SessionSnapshot | null>(null);
+  const threadStore = useMemo(() => getThreadSessionStore(client, sessionId, t), [client, sessionId]);
+  const threadMetadata = useSyncExternalStore(threadStore.subscribeMetadata, threadStore.getMetadataSnapshot, threadStore.getMetadataSnapshot);
+  const history = useSyncExternalStore(threadStore.subscribeHistory, threadStore.getHistorySnapshot, threadStore.getHistorySnapshot);
+  const session = threadMetadata.session;
   const [modelOpen, setModelOpen] = useState(false);
-  const [history, setHistory] = useState<LoadedHistory | null>(null);
-  const [isAtBottom, setIsAtBottom] = useState(true);
-  const [activeTurnId, setActiveTurnId] = useState<string | null>(null);
-  const [firstItemIndex, setFirstItemIndex] = useState(100_000);
-  const [pendingNavigation, setPendingNavigation] = useState<{
-    matchText?: string;
-    messageId?: string;
-    turnId: string;
-  } | null>(null);
-  const [virtualListVersion, setVirtualListVersion] = useState(0);
-  const [runPresentation, setRunPresentation] =
-    useState<AssistantRunPresentation | null>(null);
-  const [selectedExpertMemberId, setSelectedExpertMemberId] = useState<
-    string | null
-  >(null);
-  const virtuosoRef = useRef<VirtuosoHandle>(null);
-  const hydratedRef = useRef(false);
-  const pendingEventsRef = useRef<RuntimeEventEnvelope[]>([]);
-  const pendingTextEventsRef = useRef<RuntimeEventEnvelope[]>([]);
-  const textFrameRef = useRef<number | null>(null);
-  const lastSequenceRef = useRef<RunEventCursor | undefined>(undefined);
-  const loadingBeforeRef = useRef(false);
-  const loadingAfterRef = useRef(false);
-  const navigationSequenceRef = useRef(0);
-  const firstItemIndexRef = useRef(firstItemIndex);
-  const searchHighlightCleanupRef = useRef<(() => void) | null>(null);
-  const searchHighlightTimerRef = useRef<number | null>(null);
-  const updateComposerDraft = useCallback(
-    (draft: InlineSkillComposerValue) =>
-      onComposerDraftChange(sessionId, draft),
-    [onComposerDraftChange, sessionId],
-  );
+  const [selectedExpertMemberId, setSelectedExpertMemberId] = useState<string | null>(null);
+  const timelineViewportRef = useRef<ThreadTimelineViewportHandle>(null);
+  const viewportStore = useMemo(() => new ThreadViewportStore(), [sessionId]);
+  const approvalInFlightRef = useRef(new Set<string>());
+  const updateComposerDraft = useCallback((draft: InlineSkillComposerValue) => onComposerDraftChange(sessionId, draft), [onComposerDraftChange, sessionId]);
 
-  const scrollToBottom = useCallback(
-    (behavior: "auto" | "smooth" = "smooth") => {
-      setIsAtBottom(true);
-      const count = timelineRef.current.length;
-      if (count > 0)
-        virtuosoRef.current?.scrollToIndex({
-          index: count - 1,
-          align: "end",
-          behavior,
-        });
-    },
-    [],
-  );
-
-  const timeline = useMemo(
-    () => (snapshot ? createTimeline(snapshot, runPresentation) : []),
-    [runPresentation, snapshot],
-  );
-  const timelineRef = useRef<ThreadTimelineItem[]>([]);
-  timelineRef.current = timeline;
-  firstItemIndexRef.current = firstItemIndex;
-
-  const handleAtBottomStateChange = useCallback((atBottom: boolean) => {
-    setIsAtBottom((current) => (current === atBottom ? current : atBottom));
-  }, []);
-
-  const handleVisibleRangeChange = useCallback((range: ListRange) => {
-    const middleReportedIndex =
-      range.startIndex + Math.floor((range.endIndex - range.startIndex) / 2);
-    const item =
-      timelineRef.current[
-        dataIndexFromReportedIndex(
-          middleReportedIndex,
-          firstItemIndexRef.current,
-        )
-      ];
-    if (item?.type === "messages" || item?.type === "assistant-run")
-      setActiveTurnId((current) =>
-        current === item.turnId ? current : item.turnId,
-      );
-  }, []);
+  useLayoutEffect(() => {
+    threadStore.setTranslate(t);
+  }, [t, threadStore]);
 
   useEffect(() => {
-    setIsAtBottom(true);
-    setActiveTurnId(null);
-    setFirstItemIndex(100_000);
-    if (searchHighlightTimerRef.current !== null)
-      window.clearTimeout(searchHighlightTimerRef.current);
-    searchHighlightTimerRef.current = null;
-    searchHighlightCleanupRef.current?.();
-    searchHighlightCleanupRef.current = null;
-    setPendingNavigation(null);
-    setVirtualListVersion(0);
-    setHistory(null);
-    setSnapshot(null);
-    setRunPresentation(
-      initialPendingTurn
-        ? createAssistantRunPresentation(
-            initialPendingTurn.message.id,
-            initialPendingTurn.submission.submittedAt,
-          )
-        : null,
-    );
     setSelectedExpertMemberId(null);
-    hydratedRef.current = false;
-    pendingEventsRef.current = [];
-    pendingTextEventsRef.current = [];
-    if (textFrameRef.current !== null)
-      window.cancelAnimationFrame(textFrameRef.current);
-    textFrameRef.current = null;
-    lastSequenceRef.current = undefined;
-    navigationSequenceRef.current += 1;
-    const cached = sessionViewCache.get(sessionId);
-    if (cached) {
-      setSnapshot(
-        withPendingTurn(snapshotFromSessionView(cached), initialPendingTurn),
-      );
-      setHistory(loadedHistoryFromView(cached));
-      setFirstItemIndex(100_000 - threadTimelineItemCount(cached.history));
-    }
-    let active = true;
-    const updateRunPresentation = (event: RuntimeEventEnvelope) => {
-      setSnapshot((current) =>
-        current ? applyEvent(current, event, t) : current,
-      );
-      setRunPresentation((current) => {
-        const next = advanceAssistantRunPresentation(current, event);
-        if (
-          event.event.type === "run.failed" ||
-          event.event.type === "run.cancelled" ||
-          event.event.type === "session.idle"
-        )
-          return null;
-        return next;
-      });
-    };
-    const flushTextEvents = () => {
-      textFrameRef.current = null;
-      const events = pendingTextEventsRef.current;
-      pendingTextEventsRef.current = [];
-      if (events.length === 0) return;
-      setSnapshot((current) => {
-        let next = current;
-        for (const event of events)
-          next = next ? applyEvent(next, event, t) : next;
-        return next;
-      });
-      const last = events.at(-1);
-      if (last)
-        setRunPresentation((current) =>
-          advanceAssistantRunPresentation(current, last),
-        );
-    };
-    const applyRuntimeEvent = (event: RuntimeEventEnvelope) => {
-      if (isExpertMemberMessageEvent(event)) return;
-      if (!isNewerRunEvent(event, lastSequenceRef.current)) return;
-      lastSequenceRef.current = runEventCursor(event);
-      if (
-        event.event.type === "message.text.delta" ||
-        event.event.type === "message.reasoning.delta"
-      ) {
-        pendingTextEventsRef.current.push(event);
-        if (textFrameRef.current === null)
-          textFrameRef.current = window.requestAnimationFrame(flushTextEvents);
-        return;
-      }
-      if (textFrameRef.current !== null) {
-        window.cancelAnimationFrame(textFrameRef.current);
-        flushTextEvents();
-      }
-      updateRunPresentation(event);
-      if (event.event.type === "session.idle") {
-        void client
-          .getSessionView(sessionId)
-          .then((view) => {
-            if (!active) return;
-            rememberSessionView(view);
-            setSnapshot((current) =>
-              current && current.session.id === sessionId
-                ? {
-                    ...current,
-                    session: view.session,
-                    contextUsage: view.contextUsage,
-                    turnUsage: view.turnUsage,
-                    isRunning: view.isRunning,
-                    isCompacting: view.isCompacting,
-                    compactionTrigger: view.compactionTrigger,
-                    compactionError:
-                      view.compactionError ?? current.compactionError,
-                    extensions: view.extensions,
-                    toolApprovalMode: view.toolApprovalMode,
-                    expertCollaboration: view.expertCollaboration,
-                  }
-                : snapshotFromSessionView(view),
-            );
-            setHistory(loadedHistoryFromView(view));
-          })
-          .catch(() => {});
-      }
-    };
-    const unsubscribe = client.subscribe((event) => {
-      if (event.sessionId !== sessionId) return;
-      if (isExpertMemberMessageEvent(event)) return;
-      if (!hydratedRef.current) pendingEventsRef.current.push(event);
-      else applyRuntimeEvent(event);
-    });
-    void client
-      .getSessionView(sessionId)
-      .then((view) => {
-        if (!active) return;
-        rememberSessionView(view);
-        const pendingEvents = pendingEventsRef.current;
-        pendingEventsRef.current = [];
-        setSnapshot(() => {
-          let current = withPendingTurn(
-            snapshotFromSessionView(view),
-            initialPendingTurn,
-          );
-          for (const event of pendingEvents) {
-            if (!isNewerRunEvent(event, lastSequenceRef.current)) continue;
-            lastSequenceRef.current = runEventCursor(event);
-            current = applyEvent(current, event, t);
-          }
-          return current;
-        });
-        setHistory(loadedHistoryFromView(view));
-        setFirstItemIndex(100_000 - threadTimelineItemCount(view.history));
-        setRunPresentation((current) => {
-          const persistedMessages = messagesFromHistoryPage(view.history);
-          const initialTurnFinished =
-            !view.isRunning &&
-            initialPendingTurn !== null &&
-            initialPendingTurn !== undefined &&
-            persistedMessages.some(
-              (message) => message.id === initialPendingTurn.message.id,
-            );
-          let presentation = initialTurnFinished
-            ? null
-            : (current ??
-              (view.isRunning
-                ? assistantRunPresentationFromMessages(
-                    persistedMessages,
-                    Date.now(),
-                  )
-                : null));
-          for (const event of pendingEvents) {
-            if (
-              event.event.type === "run.failed" ||
-              event.event.type === "run.cancelled" ||
-              event.event.type === "session.idle"
-            )
-              presentation = null;
-            else
-              presentation = advanceAssistantRunPresentation(
-                presentation,
-                event,
-              );
-          }
-          return presentation;
-        });
-        hydratedRef.current = true;
-      })
-      .catch(() => {
-        if (!active) return;
-        hydratedRef.current = true;
-        for (const event of pendingEventsRef.current) applyRuntimeEvent(event);
-        pendingEventsRef.current = [];
-      });
+    void threadStore.start(initialPendingTurn);
     return () => {
-      active = false;
-      if (textFrameRef.current !== null)
-        window.cancelAnimationFrame(textFrameRef.current);
-      textFrameRef.current = null;
-      unsubscribe();
+      viewportStore.dispose();
     };
-  }, [client, sessionId, t]);
+  }, [threadStore, viewportStore]);
 
-  useEffect(() => {
-    if (!pendingNavigation) return;
-    const index = timeline.findIndex(
-      (item) =>
-        item.type === "messages" &&
-        `turn:${item.messages[0]!.id}` === pendingNavigation.turnId,
-    );
-    if (index === -1) return;
-    setIsAtBottom(false);
-    setActiveTurnId(pendingNavigation.turnId);
-    virtuosoRef.current?.scrollToIndex({
-      index,
-      align: "start",
-      behavior: reduceMotion ? "auto" : "smooth",
-    });
-    if (!pendingNavigation.messageId) {
-      setPendingNavigation(null);
-      return;
-    }
-    const messageId = pendingNavigation.messageId;
-    const matchText = pendingNavigation.matchText;
-    let frame = 0;
-    let attempts = 0;
-    let cancelWaitForScroll = () => {};
-    const focusMessage = () => {
-      const element = document.querySelector<HTMLElement>(
-        `[data-thread-message-id="${CSS.escape(messageId)}"]`,
-      );
-      if (!element && attempts++ < 20) {
-        frame = window.requestAnimationFrame(focusMessage);
-        return;
-      }
-      if (element) {
-        element.scrollIntoView({
-          block: "center",
-          behavior: reduceMotion ? "auto" : "smooth",
-        });
-        element.focus({ preventScroll: true });
-        cancelWaitForScroll = waitForScrollSettled(
-          element,
-          reduceMotion,
-          () => {
-            if (searchHighlightTimerRef.current !== null)
-              window.clearTimeout(searchHighlightTimerRef.current);
-            searchHighlightTimerRef.current = null;
-            searchHighlightCleanupRef.current?.();
-            const cleanup = matchText
-              ? applySearchHighlight(element, matchText)
-              : null;
-            searchHighlightCleanupRef.current = cleanup;
-            if (cleanup) {
-              searchHighlightTimerRef.current = window.setTimeout(
-                () => {
-                  if (searchHighlightCleanupRef.current !== cleanup) return;
-                  cleanup();
-                  searchHighlightCleanupRef.current = null;
-                  searchHighlightTimerRef.current = null;
-                },
-                reduceMotion ? 1_400 : 2_800,
-              );
-            }
-            setPendingNavigation((current) =>
-              current?.messageId === messageId ? null : current,
-            );
-          },
-        );
-        return;
-      }
-      setPendingNavigation((current) =>
-        current?.messageId === messageId ? null : current,
-      );
-    };
-    frame = window.requestAnimationFrame(focusMessage);
-    return () => {
-      window.cancelAnimationFrame(frame);
-      cancelWaitForScroll();
-    };
-  }, [pendingNavigation, reduceMotion, timeline, virtualListVersion]);
-
-  useEffect(() => {
-    return () => {
-      if (searchHighlightTimerRef.current !== null)
-        window.clearTimeout(searchHighlightTimerRef.current);
-      searchHighlightCleanupRef.current?.();
-    };
+  const scrollToBottom = useCallback((behavior: "auto" | "smooth" = "smooth") => {
+    timelineViewportRef.current?.jumpToLatest(behavior);
   }, []);
 
-  const currentModel = snapshot?.session.model ?? null;
+  const currentModel = session?.model ?? null;
   const currentEnabledModel = appSnapshot?.models.find(
     (model) =>
       model.connectionId === currentModel?.connectionId &&
@@ -3721,10 +3069,10 @@ export function ThreadView({
   const planExtensionEnabled =
     appSnapshot?.extensions.configurations["wordless.plan-mode"]?.enabled ??
     false;
-  const interactionMode = snapshot?.session.interactionMode ?? "default";
+  const interactionMode = session?.interactionMode ?? "default";
   const canPlan =
-    planExtensionEnabled && snapshot?.session.driverId === "coding";
-  const planMode = snapshot ? planModeFromSnapshot(snapshot) : "off";
+    planExtensionEnabled && session?.driverId === "coding";
+  const planMode = planModeFromExtensions(threadMetadata.extensions);
   const modelLabel = useMemo(
     () => currentEnabledModel?.displayName ?? t("modelRequired"),
     [currentEnabledModel?.displayName, t],
@@ -3736,64 +3084,45 @@ export function ThreadView({
     currentEnabledModel !== undefined &&
     currentConnection?.authStatus === "configured";
   const entry = appSnapshot?.entries.find(
-    (candidate) => candidate.id === snapshot?.session.entryId,
+    (candidate) => candidate.id === session?.entryId,
   );
   const availableSkills =
     appSnapshot?.skills.skills.filter(
       (skill) =>
         skill.workspaceId === null ||
-        skill.workspaceId === snapshot?.session.workspaceId,
+        skill.workspaceId === session?.workspaceId,
     ) ?? [];
   const availableConnectors = appSnapshot?.connectors.connectors ?? [];
   const showDensityRail = (history?.turnSummaries.length ?? 0) >= 2;
   const selectedExpert = appSnapshot?.experts.find(
     (expert) =>
-      expert.id === snapshot?.session.expertSelection?.id &&
-      expert.kind === snapshot.session.expertSelection.kind,
+      expert.id === session?.expertSelection?.id &&
+      expert.kind === session.expertSelection.kind,
   );
+  const expertTaskTools = threadStore.getToolsByName("delegate_expert");
   const expertTasks = useMemo(
-    () => expertTasksFromMessages(snapshot?.messages ?? []),
-    [snapshot?.messages],
+    () => expertTasksFromTools(expertTaskTools),
+    [expertTaskTools],
   );
   const expertCollaborationMembers = useMemo(
     () =>
       mergeExpertCollaborationMembers(
-        snapshot?.expertCollaboration?.members ?? [],
+        threadMetadata.expertCollaboration?.members ?? [],
         expertTasks,
       ),
-    [expertTasks, snapshot?.expertCollaboration?.members],
+    [expertTasks, threadMetadata.expertCollaboration?.members],
   );
   const selectedExpertMember = expertCollaborationMembers.find(
     (member) => member.memberId === selectedExpertMemberId,
   );
-
   const send = async (parts: UserPromptPart[]) => {
     const submission = createUserMessageSubmission();
     const pendingTurn = createPendingThreadTurn(parts, submission);
-    setSnapshot((current) =>
-      current ? withPendingTurn(current, pendingTurn) : current,
-    );
-    setRunPresentation(
-      createAssistantRunPresentation(
-        submission.messageId,
-        submission.submittedAt,
-      ),
-    );
+    threadStore.addPendingTurn(pendingTurn);
     try {
       await client.promptSession(sessionId, parts, submission);
     } catch (cause) {
-      setSnapshot((current) =>
-        current
-          ? {
-              ...current,
-              messages: current.messages.filter(
-                (message) => message.id !== submission.messageId,
-              ),
-              isRunning: false,
-            }
-          : current,
-      );
-      setRunPresentation(null);
+      threadStore.removePendingTurn(submission.messageId);
       throw cause;
     }
   };
@@ -3804,17 +3133,12 @@ export function ThreadView({
   ) => {
     await client.setSessionModel(sessionId, model, thinkingLevel);
     const view = await client.getSessionView(sessionId);
-    setSnapshot((current) =>
-      current
-        ? { ...current, session: view.session }
-        : snapshotFromSessionView(view),
-    );
-    setHistory(loadedHistoryFromView(view));
+    threadStore.mergeSessionView(view);
   };
 
   const setAccessLevel = async (accessLevel: "default" | "full") => {
     const session = await client.setSessionAccess(sessionId, accessLevel);
-    setSnapshot((current) => (current ? { ...current, session } : current));
+    threadStore.patchSession(session);
   };
 
   const setInteractionMode = async (
@@ -3822,19 +3146,13 @@ export function ThreadView({
   ) => {
     const session = await client.setSessionInteractionMode(sessionId, nextMode);
     const view = await client.getSessionView(sessionId);
-    setSnapshot((current) =>
-      current
-        ? { ...current, session, extensions: view.extensions }
-        : snapshotFromSessionView(view),
-    );
-    setHistory(loadedHistoryFromView(view));
+    threadStore.patchSession(session);
+    threadStore.mergeSessionView(view);
   };
 
   const setToolApprovalMode = async (mode: ToolApprovalMode) => {
     await client.setSessionToolApprovalMode(sessionId, mode);
-    setSnapshot((current) =>
-      current ? { ...current, toolApprovalMode: mode } : current,
-    );
+    threadStore.patchToolApprovalMode(mode);
   };
 
   const resolveClarificationQuestion = async (
@@ -3842,14 +3160,10 @@ export function ThreadView({
     value: string | boolean,
   ) => {
     // 1. 获取问题文本以便显示
-    const question = snapshot?.messages
-      .flatMap((message) => message.blocks)
-      .find(
-        (block): block is MessageToolBlock =>
-          block.type === "tool" &&
-          block.callId === callId &&
-          block.name === "ask_clarifying_question",
-      );
+    const candidate = threadStore.getTool(callId);
+    const question = candidate?.name === "ask_clarifying_question"
+      ? candidate
+      : undefined;
 
     const questionDetails = question ? asObject(question.details) : undefined;
     const clarificationQuestion = asObject(
@@ -3885,32 +3199,12 @@ export function ThreadView({
     const pendingTurn = createPendingThreadTurn(parts, submission);
 
     // 4. 立即更新 UI（乐观更新）
-    setSnapshot((current) =>
-      current ? withPendingTurn(current, pendingTurn) : current,
-    );
-    setRunPresentation(
-      createAssistantRunPresentation(
-        submission.messageId,
-        submission.submittedAt,
-      ),
-    );
+    threadStore.addPendingTurn(pendingTurn);
 
     // 5. 稍后获取完整状态进行同步（保险措施）
     try {
       const view = await client.getSessionView(sessionId);
-      setSnapshot((current) =>
-        current
-          ? {
-              ...current,
-              session: view.session,
-              messages: messagesFromHistoryPage(view.history),
-              contextUsage: view.contextUsage,
-              turnUsage: view.turnUsage,
-              extensions: view.extensions,
-            }
-          : snapshotFromSessionView(view),
-      );
-      setHistory(loadedHistoryFromView(view));
+      threadStore.mergeSessionView(view);
     } catch (error) {
       // 错误处理：如果同步失败，至少乐观更新已经显示了
       console.error("Failed to sync after clarification answer:", error);
@@ -3922,19 +3216,7 @@ export function ThreadView({
   ) => {
     await client.handoffClarification(sessionId, nextMode);
     const view = await client.getSessionView(sessionId);
-    setSnapshot((current) =>
-      current
-        ? {
-            ...current,
-            session: view.session,
-            messages: messagesFromHistoryPage(view.history),
-            contextUsage: view.contextUsage,
-            turnUsage: view.turnUsage,
-            extensions: view.extensions,
-          }
-        : snapshotFromSessionView(view),
-    );
-    setHistory(loadedHistoryFromView(view));
+    threadStore.mergeSessionView(view);
     if (nextMode === "default") {
       await send([
         {
@@ -3948,12 +3230,7 @@ export function ThreadView({
   const setConnectors = async (connectorIds: string[]) => {
     await client.setSessionConnectors(sessionId, connectorIds);
     const view = await client.getSessionView(sessionId);
-    setSnapshot((current) =>
-      current
-        ? { ...current, session: view.session, contextUsage: view.contextUsage }
-        : snapshotFromSessionView(view),
-    );
-    setHistory(loadedHistoryFromView(view));
+    threadStore.mergeSessionView(view);
   };
 
   const setExpertSelection = async (
@@ -3961,12 +3238,7 @@ export function ThreadView({
   ) => {
     await client.setSessionExpert(sessionId, selection);
     const view = await client.getSessionView(sessionId);
-    setSnapshot((current) =>
-      current
-        ? { ...current, session: view.session, contextUsage: view.contextUsage }
-        : snapshotFromSessionView(view),
-    );
-    setHistory(loadedHistoryFromView(view));
+    threadStore.mergeSessionView(view);
   };
 
   const resolveApproval = async (
@@ -3974,12 +3246,38 @@ export function ThreadView({
     approved: boolean,
     feedback?: string,
   ) => {
-    await client.resolveOperationApproval(
-      sessionId,
-      approvalId,
-      approved,
-      feedback,
-    );
+    if (approvalInFlightRef.current.has(approvalId)) return;
+    approvalInFlightRef.current.add(approvalId);
+    try {
+      await client.resolveOperationApproval(
+        sessionId,
+        approvalId,
+        approved,
+        feedback,
+      );
+    } catch (cause) {
+      // A stale card can survive a history refresh. Reconcile with the
+      // runtime before surfacing an error so an already-resolved approval is
+      // not presented as a failed action.
+      try {
+        const view = await client.getSessionView(sessionId);
+        threadStore.mergeSessionView(view, true);
+        const resolved = messagesFromHistoryPage(view.history)
+          .flatMap((message) => message.blocks)
+          .some(
+            (block) =>
+              block.type === "tool" &&
+              block.approval?.approvalId === approvalId &&
+              block.approval.status !== "required",
+          );
+        if (resolved) return;
+      } catch {
+        // Preserve the original IPC error when reconciliation is unavailable.
+      }
+      throw cause;
+    } finally {
+      approvalInFlightRef.current.delete(approvalId);
+    }
   };
 
   const resolveUserRequest = async (
@@ -3996,35 +3294,21 @@ export function ThreadView({
   const loadToolOutput = useCallback(
     async (callId: string) => {
       const output = await client.getSessionToolOutput(sessionId, callId);
-      setSnapshot((current) =>
-        current
-          ? {
-              ...current,
-              messages: current.messages.map((message) => ({
-                ...message,
-                blocks: message.blocks.map((block) =>
-                  block.type === "tool" && block.callId === callId
-                    ? { ...block, output, outputTruncated: undefined }
-                    : block,
-                ),
-              })),
-            }
-          : current,
-      );
+      threadStore.updateToolOutput(callId, output);
     },
-    [client, sessionId],
+    [client, sessionId, threadStore],
   );
 
   const setPlanMode = async (nextMode: "off" | "planning" | "executing") => {
-    if (!snapshot) return;
-    const currentState = snapshot.extensions.find(
+    if (!session) return;
+    const currentState = threadMetadata.extensions.find(
       (item) => item.extensionId === "wordless.plan-mode",
     )?.state;
     const nextState = {
       mode: nextMode,
       plan: Array.isArray(currentState?.plan) ? currentState.plan : [],
     };
-    if (snapshot.isRunning)
+    if (threadMetadata.isRunning)
       await client.interactWithSessionExtension(
         sessionId,
         "wordless.plan-mode",
@@ -4037,23 +3321,7 @@ export function ThreadView({
         "wordless.plan-mode",
         nextState,
       );
-    setSnapshot((current) =>
-      current
-        ? {
-            ...current,
-            extensions: [
-              ...current.extensions.filter(
-                (item) => item.extensionId !== "wordless.plan-mode",
-              ),
-              {
-                extensionId: "wordless.plan-mode",
-                state: nextState,
-                updatedAt: Date.now(),
-              },
-            ],
-          }
-        : current,
-    );
+    threadStore.mergeSessionView(await client.getSessionView(sessionId));
   };
 
   const togglePlanMode = async () =>
@@ -4071,170 +3339,18 @@ export function ThreadView({
   };
 
   const compactContext = useCallback(async () => {
-    setSnapshot((current) =>
-      current
-        ? {
-            ...current,
-            isCompacting: true,
-            compactionTrigger: "manual",
-            compactionError: undefined,
-          }
-        : current,
-    );
+    threadStore.markCompactionStarted("manual");
     try {
       await client.compactSession(sessionId);
     } catch (cause) {
-      setSnapshot((current) =>
-        current
-          ? {
-              ...current,
-              isCompacting: false,
-              compactionTrigger: "manual",
-              compactionError: compactionFailureMessage(cause),
-            }
-          : current,
-      );
+      threadStore.markCompactionFailed("manual", compactionFailureMessage(cause));
     }
-  }, [client, sessionId]);
-
-  const loadOlder = useCallback(async () => {
-    if (
-      !history?.hasMoreBefore ||
-      !history.nextBeforeCursor ||
-      loadingBeforeRef.current
-    )
-      return;
-    loadingBeforeRef.current = true;
-    setIsAtBottom(false);
-    try {
-      const page = await client.getSessionHistoryPage(sessionId, {
-        before: history.nextBeforeCursor,
-        limit: 24,
-      });
-      const prependedItemCount = threadTimelineItemCount(page);
-      setSnapshot((current) =>
-        current
-          ? {
-              ...current,
-              messages: mergeMessages(
-                current.messages,
-                messagesFromHistoryPage(page),
-              ),
-              contextCompactions: mergeCompactions(
-                current.contextCompactions,
-                compactionsFromHistoryPage(page),
-              ),
-            }
-          : current,
-      );
-      setHistory((current) =>
-        current
-          ? {
-              ...current,
-              hasMoreBefore: page.hasMoreBefore,
-              nextBeforeCursor: page.nextBeforeCursor,
-              revision: page.revision,
-            }
-          : current,
-      );
-      setFirstItemIndex((current) =>
-        firstItemIndexAfterPrepend(current, prependedItemCount),
-      );
-    } finally {
-      loadingBeforeRef.current = false;
-    }
-  }, [client, history, sessionId]);
-
-  const loadNewer = useCallback(async () => {
-    if (
-      !history?.hasMoreAfter ||
-      !history.nextAfterCursor ||
-      loadingAfterRef.current
-    )
-      return;
-    loadingAfterRef.current = true;
-    try {
-      const page = await client.getSessionHistoryPage(sessionId, {
-        after: history.nextAfterCursor,
-        limit: 24,
-      });
-      setSnapshot((current) =>
-        current
-          ? {
-              ...current,
-              messages: mergeMessages(
-                current.messages,
-                messagesFromHistoryPage(page),
-              ),
-              contextCompactions: mergeCompactions(
-                current.contextCompactions,
-                compactionsFromHistoryPage(page),
-              ),
-            }
-          : current,
-      );
-      setHistory((current) =>
-        current
-          ? {
-              ...current,
-              hasMoreAfter: page.hasMoreAfter,
-              nextAfterCursor: page.nextAfterCursor,
-              revision: page.revision,
-            }
-          : current,
-      );
-    } finally {
-      loadingAfterRef.current = false;
-    }
-  }, [client, history, sessionId]);
+  }, [client, sessionId, threadStore]);
 
   const navigateToTurn = useCallback(
-    async (turnId: string, messageId?: string, matchText?: string) => {
-      const sequence = ++navigationSequenceRef.current;
-      const existing = timelineRef.current.findIndex(
-        (item) =>
-          item.type === "messages" && `turn:${item.messages[0]!.id}` === turnId,
-      );
-      setIsAtBottom(false);
-      if (searchHighlightTimerRef.current !== null)
-        window.clearTimeout(searchHighlightTimerRef.current);
-      searchHighlightTimerRef.current = null;
-      searchHighlightCleanupRef.current?.();
-      searchHighlightCleanupRef.current = null;
-      setPendingNavigation({ turnId, messageId, matchText });
-      if (existing !== -1) {
-        return;
-      }
-      const page = await client.getSessionHistoryPage(sessionId, {
-        aroundTurnId: turnId,
-        limit: 24,
-      });
-      if (sequence !== navigationSequenceRef.current) return;
-      setSnapshot((current) =>
-        current
-          ? {
-              ...current,
-              messages: messagesFromHistoryPage(page),
-              contextCompactions: compactionsFromHistoryPage(page),
-            }
-          : current,
-      );
-      setHistory((current) =>
-        current
-          ? {
-              ...current,
-              hasMoreAfter: page.hasMoreAfter,
-              hasMoreBefore: page.hasMoreBefore,
-              nextAfterCursor: page.nextAfterCursor,
-              nextBeforeCursor: page.nextBeforeCursor,
-              revision: page.revision,
-            }
-          : current,
-      );
-      setFirstItemIndex(100_000 - threadTimelineItemCount(page));
-      setVirtualListVersion((current) => current + 1);
-    },
-    [client, sessionId],
+    (turnId: string, messageId?: string, matchText?: string) =>
+      timelineViewportRef.current?.navigateToTurn(turnId, messageId, matchText) ?? Promise.resolve(),
+    [],
   );
 
   useEffect(() => {
@@ -4255,15 +3371,15 @@ export function ThreadView({
 
   const threadVirtuosoContext = useMemo<ThreadVirtuosoContext>(
     () => ({
-      compactionError: snapshot?.compactionError,
-      compactionTrigger: snapshot?.compactionTrigger,
+      compactionError: threadMetadata.compactionError,
+      compactionTrigger: threadMetadata.compactionTrigger,
       densityRail: showDensityRail,
-      isCompacting: snapshot?.isCompacting ?? false,
+      isCompacting: threadMetadata.isCompacting,
       onRetryCompaction: compactContext,
       planMode:
         planExtensionEnabled && planMode !== "off" ? planMode : "off",
       planState: asObject(
-        snapshot?.extensions.find(
+        threadMetadata.extensions.find(
           (item) => item.extensionId === "wordless.plan-mode",
         )?.state,
       ),
@@ -4273,152 +3389,106 @@ export function ThreadView({
       planExtensionEnabled,
       planMode,
       showDensityRail,
-      snapshot?.compactionError,
-      snapshot?.compactionTrigger,
-      snapshot?.extensions,
-      snapshot?.isCompacting,
+      threadMetadata.compactionError,
+      threadMetadata.compactionTrigger,
+      threadMetadata.extensions,
+      threadMetadata.isCompacting,
     ],
   );
+  const threadRowEnvironment = useMemo(
+    () => new ThreadRowEnvironment(
+      { canPlan, densityRail: showDensityRail, planMode },
+      threadVirtuosoContext,
+    ),
+    [threadStore],
+  );
+  threadRowEnvironment.setActions({
+    handoffClarification,
+    loadToolOutput,
+    onOpenResearchTask,
+    resolveApproval,
+    resolveClarificationQuestion,
+    resolvePlanResult,
+    resolveUserRequest,
+    setToolApprovalMode,
+  });
+  useLayoutEffect(() => {
+    threadRowEnvironment.update(
+      { canPlan, densityRail: showDensityRail, planMode },
+      threadVirtuosoContext,
+    );
+  }, [canPlan, planMode, showDensityRail, threadRowEnvironment, threadVirtuosoContext]);
+  const threadStoreVirtuosoContext = useMemo<ThreadStoreVirtuosoContext>(
+    () => ({
+      environment: threadRowEnvironment,
+      store: threadStore,
+      viewportStore,
+    }),
+    [
+      threadRowEnvironment,
+      threadStore,
+      viewportStore,
+    ],
+  );
+  const composerUserMessages = threadStore.getUserMessages();
+  const composerUserMessageHistory = useMemo(
+    () => userMessageHistory(composerUserMessages),
+    [composerUserMessages],
+  );
 
-  if (!snapshot || snapshot.session.id !== sessionId || !appSnapshot || !entry)
+  if (!session || session.id !== sessionId || !appSnapshot || !entry)
     return (
       <div className="grid min-h-0 flex-1 place-items-center text-[13px] text-muted-foreground">
         Loading session
       </div>
     );
 
-  const composerUserMessageHistory = userMessageHistory(snapshot.messages);
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <div className="relative min-h-0 flex-1">
         {selectedExpertMember &&
         selectedExpert &&
-        snapshot.expertCollaboration ? (
+        threadMetadata.expertCollaboration ? (
           <ExpertMemberStream
             densityRail={showDensityRail}
             expertName={selectedExpert.name}
-            leadExpert={snapshot.expertCollaboration.leader}
+            leadExpert={threadMetadata.expertCollaboration.leader}
             member={selectedExpertMember}
             onEnableAutoApprove={
-              snapshot.toolApprovalMode === "manual"
+              threadMetadata.toolApprovalMode === "manual"
                 ? () => setToolApprovalMode("auto")
                 : undefined
             }
             onResolveApproval={resolveApproval}
-            sessionId={sessionId}
-            workbenchId={snapshot.session.workbenchId}
+            threadStore={threadStore}
+            workbenchId={session.workbenchId}
           />
         ) : (
-          <>
-            <Virtuoso
-              key={`${sessionId}:${virtualListVersion}`}
-              atBottomStateChange={handleAtBottomStateChange}
-              atBottomThreshold={24}
-              className="h-full"
-              components={THREAD_VIRTUOSO_COMPONENTS}
-              computeItemKey={threadTimelineItemKey}
-              context={threadVirtuosoContext}
-              data={timeline}
-              endReached={loadNewer}
-              firstItemIndex={firstItemIndex}
-              followOutput="auto"
-              initialTopMostItemIndex={{ index: "LAST", align: "end" }}
-              itemContent={(index, item) => {
-                const dataIndex = dataIndexFromReportedIndex(
-                  index,
-                  firstItemIndex,
-                );
-                const followsCompaction =
-                  timeline[dataIndex - 1]?.type === "compaction" &&
-                  item.type !== "compaction";
-                return (
-                  <ThreadContentFrame
-                    className={followsCompaction ? "pt-[26px]" : ""}
-                    densityRail={showDensityRail}
-                  >
-                    {item.type === "compaction" ? (
-                      <ContextCompactionActivity compaction={item.compaction} />
-                    ) : item.type === "assistant-run" ? (
-                      <AssistantRunPlaceholder
-                        identity={snapshot.expertCollaboration?.leader}
-                        presentation={item.presentation}
-                      />
-                    ) : (
-                      <MessageBody
-                        assistantIdentity={snapshot.expertCollaboration?.leader}
-                        canPlan={canPlan}
-                        isFirstMessage={
-                          item.messages[0]?.id === snapshot.messages[0]?.id
-                        }
-                        messages={item.messages}
-                        onEnableAutoApprove={
-                          snapshot.toolApprovalMode === "manual"
-                            ? () => setToolApprovalMode("auto")
-                            : undefined
-                        }
-                        onHandoffClarification={handoffClarification}
-                        onLoadToolOutput={loadToolOutput}
-                        onOpenResearchTask={onOpenResearchTask}
-                        onResolveApproval={resolveApproval}
-                        onResolveClarificationQuestion={
-                          resolveClarificationQuestion
-                        }
-                        onResolvePlanResult={resolvePlanResult}
-                        onResolveUserRequest={resolveUserRequest}
-                        planMode={planMode}
-                        runPresentation={
-                          runPresentation?.userMessageId &&
-                          item.turnId ===
-                            `turn:${runPresentation.userMessageId}`
-                            ? runPresentation
-                            : null
-                        }
-                        showFooter={
-                          !snapshot.isRunning &&
-                          index === firstItemIndex + timeline.length - 1
-                        }
-                        workbenchId={snapshot.session.workbenchId}
-                      />
-                    )}
-                  </ThreadContentFrame>
-                );
-              }}
-              rangeChanged={handleVisibleRangeChange}
-              ref={virtuosoRef}
-              startReached={loadOlder}
-            />
-            <ConversationDensityRail
-              activeTurnId={activeTurnId}
-              fallbackExcerpt={t("unnamedMessage")}
-              navigationLabel={t("conversationNavigation")}
-              onNavigate={(turnId) => void navigateToTurn(turnId)}
-              summaries={history?.turnSummaries ?? []}
-            />
-            {!isAtBottom ? (
-              <button
-                aria-label={t("threadJumpToLatest")}
-                className="absolute bottom-4 left-1/2 grid h-8 w-8 -translate-x-1/2 place-items-center rounded-full border border-[#deded8] bg-white text-[#4d4d48] shadow-[0_4px_12px_rgba(0,0,0,0.10)] hover:bg-[#f5f5f2] dark:border-border dark:bg-card dark:text-foreground dark:hover:bg-muted"
-                onClick={() => scrollToBottom()}
-                type="button"
-              >
-                <ArrowDown className="h-4 w-4" />
-              </button>
-            ) : null}
-          </>
+          <ThreadTimelineViewport
+            context={threadStoreVirtuosoContext}
+            fallbackExcerpt={t("unnamedMessage")}
+            jumpLabel={t("threadJumpToLatest")}
+            navigationLabel={t("conversationNavigation")}
+            reduceMotion={reduceMotion}
+            ref={timelineViewportRef}
+            store={threadStore}
+            summaries={history.turnSummaries}
+            viewportStore={viewportStore}
+          />
         )}
       </div>
       <div className="bg-[var(--wordless-shell-workspace)] pb-3 pt-5">
         <ThreadContentFrame densityRail={showDensityRail}>
           {selectedExpert &&
           selectedExpert.kind === "team" &&
-          snapshot.expertCollaboration ? (
+          threadMetadata.expertCollaboration ? (
             <ExpertCollaborationBar
-              lead={snapshot.expertCollaboration.leader}
+              lead={threadMetadata.expertCollaboration.leader}
               members={expertCollaborationMembers}
               onSelectLead={() => setSelectedExpertMemberId(null)}
               onSelectMember={setSelectedExpertMemberId}
               selectedMemberId={selectedExpertMember?.memberId}
-              teamName={snapshot.expertCollaboration.teamName}
+              teamName={threadMetadata.expertCollaboration.teamName}
             />
           ) : null}
           <div className="relative">
@@ -4434,12 +3504,12 @@ export function ThreadView({
               <div className="relative">
                 <Composer
                   key={sessionId}
-                  accessLevel={snapshot.session.accessLevel}
+                  accessLevel={session.accessLevel}
                   compact
-                  compacting={snapshot.isCompacting}
+                  compacting={threadMetadata.isCompacting}
                   connectors={availableConnectors}
-                  contextUsage={snapshot.contextUsage}
-                  contextCompactionAvailable={snapshot.messages.length > 1}
+                  contextUsage={threadMetadata.contextUsage}
+                  contextCompactionAvailable={threadStore.getMessageCount() > 1}
                   canPlan={canPlan}
                   interactionMode={interactionMode}
                   modelLabel={modelLabel}
@@ -4464,7 +3534,7 @@ export function ThreadView({
                   onOpenModelPicker={() => setModelOpen(true)}
                   onAccessLevelChange={setAccessLevel}
                   onToolApprovalModeChange={setToolApprovalMode}
-                  toolApprovalMode={snapshot?.toolApprovalMode ?? "manual"}
+                  toolApprovalMode={threadMetadata.toolApprovalMode}
                   onCompactContext={compactContext}
                   onConnectorIdsChange={setConnectors}
                   experts={
@@ -4472,9 +3542,9 @@ export function ThreadView({
                       ? (appSnapshot.experts ?? [])
                       : []
                   }
-                  selectedExpertSelection={snapshot.session.expertSelection}
+                  selectedExpertSelection={session.expertSelection}
                   onExpertSelectionChange={async (selection) => {
-                    if (entry.id !== "general-work" || snapshot.isRunning)
+                    if (entry.id !== "general-work" || threadMetadata.isRunning)
                       return;
                     await setExpertSelection(selection);
                   }}
@@ -4489,37 +3559,42 @@ export function ThreadView({
                     onPendingWorkspaceReferencesConsumed
                   }
                   searchWorkspaceReferences={
-                    snapshot.session.workspaceId
+                    session.workspaceId
                       ? (query) =>
-                          client.searchSessionWorkspace(sessionId, query)
-                      : undefined
+                          client.searchWorkspace(session.workspaceId!, query)
+                      : (query) => client.searchSessionWorkspace(sessionId, query)
                   }
                   workspaceSearchScope={
-                    snapshot.session.workspaceId ? sessionId : "no-workspace"
+                    session.workspaceId
+                      ? `workspace:${session.workspaceId}`
+                      : `session:${sessionId}`
                   }
                   onStop={() => client.cancelSession(sessionId)}
                   planMode={planMode}
-                  running={snapshot.isRunning}
+                  running={threadMetadata.isRunning}
                   sendDisabled={
                     !canPrompt ||
                     (interactionMode === "clarify" &&
                       currentEnabledModel?.capabilities.supportsToolUse ===
                         false)
                   }
-                  selectedConnectorIds={snapshot.session.connectorIds}
+                  selectedConnectorIds={session.connectorIds}
                   skillContextWindow={
                     currentEnabledModel?.capabilities.contextWindow
                   }
                   skills={availableSkills}
                   showWorkspacePicker={false}
-                  showAccessControl={snapshot.session.workbenchId === "code"}
+                  showAccessControl={
+                    session.workbenchId === "code" ||
+                    supportsGeneralWorkAccessSelection(entry.id)
+                  }
                   userMessageHistory={composerUserMessageHistory}
                   initialDraft={composerDraft}
                   onDraftChange={updateComposerDraft}
                 />
                 <ModelPicker
                   connections={appSnapshot.connections}
-                  disabled={snapshot.isRunning}
+                  disabled={threadMetadata.isRunning}
                   entry={entry}
                   models={appSnapshot.models}
                   onConfigure={onOpenModels}
@@ -4529,10 +3604,10 @@ export function ThreadView({
                   }
                   open={modelOpen}
                   selected={currentModel}
-                  thinkingLevel={snapshot.session.thinkingLevel}
+                  thinkingLevel={session.thinkingLevel}
                 />
               </div>
-              <TurnTokenUsageRow usage={snapshot.turnUsage} />
+              <TurnTokenUsageRow usage={threadMetadata.turnUsage} />
               <p className="mt-2 text-center text-[11px] text-[#96968e] dark:text-muted-foreground">
                 {t("aiContentNotice")}
               </p>

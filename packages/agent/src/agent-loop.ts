@@ -19,6 +19,7 @@ import type {
 	AgentTool,
 	AgentToolCall,
 	AgentToolResult,
+	AgentToolSource,
 	StreamFn,
 } from "./types.ts";
 
@@ -210,7 +211,7 @@ async function runLoop(
 				// them all instead of executing potentially borked calls.
 				const executedToolBatch =
 					message.stopReason === "length"
-						? await failToolCallsFromTruncatedMessage(toolCalls, emit)
+						? await failToolCallsFromTruncatedMessage(currentContext, toolCalls, emit)
 						: await executeToolCalls(currentContext, message, config, signal, emit);
 				toolResults.push(...executedToolBatch.messages);
 				hasMoreToolCalls = !executedToolBatch.terminate;
@@ -381,16 +382,19 @@ async function streamAssistantResponse(
  * are safe to execute; report each as an error so the model can re-issue them.
  */
 async function failToolCallsFromTruncatedMessage(
+	currentContext: AgentContext,
 	toolCalls: AgentToolCall[],
 	emit: AgentEventSink,
 ): Promise<ExecutedToolCallBatch> {
 	const messages: ToolResultMessage[] = [];
 	for (const toolCall of toolCalls) {
+		const source = toolSourceForCall(currentContext, toolCall);
 		await emit({
 			type: "tool_execution_start",
 			toolCallId: toolCall.id,
 			toolName: toolCall.name,
 			args: toolCall.arguments,
+			...(source ? { source } : {}),
 		});
 		const finalized: FinalizedToolCallOutcome = {
 			toolCall,
@@ -398,6 +402,7 @@ async function failToolCallsFromTruncatedMessage(
 				`Tool call "${toolCall.name}" was not executed: the response hit the output token limit, so its arguments may be truncated. Re-issue the tool call with complete arguments.`,
 			),
 			isError: true,
+			...(source ? { source } : {}),
 		};
 		await emitToolExecutionEnd(finalized, emit);
 		const toolResultMessage = createToolResultMessage(finalized);
@@ -444,11 +449,13 @@ async function executeToolCallsSequential(
 	const messages: ToolResultMessage[] = [];
 
 	for (const toolCall of toolCalls) {
+		const source = toolSourceForCall(currentContext, toolCall);
 		await emit({
 			type: "tool_execution_start",
 			toolCallId: toolCall.id,
 			toolName: toolCall.name,
 			args: toolCall.arguments,
+			...(source ? { source } : {}),
 		});
 
 		const preparation = await prepareToolCall(currentContext, assistantMessage, toolCall, config, signal);
@@ -458,6 +465,7 @@ async function executeToolCallsSequential(
 				toolCall,
 				result: preparation.result,
 				isError: preparation.isError,
+				...(source ? { source } : {}),
 			};
 		} else {
 			const executed = await executePreparedToolCall(preparation, signal, emit);
@@ -499,11 +507,13 @@ async function executeToolCallsParallel(
 	const finalizedCalls: FinalizedToolCallEntry[] = [];
 
 	for (const toolCall of toolCalls) {
+		const source = toolSourceForCall(currentContext, toolCall);
 		await emit({
 			type: "tool_execution_start",
 			toolCallId: toolCall.id,
 			toolName: toolCall.name,
 			args: toolCall.arguments,
+			...(source ? { source } : {}),
 		});
 
 		const preparation = await prepareToolCall(currentContext, assistantMessage, toolCall, config, signal);
@@ -512,6 +522,7 @@ async function executeToolCallsParallel(
 				toolCall,
 				result: preparation.result,
 				isError: preparation.isError,
+				...(source ? { source } : {}),
 			} satisfies FinalizedToolCallOutcome;
 			await emitToolExecutionEnd(finalized, emit);
 			finalizedCalls.push(finalized);
@@ -577,7 +588,15 @@ type FinalizedToolCallOutcome = {
 	toolCall: AgentToolCall;
 	result: AgentToolResult<any>;
 	isError: boolean;
+	source?: AgentToolSource;
 };
+
+function toolSourceForCall(
+	context: AgentContext,
+	toolCall: AgentToolCall,
+): AgentToolSource | undefined {
+	return context.tools?.find((tool) => tool.name === toolCall.name)?.source;
+}
 
 type FinalizedToolCallEntry = FinalizedToolCallOutcome | (() => Promise<FinalizedToolCallOutcome>);
 
@@ -688,6 +707,7 @@ async function executePreparedToolCall(
 							toolName: prepared.toolCall.name,
 							args: prepared.toolCall.arguments,
 							partialResult,
+							...(prepared.tool.source ? { source: prepared.tool.source } : {}),
 						}),
 					),
 				);
@@ -751,6 +771,7 @@ async function finalizeExecutedToolCall(
 		toolCall: prepared.toolCall,
 		result,
 		isError,
+		...(prepared.tool.source ? { source: prepared.tool.source } : {}),
 	};
 }
 
@@ -768,7 +789,20 @@ async function emitToolExecutionEnd(finalized: FinalizedToolCallOutcome, emit: A
 		toolName: finalized.toolCall.name,
 		result: finalized.result,
 		isError: finalized.isError,
+		...(finalized.source ? { source: finalized.source } : {}),
 	});
+}
+
+function detailsWithToolSource(
+	details: unknown,
+	source: AgentToolSource | undefined,
+): unknown {
+	if (!source) return details;
+	const record =
+		typeof details === "object" && details !== null && !Array.isArray(details)
+			? details
+			: {};
+	return { ...record, toolSource: source };
 }
 
 function createToolResultMessage(finalized: FinalizedToolCallOutcome): ToolResultMessage {
@@ -779,7 +813,7 @@ function createToolResultMessage(finalized: FinalizedToolCallOutcome): ToolResul
 		// Untyped tools (JS extensions) can return results without content; normalize
 		// so the null never enters session history or provider payloads.
 		content: finalized.result.content ?? [],
-		details: finalized.result.details,
+		details: detailsWithToolSource(finalized.result.details, finalized.source),
 		...(finalized.result.addedToolNames?.length ? { addedToolNames: finalized.result.addedToolNames } : {}),
 		isError: finalized.isError,
 		timestamp: Date.now(),

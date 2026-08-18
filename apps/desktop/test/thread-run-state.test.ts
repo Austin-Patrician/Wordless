@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { ConversationMessage, RuntimeEventEnvelope } from "@wordless/protocol";
-import { advanceAssistantRunPresentation, assistantRunActivityAt, assistantRunPresentationFromMessages, createAssistantRunPresentation, isExpertMemberMessageEvent, isNewerRunEvent, mergeCompletedAssistantMessage, MODEL_RESPONSE_WAIT_DELAY_MS, runEventCursor, shouldRefreshSnapshotAfterEvent } from "../src/renderer/features/thread/thread-run-state.ts";
+import { advanceAssistantRunPresentation, assistantRunActivityAt, assistantRunPresentationFromMessages, assistantToolActivity, createAssistantRunPresentation, isExpertMemberMessageEvent, isNewerRunEvent, mergeCompletedAssistantMessage, MODEL_RESPONSE_WAIT_DELAY_MS, runEventCursor, shouldRefreshSnapshotAfterEvent } from "../src/renderer/features/thread/thread-run-state.ts";
 
 function event(sequence: number, runId: string, payload: RuntimeEventEnvelope["event"]): RuntimeEventEnvelope {
   return { event: payload, eventId: `event-${sequence}`, protocolVersion: 10, runId, runtimeInstanceId: "test", sequence, sessionId: "session-1", timestamp: 1_700_000_000_000 };
@@ -202,12 +202,21 @@ test("accepts a standalone context compaction as a new run", () => {
 });
 
 test("completion keeps local tool details without replacing terminal state", () => {
+  const source = {
+    kind: "mcp" as const,
+    connectorId: "connector-1",
+    connectorName: "Web Search",
+    toolName: "search",
+    templateId: "web-search" as const,
+    transport: "streamable-http" as const,
+  };
   const previous = assistant("assistant-1", [{
     type: "tool",
     callId: "call-1",
     name: "read",
     input: { path: "README.md" },
     output: "local output",
+    source,
     state: "running",
   }]);
   const completed = {
@@ -227,4 +236,31 @@ test("completion keeps local tool details without replacing terminal state", () 
   assert.equal(tool.state, "complete");
   assert.deepEqual(tool.input, { path: "README.md" });
   assert.equal(tool.output, "local output");
+  assert.deepEqual(tool.source, source);
+  assert.equal(assistantToolActivity(tool.name, tool.source), "connector");
+});
+
+test("does not replace a loaded tool output with a history preview", () => {
+  const loaded = assistant("assistant-1", [{
+    type: "tool",
+    callId: "call-1",
+    name: "read",
+    output: "complete output",
+    outputTruncated: false,
+    state: "complete",
+  }]);
+  const preview = assistant("assistant-1", [{
+    type: "tool",
+    callId: "call-1",
+    name: "read",
+    output: "preview...",
+    outputTruncated: true,
+    state: "complete",
+  }]);
+
+  const tool = mergeCompletedAssistantMessage(loaded, preview).blocks[0];
+  assert.equal(tool?.type, "tool");
+  if (tool?.type !== "tool") throw new Error("Expected a tool block");
+  assert.equal(tool.output, "complete output");
+  assert.equal(tool.outputTruncated, false);
 });

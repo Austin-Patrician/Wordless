@@ -9,7 +9,7 @@ import {
 import { Type } from "typebox";
 import { describe, expect, it } from "vitest";
 import { agentLoop, agentLoopContinue } from "../src/agent-loop.ts";
-import type { AgentContext, AgentEvent, AgentLoopConfig, AgentMessage, AgentTool } from "../src/types.ts";
+import type { AgentContext, AgentEvent, AgentLoopConfig, AgentMessage, AgentTool, AgentToolSource } from "../src/types.ts";
 
 // Mock stream for testing - mimics MockAssistantStream
 class MockAssistantStream extends EventStream<AssistantMessageEvent, AssistantMessage> {
@@ -305,6 +305,72 @@ describe("agentLoop with AgentMessage", () => {
 		if (toolEnd?.type === "tool_execution_end") {
 			expect(toolEnd.isError).toBe(false);
 		}
+	});
+
+	it("preserves tool source when execution throws", async () => {
+		const toolSchema = Type.Object({ query: Type.String() });
+		const source: AgentToolSource = {
+			kind: "mcp",
+			connectorId: "connector-1",
+			connectorName: "Search MCP",
+			toolName: "search",
+			templateId: "web-search",
+			transport: "streamable-http",
+		};
+		const tool: AgentTool<typeof toolSchema> = {
+			name: "mcp_connector_1_search",
+			label: "Search MCP: search",
+			description: "Search the web",
+			parameters: toolSchema,
+			source,
+			async execute() {
+				throw new Error("Connector request failed");
+			},
+		};
+		const context: AgentContext = {
+			systemPrompt: "",
+			messages: [],
+			tools: [tool],
+		};
+		const config: AgentLoopConfig = {
+			model: createModel(),
+			convertToLlm: identityConverter,
+		};
+		let callIndex = 0;
+		const events: AgentEvent[] = [];
+		const stream = agentLoop(
+			[createUserMessage("search")],
+			context,
+			config,
+			undefined,
+			() => {
+				const mockStream = new MockAssistantStream();
+				queueMicrotask(() => {
+					const message = callIndex === 0
+						? createAssistantMessage(
+							[{ type: "toolCall", id: "mcp-call", name: tool.name, arguments: { query: "Wordless" } }],
+							"toolUse",
+						)
+						: createAssistantMessage([{ type: "text", text: "done" }]);
+					callIndex += 1;
+					mockStream.push({ type: "done", reason: message.stopReason, message });
+				});
+				return mockStream;
+			},
+		);
+		for await (const event of stream) events.push(event);
+
+		const started = events.find((event) => event.type === "tool_execution_start");
+		const completed = events.find((event) => event.type === "tool_execution_end");
+		const persisted = events.find(
+			(event) => event.type === "message_end" && event.message.role === "toolResult",
+		);
+		expect(started?.type === "tool_execution_start" ? started.source : undefined).toEqual(source);
+		expect(completed?.type === "tool_execution_end" ? completed.source : undefined).toEqual(source);
+		expect(completed?.type === "tool_execution_end" ? completed.isError : false).toBe(true);
+		if (persisted?.type !== "message_end" || persisted.message.role !== "toolResult")
+			throw new Error("Expected persisted tool result");
+		expect(persisted.message.details).toMatchObject({ toolSource: source });
 	});
 
 	it("should not execute tool calls from a length-truncated assistant message", async () => {

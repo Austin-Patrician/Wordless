@@ -21,6 +21,7 @@
     "build:desktop": "npm run prepare:officecli && npm run build:renderer && npm run build:electron",
     "dev:electron": "npm run prepare:officecli && node scripts/build-electron.mjs && node scripts/dev-electron.mjs",
     "test:host": "node --test test/*.test.ts",
+    "test:thread-browser": "vitest run --config vitest.thread-browser.config.ts",
     "dist:mac": "npm run build:desktop && electron-builder --config electron-builder.yml --mac --publish never",
     "dist:mac:preview": "npm run build:desktop && CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --config electron-builder.yml --mac --publish never",
     "dist:win": "npm run build:desktop && electron-builder --config electron-builder.yml --win --x64 --publish never"
@@ -51,6 +52,8 @@
     "@types/react-dom": "19.2.3",
     "@types/three": "0.185.1",
     "@vitejs/plugin-react": "6.0.3",
+    "@vitest/browser": "^4.1.9",
+    "@vitest/browser-playwright": "^4.1.9",
     "@wordless/agent": "0.80.6-wordless.0",
     "@wordless/agent-driver-coding": "0.0.0",
     "@wordless/agent-driver-generic": "0.0.0",
@@ -93,6 +96,7 @@
     "mermaid": "11.16.0",
     "micromark-util-character": "2.1.1",
     "micromark-util-types": "2.0.2",
+    "playwright": "^1.55.0",
     "react": "19.2.7",
     "react-dom": "19.2.7",
     "react-markdown": "10.1.0",
@@ -107,6 +111,7 @@
     "typebox": "1.1.38",
     "typescript": "5.9.3",
     "unified": "11.0.5",
-    "vite": "8.1.4"
+    "vite": "8.1.4",
+    "vitest": "^4.1.9"
   }
 }

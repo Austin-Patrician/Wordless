@@ -17,6 +17,7 @@ import type {
   MediaOperationRequest,
   MediaProject,
   MediaProjectSummary,
+  MessageToolSource,
   ModelReference,
   ProviderConnectionRecord,
   SessionDraft,
@@ -1187,6 +1188,7 @@ export interface AppSnapshot {
   entries: WorkbenchEntryDefinition[];
   workspaces: WorkspaceRecord[];
   sessions: SessionRecord[];
+  runningSessionIds: string[];
   connections: ProviderConnectionRecord[];
   models: EnabledModelRecord[];
   modelConfiguration: ModelConfigurationSnapshot;
@@ -1775,6 +1777,7 @@ export type RuntimeEvent =
       callId: string;
       name: string;
       input: Record<string, unknown>;
+      source?: MessageToolSource;
     }
   | {
       type: "expert-member.tool.updated";
@@ -1784,6 +1787,7 @@ export type RuntimeEvent =
       callId: string;
       output: string;
       details?: unknown;
+      source?: MessageToolSource;
     }
   | {
       type: "expert-member.tool.completed";
@@ -1794,6 +1798,7 @@ export type RuntimeEvent =
       output: string;
       details?: unknown;
       isError: boolean;
+      source?: MessageToolSource;
     }
   | {
       type: "expert-member.approval.requested";
@@ -1826,6 +1831,7 @@ export type RuntimeEvent =
       callId: string;
       name: string;
       input: Record<string, unknown>;
+      source?: MessageToolSource;
     }
   | {
       type: "tool.updated";
@@ -1834,6 +1840,7 @@ export type RuntimeEvent =
       output: string;
       details?: unknown;
       usage?: ConversationUsage;
+      source?: MessageToolSource;
     }
   | {
       type: "tool.completed";
@@ -1843,6 +1850,7 @@ export type RuntimeEvent =
       details?: unknown;
       usage?: ConversationUsage;
       isError: boolean;
+      source?: MessageToolSource;
     }
   | {
       type: "approval.requested";

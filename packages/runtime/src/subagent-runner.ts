@@ -1,5 +1,5 @@
-import { mkdir } from "node:fs/promises";
-import { join } from "node:path";
+import { mkdir, writeFile } from "node:fs/promises";
+import { dirname, join } from "node:path";
 import {
   SubagentTaskPool,
   type SubagentTaskExecutor,
@@ -34,8 +34,10 @@ import {
   mergeConversationUsage,
   type ConversationMessage,
   type ExpertExecutionProfile,
+  type MessageToolBlock,
   type ModelCapabilities,
   type ModelReference,
+  type MessageToolSource,
   type SecurityPolicySnapshot,
   type SessionRecord,
   type ThinkingLevel,
@@ -58,6 +60,8 @@ type SubagentTaskEntry = {
   >;
 };
 
+const TASK_INLINE_LIMIT = 4_000;
+
 export interface SessionSubagentRunnerOptions {
   parent: SessionRecord;
   profile: AgentProfileDefinition;
@@ -67,7 +71,7 @@ export interface SessionSubagentRunnerOptions {
   createExecutionEnv?: (
     rootPath: string,
     accessLevel: SessionRecord["accessLevel"],
-    readOnlyRoots: string[],
+    options: { readOnlyRoots: string[]; writableRoot?: string },
   ) => ExecutionEnv;
   workspaceSearch: WorkspaceSearchProvider;
   skills: AgentRuntimeSkill[];
@@ -106,9 +110,9 @@ export type ExpertMemberStreamEvent =
   | { type: "message.text.delta"; memberId: string; taskId: string; messageId: string; delta: string; revision: number }
   | { type: "message.reasoning.delta"; memberId: string; taskId: string; messageId: string; delta: string; revision: number }
   | { type: "message.completed"; memberId: string; taskId: string; message: ConversationMessage; revision: number }
-  | { type: "tool.started"; memberId: string; taskId: string; messageId: string; callId: string; name: string; input: Record<string, unknown> }
-  | { type: "tool.updated"; memberId: string; taskId: string; messageId: string; callId: string; output: string; details?: unknown }
-  | { type: "tool.completed"; memberId: string; taskId: string; messageId: string; callId: string; output: string; details?: unknown; isError: boolean }
+  | { type: "tool.started"; memberId: string; taskId: string; messageId: string; callId: string; name: string; input: Record<string, unknown>; source?: MessageToolSource }
+  | { type: "tool.updated"; memberId: string; taskId: string; messageId: string; callId: string; output: string; details?: unknown; source?: MessageToolSource }
+  | { type: "tool.completed"; memberId: string; taskId: string; messageId: string; callId: string; output: string; details?: unknown; isError: boolean; source?: MessageToolSource }
   | { type: "approval.requested"; memberId: string; taskId: string; messageId: string; approval: OperationApprovalRequest }
   | { type: "approval.resolved"; memberId: string; taskId: string; messageId: string; resolution: OperationApprovalResolution };
 
@@ -233,7 +237,7 @@ function expertProfile(
           : READ_ONLY_TOOLS;
   return {
     ...profile,
-    systemPrompt: `${profile.systemPrompt}\n\nYou are ${member.name}, a member of the selected expert team. Stay in this expert identity throughout the task.\n\nExpert instructions:\n${member.systemPrompt}\n\nTeam responsibility:\n${member.responsibility}\n\nExecution constraints:\n${EXPERT_PROFILE_CONSTRAINTS[member.executionProfile]}\n\nSession artifacts:\nWhen creating or editing files, use the current working directory and keep all deliverables inside it. Report paths relative to that directory. Do not write to absolute paths outside the current session artifact directory. Other members' artifact directories are available read-only through sibling paths when their files are needed.`,
+    systemPrompt: `${profile.systemPrompt}\n\nYou are ${member.name}, a member of the selected expert team. Stay in this expert identity throughout the task.\n\nExpert instructions:\n${member.systemPrompt}\n\nTeam responsibility:\n${member.responsibility}\n\nExecution constraints:\n${EXPERT_PROFILE_CONSTRAINTS[member.executionProfile]}\n\nTeam file protocol:\nAll file paths are relative to the session workspace root. Read shared and upstream files with artifacts/... paths. Write your outputs only under artifacts/${safeArtifactDirectoryName(member.id)}/. Do not use bare paths for outputs, do not use ../ paths, and never write to artifacts/primary, artifacts/shared, or another member directory. Never use an OS temp directory. If task metadata provides inputs or outputs, treat those session-relative paths as authoritative.`,
     activeToolNames: [...new Set(activeToolNames)],
   };
 }
@@ -369,6 +373,33 @@ export class SessionSubagentRunner
     return state ? structuredClone(state) : null;
   }
 
+  private updateExpertMemberLiveTool(
+    memberId: string,
+    taskId: string,
+    messageId: string,
+    callId: string,
+    update: (existing: MessageToolBlock | undefined) => MessageToolBlock,
+  ): void {
+    const current = this.liveMessages.get(memberId);
+    if (!current || current.taskId !== taskId) return;
+    const message = current.message;
+    const blocks = [...message.blocks];
+    const existingIndex = blocks.findIndex(
+      (block) => block.type === "tool" && block.callId === callId,
+    );
+    const existing = existingIndex >= 0 && blocks[existingIndex]?.type === "tool"
+      ? blocks[existingIndex] as MessageToolBlock
+      : undefined;
+    const next = update(existing);
+    if (existingIndex >= 0) blocks[existingIndex] = next;
+    else blocks.push(next);
+    this.liveMessages.set(memberId, {
+      ...current,
+      message: { ...message, id: message.id || messageId, blocks },
+      revision: current.revision + 1,
+    });
+  }
+
   async resolveOperationApproval(
     approvalId: string,
     approved: boolean,
@@ -480,6 +511,19 @@ export class SessionSubagentRunner
         : undefined;
     if (task.kind === "expert-member" && !member)
       throw new Error(`Unknown expert team member: ${task.memberId}`);
+    if (task.kind === "expert-member") {
+      const validPath = (value: string) =>
+        value.startsWith("artifacts/") &&
+        !value.includes("\\") &&
+        !value.split("/").includes("..");
+      for (const path of [...(task.inputs ?? []), ...(task.outputs ?? [])])
+        if (!validPath(path))
+          throw new Error(`Invalid team artifact path: ${path}`);
+      const memberPrefix = `artifacts/${safeArtifactDirectoryName(task.memberId)}/`;
+      for (const path of task.outputs ?? [])
+        if (!path.startsWith(memberPrefix))
+          throw new Error(`Expert member outputs must stay in ${memberPrefix}: ${path}`);
+    }
     const role = task.kind === "builtin-subagent" ? task.role : undefined;
     const modelResolution = resolveDelegatedTaskModel(
       task,
@@ -513,7 +557,18 @@ export class SessionSubagentRunner
         )
       : [];
     const profile = member
-      ? expertProfile(this.options.profile, member, [...memberConnectorNames])
+      ? (() => {
+          const base = expertProfile(
+            this.options.profile,
+            member,
+            [...memberConnectorNames],
+          );
+          const memberTask = task.kind === "expert-member" ? task : undefined;
+          return {
+            ...base,
+            systemPrompt: `${base.systemPrompt}\n\nTask file contract:\n${memberTask?.inputs?.length ? `Read these inputs: ${memberTask.inputs.join(", ")}.` : "No input files were declared."} ${memberTask?.outputs?.length ? `Create these outputs in your member directory: ${memberTask.outputs.join(", ")}.` : "Report any files you create using full artifacts/... paths."}`,
+          };
+        })()
       : roleProfile(this.options.profile, role!);
     const path = member
       ? join(
@@ -545,7 +600,26 @@ export class SessionSubagentRunner
           )
         : undefined;
     if (artifactRoot) await mkdir(artifactRoot, { recursive: true });
-    const childRoot = artifactRoot ?? this.options.parent.runtimeRootPath;
+    const childRoot = this.options.parent.runtimeRootPath;
+    const resultPath = member
+      ? `artifacts/${safeArtifactDirectoryName(member.id)}/delegations/${task.id}/result.md`
+      : undefined;
+    const resultAbsolutePath = resultPath
+      ? join(this.options.parent.runtimeRootPath, resultPath)
+      : undefined;
+    if (resultAbsolutePath)
+      await mkdir(dirname(resultAbsolutePath), { recursive: true });
+    let effectivePrompt = task.prompt;
+    if (member && task.prompt.length > TASK_INLINE_LIMIT) {
+      const briefPath = `artifacts/shared/delegations/${task.id}/brief.md`;
+      const briefAbsolutePath = join(
+        this.options.parent.runtimeRootPath,
+        briefPath,
+      );
+      await mkdir(dirname(briefAbsolutePath), { recursive: true });
+      await writeFile(briefAbsolutePath, task.prompt, "utf8");
+      effectivePrompt = `Read the complete task brief at ${briefPath} before starting. Follow the declared inputs and outputs, then report completion and the resulting file paths.`;
+    }
     const record: SessionRecord = {
       ...this.options.parent,
       id: task.id,
@@ -622,7 +696,13 @@ export class SessionSubagentRunner
           ? this.options.createExecutionEnv(
               childRoot,
               record.accessLevel,
-              [...this.options.skills.map((skill) => skill.baseDir), sessionArtifactsRoot],
+              {
+                readOnlyRoots: [
+                  ...this.options.skills.map((skill) => skill.baseDir),
+                  sessionArtifactsRoot,
+                ],
+                ...(artifactRoot ? { writableRoot: artifactRoot } : {}),
+              },
             )
           : this.options.env,
       workspaceSearch: this.options.workspaceSearch,
@@ -650,6 +730,7 @@ export class SessionSubagentRunner
           ? this.options.connectorToolPolicies
           : [],
       security: this.options.security,
+      ...(artifactRoot ? { workspaceWriteRoot: artifactRoot } : {}),
       resolveModel: this.options.resolveModel,
       executionKind: "subagent",
       resourceOwnerSessionId: this.options.parent.id,
@@ -757,6 +838,20 @@ export class SessionSubagentRunner
       }
       if (event.type === "tool.started") {
         entry.tools.set(event.callId, { name: event.name, input: event.input });
+        if (task.kind === "expert-member")
+          this.updateExpertMemberLiveTool(
+            task.memberId,
+            task.id,
+            event.messageId,
+            event.callId,
+            (existing) => ({
+              ...(existing ?? { type: "tool", callId: event.callId }),
+              name: event.name,
+              input: event.input,
+              source: event.source ?? existing?.source,
+              state: "running",
+            }),
+          );
         onUpdate?.({
           taskId: task.id,
           status: "running",
@@ -781,6 +876,20 @@ export class SessionSubagentRunner
         };
         const next = { ...current, output: event.output };
         entry.tools.set(event.callId, next);
+        if (task.kind === "expert-member")
+          this.updateExpertMemberLiveTool(
+            task.memberId,
+            task.id,
+            event.messageId,
+            event.callId,
+            (existing) => ({
+              ...(existing ?? { type: "tool", callId: event.callId, name: current.name, input: current.input }),
+              output: `${existing?.output ?? ""}${event.output}`,
+              details: event.details ?? existing?.details,
+              source: event.source ?? existing?.source,
+              state: "running",
+            }),
+          );
         onUpdate?.({
           taskId: task.id,
           status: "running",
@@ -808,6 +917,20 @@ export class SessionSubagentRunner
             state: event.isError ? "error" : "complete",
           },
         });
+        if (task.kind === "expert-member")
+          this.updateExpertMemberLiveTool(
+            task.memberId,
+            task.id,
+            event.messageId,
+            event.callId,
+            (existing) => ({
+              ...(existing ?? { type: "tool", callId: event.callId, name: current.name, input: current.input }),
+              output: event.output,
+              details: event.details ?? existing?.details,
+              source: event.source ?? existing?.source,
+              state: event.isError ? "error" : "complete",
+            }),
+          );
         entry.tools.delete(event.callId);
         if (task.kind === "expert-member")
           this.options.onExpertMemberEvent?.({
@@ -824,6 +947,18 @@ export class SessionSubagentRunner
           approval: event.approval,
         });
         if (task.kind === "expert-member")
+          this.updateExpertMemberLiveTool(
+            task.memberId,
+            task.id,
+            event.messageId,
+            event.approval.callId,
+            (existing) => ({
+              ...(existing ?? { type: "tool", callId: event.approval.callId, name: event.approval.toolName, input: event.approval.input }),
+              approval: { ...event.approval, status: "required" },
+              state: "awaiting-approval",
+            }),
+          );
+        if (task.kind === "expert-member")
           this.options.onExpertMemberEvent?.({
             ...event,
             memberId: task.memberId,
@@ -834,6 +969,7 @@ export class SessionSubagentRunner
         const approval = asRecord(
           entry.approvals.get(event.resolution.approvalId),
         );
+        const approvalCallId = typeof approval?.callId === "string" ? approval.callId : undefined;
         entry.approvals.delete(event.resolution.approvalId);
         this.rememberResolvedApproval(
           event.resolution.approvalId,
@@ -852,6 +988,20 @@ export class SessionSubagentRunner
               }
             : {}),
         });
+        if (task.kind === "expert-member" && approvalCallId)
+            this.updateExpertMemberLiveTool(
+              task.memberId,
+              task.id,
+              event.messageId,
+              approvalCallId,
+              (existing) => ({
+                ...(existing ?? { type: "tool", callId: approvalCallId, name: "tool" }),
+                state: event.resolution.approved ? "running" : "error",
+                approval: existing?.approval
+                  ? { ...existing.approval, status: event.resolution.approved ? "approved" : "rejected", feedback: event.resolution.feedback }
+                  : undefined,
+              }),
+            );
         if (task.kind === "expert-member")
           this.options.onExpertMemberEvent?.({
             ...event,
@@ -883,9 +1033,16 @@ export class SessionSubagentRunner
     const onAbort = () => void session.execute({ type: "cancel" });
     signal.addEventListener("abort", onAbort, { once: true });
     try {
-      await session.execute({ type: "prompt", text: task.prompt });
+      // Persist the task id as the child-session user message id. Live driver
+      // message ids are ephemeral, while history uses journal entry ids; the
+      // task id gives both projections one stable turn identity.
+      await session.execute({
+        type: "prompt",
+        text: effectivePrompt,
+        submission: { messageId: task.id, submittedAt: Date.now() },
+      });
       const terminalError = finalAssistantMessage?.errorMessage;
-      const status: SubagentResult["status"] = signal.aborted
+      let status: SubagentResult["status"] = signal.aborted
         ? "cancelled"
         : task.kind !== "expert-member"
           ? "completed"
@@ -898,18 +1055,39 @@ export class SessionSubagentRunner
               : finalAssistantMessage?.status === "complete"
                 ? "completed"
                 : "failed";
-      const error =
+      let error =
         status === "completed"
           ? undefined
           : terminalError ??
             (status === "cancelled"
               ? "The expert task was cancelled"
               : "The expert task ended without a complete assistant response");
+      if (status === "completed" && task.kind === "expert-member") {
+        for (const outputPath of task.outputs ?? []) {
+          const info = await this.options.env.fileInfo(outputPath);
+          if (!info.ok || info.value.kind !== "file") {
+            status = "failed";
+            error = `Declared expert output was not created: ${outputPath}`;
+            break;
+          }
+        }
+      }
+      if (resultAbsolutePath) {
+        await writeFile(resultAbsolutePath, output, "utf8");
+      }
+      const declaredOutputs =
+        task.kind === "expert-member" ? (task.outputs ?? []) : [];
       const result: SubagentResult = {
         taskId: task.id,
         status,
         text: output,
         usage,
+        ...(resultPath
+          ? {
+              resultPath,
+              files: [...new Set([resultPath, ...declaredOutputs])],
+            }
+          : {}),
         ...(error ? { error } : {}),
       };
       onUpdate?.({

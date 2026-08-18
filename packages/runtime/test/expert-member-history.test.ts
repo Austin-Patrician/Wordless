@@ -28,10 +28,11 @@ function toolBlock(messages: ConversationMessage[], callId: string) {
 
 test("projects expert member approvals into their tool history", async (context) => {
   const root = await mkdtemp(join(tmpdir(), "wordless-member-history-"));
-  context.after(async () => await rm(root, { force: true, recursive: true }));
-
   const database = new WordlessDatabase(join(root, "wordless.db"));
-  context.after(() => database.close());
+  context.after(async () => {
+    database.close();
+    await rm(root, { force: true, recursive: true });
+  });
   const sessionId = "session-1";
   const memberId = "member-1";
   const record: SessionRecord = {
@@ -113,6 +114,7 @@ test("projects expert member approvals into their tool history", async (context)
       { type: "toolCall", id: "pending", name: "bash", arguments: { command: "pending" } },
       { type: "toolCall", id: "approved", name: "bash", arguments: { command: "approved" } },
       { type: "toolCall", id: "rejected", name: "bash", arguments: { command: "rejected" } },
+      { type: "toolCall", id: "mcp-failed", name: "mcp_connector_1_search", arguments: { query: "Wordless" } },
     ],
     provider: "openai",
     model: "gpt-5",
@@ -141,6 +143,24 @@ test("projects expert member approvals into their tool history", async (context)
     toolName: "bash",
     content: [{ type: "text", text: "complete" }],
     isError: false,
+    timestamp: 4,
+  });
+  await journal.appendMessage({
+    role: "toolResult",
+    toolCallId: "mcp-failed",
+    toolName: "mcp_connector_1_search",
+    content: [{ type: "text", text: "Connector request failed" }],
+    details: {
+      toolSource: {
+        kind: "mcp",
+        connectorId: "connector-1",
+        connectorName: "Web Search",
+        toolName: "search",
+        templateId: "web-search",
+        transport: "streamable-http",
+      },
+    },
+    isError: true,
     timestamp: 4,
   });
   await journal.appendCustomEntry("wordless.operation-approval", {
@@ -195,6 +215,14 @@ test("projects expert member approvals into their tool history", async (context)
   assert.equal(toolBlock(activeMessages, "approved")?.approval?.status, "approved");
   assert.equal(toolBlock(activeMessages, "rejected")?.state, "error");
   assert.equal(toolBlock(activeMessages, "rejected")?.approval?.status, "rejected");
+  assert.deepEqual(toolBlock(activeMessages, "mcp-failed")?.source, {
+    kind: "mcp",
+    connectorId: "connector-1",
+    connectorName: "Web Search",
+    toolName: "search",
+    templateId: "web-search",
+    transport: "streamable-http",
+  });
 
   Object.assign(runtime, { runs: new Map() });
   const interruptedMessages = messagesFromPage(

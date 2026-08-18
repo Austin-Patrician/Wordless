@@ -136,6 +136,30 @@ describe("automatic operation approval", () => {
     scenario.driverSession.dispose();
   });
 
+  it("treats repeated approval resolution as idempotent", async () => {
+    const scenario = await createApprovalScenario({ mode: "manual", severity: "high" });
+    const prompt = scenario.driverSession.execute({ type: "prompt", text: "Update the value" });
+    const approval = await scenario.approvalRequested;
+
+    await scenario.driverSession.execute({
+      type: "resolve-approval",
+      resolution: { approvalId: approval.approvalId, approved: true },
+    });
+    await expect(
+      scenario.driverSession.execute({
+        type: "resolve-approval",
+        resolution: { approvalId: approval.approvalId, approved: true },
+      }),
+    ).resolves.toBeUndefined();
+    await prompt;
+
+    expect(scenario.executions()).toBe(1);
+    expect(
+      scenario.events.filter((event) => event.type === "approval.resolved"),
+    ).toHaveLength(1);
+    scenario.driverSession.dispose();
+  });
+
   it("auto-approves high-risk operations in bypass mode without user-action events", async () => {
     const scenario = await createApprovalScenario({ mode: "bypass", severity: "high" });
 

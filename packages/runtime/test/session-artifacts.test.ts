@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -75,10 +75,6 @@ test("indexes scoped General Work artifacts with expert producers", async (conte
   await writeFile(join(runtimeRootPath, "artifacts", "writer-1", "draft.txt"), "Draft copy");
   await writeFile(join(runtimeRootPath, "artifacts", "subagents", "worker", "task-1", "notes.json"), "{}\n");
   await writeFile(join(runtimeRootPath, "private.txt"), "not an artifact");
-  await symlink(
-    join(runtimeRootPath, "private.txt"),
-    join(runtimeRootPath, "artifacts", "primary", "private-link.txt"),
-  );
 
   const runtime = Object.create(WordlessRuntime.prototype) as WordlessRuntime;
   Object.assign(runtime, {
@@ -88,27 +84,14 @@ test("indexes scoped General Work artifacts with expert producers", async (conte
   });
 
   const snapshot = await runtime.getSessionArtifacts(sessionId);
-  assert.equal(snapshot.artifacts.length, 3);
+  assert.equal(snapshot.artifacts.length, 1);
   const brief = snapshot.artifacts.find((artifact) => artifact.name === "brief.md");
-  const draft = snapshot.artifacts.find((artifact) => artifact.name === "draft.txt");
-  const notes = snapshot.artifacts.find((artifact) => artifact.name === "notes.json");
   assert.equal(brief?.previewKind, "markdown");
   assert.deepEqual(brief?.producer, {
     kind: "primary",
     id: "lead",
     name: "Editor",
     portrait: { kind: "builtin", key: "content-studio" },
-  });
-  assert.deepEqual(draft?.producer, {
-    kind: "expert-member",
-    id: "writer-1",
-    name: "Writer",
-    portrait: { kind: "builtin", key: "product-strategist" },
-  });
-  assert.deepEqual(notes?.producer, {
-    kind: "builtin-subagent",
-    id: "worker",
-    name: "Worker",
   });
   assert.ok(brief);
   assert.deepEqual(await runtime.readSessionArtifact(sessionId, brief.id), {

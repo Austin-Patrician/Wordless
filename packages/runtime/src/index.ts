@@ -73,6 +73,7 @@ import type {
   EnabledModelRecord,
   MessageBlock,
   MessageToolBlock,
+  MessageToolSource,
   MediaAsset,
   MediaBackgroundRemovalRequest,
   MediaCropRequest,
@@ -177,6 +178,7 @@ const SUBAGENT_FILE_CHANGE_JOURNAL_TYPE = "wordless.subagent-file-change";
 const CLARIFICATION_ANSWER_JOURNAL_TYPE = "wordless.clarification-answer";
 const SESSION_ARTIFACTS_DIRECTORY = "artifacts";
 const PRIMARY_ARTIFACTS_DIRECTORY = "primary";
+const SHARED_ARTIFACTS_DIRECTORY = "shared";
 
 const BUILTIN_EXPERTS: ExpertSummary[] = [
   {
@@ -240,7 +242,7 @@ const BUILTIN_TEAM_MEMBERS: Record<
       systemPrompt: "You are the Content Reviewer. Independently inspect the draft for factual support, logical gaps, audience fit, structure, tone, repetition, and publication risk. Cite exact passages when raising issues and provide prioritized, directly actionable revisions. Do not merely summarize the draft or assume the writer's voice.",
       skillIds: [],
       connectorIds: [],
-      executionProfile: "review",
+      executionProfile: "workspace-write",
       responsibility: "检查逻辑、事实、表达与一致性，给出可执行的修改建议。",
     },
   ],
@@ -615,6 +617,53 @@ function asRecord(value: unknown): Record<string, unknown> | undefined {
   return typeof value === "object" && value !== null && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : undefined;
+}
+
+function messageToolSourceFromUnknown(
+  value: unknown,
+): MessageToolSource | undefined {
+  const source = asRecord(value);
+  if (
+    source?.kind !== "mcp" ||
+    typeof source.connectorId !== "string" ||
+    typeof source.connectorName !== "string" ||
+    typeof source.toolName !== "string" ||
+    (source.transport !== "stdio" &&
+      source.transport !== "streamable-http")
+  )
+    return undefined;
+  const templateId =
+    source.templateId === "feishu" ||
+    source.templateId === "dingtalk" ||
+    source.templateId === "wecom" ||
+    source.templateId === "postgresql" ||
+    source.templateId === "web-search" ||
+    source.templateId === "firecrawl" ||
+    source.templateId === "github" ||
+    source.templateId === "ai-hot" ||
+    source.templateId === null
+      ? source.templateId
+      : null;
+  return {
+    kind: "mcp",
+    connectorId: source.connectorId,
+    connectorName: source.connectorName,
+    toolName: source.toolName,
+    templateId,
+    transport: source.transport,
+  };
+}
+
+function persistedToolDetails(value: unknown): {
+  details: unknown;
+  source?: MessageToolSource;
+} {
+  const record = asRecord(value);
+  if (!record) return { details: value };
+  const source = messageToolSourceFromUnknown(record.toolSource);
+  if (!source) return { details: value };
+  const { toolSource: _toolSource, ...details } = record;
+  return { details, source };
 }
 
 const EXPERT_COLLABORATION_STATUSES = new Set<ExpertCollaborationStatus>([
@@ -1357,6 +1406,7 @@ export class WordlessRuntime {
   private readonly historyCache = new Map<string, CachedSessionHistory>();
   private readonly artifactRevisions = new Map<string, string>();
   private readonly runs = new Map<string, ActiveRun>();
+  private readonly approvalResolutions = new Map<string, Promise<void>>();
   private readonly mediaOperations = new Map<string, AbortController>();
   private readonly runtimeInstanceId = randomUUID();
   private appSequence = 0;
@@ -1460,6 +1510,9 @@ export class WordlessRuntime {
       entries: this.getEntries(),
       workspaces: this.database.listWorkspaces(),
       sessions: this.database.listSessions(),
+      runningSessionIds: [...this.runs.entries()]
+        .filter(([, active]) => active.kind === "prompt")
+        .map(([sessionId]) => sessionId),
       connections: this.toLegacyConnections(modelConfiguration),
       models: this.toLegacyEnabledModels(modelConfiguration),
       modelConfiguration,
@@ -2226,7 +2279,7 @@ export class WordlessRuntime {
     const record = await this.ensureSessionModelForOpen(sessionId);
     const cached = await this.getCachedSessionHistory(sessionId);
     const active = this.runs.get(sessionId);
-    return {
+    const view = {
       session: record,
       contextUsage: cached.snapshot.contextUsage,
       turnUsage: cached.snapshot.turnUsage,
@@ -2240,6 +2293,7 @@ export class WordlessRuntime {
       extensions: cached.snapshot.extensions,
       expertCollaboration: cached.snapshot.expertCollaboration,
     };
+    return view;
   }
 
   async getSessionHistoryPage(
@@ -2736,7 +2790,10 @@ export class WordlessRuntime {
         });
       }
     };
-    await visit(root, "");
+    await visit(
+      join(root, PRIMARY_ARTIFACTS_DIRECTORY),
+      PRIMARY_ARTIFACTS_DIRECTORY,
+    );
     artifacts.sort(
       (left, right) => right.mtimeMs - left.mtimeMs || left.path.localeCompare(right.path),
     );
@@ -2770,7 +2827,7 @@ export class WordlessRuntime {
     sessionId: string,
     path: string,
   ): Promise<SessionWorkspaceTextFile> {
-    const record = this.requireWorkspaceSession(sessionId);
+    const record = this.requireSession(sessionId);
     try {
       const file = await this.pathService.readWorkspaceTextFile(
         record.runtimeRootPath,
@@ -2893,7 +2950,7 @@ export class WordlessRuntime {
     sessionId: string,
     path: string,
   ): Promise<WorkspaceFileEntry[]> {
-    const record = this.requireWorkspaceSession(sessionId);
+    const record = this.requireSession(sessionId);
     return await this.pathService.listDirectory(record.runtimeRootPath, path);
   }
 
@@ -2901,7 +2958,7 @@ export class WordlessRuntime {
     sessionId: string,
     query: string,
   ): Promise<WorkspaceFileEntry[]> {
-    const record = this.requireWorkspaceSession(sessionId);
+    const record = this.requireSession(sessionId);
     return await this.searchWorkspaceRoot(record.runtimeRootPath, query);
   }
 
@@ -4240,20 +4297,35 @@ export class WordlessRuntime {
     approved: boolean,
     feedback?: string,
   ): Promise<void> {
-    const active = this.runs.get(sessionId);
-    if (!active) throw new Error("The requested operation is no longer active");
-    if (
-      await active.subagents.resolveOperationApproval(
-        approvalId,
-        approved,
-        feedback,
-      )
-    )
+    const key = `${sessionId}:${approvalId}`;
+    const existing = this.approvalResolutions.get(key);
+    if (existing) {
+      await existing;
       return;
-    await active.driverSession.execute({
-      type: "resolve-approval",
-      resolution: { approvalId, approved, feedback },
-    });
+    }
+    const resolution = (async () => {
+      const active = this.runs.get(sessionId);
+      if (!active)
+        throw new Error("The requested operation is no longer active");
+      if (
+        await active.subagents.resolveOperationApproval(
+          approvalId,
+          approved,
+          feedback,
+        )
+      )
+        return;
+      await active.driverSession.execute({
+        type: "resolve-approval",
+        resolution: { approvalId, approved, feedback },
+      });
+    })();
+    this.approvalResolutions.set(key, resolution);
+    try {
+      await resolution;
+    } finally {
+      this.approvalResolutions.delete(key);
+    }
   }
 
   async resolveUserRequest(
@@ -4549,7 +4621,7 @@ export class WordlessRuntime {
       record.workbenchId === "conversation"
         ? {
             ...identityProfile,
-            systemPrompt: `${identityProfile.systemPrompt}\n\n[SESSION ARTIFACTS]\nPlace finished deliverables in artifacts/primary/ so they appear in the user's Artifacts panel. Keep temporary files outside that directory. When you create a deliverable, report its path relative to the session root.`,
+            systemPrompt: `${identityProfile.systemPrompt}\n\n[SESSION ARTIFACTS]\nThe session root is the shared namespace for this conversation. Put final user deliverables in artifacts/primary/ so they appear in the user's Artifacts panel. Put team handoff files, briefs, source notes, and evidence packets in artifacts/shared/. Keep member-specific work in artifacts/<member-id>/. Temporary files must remain inside the session root and must never use the OS temp directory. Always report paths relative to the session root, using the full artifacts/... path for any file another agent must read.`,
           }
         : identityProfile;
     const driver = this.drivers.get(record.driverId);
@@ -4563,6 +4635,15 @@ export class WordlessRuntime {
           record.runtimeRootPath,
           SESSION_ARTIFACTS_DIRECTORY,
           PRIMARY_ARTIFACTS_DIRECTORY,
+        ),
+        { recursive: true },
+      );
+    if (record.workbenchId === "conversation")
+      await mkdir(
+        join(
+          record.runtimeRootPath,
+          SESSION_ARTIFACTS_DIRECTORY,
+          SHARED_ARTIFACTS_DIRECTORY,
         ),
         { recursive: true },
       );
@@ -4621,9 +4702,10 @@ export class WordlessRuntime {
         const active = this.runs.get(sessionId);
         if (active) await this.refreshSessionArtifacts(sessionId, active);
       },
-      createExecutionEnv: (rootPath, accessLevel, readOnlyRoots) =>
+      createExecutionEnv: (rootPath, accessLevel, options) =>
         this.pathService.createExecutionEnv(rootPath, accessLevel, {
-          readOnlyRoots,
+          readOnlyRoots: options.readOnlyRoots,
+          writableRoot: options.writableRoot,
         }),
       onExpertMemberEvent: (event) =>
         this.emitExpertMemberEvent(sessionId, event),
@@ -4728,6 +4810,7 @@ export class WordlessRuntime {
         output,
         details,
         ...(tool.usage ? { usage: tool.usage } : {}),
+        ...(tool.source ? { source: tool.source } : {}),
         isError: true,
       });
     }
@@ -4804,6 +4887,7 @@ export class WordlessRuntime {
             }
           : {}),
         input: event.input,
+        ...(event.source ? { source: event.source } : {}),
       });
       this.historyCache.delete(sessionId);
       this.emit(sessionId, active, event);
@@ -4817,6 +4901,7 @@ export class WordlessRuntime {
           output: `${current.output ?? ""}${event.output}`,
           ...(event.details !== undefined ? { details: event.details } : {}),
           ...(event.usage ? { usage: event.usage } : {}),
+          ...(event.source ? { source: event.source } : {}),
         });
       }
       this.emit(sessionId, active, event);
@@ -4830,6 +4915,7 @@ export class WordlessRuntime {
           output: event.output,
           ...(event.details !== undefined ? { details: event.details } : {}),
           ...(event.usage ? { usage: event.usage } : {}),
+          ...(event.source ? { source: event.source } : {}),
         });
       }
       this.invalidateSessionWorkspaceSearch(sessionId);
@@ -5953,13 +6039,14 @@ export class WordlessRuntime {
     if (!block || block.type !== "tool") return;
     const blocks = [...message.blocks];
     const output = contentToText(result.content);
-    const detailsRecord = asRecord(result.details);
+    const persistedResult = persistedToolDetails(result.details);
+    const detailsRecord = asRecord(persistedResult.details);
     const details = result.isError
       ? terminalizeToolDetails(
-          result.details,
+          persistedResult.details,
           output || "Tool execution failed",
         )
-      : result.details;
+      : persistedResult.details;
     const usage = conversationUsageFromUnknown(detailsRecord?.usage);
     const approval = persisted?.resolution
       ? {
@@ -5977,6 +6064,7 @@ export class WordlessRuntime {
       state: result.isError === true ? "error" : "complete",
       output,
       details,
+      source: persistedResult.source ?? block.source,
       ...(usage ? { usage } : block.usage ? { usage: block.usage } : {}),
       approval,
       userRequest: persistedUserRequest

@@ -56,14 +56,16 @@ export function WorkbenchShell() {
   const autoOpenedArtifactSessionsRef = useRef(new Set<string>());
   const sessionDraftsRef = useRef(new Map<string, InlineSkillComposerValue>());
   const deletedSessionIdsRef = useRef(new Set<string>());
-  const sessionRunEventRevisionsRef = useRef(new Map<string, number>());
-  const checkedSessionRunStatesRef = useRef(new Set<string>());
+  const runningSessionStateInitializedRef = useRef(false);
+  const pendingRunningSessionStatesRef = useRef(new Map<string, boolean>());
   const { t } = usePreferences();
   const { client, error, refresh, snapshot, status } = useRuntime();
   const hasSelectedThread = mainView === "thread" && snapshot?.sessions.some((session) => session.id === selectedSessionId) === true;
   const selectedWorkbenchId = snapshot?.sessions.find((session) => session.id === selectedSessionId)?.workbenchId;
 
   const updateSessionRunningState = useCallback((sessionId: string, running: boolean) => {
+    if (!runningSessionStateInitializedRef.current)
+      pendingRunningSessionStatesRef.current.set(sessionId, running);
     setRunningSessionIds((current) => {
       if (current.has(sessionId) === running) return current;
       const next = new Set(current);
@@ -79,7 +81,6 @@ export function WorkbenchShell() {
       if (!event.sessionId) return;
       const type = event.event.type;
       if (type !== "run.started" && type !== "run.failed" && type !== "run.cancelled" && type !== "session.idle") return;
-      sessionRunEventRevisionsRef.current.set(event.sessionId, (sessionRunEventRevisionsRef.current.get(event.sessionId) ?? 0) + 1);
       updateSessionRunningState(event.sessionId, type === "run.started");
     });
   }, [client, updateSessionRunningState]);
@@ -136,29 +137,24 @@ export function WorkbenchShell() {
   }, [selectedSessionId, selectedWorkbenchId, unreadArtifactSessionIds]);
 
   useEffect(() => {
-    if (!client || !snapshot) return;
-    const sessions = snapshot.sessions.filter((session) => session.workbenchId !== "media-canvas");
-    const sessionIds = new Set(sessions.map((session) => session.id));
-    for (const sessionId of checkedSessionRunStatesRef.current) {
-      if (sessionIds.has(sessionId)) continue;
-      checkedSessionRunStatesRef.current.delete(sessionId);
-      sessionRunEventRevisionsRef.current.delete(sessionId);
-      updateSessionRunningState(sessionId, false);
+    if (!snapshot) return;
+    if (!runningSessionStateInitializedRef.current) {
+      const next = new Set(snapshot.runningSessionIds ?? []);
+      for (const [sessionId, running] of pendingRunningSessionStatesRef.current) {
+        if (running) next.add(sessionId);
+        else next.delete(sessionId);
+      }
+      pendingRunningSessionStatesRef.current.clear();
+      runningSessionStateInitializedRef.current = true;
+      setRunningSessionIds(next);
+      return;
     }
-    let disposed = false;
-    for (const session of sessions) {
-      if (checkedSessionRunStatesRef.current.has(session.id)) continue;
-      checkedSessionRunStatesRef.current.add(session.id);
-      const revision = sessionRunEventRevisionsRef.current.get(session.id) ?? 0;
-      void client.getSessionView(session.id).then((view) => {
-        if (disposed || revision !== (sessionRunEventRevisionsRef.current.get(session.id) ?? 0)) return;
-        updateSessionRunningState(session.id, view.isRunning);
-      }).catch(() => {
-        checkedSessionRunStatesRef.current.delete(session.id);
-      });
-    }
-    return () => { disposed = true; };
-  }, [client, snapshot, updateSessionRunningState]);
+    const sessionIds = new Set(snapshot.sessions.map((session) => session.id));
+    setRunningSessionIds((current) => {
+      const next = new Set([...current].filter((sessionId) => sessionIds.has(sessionId)));
+      return next.size === current.size ? current : next;
+    });
+  }, [snapshot]);
 
   const newThread = () => {
     setPendingExpertSelection(undefined);

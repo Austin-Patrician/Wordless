@@ -19,7 +19,7 @@ import xml from "highlight.js/lib/languages/xml";
 import yaml from "highlight.js/lib/languages/yaml";
 import mermaid from "mermaid";
 import { Check, ChevronDown, ChevronUp, Code2, Copy, ImageOff, LoaderCircle, Maximize2, Minus, Plus, RotateCcw, TextWrap, X } from "lucide-react";
-import { Children, isValidElement, memo, useDeferredValue, useEffect, useMemo, useRef, useState, type ComponentPropsWithoutRef, type PointerEvent as ReactPointerEvent, type ReactNode, type WheelEvent as ReactWheelEvent } from "react";
+import { Children, isValidElement, memo, useEffect, useMemo, useRef, useState, type ComponentPropsWithoutRef, type PointerEvent as ReactPointerEvent, type ReactNode, type WheelEvent as ReactWheelEvent } from "react";
 import ReactMarkdown, { type Components, type ExtraProps } from "react-markdown";
 import rehypeKatex from "rehype-katex";
 import remarkGfm from "remark-gfm";
@@ -127,16 +127,17 @@ function IconAction({ active = false, disabled = false, label, onClick, children
   return <Tooltip><TooltipTrigger asChild><button aria-label={label} className={cn("grid h-7 w-7 place-items-center rounded-[5px] text-[#74746d] transition-colors hover:bg-[#ecece8] hover:text-[#343430] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-35 dark:text-muted-foreground dark:hover:bg-[#34362f] dark:hover:text-foreground", active && "bg-[#e8ebe2] text-[#4e6238] dark:bg-[#3b422e] dark:text-[#d1e79b]")} disabled={disabled} onClick={onClick} type="button">{children}</button></TooltipTrigger><TooltipContent>{label}</TooltipContent></Tooltip>;
 }
 
-function CodeBlock({ code, language }: { code: string; language: string }) {
+const CodeBlock = memo(function CodeBlock({ code, highlight = true, language }: { code: string; highlight?: boolean; language: string }) {
   const { locale } = usePreferences();
   const [expanded, setExpanded] = useState(false);
   const [wrap, setWrap] = useState(false);
   const { copied, copy } = useCopyFeedback(code);
   const normalizedLanguage = normalizeCodeLanguage(language);
   const highlighted = useMemo(() => {
+    if (!highlight) return null;
     if (!hljs.getLanguage(normalizedLanguage)) return null;
     return hljs.highlight(code, { language: normalizedLanguage, ignoreIllegals: true }).value;
-  }, [code, normalizedLanguage]);
+  }, [code, highlight, normalizedLanguage]);
   const long = code.length > 1_600 || code.split(/\r?\n/).length > 16;
   return (
     <section className="message-code-block my-4 overflow-hidden rounded-[7px] border border-[#deded9] bg-[#fafaf8] dark:border-border dark:bg-[#1b1d19]">
@@ -150,7 +151,7 @@ function CodeBlock({ code, language }: { code: string; language: string }) {
       {long ? <div className="flex h-7 items-center justify-center border-t border-[#e5e5e0] dark:border-border"><IconAction label={expanded ? locale === "zh-CN" ? "收起代码" : "Collapse code" : locale === "zh-CN" ? "展开代码" : "Expand code"} onClick={() => setExpanded((value) => !value)}>{expanded ? <ChevronUp className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}</IconAction></div> : null}
     </section>
   );
-}
+});
 
 function MermaidCanvas({ svg }: { svg: string }) {
   return <div className="message-mermaid-svg" dangerouslySetInnerHTML={{ __html: svg }} />;
@@ -184,8 +185,12 @@ function MermaidBlock({ closed, source }: { closed: boolean; source: string }) {
   const [fullscreen, setFullscreen] = useState(false);
   const { copied, copy } = useCopyFeedback(source);
   const oversized = isOversizedMermaid(source);
+  const renderedKeyRef = useRef<string | null>(null);
   useEffect(() => {
     if (!closed || oversized) return;
+    const renderKey = `${theme}\u0000${source}`;
+    if (renderedKeyRef.current === renderKey) return;
+    renderedKeyRef.current = renderKey;
     let active = true;
     setSvg(null);
     setError(null);
@@ -213,9 +218,73 @@ function RemoteMarkdownImage({ alt, src }: { alt?: string; src?: string }) {
 
 type MarkdownPreProps = ComponentPropsWithoutRef<"pre"> & ExtraProps;
 
-export const MessageMarkdown = memo(function MessageMarkdown({ text }: { text: string }) {
+const MARKDOWN_REMARK_PLUGINS: ComponentPropsWithoutRef<typeof ReactMarkdown>["remarkPlugins"] = [
+  remarkGfm,
+  remarkMath,
+  remarkWordlessMath,
+];
+const MARKDOWN_REHYPE_PLUGINS: ComponentPropsWithoutRef<typeof ReactMarkdown>["rehypePlugins"] = [
+  [rehypeKatex, { errorColor: "#a85a4f", throwOnError: false, trust: false, strict: false }],
+];
+
+// Parsing the complete growing document on every token is both expensive and
+// synchronous. Keep rich Markdown for normal-sized responses, then switch to
+// a cheap text projection until the terminal message can be parsed once.
+const STREAMING_MARKDOWN_MAX_LENGTH = 16_000;
+
+const MarkdownDocument = memo(function MarkdownDocument({ components, streaming: _streaming, text }: { components: Components; streaming: boolean; text: string }) {
+  return <ReactMarkdown components={components} rehypePlugins={MARKDOWN_REHYPE_PLUGINS} remarkPlugins={MARKDOWN_REMARK_PLUGINS} skipHtml urlTransform={markdownUrlTransform}>{text}</ReactMarkdown>;
+});
+
+function streamingMarkdownInterval(length: number): number {
+  if (length < 8_000) return 48;
+  if (length < 32_000) return 80;
+  return 120;
+}
+
+function useStreamingMarkdownText(text: string, streaming: boolean): string {
+  const [committed, setCommitted] = useState(text);
+  const latestRef = useRef(text);
+  const timerRef = useRef<number | null>(null);
+  const lastCommitRef = useRef(0);
+  latestRef.current = text;
+
+  useEffect(() => {
+    if (!streaming) {
+      if (timerRef.current !== null) window.clearTimeout(timerRef.current);
+      timerRef.current = null;
+      lastCommitRef.current = performance.now();
+      setCommitted((current) => current === text ? current : text);
+      return;
+    }
+    if (timerRef.current !== null) return;
+    const interval = streamingMarkdownInterval(text.length);
+    const delay = Math.max(0, interval - (performance.now() - lastCommitRef.current));
+    timerRef.current = window.setTimeout(() => {
+      timerRef.current = null;
+      lastCommitRef.current = performance.now();
+      setCommitted((current) => current === latestRef.current ? current : latestRef.current);
+    }, delay);
+  }, [streaming, text]);
+
+  useEffect(() => () => {
+    if (timerRef.current !== null) {
+      window.clearTimeout(timerRef.current);
+      timerRef.current = null;
+    }
+  }, []);
+
+  return committed;
+}
+
+export const MessageMarkdown = memo(function MessageMarkdown({ streaming = false, text }: { streaming?: boolean; text: string }) {
   const client = useRuntimeClient();
-  const deferredText = useDeferredValue(text);
+  const renderedText = useStreamingMarkdownText(text, streaming);
+  const visibleText = streaming ? renderedText : text;
+  const visibleTextRef = useRef(visibleText);
+  const streamingRef = useRef(streaming);
+  visibleTextRef.current = visibleText;
+  streamingRef.current = streaming;
   const components = useMemo<Components>(() => ({
     a: ({ children, href }) => {
       const safeUrl = typeof href === "string" ? safeExternalUrl(href) : null;
@@ -241,8 +310,9 @@ export const MessageMarkdown = memo(function MessageMarkdown({ text }: { text: s
       const element = isValidElement<{ children?: ReactNode; className?: string }>(child) ? child : null;
       const code = childText(element?.props.children).replace(/\n$/, "");
       const language = normalizeCodeLanguage(element?.props.className);
-      if (language === "mermaid") return <MermaidBlock closed={hasClosedCodeFence(deferredText, node?.position?.start.offset, node?.position?.end.offset)} source={code} />;
-      return <CodeBlock code={code} language={language} />;
+      const closed = !streamingRef.current || hasClosedCodeFence(visibleTextRef.current, node?.position?.start.offset, node?.position?.end.offset);
+      if (language === "mermaid") return <MermaidBlock closed={closed} source={code} />;
+      return <CodeBlock code={code} highlight={closed} language={language} />;
     },
     table: ({ children }) => <div className="message-markdown-table my-4 overflow-x-auto rounded-[6px] border border-[#e0e0db] dark:border-border"><table className="w-full min-w-max border-collapse text-left text-[12px]">{children}</table></div>,
     tbody: ({ children }) => <tbody className="divide-y divide-[#e8e8e3] dark:divide-border">{children}</tbody>,
@@ -250,6 +320,17 @@ export const MessageMarkdown = memo(function MessageMarkdown({ text }: { text: s
     th: ({ children }) => <th className="bg-[#f3f3f0] px-3 py-2 font-semibold text-[#4b4b46] dark:bg-[#272923] dark:text-foreground">{children}</th>,
     thead: ({ children }) => <thead className="border-b border-[#dbdbd6] dark:border-border">{children}</thead>,
     ul: ({ children }) => <ul className="my-3 list-disc space-y-0.5 pl-6">{children}</ul>,
-  }), [client, deferredText]);
-  return <div className="message-markdown min-w-0"><ReactMarkdown components={components} rehypePlugins={[[rehypeKatex, { errorColor: "#a85a4f", throwOnError: false, trust: false, strict: false }]]} remarkPlugins={[remarkGfm, remarkMath, remarkWordlessMath]} skipHtml urlTransform={markdownUrlTransform}>{deferredText}</ReactMarkdown></div>;
+  }), [client]);
+  const usePlainStreamingProjection = streaming && visibleText.length > STREAMING_MARKDOWN_MAX_LENGTH;
+  return (
+    <div className="message-markdown min-w-0">
+      {usePlainStreamingProjection ? (
+        <span className="block whitespace-pre-wrap break-words text-[14px] leading-6 text-[#51514d] dark:text-muted-foreground">
+          {visibleText}
+        </span>
+      ) : (
+        <MarkdownDocument components={components} streaming={streaming} text={visibleText} />
+      )}
+    </div>
+  );
 });

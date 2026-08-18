@@ -3,6 +3,15 @@ import type { Static, TSchema } from "typebox";
 
 export type ThinkingLevel = "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
 
+export type AgentToolSource = {
+  kind: "mcp";
+  connectorId: string;
+  connectorName: string;
+  toolName: string;
+  templateId: "feishu" | "dingtalk" | "wecom" | "postgresql" | "web-search" | "firecrawl" | "github" | "ai-hot" | null;
+  transport: "stdio" | "streamable-http";
+};
+
 export type AgentMessage = { role: "user" | "assistant"; content: unknown; timestamp?: number; stopReason?: string; errorMessage?: string };
 
 export interface AgentToolResult<TDetails = unknown> {
@@ -19,6 +28,7 @@ export interface AgentTool<TParameters extends TSchema = TSchema, TDetails = unk
   label: string;
   description: string;
   parameters: TParameters;
+  source?: AgentToolSource;
   executionMode?: "parallel" | "sequential";
   execute(toolCallId: string, params: Static<TParameters>, signal?: AbortSignal, onUpdate?: AgentToolUpdateCallback<TDetails>): Promise<AgentToolResult<TDetails>>;
 }
@@ -48,9 +58,9 @@ export type AgentHarnessEvent =
   | { type: "message_start"; message: AgentMessage }
   | { type: "message_end"; message: AgentMessage }
   | { type: "message_update"; assistantMessageEvent: { type: "text_delta" | "thinking_delta"; delta: string } }
-  | { type: "tool_execution_start"; toolCallId: string; toolName: string; args: unknown }
-  | { type: "tool_execution_update"; toolCallId: string; toolName: string; args: unknown; partialResult: unknown }
-  | { type: "tool_execution_end"; toolCallId: string; toolName: string; result: unknown; isError: boolean }
+  | { type: "tool_execution_start"; toolCallId: string; toolName: string; args: unknown; source?: AgentToolSource }
+  | { type: "tool_execution_update"; toolCallId: string; toolName: string; args: unknown; partialResult: unknown; source?: AgentToolSource }
+  | { type: "tool_execution_end"; toolCallId: string; toolName: string; result: unknown; isError: boolean; source?: AgentToolSource }
   | { type: "agent_start" | "agent_end" | "turn_start" | "turn_end" | "queue_update" | "save_point" | "abort" | "settled" | "before_agent_start" | "context" | "before_provider_request" | "before_provider_payload" | "after_provider_response" | "tool_call" | "tool_result" | "session_before_compact" | "session_compact" | "session_before_tree" | "session_tree" | "model_update" | "thinking_level_update" | "resources_update" | "tools_update" };
 
 export interface SessionMetadata {

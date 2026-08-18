@@ -31,6 +31,8 @@ type SidebarProps = {
   expertsActive: boolean;
 };
 
+const RECENT_SESSION_LIMIT = 5;
+
 function sortSessions(sessions: SessionRecord[]): SessionRecord[] {
   return [...sessions].sort((left, right) => {
     if (left.pinnedAt !== null && right.pinnedAt === null) return -1;
@@ -162,12 +164,35 @@ export function Sidebar({ automationActive, collapsed, expertsActive, mediaActiv
   const [actionError, setActionError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [sessionSearchOpen, setSessionSearchOpen] = useState(false);
-  const sessions = (snapshot?.sessions ?? []).filter((session) => session.workbenchId !== "media-canvas");
+  const [recentSessionsExpanded, setRecentSessionsExpanded] = useState(false);
+  const sessions = useMemo(
+    () =>
+      (snapshot?.sessions ?? []).filter(
+        (session) => session.workbenchId !== "media-canvas",
+      ),
+    [snapshot?.sessions],
+  );
   const workspaces = snapshot?.workspaces ?? [];
   const entries = snapshot?.entries ?? [];
   const entryIconKeys = useMemo(() => new Map(entries.map((entry) => [entry.id, entry.iconKey])), [entries]);
   const selectedSession = sessions.find((session) => session.id === selectedSessionId);
   const recentSessions = useMemo(() => sortSessions(sessions.filter((session) => session.workspaceId === null)), [sessions]);
+  const selectedRecentSessionIndex = recentSessions.findIndex(
+    (session) => session.id === selectedSessionId,
+  );
+  const hiddenRecentSessionCount = Math.max(
+    0,
+    recentSessions.length - RECENT_SESSION_LIMIT,
+  );
+  const hasImportantHiddenRecentSession = recentSessions
+    .slice(RECENT_SESSION_LIMIT)
+    .some(
+      (session) =>
+        session.pinnedAt !== null || runningSessionIds.has(session.id),
+    );
+  const visibleRecentSessions = recentSessionsExpanded
+    ? recentSessions
+    : recentSessions.slice(0, RECENT_SESSION_LIMIT);
   const workspaceGroups = useMemo(
     () => workspaces
       .map((workspace) => ({ workspace, sessions: sortSessions(sessions.filter((session) => session.workspaceId === workspace.id)) }))
@@ -179,6 +204,15 @@ export function Sidebar({ automationActive, collapsed, expertsActive, mediaActiv
     if (!selectedSession?.workspaceId) return;
     setExpandedWorkspaceIds((current) => current.has(selectedSession.workspaceId!) ? current : new Set([...current, selectedSession.workspaceId!]));
   }, [selectedSession?.workspaceId]);
+
+  useEffect(() => {
+    if (
+      selectedRecentSessionIndex < RECENT_SESSION_LIMIT &&
+      !hasImportantHiddenRecentSession
+    )
+      return;
+    setRecentSessionsExpanded(true);
+  }, [hasImportantHiddenRecentSession, selectedRecentSessionIndex]);
 
   const run = async (operation: () => Promise<unknown>): Promise<boolean> => {
     setActionError(null);
@@ -263,7 +297,7 @@ export function Sidebar({ automationActive, collapsed, expertsActive, mediaActiv
         })}
       </nav>
 
-      {!collapsed ? <div className="wordless-sidebar-session-scroll mt-7 min-h-0 flex-1 overflow-y-auto pr-1"><section><div className="mb-2 flex items-center justify-between px-3"><p className="font-mono text-[10px] uppercase tracking-[0.14em] text-muted-foreground">{t("recentThreads")}</p><span className="font-mono text-[10px] text-muted-foreground">{recentSessions.length.toString().padStart(2, "0")}</span></div><div className="space-y-1">{recentSessions.map(sessionRow)}</div></section><section className="mt-6"><div className="mb-2 flex items-center justify-between px-3"><p className="font-mono text-[10px] uppercase tracking-[0.14em] text-muted-foreground">{t("yourSpace")}</p><span className="font-mono text-[10px] text-muted-foreground">{workspaceGroups.length.toString().padStart(2, "0")}</span></div><div className="space-y-2">{workspaceGroups.map(({ workspace, sessions: workspaceSessions }) => {
+      {!collapsed ? <div className="wordless-sidebar-session-scroll mt-7 min-h-0 flex-1 overflow-y-auto pr-1"><section><div className="mb-2 flex items-center justify-between px-3"><p className="font-mono text-[10px] uppercase tracking-[0.14em] text-muted-foreground">{t("recentThreads")}</p><span className="font-mono text-[10px] text-muted-foreground">{recentSessions.length.toString().padStart(2, "0")}</span></div><div className="space-y-1">{visibleRecentSessions.map(sessionRow)}</div>{hiddenRecentSessionCount > 0 ? <Tooltip><TooltipTrigger asChild><button aria-expanded={recentSessionsExpanded} aria-label={recentSessionsExpanded ? t("collapseRecentThreads") : t("expandRecentThreads")} className="mt-1 flex h-7 w-full items-center justify-center rounded-[7px] text-[#85857e] outline-none transition-colors hover:bg-[#e7e7e3] hover:text-[#4d4d48] focus-visible:ring-2 focus-visible:ring-ring dark:text-muted-foreground dark:hover:bg-[#282a21] dark:hover:text-foreground" onClick={() => setRecentSessionsExpanded((current) => !current)} type="button"><Ellipsis className="h-4 w-4" /></button></TooltipTrigger><TooltipContent>{recentSessionsExpanded ? t("collapseRecentThreads") : t("expandRecentThreads")}</TooltipContent></Tooltip> : null}</section><section className={hiddenRecentSessionCount > 0 ? "mt-3" : "mt-6"}><div className="mb-2 flex items-center justify-between px-3"><p className="font-mono text-[10px] uppercase tracking-[0.14em] text-muted-foreground">{t("yourSpace")}</p><span className="font-mono text-[10px] text-muted-foreground">{workspaceGroups.length.toString().padStart(2, "0")}</span></div><div className="space-y-2">{workspaceGroups.map(({ workspace, sessions: workspaceSessions }) => {
         const expanded = expandedWorkspaceIds.has(workspace.id);
         return <section key={workspace.id}><button aria-expanded={expanded} className="flex h-8 w-full items-center gap-2 rounded-[7px] px-2 text-left text-[11px] text-[#4f4f4a] outline-none hover:bg-[#e7e7e3] focus-visible:ring-2 focus-visible:ring-ring dark:text-muted-foreground dark:hover:bg-[#282a21]" onClick={() => setExpandedWorkspaceIds((current) => { const next = new Set(current); if (next.has(workspace.id)) next.delete(workspace.id); else next.add(workspace.id); return next; })} type="button"><img alt="" className="h-3.5 w-3.5 shrink-0 opacity-75 dark:invert" src={folderIcon} /><span className="min-w-0 flex-1 truncate font-medium">{workspace.name}</span><ChevronDown className={`h-3.5 w-3.5 transition-transform ${expanded ? "" : "-rotate-90"}`} /></button>{expanded ? <div className="mt-0.5 space-y-1 pl-2">{workspaceSessions.map(sessionRow)}</div> : null}</section>;
       })}</div></section></div> : null}

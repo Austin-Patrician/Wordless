@@ -41,6 +41,17 @@ import type {
 } from "@wordless/domain";
 import { useRuntime, useRuntimeClient } from "../../shared/runtime";
 import { usePreferences } from "../../shared/preferences";
+import aiNewsIcon from "../../../icons/automations/每日AI新闻推送.svg";
+import familyIcon from "../../../icons/automations/父母联系提醒.svg";
+import healthIcon from "../../../icons/automations/体检预约提醒.svg";
+import interviewIcon from "../../../icons/automations/面试准备提醒.svg";
+import meetingIcon from "../../../icons/automations/会议前准备.svg";
+import movieIcon from "../../../icons/automations/经典电影推荐.svg";
+import storyIcon from "../../../icons/automations/每日儿童睡前故事.svg";
+import todayIcon from "../../../icons/automations/历史上的今天.svg";
+import weeklyIcon from "../../../icons/automations/每周工作汇报.svg";
+import whyIcon from "../../../icons/automations/每日一个为什么.svg";
+import wordsIcon from "../../../icons/automations/每日5个单词.svg";
 import { ProviderIcon } from "../settings/provider-icons";
 import {
   InlineSkillComposer,
@@ -134,19 +145,19 @@ const templateDefinitions: TemplateDefinition[] = [
     nameKey: "automationTemplateAiNewsName",
     promptKey: "automationTemplateAiNewsPrompt",
     schedule: { kind: "recurring", cadence: "daily", time: "09:00" },
-    icon: "▤",
+    icon: aiNewsIcon,
   },
   {
     nameKey: "automationTemplateWordsName",
     promptKey: "automationTemplateWordsPrompt",
     schedule: { kind: "recurring", cadence: "daily", time: "09:00" },
-    icon: "A",
+    icon: wordsIcon,
   },
   {
     nameKey: "automationTemplateStoryName",
     promptKey: "automationTemplateStoryPrompt",
     schedule: { kind: "recurring", cadence: "daily", time: "20:30" },
-    icon: "◔",
+    icon: storyIcon,
   },
   {
     nameKey: "automationTemplateWeeklyName",
@@ -157,7 +168,7 @@ const templateDefinitions: TemplateDefinition[] = [
       weekdays: [5],
       time: "17:30",
     },
-    icon: "▣",
+    icon: weeklyIcon,
   },
   {
     nameKey: "automationTemplateMovieName",
@@ -168,19 +179,19 @@ const templateDefinitions: TemplateDefinition[] = [
       weekdays: [6],
       time: "10:00",
     },
-    icon: "◫",
+    icon: movieIcon,
   },
   {
     nameKey: "automationTemplateTodayName",
     promptKey: "automationTemplateTodayPrompt",
     schedule: { kind: "recurring", cadence: "daily", time: "08:30" },
-    icon: "□",
+    icon: todayIcon,
   },
   {
     nameKey: "automationTemplateWhyName",
     promptKey: "automationTemplateWhyPrompt",
     schedule: { kind: "recurring", cadence: "daily", time: "12:00" },
-    icon: "?",
+    icon: whyIcon,
   },
   {
     nameKey: "automationTemplateFamilyName",
@@ -191,25 +202,25 @@ const templateDefinitions: TemplateDefinition[] = [
       weekdays: [0],
       time: "10:00",
     },
-    icon: "♙",
+    icon: familyIcon,
   },
   {
     nameKey: "automationTemplateHealthName",
     promptKey: "automationTemplateHealthPrompt",
     schedule: { kind: "once", at: Date.now() + 86_400_000 },
-    icon: "+",
+    icon: healthIcon,
   },
   {
     nameKey: "automationTemplateInterviewName",
     promptKey: "automationTemplateInterviewPrompt",
     schedule: { kind: "interval", every: 2, unit: "hours" },
-    icon: "◌",
+    icon: interviewIcon,
   },
   {
     nameKey: "automationTemplateMeetingName",
     promptKey: "automationTemplateMeetingPrompt",
     schedule: { kind: "once", at: Date.now() + 3_600_000 },
-    icon: "⌘",
+    icon: meetingIcon,
   },
 ];
 
@@ -739,9 +750,7 @@ function TemplateGrid({
           key={template.name}
           onClick={() => onChoose(template)}
         >
-          <span className="grid h-5 w-5 shrink-0 place-items-center text-[17px]">
-            {template.icon}
-          </span>
+          <img alt="" className="h-16 w-9 shrink-0 object-contain" src={template.icon} />
           <span className="min-w-0">
             <span className="block text-[13px] font-medium">
               {template.name}

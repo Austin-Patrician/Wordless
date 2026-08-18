@@ -15,6 +15,7 @@ import { AgentEntryIcon } from "./AgentEntryIcon";
 import { QuickModelSetup } from "./QuickModelSetup";
 import { ExpertPortrait } from "../experts/ExpertPortrait";
 import { hasEnabledChatModel } from "./quick-model-setup-model";
+import { supportsGeneralWorkAccessSelection } from "../thread/access-control";
 
 type WelcomeViewProps = {
   onOpenModels: () => void;
@@ -285,7 +286,10 @@ export function WelcomeView({ initialExpertPrompt, initialExpertSelection, onOpe
               skillContextWindow={selectedModel?.capabilities.contextWindow}
               selectedConnectorIds={connectorIds}
               skills={snapshot?.skills.skills.filter((skill) => skill.workspaceId === null || skill.workspaceId === workspaceId) ?? []}
-              showAccessControl={workspaceRequired}
+              showAccessControl={
+                workspaceRequired ||
+                supportsGeneralWorkAccessSelection(entry?.id)
+              }
               workspaceLabel={selectedWorkspace?.name ?? t("selectWorkspace")}
             />
             {snapshot && entry ? (

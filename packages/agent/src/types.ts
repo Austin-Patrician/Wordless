@@ -48,6 +48,27 @@ export type ToolExecutionMode = "sequential" | "parallel";
  */
 export type QueueMode = "all" | "one-at-a-time";
 
+export type AgentConnectorTemplateId =
+	| "feishu"
+	| "dingtalk"
+	| "wecom"
+	| "postgresql"
+	| "web-search"
+	| "firecrawl"
+	| "github"
+	| "ai-hot"
+	| null;
+
+/** Immutable origin metadata for a registered tool. */
+export type AgentToolSource = {
+	kind: "mcp";
+	connectorId: string;
+	connectorName: string;
+	toolName: string;
+	templateId: AgentConnectorTemplateId;
+	transport: "stdio" | "streamable-http";
+};
+
 /** A single tool call content block emitted by an assistant message. */
 export type AgentToolCall = Extract<AssistantMessage["content"][number], { type: "toolCall" }>;
 
@@ -373,6 +394,8 @@ export type AgentToolUpdateCallback<T = any> = (partialResult: AgentToolResult<T
 export interface AgentTool<TParameters extends TSchema = TSchema, TDetails = any> extends Tool<TParameters> {
 	/** Human-readable label for UI display. */
 	label: string;
+	/** Immutable origin metadata available even when execution never returns a result. */
+	source?: AgentToolSource;
 	/**
 	 * Optional compatibility shim for raw tool-call arguments before schema validation.
 	 * Must return an object that matches `TParameters`.
@@ -425,6 +448,6 @@ export type AgentEvent =
 	| { type: "message_update"; message: AgentMessage; assistantMessageEvent: AssistantMessageEvent }
 	| { type: "message_end"; message: AgentMessage }
 	// Tool execution lifecycle
-	| { type: "tool_execution_start"; toolCallId: string; toolName: string; args: any }
-	| { type: "tool_execution_update"; toolCallId: string; toolName: string; args: any; partialResult: any }
-	| { type: "tool_execution_end"; toolCallId: string; toolName: string; result: any; isError: boolean };
+	| { type: "tool_execution_start"; toolCallId: string; toolName: string; args: any; source?: AgentToolSource }
+	| { type: "tool_execution_update"; toolCallId: string; toolName: string; args: any; partialResult: any; source?: AgentToolSource }
+	| { type: "tool_execution_end"; toolCallId: string; toolName: string; result: any; isError: boolean; source?: AgentToolSource };

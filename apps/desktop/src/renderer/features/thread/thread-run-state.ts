@@ -66,7 +66,7 @@ export function advanceAssistantRunPresentation(current: AssistantRunPresentatio
   if (event.event.type === "message.text.delta" && event.event.messageId === current.assistantMessageId) return { ...current, activity: { type: "generating", since: at } };
   if (event.event.type === "message.reasoning.delta" && event.event.messageId === current.assistantMessageId) return { ...current, activity: { type: "thinking", since: at } };
   if (event.event.type === "tool.started" && event.event.messageId === current.assistantMessageId) {
-    const tool = assistantToolActivity(event.event.name);
+    const tool = assistantToolActivity(event.event.name, event.event.source);
     return { ...current, activity: { type: "tool", tool, phase: tool === "command" ? "preparing" : "running", since: at } };
   }
   if (event.event.type === "tool.updated" && event.event.messageId === current.assistantMessageId) {
@@ -106,7 +106,11 @@ export function nextAssistantRunActivityUpdateAt(activity: AssistantRunActivity)
   return undefined;
 }
 
-export function assistantToolActivity(toolName: string): AssistantToolActivity {
+export function assistantToolActivity(
+  toolName: string,
+  source?: MessageToolBlock["source"],
+): AssistantToolActivity {
+  if (source?.kind === "mcp") return "connector";
   const normalized = toolName.toLowerCase();
   if (
     normalized.includes("delegate_task") ||
@@ -114,7 +118,8 @@ export function assistantToolActivity(toolName: string): AssistantToolActivity {
   )
     return "delegate";
   if (normalized.includes("load_skill")) return "skill";
-  if (normalized.includes("connector")) return "connector";
+  if (normalized.startsWith("mcp_") || normalized.includes("connector"))
+    return "connector";
   if (/(bash|shell|powershell|command|exec)/.test(normalized)) return "command";
   if (/(edit|replace|apply_patch|patch)/.test(normalized)) return "edit";
   if (/(write|create|save)/.test(normalized)) return "write";
@@ -139,9 +144,9 @@ export function assistantRunPresentationFromMessages(messages: ConversationMessa
     ? { type: "awaiting-approval" as const, since: startedAt }
     : activeTool?.state === "awaiting-user-input"
       ? { type: "awaiting-user-input" as const, since: startedAt }
-      : activeTool ? { type: "tool" as const, tool: assistantToolActivity(activeTool.name), phase: "running" as const, since: startedAt }
+      : activeTool ? { type: "tool" as const, tool: assistantToolActivity(activeTool.name, activeTool.source), phase: "running" as const, since: startedAt }
         : completedTool
-          ? { type: "tool-result" as const, tool: assistantToolActivity(completedTool.name), outcome: completedTool.state === "error" ? "failure" as const : "success" as const, since: startedAt }
+          ? { type: "tool-result" as const, tool: assistantToolActivity(completedTool.name, completedTool.source), outcome: completedTool.state === "error" ? "failure" as const : "success" as const, since: startedAt }
           : { type: "thinking" as const, since: startedAt };
   return {
     assistantMessageId: assistant?.id ?? null,
@@ -168,11 +173,14 @@ export function mergeCompletedAssistantMessage(previous: ConversationMessage, co
       if (block.type !== "tool") return block;
       const prior = previousTools.get(block.callId);
       if (!prior) return block;
+      const keepLoadedOutput = prior.outputTruncated === false && block.outputTruncated === true;
       return {
         ...block,
         input: block.input ?? prior.input,
-        output: block.output ?? prior.output,
+        output: keepLoadedOutput ? prior.output : block.output ?? prior.output,
+        outputTruncated: keepLoadedOutput ? false : block.outputTruncated ?? prior.outputTruncated,
         details: block.details ?? prior.details,
+        source: block.source ?? prior.source,
         usage: block.usage ?? prior.usage,
         approval: block.approval ?? prior.approval,
         userRequest: block.userRequest ?? prior.userRequest,

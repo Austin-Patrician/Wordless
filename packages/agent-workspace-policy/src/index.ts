@@ -146,7 +146,8 @@ async function fileOperation(
 ): Promise<{ approval: OperationApprovalDefinition; baseline: SessionFileBaseline } | { block: string }> {
   const path = stringInput(request.input, "path") ?? "";
   const absolutePath = isAbsolute(path) ? resolve(path) : resolve(context.record.runtimeRootPath, path);
-  if (context.record.accessLevel === "default" && !isWithinWorkspace(context.record.runtimeRootPath, absolutePath)) {
+  const writeRoot = context.workspaceWriteRoot ?? context.record.runtimeRootPath;
+  if (context.record.accessLevel === "default" && !isWithinWorkspace(writeRoot, absolutePath)) {
     return { block: "Default access only permits files inside the workspace" };
   }
   const current = await context.env.readTextFile(path);

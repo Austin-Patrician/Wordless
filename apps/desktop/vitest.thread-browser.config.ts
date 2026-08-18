@@ -1,0 +1,62 @@
+import react from "@vitejs/plugin-react";
+import { playwright } from "@vitest/browser-playwright";
+import { defineConfig } from "vitest/config";
+
+export default defineConfig({
+  plugins: [react()],
+  optimizeDeps: {
+    include: [
+      "@radix-ui/react-dialog",
+      "@radix-ui/react-dropdown-menu",
+      "@radix-ui/react-hover-card",
+      "@radix-ui/react-scroll-area",
+      "@radix-ui/react-select",
+      "@radix-ui/react-separator",
+      "@radix-ui/react-slider",
+      "@radix-ui/react-slot",
+      "@radix-ui/react-switch",
+      "@radix-ui/react-tooltip",
+      "class-variance-authority",
+      "clsx",
+      "highlight.js/lib/core",
+      "highlight.js/lib/languages/bash",
+      "highlight.js/lib/languages/c",
+      "highlight.js/lib/languages/cpp",
+      "highlight.js/lib/languages/csharp",
+      "highlight.js/lib/languages/css",
+      "highlight.js/lib/languages/diff",
+      "highlight.js/lib/languages/go",
+      "highlight.js/lib/languages/java",
+      "highlight.js/lib/languages/javascript",
+      "highlight.js/lib/languages/json",
+      "highlight.js/lib/languages/markdown",
+      "highlight.js/lib/languages/powershell",
+      "highlight.js/lib/languages/python",
+      "highlight.js/lib/languages/rust",
+      "highlight.js/lib/languages/sql",
+      "highlight.js/lib/languages/typescript",
+      "highlight.js/lib/languages/xml",
+      "highlight.js/lib/languages/yaml",
+      "lucide-react",
+      "mermaid",
+      "micromark-util-character",
+      "react-markdown",
+      "rehype-katex",
+      "remark-gfm",
+      "remark-math",
+      "tailwind-merge",
+    ],
+  },
+  test: {
+    browser: {
+      enabled: true,
+      headless: true,
+      instances: [{ browser: "chromium" }],
+      provider: playwright(),
+    },
+    include: [
+      "test/thread-production-row.browser.test.tsx",
+      "test/thread-virtuoso.browser.test.tsx",
+    ],
+  },
+});

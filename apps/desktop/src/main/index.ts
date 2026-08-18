@@ -1,5 +1,6 @@
 import path from "node:path";
 import { app, BrowserWindow, dialog, Menu, nativeTheme, session, shell, Tray } from "electron";
+import type { AppPreferences } from "@wordless/domain";
 import { createDesktopRuntime } from "./bootstrap/create-runtime";
 import { prepareUserDataPath } from "./bootstrap/user-data";
 import { registerRuntimeIpc } from "./ipc/register-runtime-ipc";
@@ -22,6 +23,7 @@ import { GoogleDriveAppData } from "./cloud-sync/google-drive-app-data";
 import { DesktopDataAnalysisService } from "./data-analysis/data-analysis-service";
 import { configureHttpDispatcher } from "./network/http-dispatcher";
 import { AutomationService } from "./automation/automation-service";
+
 import { McpRegistryService } from "./marketplace/mcp-registry-service";
 import { SkillsMpMarketplaceService } from "./marketplace/skillsmp-marketplace-service";
 
@@ -45,6 +47,31 @@ let quitting = false;
 const hostInfo = createDesktopHostInfo();
 let mainWindow: BrowserWindow | undefined;
 const hasSingleInstance = app.requestSingleInstanceLock();
+
+function showWindow(): void {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  if (mainWindow.isMinimized()) mainWindow.restore();
+  mainWindow.show();
+  mainWindow.focus();
+}
+
+function updateTrayMenu(preferences: AppPreferences): void {
+  if (!tray) return;
+  const chinese = preferences.locale === "zh-CN";
+  tray.setContextMenu(
+    Menu.buildFromTemplate([
+      { label: chinese ? "打开 Wordless" : "Open Wordless", click: showWindow },
+      { type: "separator" },
+      {
+        label: chinese ? "退出 Wordless" : "Quit Wordless",
+        click: () => {
+          quitting = true;
+          app.quit();
+        },
+      },
+    ]),
+  );
+}
 
 if (!hasSingleInstance) {
   app.quit();
@@ -119,6 +146,8 @@ app.whenReady().then(async () => {
   const notifications = new DesktopNotificationService();
   runtime.subscribe((event) => {
     notifications.handle(event, runtime!.getSnapshot().preferences);
+    if (event.event.type === "preferences.changed")
+      updateTrayMenu(runtime!.getSnapshot().preferences);
     for (const window of BrowserWindow.getAllWindows()) window.webContents.send("wordless:event", event);
   });
   const applicationMenu = new ApplicationMenuController(hostInfo);
@@ -154,13 +183,8 @@ app.whenReady().then(async () => {
   mainWindow.on("focus", () => notifications.clearBadge());
   tray = new Tray(path.join(__dirname, process.platform === "win32" ? "wordless.ico" : "wordless.png"));
   tray.setToolTip("Wordless");
-  const showWindow = () => { if (!mainWindow || mainWindow.isDestroyed()) return; if (mainWindow.isMinimized()) mainWindow.restore(); mainWindow.show(); mainWindow.focus(); };
   tray.on("click", showWindow);
-  tray.setContextMenu(Menu.buildFromTemplate([
-    { label: "Show Wordless", click: showWindow },
-    { type: "separator" },
-    { label: "Quit Wordless", click: () => { quitting = true; app.quit(); } },
-  ]));
+  updateTrayMenu(runtime.getSnapshot().preferences);
   setTimeout(() => void updateService.check(), 12_000);
   if (userData.notice) await dialog.showMessageBox({ type: "warning", message: userData.notice });
 

@@ -23,6 +23,7 @@ import type {
   ExpertPortrait,
   MessageAttachmentBlock,
   MessageBlock,
+  MessageToolSource,
   ModelCapabilities,
   ModelReference,
   ModelRequirements,
@@ -635,6 +636,7 @@ export type AgentDriverEventBase =
       callId: string;
       name: string;
       input: Record<string, unknown>;
+      source?: MessageToolSource;
     }
   | {
       type: "tool.updated";
@@ -643,6 +645,7 @@ export type AgentDriverEventBase =
       output: string;
       details?: unknown;
       usage?: ConversationUsage;
+      source?: MessageToolSource;
     }
   | {
       type: "tool.completed";
@@ -652,6 +655,7 @@ export type AgentDriverEventBase =
       details?: unknown;
       usage?: ConversationUsage;
       isError: boolean;
+      source?: MessageToolSource;
     }
   | {
       type: "approval.requested";
@@ -688,6 +692,8 @@ export type AgentDriverEvent =
 
 export interface AgentDriverSessionContext {
   record: SessionRecord;
+  /** Optional write boundary for isolated expert-member artifacts. */
+  workspaceWriteRoot?: string;
   profile: AgentProfileDefinition;
   model: Model<Api>;
   modelCapabilities: ModelCapabilities;

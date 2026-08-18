@@ -5,6 +5,7 @@ import {
   type AgentHarnessEvent,
   type AgentMessage,
   type AgentTool,
+  type AgentToolSource,
   type ExecutionEnv,
   type ThinkingLevel,
   type Skill,
@@ -750,6 +751,7 @@ function isToolExecutionStart(
   toolCallId: string;
   toolName: string;
   args: unknown;
+  source?: AgentToolSource;
 } {
   return (
     event.type === "tool_execution_start" &&
@@ -765,6 +767,7 @@ function isToolExecutionUpdate(
   type: "tool_execution_update";
   toolCallId: string;
   partialResult: unknown;
+  source?: AgentToolSource;
 } {
   return (
     event.type === "tool_execution_update" &&
@@ -780,6 +783,7 @@ function isToolExecutionEnd(
   toolCallId: string;
   result: unknown;
   isError: boolean;
+  source?: AgentToolSource;
 } {
   return (
     event.type === "tool_execution_end" &&
@@ -864,6 +868,12 @@ class AgentHarnessDriverSession implements AgentDriverSession {
       resolve: (resolution: OperationApprovalResolution) => void;
     }
   >();
+  /** Resolutions are retained for the lifetime of this driver session so repeated
+   * commands (for example from duplicate renderer cards) are idempotent. */
+  private readonly resolvedApprovals = new Map<
+    string,
+    OperationApprovalResolution
+  >();
   private readonly approvalResults = new Map<
     string,
     PersistedOperationApproval
@@ -890,6 +900,7 @@ class AgentHarnessDriverSession implements AgentDriverSession {
   private suppressedOverflowMessage: SuppressedOverflowMessage | undefined;
   private currentPrompt: string | undefined;
   private selectedSkillsForRun: readonly AgentRuntimeSkill[] = [];
+  private disposed = false;
   readonly features: readonly AgentDriverFeature[];
 
   constructor(
@@ -1306,6 +1317,8 @@ class AgentHarnessDriverSession implements AgentDriverSession {
   }
 
   async execute(command: AgentDriverCommand): Promise<void> {
+    if (this.disposed && command.type !== "resolve-approval")
+      throw new Error("The agent session is closed");
     switch (command.type) {
       case "prompt": {
         this.currentPrompt = command.text;
@@ -1346,12 +1359,17 @@ class AgentHarnessDriverSession implements AgentDriverSession {
         await this.harness.abort();
         return;
       case "resolve-approval": {
+        const previous = this.resolvedApprovals.get(
+          command.resolution.approvalId,
+        );
+        if (previous) return;
         const pending = this.pendingApprovals.get(
           command.resolution.approvalId,
         );
         if (!pending)
           throw new Error("Operation approval is no longer pending");
         this.pendingApprovals.delete(command.resolution.approvalId);
+        this.rememberApprovalResolution(command.resolution);
         pending.resolve(command.resolution);
         this.emit({
           type: "approval.resolved",
@@ -1437,6 +1455,8 @@ class AgentHarnessDriverSession implements AgentDriverSession {
   }
 
   dispose(): void {
+    if (this.disposed) return;
+    this.disposed = true;
     for (const toolCallId of this.elevatedToolCallIds)
       this.accessController?.revokeOutsideWorkspaceAccess(toolCallId);
     this.elevatedToolCallIds.clear();
@@ -1619,6 +1639,7 @@ class AgentHarnessDriverSession implements AgentDriverSession {
         approved,
         feedback,
       };
+      this.rememberApprovalResolution(resolution);
       pending.resolve(resolution);
       this.emit({
         type: "approval.resolved",
@@ -1641,12 +1662,22 @@ class AgentHarnessDriverSession implements AgentDriverSession {
       approved,
       ...(feedback ? { feedback } : {}),
     };
+    this.rememberApprovalResolution(resolution);
     pending.resolve(resolution);
     this.emit({
       type: "approval.resolved",
       messageId: pending.messageId,
       resolution,
     });
+  }
+
+  private rememberApprovalResolution(
+    resolution: OperationApprovalResolution,
+  ): void {
+    this.resolvedApprovals.set(resolution.approvalId, resolution);
+    if (this.resolvedApprovals.size <= 256) return;
+    const oldest = this.resolvedApprovals.keys().next().value;
+    if (typeof oldest === "string") this.resolvedApprovals.delete(oldest);
   }
 
   private resolvePendingNormalApprovals(): void {
@@ -1790,6 +1821,7 @@ class AgentHarnessDriverSession implements AgentDriverSession {
         callId: event.toolCallId,
         name: event.toolName,
         input: asRecord(event.args) ?? {},
+        ...(event.source ? { source: event.source } : {}),
       });
       return;
     }
@@ -1809,6 +1841,7 @@ class AgentHarnessDriverSession implements AgentDriverSession {
         output: contentToText(asRecord(event.partialResult)?.content),
         details: asRecord(event.partialResult)?.details,
         usage: toolUsageFromDetails(asRecord(event.partialResult)?.details),
+        ...(event.source ? { source: event.source } : {}),
       });
       return;
     }
@@ -1834,6 +1867,7 @@ class AgentHarnessDriverSession implements AgentDriverSession {
         details,
         usage: toolUsageFromDetails(details),
         isError: event.isError,
+        ...(event.source ? { source: event.source } : {}),
       });
       return;
     }

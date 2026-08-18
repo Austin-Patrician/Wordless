@@ -1149,10 +1149,20 @@ export interface MessageReasoningBlock {
   text: string;
 }
 
+export interface MessageToolSource {
+  kind: "mcp";
+  connectorId: string;
+  connectorName: string;
+  toolName: string;
+  templateId: ConnectorTemplateId;
+  transport: ConnectorTransport;
+}
+
 export interface MessageToolBlock {
   type: "tool";
   callId: string;
   name: string;
+  source?: MessageToolSource;
   state:
     | "pending"
     | "awaiting-approval"

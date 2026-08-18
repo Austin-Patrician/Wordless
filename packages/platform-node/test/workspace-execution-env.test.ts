@@ -38,6 +38,27 @@ test("default access rejects an absolute write path outside the workspace", asyn
   });
 });
 
+test("member write root isolates writes while keeping the session root readable", async () => {
+  await withWorkspace(async (rootPath) => {
+    const memberRoot = path.join(rootPath, "artifacts", "content-reviewer");
+    await mkdir(memberRoot, { recursive: true });
+    await writeFile(path.join(rootPath, "artifacts", "primary.md"), "primary\n");
+    const env = new WorkspacePathService().createExecutionEnv(rootPath, "default", {
+      writableRoot: memberRoot,
+    });
+
+    const read = await env.readTextFile("artifacts/primary.md");
+    const write = await env.writeFile("artifacts/content-reviewer/review.md", "review\n");
+    const blocked = await env.writeFile("artifacts/primary.md", "overwritten\n");
+
+    assert.equal(read.ok, true);
+    assert.equal(write.ok, true);
+    assert.equal(blocked.ok, false);
+    assert.equal(await readFile(path.join(memberRoot, "review.md"), "utf8"), "review\n");
+    assert.equal(await readFile(path.join(rootPath, "artifacts", "primary.md"), "utf8"), "primary\n");
+  });
+});
+
 test("default access canonicalizes paths inside a configured read-only root", async () => {
   await withWorkspace(async (rootPath) => {
     const readOnlyRoot = await mkdtemp(path.join(os.tmpdir(), "wordless-read-only-"));

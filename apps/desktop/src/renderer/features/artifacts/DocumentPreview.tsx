@@ -1,7 +1,8 @@
 import { ArrowLeft, ExternalLink, FileWarning } from "lucide-react";
-import { type ReactNode } from "react";
 import { FileTypeIcon } from "../../shared/FileTypeIcon";
 import { usePreferences } from "../../shared/preferences";
+import { MessageMarkdown } from "../thread/MessageMarkdown";
+import "./document-preview.css";
 
 type DocumentPreviewProps = {
   content: string | null;
@@ -11,37 +12,12 @@ type DocumentPreviewProps = {
   unavailableReason?: "binary" | "missing" | "too-large";
 };
 
-function InlineMarkdown({ text }: { text: string }) {
-  return <>{text.split(/(`[^`]+`|\*\*[^*]+\*\*)/g).map((part, index) => {
-    if (part.startsWith("`") && part.endsWith("`")) return <code className="rounded bg-[#efefeb] px-1 py-0.5 font-mono text-[11px] text-[#454540] dark:bg-muted dark:text-foreground" key={index}>{part.slice(1, -1)}</code>;
-    if (part.startsWith("**") && part.endsWith("**")) return <strong key={index}>{part.slice(2, -2)}</strong>;
-    return part;
-  })}</>;
-}
-
 function MarkdownPreview({ content }: { content: string }) {
-  const lines = content.split("\n");
-  const blocks: ReactNode[] = [];
-  for (let index = 0; index < lines.length; index += 1) {
-    const line = lines[index]!;
-    if (line.startsWith("```")) {
-      const code: string[] = [];
-      index += 1;
-      while (index < lines.length && !lines[index]!.startsWith("```")) code.push(lines[index++]!);
-      blocks.push(<pre className="mt-3 overflow-x-auto border-y border-[#e4e4df] bg-[#fafaf9] px-3 py-2 font-mono text-[11px] leading-5 text-[#4d4d47] dark:border-border dark:bg-muted dark:text-muted-foreground" key={`code-${index}`}>{code.join("\n")}</pre>);
-      continue;
-    }
-    if (/^#{1,3}\s+/.test(line)) {
-      blocks.push(<h2 className="mt-5 text-[14px] font-semibold text-[#30302d] first:mt-0 dark:text-foreground" key={`heading-${index}`}><InlineMarkdown text={line.replace(/^#{1,3}\s+/, "")} /></h2>);
-      continue;
-    }
-    if (/^[-*]\s+/.test(line)) {
-      blocks.push(<p className="mt-1 flex gap-2 text-[12px] leading-5 text-[#5a5a55] dark:text-muted-foreground" key={`list-${index}`}><span>•</span><span><InlineMarkdown text={line.replace(/^[-*]\s+/, "")} /></span></p>);
-      continue;
-    }
-    if (line.trim()) blocks.push(<p className="mt-3 whitespace-pre-wrap text-[12px] leading-5 text-[#565650] dark:text-muted-foreground" key={`text-${index}`}><InlineMarkdown text={line} /></p>);
-  }
-  return <div className="px-4 py-3">{blocks}</div>;
+  return (
+    <div className="artifact-markdown-preview px-4 py-3.5">
+      <MessageMarkdown text={content} />
+    </div>
+  );
 }
 
 function TextPreview({ content }: { content: string }) {

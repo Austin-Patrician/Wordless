@@ -49,6 +49,7 @@ export type {
 	AgentMessage,
 	AgentTool,
 	AgentToolResult,
+	AgentToolSource,
 	AgentToolUpdateCallback,
 	ThinkingLevel,
 } from "./types.ts";

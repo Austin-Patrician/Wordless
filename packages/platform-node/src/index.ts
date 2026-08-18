@@ -245,13 +245,15 @@ export interface ToolCallAccessController {
 
 class WorkspaceExecutionEnv implements ToolCallAccessController {
   readonly cwd: string;
+  private readonly writableRoot: string;
   private readonly base: NodeExecutionEnv;
   private readonly readOnlyRoots: string[];
   private readonly toolCallContext = new AsyncLocalStorage<string>();
   private readonly elevatedToolCalls = new Set<string>();
 
-  constructor(rootPath: string, readOnlyRoots: string[] = []) {
+  constructor(rootPath: string, readOnlyRoots: string[] = [], writableRoot = rootPath) {
     this.cwd = canonicalExistingPath(rootPath);
+    this.writableRoot = canonicalExistingPath(writableRoot);
     this.base = new NodeExecutionEnv({ cwd: this.cwd });
     this.readOnlyRoots = readOnlyRoots.map(canonicalExistingPath);
   }
@@ -308,7 +310,7 @@ class WorkspaceExecutionEnv implements ToolCallAccessController {
 
   private async guardWorkspacePath(path: string, abortSignal?: AbortSignal): Promise<{ ok: true; value: string } | { ok: false; error: Error }> {
     const addressed = isAbsolute(path) ? resolve(path) : resolve(this.cwd, path);
-    return await this.guardAddressedPath(addressed, abortSignal, (candidate) => this.isWithinRoot(candidate));
+    return await this.guardAddressedPath(addressed, abortSignal, (candidate) => this.isWithinWritableRoot(candidate));
   }
 
   private async guardReadPath(path: string, abortSignal?: AbortSignal): Promise<{ ok: true; value: string } | { ok: false; error: Error }> {
@@ -353,6 +355,11 @@ class WorkspaceExecutionEnv implements ToolCallAccessController {
     return value === "" || (!value.startsWith("..") && !isAbsolute(value));
   }
 
+  private isWithinWritableRoot(path: string): boolean {
+    const value = relative(this.writableRoot, path);
+    return value === "" || (!value.startsWith("..") && !isAbsolute(value));
+  }
+
   private isWithinReadOnlyRoot(path: string): boolean {
     return this.readOnlyRoots.some((root) => {
       const value = relative(root, path);
@@ -390,8 +397,8 @@ export class WorkspacePathService {
     return await realpath(rootPath);
   }
 
-  createExecutionEnv(rootPath: string, accessLevel: SessionAccessLevel, options?: { readOnlyRoots?: string[] }): NodeExecutionEnv | WorkspaceExecutionEnv {
-    return accessLevel === "default" ? new WorkspaceExecutionEnv(rootPath, options?.readOnlyRoots) : new NodeExecutionEnv({ cwd: rootPath });
+  createExecutionEnv(rootPath: string, accessLevel: SessionAccessLevel, options?: { readOnlyRoots?: string[]; writableRoot?: string }): NodeExecutionEnv | WorkspaceExecutionEnv {
+    return accessLevel === "default" ? new WorkspaceExecutionEnv(rootPath, options?.readOnlyRoots, options?.writableRoot) : new NodeExecutionEnv({ cwd: rootPath });
   }
 
   isWithinRoot(rootPath: string, candidatePath: string): boolean {
