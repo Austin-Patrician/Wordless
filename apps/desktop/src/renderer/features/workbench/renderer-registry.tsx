@@ -333,6 +333,8 @@ function ToolActivityRow({
     stateLabel ??
     (block.state === "complete" ? t("toolCompleted") : t("toolStatus"));
   const statusClass = activityStatusClass(block, completedWarning);
+  const displayName =
+    block.source?.kind === "mcp" ? block.source.connectorName : block.name;
 
   return (
     <div className="flex min-h-5 items-center gap-3 text-[13px]">
@@ -346,7 +348,7 @@ function ToolActivityRow({
         {icon}
       </span>
       <span className="shrink-0 font-mono text-[12px] text-[#2d2d2a] dark:text-foreground">
-        {block.name}
+        {displayName}
       </span>
       <div
         className={`min-w-0 flex-1 font-mono text-[11px] text-[#777770] dark:text-muted-foreground ${typeof detail === "string" ? "truncate" : ""}`}

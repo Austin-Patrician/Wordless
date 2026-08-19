@@ -8,6 +8,8 @@ import type {
   AppearancePreferences,
   AppPreferences,
   AutomationTaskInput,
+  TaskRecordInput,
+  TaskStatus,
   SessionAccessLevel,
   ThinkingLevel,
   ToolApprovalMode,
@@ -21,6 +23,9 @@ import {
 import {
   CreateAndPromptSchema,
   AutomationTaskInputSchema,
+  TaskRecordInputSchema,
+  TaskIdSchema,
+  TaskMoveSchema,
   CompactSessionSchema,
   ConnectorConfigurationSchema,
   ConnectorIdSchema,
@@ -318,6 +323,27 @@ export function registerRuntimeIpc(
   ipcMain.handle("wordless:cloud-sync:delete-remote", () =>
     options.cloudSync.deleteRemote(),
   );
+  ipcMain.handle("wordless:tasks:list", () => runtime.listTasks());
+  ipcMain.handle("wordless:tasks:create", (_event, payload: unknown) => {
+    const { input } = parsePayload<{ input: TaskRecordInput }>(Type.Object({ input: TaskRecordInputSchema }), payload);
+    return runtime.createTask(input);
+  });
+  ipcMain.handle("wordless:tasks:update", (_event, payload: unknown) => {
+    const { id, input } = parsePayload<{ id: string; input: TaskRecordInput }>(Type.Object({ id: Type.String({ minLength: 1 }), input: TaskRecordInputSchema }), payload);
+    return runtime.updateTask(id, input);
+  });
+  ipcMain.handle("wordless:tasks:move", (_event, payload: unknown) => {
+    const input = parsePayload<{ id: string; status: TaskStatus; position?: number }>(TaskMoveSchema, payload);
+    return runtime.moveTask(input.id, input.status, input.position);
+  });
+  ipcMain.handle("wordless:tasks:delete", (_event, payload: unknown) => {
+    const { id } = parsePayload<{ id: string }>(TaskIdSchema, payload);
+    runtime.deleteTask(id);
+  });
+  ipcMain.handle("wordless:tasks:execute", (_event, payload: unknown) => {
+    const { id } = parsePayload<{ id: string }>(TaskIdSchema, payload);
+    return runtime.executeTask(id);
+  });
   const IdSchema = Type.Object({ id: Type.String({ minLength: 1 }) });
   const IdsSchema = Type.Object({
     ids: Type.Array(Type.String({ minLength: 1 }), {

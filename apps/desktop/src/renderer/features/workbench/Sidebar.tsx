@@ -1,5 +1,5 @@
 import { Button, DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger, Tooltip, TooltipContent, TooltipTrigger } from "@wordless/ui-kit";
-import { Bell, CalendarClock, ChevronDown, ChevronLeft, Cloud, Command, Ellipsis, Folder, FolderOpen, Images, LoaderCircle, LogIn, LogOut, Pin, PinOff, Search, Settings, Trash2, Pencil, UserRoundSearch, X } from "lucide-react";
+import { Bell, CalendarClock, ChevronDown, ChevronLeft, Cloud, Command, Ellipsis, Folder, FolderOpen, Images, LoaderCircle, LogIn, LogOut, Pin, PinOff, Search, Settings, Trash2, Pencil, UserRoundSearch, X, ListTodo } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import type { SessionRecord } from "@wordless/domain";
@@ -29,6 +29,7 @@ type SidebarProps = {
   mediaActive: boolean;
   skillsActive: boolean;
   expertsActive: boolean;
+  tasksActive: boolean;
 };
 
 const RECENT_SESSION_LIMIT = 5;
@@ -152,7 +153,7 @@ function SidebarActionNotice({ message, onDismiss }: { message: string | null; o
   );
 }
 
-export function Sidebar({ automationActive, collapsed, expertsActive, mediaActive, onNewThread, onOpenAutomation, onOpenExperts, onOpenMedia, onOpenSettings, onOpenSession, onSessionDeleted, onOpenSkills, onToggle, runningSessionIds, selectedSessionId, skillsActive }: SidebarProps) {
+export function Sidebar({ automationActive, collapsed, expertsActive, mediaActive, onNewThread, onOpenAutomation, onOpenExperts, onOpenMedia, onOpenSettings, onOpenSession, onSessionDeleted, onOpenSkills, onToggle, runningSessionIds, selectedSessionId, skillsActive, tasksActive, onOpenTasks }: SidebarProps & { onOpenTasks: () => void }) {
   const client = useRuntimeClient();
   const { refresh, snapshot } = useRuntime();
   const { locale, t } = usePreferences();
@@ -272,6 +273,7 @@ export function Sidebar({ automationActive, collapsed, expertsActive, mediaActiv
     { id: "new", label: t("newThread"), icon: Folder, onClick: onNewThread },
     { id: "media", label: t("imageVideoGeneration"), icon: Images, onClick: onOpenMedia },
     { id: "automation", label: t("automations"), icon: CalendarClock, onClick: onOpenAutomation },
+    { id: "tasks", label: t("tasks"), icon: ListTodo, onClick: onOpenTasks },
     { id: "experts", label: t("digitalEmployees"), icon: UserRoundSearch, onClick: onOpenExperts },
     { id: "skills", label: "Skills & MCP", icon: Command, onClick: onOpenSkills },
   ];
@@ -291,7 +293,7 @@ export function Sidebar({ automationActive, collapsed, expertsActive, mediaActiv
       <nav aria-label="Primary navigation" className="mt-7 shrink-0 space-y-1">
         {navItems.map((item) => {
           const Icon = item.icon;
-          const active = (item.id === "new" && selectedSessionId === null && !skillsActive && !expertsActive && !mediaActive && !automationActive) || (item.id === "experts" && expertsActive) || (item.id === "skills" && skillsActive) || (item.id === "media" && mediaActive) || (item.id === "automation" && automationActive);
+          const active = (item.id === "new" && selectedSessionId === null && !skillsActive && !expertsActive && !mediaActive && !automationActive && !tasksActive) || (item.id === "experts" && expertsActive) || (item.id === "skills" && skillsActive) || (item.id === "media" && mediaActive) || (item.id === "automation" && automationActive) || (item.id === "tasks" && tasksActive);
           const button = <button className={`flex w-full items-center gap-3 rounded-xl px-3 py-2 text-left text-[13px] font-medium transition-colors ${collapsed ? "justify-center" : ""} ${active ? "bg-[#e3e3df] text-foreground dark:bg-[#2a2c22]" : "text-[#4c4c47] hover:bg-[#e7e7e3] dark:text-muted-foreground dark:hover:bg-[#282a21] dark:hover:text-foreground"}`} onClick={item.onClick} type="button"><Icon className="h-[17px] w-[17px] shrink-0" />{!collapsed ? <span className="truncate">{item.label}</span> : null}</button>;
           return collapsed ? <Tooltip key={item.id}><TooltipTrigger asChild>{button}</TooltipTrigger><TooltipContent side="right">{item.label}</TooltipContent></Tooltip> : <div key={item.id}>{button}</div>;
         })}

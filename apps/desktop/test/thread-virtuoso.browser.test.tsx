@@ -99,6 +99,7 @@ function Row({ descriptor, store }: { descriptor: ThreadTimelineDescriptor; stor
 type BrowserHarnessHandle = {
   jump: () => void;
   scrollTo: (index: number) => void;
+  scrollToTop: () => void;
 };
 
 type BrowserVirtuosoContext = {
@@ -138,7 +139,7 @@ const BrowserHarness = forwardRef<BrowserHarnessHandle, { store: ThreadSessionSt
     const virtuoso = useRef<VirtuosoHandle>(null);
     const jump = useCallback(() => {
       viewport.resumeFollowing();
-      virtuoso.current?.scrollToIndex({ index: "LAST", align: "end" });
+      virtuoso.current?.scrollToIndex({ index: "LAST", align: "end", behavior: "auto" });
     }, [viewport]);
     const context = useMemo<BrowserVirtuosoContext>(() => ({ store, viewport }), [store, viewport]);
     const atBottomChanged = useCallback((value: boolean) => viewport.setAtBottom(value), [viewport]);
@@ -157,6 +158,7 @@ const BrowserHarness = forwardRef<BrowserHarnessHandle, { store: ThreadSessionSt
     useImperativeHandle(ref, () => ({
       jump,
       scrollTo: (index) => virtuoso.current?.scrollToIndex({ index, align: "start" }),
+      scrollToTop: () => virtuoso.current?.scrollTo({ top: 0 }),
     }), [jump]);
     return (
       <div style={{ height: 420, position: "relative", width: 600 }}>
@@ -298,6 +300,29 @@ describe("Thread Virtuoso streaming architecture", () => {
     await act(async () => { handle.current?.jump(); await frame(); });
     expect(viewport.getSnapshot().followMode).toBe("following");
     expect(document.querySelector("[data-jump]")).toBeNull();
+  });
+
+  it("reaches the actual tail when jumping from a deep historical position", async () => {
+    const runtime = runtimeHarness(view(Array.from({ length: 240 }, (_, index) => turn(
+      `jump-${index}`,
+      index * 10,
+      `answer ${index} ${"dynamic streamed content ".repeat(index % 9 === 0 ? 80 : 3)}`,
+    ))));
+    await runtime.store.start();
+    const viewport = new ThreadViewportStore();
+    const handle = await mount(runtime.store, viewport);
+    await act(async () => {
+      viewport.pauseFollowing();
+      await settle();
+      handle.current?.scrollToTop();
+      await settle();
+    });
+    await act(async () => {
+      handle.current?.jump();
+      await settle();
+    });
+    const latest = await waitForSelector<HTMLElement>('[data-row-key="assistant:jump-239"]');
+    expect(latest.getBoundingClientRect().bottom).toBeLessThanOrEqual(421);
   });
 
   it("follows multi-frame height growth without flashing the latest button", async () => {

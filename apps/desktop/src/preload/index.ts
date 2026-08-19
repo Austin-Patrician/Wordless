@@ -47,6 +47,12 @@ const wordlessBridge: DesktopBridge = {
     ipcRenderer.invoke("wordless:automation:runs", { limit }),
   deleteAutomationRun: (id) =>
     ipcRenderer.invoke("wordless:automation:run-delete", { id }),
+  listTasks: () => ipcRenderer.invoke("wordless:tasks:list"),
+  createTask: (input) => ipcRenderer.invoke("wordless:tasks:create", { input }),
+  updateTask: (id, input) => ipcRenderer.invoke("wordless:tasks:update", { id, input }),
+  moveTask: (id, status, position) => ipcRenderer.invoke("wordless:tasks:move", { id, status, ...(position === undefined ? {} : { position }) }),
+  deleteTask: (id) => ipcRenderer.invoke("wordless:tasks:delete", { id }),
+  executeTask: (id) => ipcRenderer.invoke("wordless:tasks:execute", { id }),
   getSnapshot: () => ipcRenderer.invoke("wordless:snapshot"),
   listExperts: () => ipcRenderer.invoke("wordless:experts:list"),
   saveExpert: (input, id) =>

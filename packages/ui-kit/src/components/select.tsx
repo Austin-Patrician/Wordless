@@ -5,8 +5,14 @@ import { cn } from "../lib/cn";
 
 const Select = SelectPrimitive.Root;
 const SelectValue = SelectPrimitive.Value;
+const SelectGroup = SelectPrimitive.Group;
+const SelectLabel = SelectPrimitive.Label;
 
-function SelectTrigger({ className, children, ...props }: ComponentPropsWithoutRef<typeof SelectPrimitive.Trigger>) {
+function SelectTrigger({
+  className,
+  children,
+  ...props
+}: ComponentPropsWithoutRef<typeof SelectPrimitive.Trigger>) {
   return (
     <SelectPrimitive.Trigger
       className={cn(
@@ -23,27 +29,52 @@ function SelectTrigger({ className, children, ...props }: ComponentPropsWithoutR
   );
 }
 
-function SelectContent({ className, children, style, ...props }: ComponentPropsWithoutRef<typeof SelectPrimitive.Content>) {
+function SelectContent({
+  className,
+  children,
+  style,
+  ...props
+}: ComponentPropsWithoutRef<typeof SelectPrimitive.Content>) {
   return (
     <SelectPrimitive.Portal>
       <SelectPrimitive.Content
-        className={cn("w-[var(--radix-select-trigger-width)] overflow-hidden rounded-md border border-border bg-card shadow-md", className)}
+        className={cn(
+          "w-[var(--radix-select-trigger-width)] overflow-hidden rounded-md border border-border bg-card shadow-md",
+          className,
+        )}
         position="popper"
         side="bottom"
         sideOffset={6}
-        style={{ zIndex: 100, width: "var(--radix-select-trigger-width)", maxHeight: "min(294px, var(--radix-select-content-available-height))", ...style }}
+        style={{
+          zIndex: 100,
+          width: "var(--radix-select-trigger-width)",
+          maxHeight: "min(294px, var(--radix-select-content-available-height))",
+          ...style,
+        }}
         {...props}
       >
-        <SelectPrimitive.Viewport className="p-1" style={{ maxHeight: "inherit", overflowY: "auto" }}>{children}</SelectPrimitive.Viewport>
+        <SelectPrimitive.Viewport
+          className="p-1"
+          style={{ maxHeight: "inherit", overflowY: "auto" }}
+        >
+          {children}
+        </SelectPrimitive.Viewport>
       </SelectPrimitive.Content>
     </SelectPrimitive.Portal>
   );
 }
 
-function SelectItem({ className, children, ...props }: ComponentPropsWithoutRef<typeof SelectPrimitive.Item>) {
+function SelectItem({
+  className,
+  children,
+  ...props
+}: ComponentPropsWithoutRef<typeof SelectPrimitive.Item>) {
   return (
     <SelectPrimitive.Item
-      className={cn("relative flex cursor-default select-none items-center rounded-sm px-3 py-2 text-sm outline-none focus:bg-muted data-[state=checked]:bg-muted data-[state=checked]:text-foreground", className)}
+      className={cn(
+        "relative flex cursor-default select-none items-center rounded-sm px-3 py-2 text-sm outline-none focus:bg-muted data-[state=checked]:bg-muted data-[state=checked]:text-foreground",
+        className,
+      )}
       {...props}
     >
       <SelectPrimitive.ItemText>{children}</SelectPrimitive.ItemText>
@@ -51,4 +82,12 @@ function SelectItem({ className, children, ...props }: ComponentPropsWithoutRef<
   );
 }
 
-export { Select, SelectContent, SelectItem, SelectTrigger, SelectValue };
+export {
+  Select,
+  SelectContent,
+  SelectGroup,
+  SelectItem,
+  SelectLabel,
+  SelectTrigger,
+  SelectValue,
+};

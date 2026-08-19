@@ -1074,8 +1074,8 @@ function ExpertMemberStream({
   }), [environment, store, viewportStore]);
   const jumpToLatest = useCallback(() => {
     viewportStore.resumeFollowing();
-    const timeline = store.getTimelineSnapshot();
-    if (timeline.items.length) virtuosoRef.current?.scrollToIndex({ index: timeline.items.length - 1, align: "end", behavior: "smooth" });
+    if (store.getTimelineSnapshot().items.length)
+      virtuosoRef.current?.scrollToIndex({ index: "LAST", align: "end", behavior: "auto" });
   }, [store, viewportStore]);
   const atBottomChanged = useCallback((atBottom: boolean) => {
     viewportStore.setAtBottom(timeline.items.length === 0 ? true : atBottom);
@@ -2804,10 +2804,11 @@ const ThreadTimelineViewport = memo(forwardRef<ThreadTimelineViewportHandle, Thr
     const searchHighlightCleanupRef = useRef<(() => void) | null>(null);
     const searchHighlightTimerRef = useRef<number | null>(null);
 
-    const jumpToLatest = useCallback((behavior: "auto" | "smooth" = "smooth") => {
+    const jumpToLatest = useCallback((behavior: "auto" | "smooth" = "auto") => {
       viewportStore.resumeFollowing();
       const current = store.getTimelineSnapshot();
-      if (current.items.length) virtuosoRef.current?.scrollToIndex({ index: current.items.length - 1, align: "end", behavior });
+      if (current.items.length)
+        virtuosoRef.current?.scrollToIndex({ index: "LAST", align: "end", behavior });
     }, [store, viewportStore]);
 
     const navigateToTurn = useCallback(async (turnId: string, messageId?: string, matchText?: string) => {
@@ -3056,7 +3057,7 @@ export function ThreadView({
     };
   }, [threadStore, viewportStore]);
 
-  const scrollToBottom = useCallback((behavior: "auto" | "smooth" = "smooth") => {
+  const scrollToBottom = useCallback((behavior: "auto" | "smooth" = "auto") => {
     timelineViewportRef.current?.jumpToLatest(behavior);
   }, []);
 

@@ -383,6 +383,33 @@ export const CreateAndPromptSchema = Type.Object({
   submission: UserMessageSubmissionSchema,
 });
 
+const TaskStatusSchema = Type.Union([
+  Type.Literal("todo"),
+  Type.Literal("in-progress"),
+  Type.Literal("review"),
+  Type.Literal("done"),
+]);
+export const TaskRecordInputSchema = Type.Object({
+  title: Type.String({ minLength: 1, maxLength: 120 }),
+  detailParts: UserPromptPartsSchema,
+  expectedResult: Type.Optional(Type.String({ maxLength: 20_000 })),
+  status: TaskStatusSchema,
+  priority: Type.Optional(Type.Union([Type.Literal("low"), Type.Literal("medium"), Type.Literal("high")])),
+  dueAt: Type.Union([Type.Number({ minimum: 0 }), Type.Null()]),
+  position: Type.Optional(Type.Number({ minimum: 0 })),
+  entryId: Type.Union([Type.String({ minLength: 1 }), Type.Null()]),
+  expertSelection: Type.Optional(Type.Object({ kind: Type.Union([Type.Literal("expert"), Type.Literal("team")]), id: Type.String({ minLength: 1, maxLength: 128 }), version: Type.String({ minLength: 1, maxLength: 32 }) })),
+  workspaceId: Type.Union([Type.String({ minLength: 1 }), Type.Null()]),
+  sessionId: Type.Union([Type.String({ minLength: 1 }), Type.Null()]),
+  model: Type.Union([ModelReferenceSchema, Type.Null()]),
+  thinkingLevel: ThinkingLevelSchema,
+  accessLevel: SessionAccessLevelSchema,
+  toolApprovalMode: ToolApprovalModeSchema,
+  connectorIds: Type.Array(Type.String({ minLength: 1 }), { maxItems: 64 }),
+});
+export const TaskIdSchema = Type.Object({ id: Type.String({ minLength: 1 }) });
+export const TaskMoveSchema = Type.Object({ id: Type.String({ minLength: 1 }), status: TaskStatusSchema, position: Type.Optional(Type.Number({ minimum: 0 })) });
+
 const ExpertMetadataSchema = {
   tags: Type.Optional(
     Type.Array(Type.String({ minLength: 1, maxLength: 80 }), { maxItems: 32 }),
@@ -1709,6 +1736,7 @@ export type RuntimeEvent =
   | { type: "media.project.changed"; sessionId: string }
   | { type: "automation.changed"; id?: string }
   | { type: "automation-run.changed"; id?: string }
+  | { type: "task.changed"; id: string }
   | {
       type: "artifact.changed";
       artifactId: string;

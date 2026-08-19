@@ -13,9 +13,10 @@ type WorkspacePickerProps = {
   open: boolean;
   selectedWorkspaceId: string | null;
   workspaces: WorkspaceRecord[];
+  placement?: "composer" | "below";
 };
 
-export function WorkspacePicker({ allowNoWorkspace = true, onCreate, onOpenChange, onOpenLocal, onSelect, open, selectedWorkspaceId, workspaces }: WorkspacePickerProps) {
+export function WorkspacePicker({ allowNoWorkspace = true, onCreate, onOpenChange, onOpenLocal, onSelect, open, placement = "composer", selectedWorkspaceId, workspaces }: WorkspacePickerProps) {
   const panelRef = useRef<HTMLDivElement>(null);
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
   const [query, setQuery] = useState("");
@@ -61,7 +62,7 @@ export function WorkspacePicker({ allowNoWorkspace = true, onCreate, onOpenChang
   return (
     <>
       {open ? (
-        <div className="absolute bottom-[50px] left-0 z-[60] w-[250px] max-w-[calc(100vw-2rem)] overflow-hidden rounded-b-[15px] rounded-tr-[15px] border border-[#e5e6e8] bg-white p-2 font-['Inter','Noto_Sans_SC','Manrope',sans-serif] text-[#1d2025] shadow-[0_11px_26px_rgba(30,35,43,0.09)] dark:border-[#3c3f43] dark:bg-[#202225] dark:text-[#edf0f2]" ref={panelRef} role="menu">
+        <div className={`absolute ${placement === "below" ? "bottom-[34px]" : "bottom-[50px]"} left-0 z-[60] w-[250px] max-w-[calc(100vw-2rem)] overflow-hidden rounded-b-[15px] rounded-tr-[15px] border border-[#e5e6e8] bg-white p-2 font-['Inter','Noto_Sans_SC','Manrope',sans-serif] text-[#1d2025] shadow-[0_11px_26px_rgba(30,35,43,0.09)] dark:border-[#3c3f43] dark:bg-[#202225] dark:text-[#edf0f2]`} ref={panelRef} role="menu">
           <label className="flex h-[32px] items-center gap-2 rounded-[8px] bg-[#f5f5f5] px-2.5 text-[#777b82] transition focus-within:ring-2 focus-within:ring-[#bfc9d6] dark:bg-[#2b2e32] dark:text-[#aeb3b9]">
             <Search className="shrink-0 text-[#60646b] dark:text-[#d8dce0]" size={16} strokeWidth={2} />
             <input

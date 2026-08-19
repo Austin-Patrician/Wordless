@@ -14,6 +14,8 @@ import type {
   AutomationRun,
   AutomationRunStatus,
   AutomationTask,
+  TaskRecord,
+  TaskExecutionStatus,
   EnabledModelRecord,
   MediaProject,
   ProviderConnectionRecord,
@@ -515,6 +517,34 @@ export class WordlessDatabase {
     this.database.prepare("DELETE FROM automation_runs WHERE session_id = ?").run(sessionId);
   }
 
+  listTasks(): TaskRecord[] {
+    return this.database.prepare("SELECT document FROM tasks ORDER BY status, position, updated_at DESC").all().flatMap((row): TaskRecord[] => {
+      try { return [parseJson<TaskRecord>(asString((row as SqlRow).document))]; } catch { return []; }
+    });
+  }
+
+  getTask(id: string): TaskRecord | undefined {
+    const row = this.database.prepare("SELECT document FROM tasks WHERE id = ?").get(id) as SqlRow | undefined;
+    if (!row) return undefined;
+    try { return parseJson<TaskRecord>(asString(row.document)); } catch { return undefined; }
+  }
+
+  upsertTask(task: TaskRecord): void {
+    this.database.prepare(`INSERT INTO tasks(id, status, position, due_at, session_id, document, created_at, updated_at)
+      VALUES(?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET status=excluded.status, position=excluded.position,
+      due_at=excluded.due_at, session_id=excluded.session_id, document=excluded.document, updated_at=excluded.updated_at`)
+      .run(task.id, task.status, task.position, task.dueAt, task.sessionId, JSON.stringify(task), task.createdAt, task.updatedAt);
+  }
+
+  deleteTask(id: string): boolean {
+    return this.database.prepare("DELETE FROM tasks WHERE id = ?").run(id).changes > 0;
+  }
+
+  clearTaskSession(sessionId: string): void {
+    for (const task of this.listTasks().filter((candidate) => candidate.sessionId === sessionId))
+      this.upsertTask({ ...task, sessionId: null, updatedAt: Date.now() });
+  }
+
   private migrate(): void {
     this.database.exec(`
       PRAGMA journal_mode = WAL;
@@ -640,6 +670,10 @@ export class WordlessDatabase {
     if (this.claimMigration(13)) this.database.exec("CREATE TABLE experts(id TEXT PRIMARY KEY, version TEXT NOT NULL, document TEXT NOT NULL, updated_at INTEGER NOT NULL);");
     if (this.claimMigration(14)) this.database.exec("CREATE TABLE session_expert_snapshots(session_id TEXT PRIMARY KEY REFERENCES sessions(id) ON DELETE CASCADE, document TEXT NOT NULL);");
     if (this.claimMigration(15)) this.database.exec("CREATE TABLE expert_teams(id TEXT PRIMARY KEY, version TEXT NOT NULL, document TEXT NOT NULL, updated_at INTEGER NOT NULL);");
+    if (this.claimMigration(16)) this.database.exec(`CREATE TABLE tasks(
+      id TEXT PRIMARY KEY, status TEXT NOT NULL, position INTEGER NOT NULL DEFAULT 0, due_at INTEGER,
+      session_id TEXT, document TEXT NOT NULL, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL
+    ); CREATE INDEX tasks_order ON tasks(status, position, updated_at DESC); CREATE INDEX tasks_session ON tasks(session_id);`);
   }
 
   private readWorkspace(row: SqlRow): WorkspaceRecord {

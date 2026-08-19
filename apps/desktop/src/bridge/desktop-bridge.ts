@@ -5,6 +5,9 @@ import type {
   AutomationRun,
   AutomationTask,
   AutomationTaskInput,
+  TaskRecord,
+  TaskRecordInput,
+  TaskStatus,
   ConfiguredModelKind,
   ConnectorConfiguration,
   ConnectorPromptSummary,
@@ -119,6 +122,12 @@ export interface DesktopBridge {
   runAutomation(id: string): Promise<AutomationRun>;
   listAutomationRuns(limit?: number): Promise<AutomationRun[]>;
   deleteAutomationRun(id: string): Promise<void>;
+  listTasks(): Promise<TaskRecord[]>;
+  createTask(input: TaskRecordInput): Promise<TaskRecord>;
+  updateTask(id: string, input: TaskRecordInput): Promise<TaskRecord>;
+  moveTask(id: string, status: TaskStatus, position?: number): Promise<TaskRecord>;
+  deleteTask(id: string): Promise<void>;
+  executeTask(id: string): Promise<TaskRecord>;
   getSnapshot(): Promise<AppSnapshot>;
   listExperts(): Promise<ExpertDefinition[]>;
   saveExpert(
@@ -473,6 +482,12 @@ const requiredMethods: Array<Exclude<keyof DesktopBridge, "version">> = [
   "runAutomation",
   "listAutomationRuns",
   "deleteAutomationRun",
+  "listTasks",
+  "createTask",
+  "updateTask",
+  "moveTask",
+  "deleteTask",
+  "executeTask",
   "getSnapshot",
   "listExperts",
   "saveExpert",

@@ -401,41 +401,112 @@ export type ExpertSelection = {
 };
 
 export type AvataaarsTop =
-  | "hat" | "hijab" | "turban" | "winterHat1" | "winterHat02"
-  | "winterHat03" | "winterHat04" | "bob" | "bun" | "curly" | "curvy"
-  | "dreads" | "frida" | "fro" | "froBand" | "longButNotTooLong"
-  | "miaWallace" | "shavedSides" | "straight02" | "straight01"
-  | "straightAndStrand" | "dreads01" | "dreads02" | "frizzle" | "shaggy"
-  | "shaggyMullet" | "shortCurly" | "shortFlat" | "shortRound"
-  | "shortWaved" | "sides" | "theCaesar" | "theCaesarAndSidePart"
+  | "hat"
+  | "hijab"
+  | "turban"
+  | "winterHat1"
+  | "winterHat02"
+  | "winterHat03"
+  | "winterHat04"
+  | "bob"
+  | "bun"
+  | "curly"
+  | "curvy"
+  | "dreads"
+  | "frida"
+  | "fro"
+  | "froBand"
+  | "longButNotTooLong"
+  | "miaWallace"
+  | "shavedSides"
+  | "straight02"
+  | "straight01"
+  | "straightAndStrand"
+  | "dreads01"
+  | "dreads02"
+  | "frizzle"
+  | "shaggy"
+  | "shaggyMullet"
+  | "shortCurly"
+  | "shortFlat"
+  | "shortRound"
+  | "shortWaved"
+  | "sides"
+  | "theCaesar"
+  | "theCaesarAndSidePart"
   | "bigHair";
 
 export type AvataaarsClothing =
-  | "blazerAndShirt" | "blazerAndSweater" | "collarAndSweater"
-  | "graphicShirt" | "hoodie" | "overall" | "shirtCrewNeck"
-  | "shirtScoopNeck" | "shirtVNeck";
+  | "blazerAndShirt"
+  | "blazerAndSweater"
+  | "collarAndSweater"
+  | "graphicShirt"
+  | "hoodie"
+  | "overall"
+  | "shirtCrewNeck"
+  | "shirtScoopNeck"
+  | "shirtVNeck";
 
 export type AvataaarsEyes =
-  | "closed" | "cry" | "default" | "eyeRoll" | "happy" | "hearts"
-  | "side" | "squint" | "surprised" | "winkWacky" | "wink" | "xDizzy";
+  | "closed"
+  | "cry"
+  | "default"
+  | "eyeRoll"
+  | "happy"
+  | "hearts"
+  | "side"
+  | "squint"
+  | "surprised"
+  | "winkWacky"
+  | "wink"
+  | "xDizzy";
 
 export type AvataaarsEyebrows =
-  | "angryNatural" | "defaultNatural" | "flatNatural" | "frownNatural"
-  | "raisedExcitedNatural" | "sadConcernedNatural" | "unibrowNatural"
-  | "upDownNatural" | "angry" | "default" | "raisedExcited"
-  | "sadConcerned" | "upDown";
+  | "angryNatural"
+  | "defaultNatural"
+  | "flatNatural"
+  | "frownNatural"
+  | "raisedExcitedNatural"
+  | "sadConcernedNatural"
+  | "unibrowNatural"
+  | "upDownNatural"
+  | "angry"
+  | "default"
+  | "raisedExcited"
+  | "sadConcerned"
+  | "upDown";
 
 export type AvataaarsMouth =
-  | "concerned" | "default" | "disbelief" | "eating" | "grimace" | "sad"
-  | "screamOpen" | "serious" | "smile" | "tongue" | "twinkle" | "vomit";
+  | "concerned"
+  | "default"
+  | "disbelief"
+  | "eating"
+  | "grimace"
+  | "sad"
+  | "screamOpen"
+  | "serious"
+  | "smile"
+  | "tongue"
+  | "twinkle"
+  | "vomit";
 
 export type AvataaarsFacialHair =
-  | "none" | "beardLight" | "beardMajestic" | "beardMedium"
-  | "moustacheFancy" | "moustacheMagnum";
+  | "none"
+  | "beardLight"
+  | "beardMajestic"
+  | "beardMedium"
+  | "moustacheFancy"
+  | "moustacheMagnum";
 
 export type AvataaarsAccessories =
-  | "none" | "kurt" | "prescription01" | "prescription02" | "round"
-  | "sunglasses" | "wayfarers" | "eyepatch";
+  | "none"
+  | "kurt"
+  | "prescription01"
+  | "prescription02"
+  | "round"
+  | "sunglasses"
+  | "wayfarers"
+  | "eyepatch";
 
 export interface AvataaarsPortraitOptions {
   backgroundColor: string;
@@ -1139,6 +1210,11 @@ export interface UserMessageSubmission {
   submittedAt: number;
 }
 
+export interface PromptSessionOptions {
+  connectorIds?: string[];
+  taskId?: string;
+}
+
 export interface MessageTextBlock {
   type: "text";
   text: string;
@@ -1148,6 +1224,57 @@ export interface MessageReasoningBlock {
   type: "reasoning";
   text: string;
 }
+
+export type TaskStatus = "todo" | "in-progress" | "review" | "done";
+export type TaskExecutionStatus =
+  | "idle"
+  | "starting"
+  | "running"
+  | "waiting"
+  | "completed"
+  | "failed"
+  | "cancelled"
+  | "blocked"
+  | "interrupted";
+
+export interface TaskExecutionState {
+  status: TaskExecutionStatus;
+  sessionId: string | null;
+  messageId: string | null;
+  runId: string | null;
+  startedAt: number | null;
+  completedAt: number | null;
+  error: string | null;
+}
+
+export interface TaskRecord {
+  id: string;
+  title: string;
+  detailParts: UserPromptPart[];
+  expectedResult?: string;
+  status: TaskStatus;
+  priority?: "low" | "medium" | "high";
+  dueAt: number | null;
+  completedAt: number | null;
+  position: number;
+  entryId: string | null;
+  expertSelection?: ExpertSelection;
+  workspaceId: string | null;
+  sessionId: string | null;
+  model: ModelReference | null;
+  thinkingLevel: ThinkingLevel;
+  accessLevel: SessionAccessLevel;
+  toolApprovalMode: ToolApprovalMode;
+  connectorIds: string[];
+  execution: TaskExecutionState;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export type TaskRecordInput = Omit<
+  TaskRecord,
+  "id" | "execution" | "createdAt" | "updatedAt" | "position" | "completedAt"
+> & { position?: number };
 
 export interface MessageToolSource {
   kind: "mcp";

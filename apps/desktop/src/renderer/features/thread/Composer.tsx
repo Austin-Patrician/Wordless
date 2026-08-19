@@ -13,7 +13,6 @@ import {
   CircleHelp,
   Folder,
   Layers3,
-  Mic,
   Pin,
   PinOff,
   Plus,
@@ -1819,21 +1818,6 @@ export function Composer({
               <span className="truncate">{modelLabel}</span>
               <ChevronDown className="h-3.5 w-3.5 shrink-0" />
             </Button>
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button
-                  aria-label={t("useVoice")}
-                  className="text-[#686862]"
-                  disabled={interactionDisabled || running}
-                  size="icon"
-                  type="button"
-                  variant="ghost"
-                >
-                  <Mic className="h-4 w-4" />
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent>{t("useVoice")}</TooltipContent>
-            </Tooltip>
             <Button
               aria-label={running ? "Stop agent" : t("send")}
               className="rounded-full disabled:bg-[#b5b5b1]"

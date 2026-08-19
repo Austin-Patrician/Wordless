@@ -4,6 +4,11 @@ import {
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger,
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
   Switch,
 } from "@wordless/ui-kit";
 import {
@@ -58,7 +63,10 @@ import {
   type InlineSkillComposerHandle,
   type InlineSkillComposerValue,
 } from "../thread/InlineSkillComposer";
-import { ConnectorSwitchMenu, SkillInsertMenu } from "../thread/PromptCapabilityControls";
+import {
+  ConnectorSwitchMenu,
+  SkillInsertMenu,
+} from "../thread/PromptCapabilityControls";
 
 type Page =
   | { kind: "list" }
@@ -126,7 +134,10 @@ function thinkingLevelForModel(
   return supported[0] ?? "off";
 }
 
-function thinkingLevelLabel(level: ThinkingLevel, t: ReturnType<typeof usePreferences>["t"]): string {
+function thinkingLevelLabel(
+  level: ThinkingLevel,
+  t: ReturnType<typeof usePreferences>["t"],
+): string {
   return (
     {
       off: t("thinkingLevel_off"),
@@ -227,16 +238,20 @@ const templateDefinitions: TemplateDefinition[] = [
 function useAutomationTemplates(): Template[] {
   const { locale, t } = usePreferences();
   return useMemo(
-    () => templateDefinitions.map(({ nameKey, promptKey, ...template }) => ({
-      ...template,
-      name: t(nameKey),
-      prompt: t(promptKey),
-    })),
+    () =>
+      templateDefinitions.map(({ nameKey, promptKey, ...template }) => ({
+        ...template,
+        name: t(nameKey),
+        prompt: t(promptKey),
+      })),
     [t],
   );
 }
 
-function formatMessage(template: string, values: Record<string, string | number>) {
+function formatMessage(
+  template: string,
+  values: Record<string, string | number>,
+) {
   return Object.entries(values).reduce(
     (message, [key, value]) => message.replace(`{${key}}`, String(value)),
     template,
@@ -274,9 +289,10 @@ function scheduleLabel(
             : "automationDays",
       ),
     });
-  const weekdays = locale === "zh-CN"
-    ? ["日", "一", "二", "三", "四", "五", "六"]
-    : ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+  const weekdays =
+    locale === "zh-CN"
+      ? ["日", "一", "二", "三", "四", "五", "六"]
+      : ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
   const cadence =
     schedule.cadence === "daily"
       ? t("automationDaily")
@@ -432,7 +448,9 @@ export function AutomationView({
     if (
       action === "delete" &&
       !window.confirm(
-        formatMessage(t("automationDeleteSelectedConfirm"), { count: ids.length }),
+        formatMessage(t("automationDeleteSelectedConfirm"), {
+          count: ids.length,
+        }),
       )
     )
       return;
@@ -449,7 +467,10 @@ export function AutomationView({
       <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4 sm:px-8">
         <div className="mx-auto flex min-h-full w-full max-w-[1280px] flex-col">
           <div className="flex flex-wrap items-center justify-between gap-3">
-            <nav aria-label="Automation views" className="inline-flex border-b border-[#deded9] dark:border-border">
+            <nav
+              aria-label="Automation views"
+              className="inline-flex border-b border-[#deded9] dark:border-border"
+            >
               <TabButton
                 active={tab === "scheduled"}
                 onClick={() => setTab("scheduled")}
@@ -463,10 +484,7 @@ export function AutomationView({
             {tasks.length ? (
               <div className="flex min-w-0 flex-1 flex-wrap items-center justify-end gap-2">
                 {tab === "runs" ? (
-                  <RunStatusFilter
-                    onChange={setRunStatus}
-                    value={runStatus}
-                  />
+                  <RunStatusFilter onChange={setRunStatus} value={runStatus} />
                 ) : null}
                 <label
                   className={`flex h-8 min-w-0 max-w-full items-center gap-1.5 rounded-[7px] bg-[#f0f0ed] px-2.5 dark:bg-muted ${tab === "runs" ? "w-[168px] shrink-0" : "min-w-[140px] flex-1 basis-[180px]"}`}
@@ -475,7 +493,11 @@ export function AutomationView({
                   <input
                     className="min-w-0 flex-1 bg-transparent text-[11px] outline-none"
                     onChange={(event) => setQuery(event.target.value)}
-                    placeholder={tab === "runs" ? t("automationSearchRuns") : t("automationSearch")}
+                    placeholder={
+                      tab === "runs"
+                        ? t("automationSearchRuns")
+                        : t("automationSearch")
+                    }
                     value={query}
                   />
                 </label>
@@ -526,7 +548,9 @@ export function AutomationView({
                 {selected.size ? (
                   <div className="mb-3 flex flex-wrap items-center gap-2 border-y border-border py-2 text-[11px]">
                     <span className="mr-auto text-muted-foreground">
-                      {formatMessage(t("automationSelected"), { count: selected.size })}
+                      {formatMessage(t("automationSelected"), {
+                        count: selected.size,
+                      })}
                     </span>
                     <Button
                       className="h-7 text-[10px]"
@@ -567,7 +591,9 @@ export function AutomationView({
                       onDelete={() => {
                         if (
                           window.confirm(
-                            formatMessage(t("automationDeleteConfirm"), { name: task.name }),
+                            formatMessage(t("automationDeleteConfirm"), {
+                              name: task.name,
+                            }),
                           )
                         )
                           void run(() => client.deleteAutomations([task.id]));
@@ -675,7 +701,9 @@ function EmptyState({
         </Button>
       </section>
       <section className="pb-5">
-        <h2 className="mb-4 text-[14px] font-semibold">{t("automationTemplates")}</h2>
+        <h2 className="mb-4 text-[14px] font-semibold">
+          {t("automationTemplates")}
+        </h2>
         <TemplateGrid
           onChoose={(template) => template && onChooseTemplate(template)}
           templates={templates}
@@ -750,7 +778,11 @@ function TemplateGrid({
           key={template.name}
           onClick={() => onChoose(template)}
         >
-          <img alt="" className="h-16 w-9 shrink-0 object-contain" src={template.icon} />
+          <img
+            alt=""
+            className="h-16 w-9 shrink-0 object-contain"
+            src={template.icon}
+          />
           <span className="min-w-0">
             <span className="block text-[13px] font-medium">
               {template.name}
@@ -794,7 +826,9 @@ function TemplateGallery({
           {t("automations")}
         </button>
         <span className="mx-2 text-muted-foreground">/</span>
-        <h1 className="text-[14px] font-semibold">{t("automationTemplateGallery")}</h1>
+        <h1 className="text-[14px] font-semibold">
+          {t("automationTemplateGallery")}
+        </h1>
       </header>
       <div className="min-h-0 flex-1 overflow-y-auto px-5 py-6 sm:px-8">
         <div className="mx-auto w-full max-w-[1280px]">
@@ -829,13 +863,17 @@ function TaskRow({
   return (
     <div className="group flex min-w-0 flex-wrap items-center gap-3 border-b border-border px-2 py-3 sm:flex-nowrap">
       <input
-        aria-label={formatMessage(t("automationSelectTask"), { name: task.name })}
+        aria-label={formatMessage(t("automationSelectTask"), {
+          name: task.name,
+        })}
         checked={checked}
         onChange={(event) => onCheck(event.target.checked)}
         type="checkbox"
       />
       <Switch
-        aria-label={task.enabled ? t("automationDisable") : t("automationEnable")}
+        aria-label={
+          task.enabled ? t("automationDisable") : t("automationEnable")
+        }
         checked={task.enabled}
         className={automationSwitchClass}
         onCheckedChange={onToggle}
@@ -844,12 +882,18 @@ function TaskRow({
         <p className="truncate text-[12px] font-medium">{task.name}</p>
         <p className="mt-1 truncate text-[10px] text-muted-foreground">
           {scheduleLabel(task.schedule, locale, t)} ·{" "}
-          {task.workspaceId ? t("automationWorkspace") : t("automationRecentSession")}
+          {task.workspaceId
+            ? t("automationWorkspace")
+            : t("automationRecentSession")}
         </p>
       </div>
       <div className="min-w-0 basis-[140px] text-left sm:text-right">
-        <p className="text-[10px] text-muted-foreground">{t("automationNextRun")}</p>
-        <p className="mt-1 text-[11px]">{formatDateTime(task.nextRunAt, locale, t)}</p>
+        <p className="text-[10px] text-muted-foreground">
+          {t("automationNextRun")}
+        </p>
+        <p className="mt-1 text-[11px]">
+          {formatDateTime(task.nextRunAt, locale, t)}
+        </p>
       </div>
       <div className="ml-auto flex shrink-0 items-center gap-1">
         <Button
@@ -1016,9 +1060,8 @@ function AutomationForm({
       : null);
   const source = initial ?? template;
   const [name, setName] = useState(source?.name ?? "");
-  const [promptValue, setPromptValue] = useState<InlineSkillComposerValue>(
-    EMPTY_PROMPT_VALUE,
-  );
+  const [promptValue, setPromptValue] =
+    useState<InlineSkillComposerValue>(EMPTY_PROMPT_VALUE);
   const promptRef = useRef<InlineSkillComposerHandle>(null);
   const promptHydrated = useRef(false);
   const [workspaceId, setWorkspaceId] = useState<string | null>(
@@ -1093,7 +1136,9 @@ function AutomationForm({
       return skill ? [skill] : [];
     });
     const parts: UserPromptPart[] = [
-      ...(source?.prompt ? [{ type: "text" as const, text: source.prompt }] : []),
+      ...(source?.prompt
+        ? [{ type: "text" as const, text: source.prompt }]
+        : []),
       ...legacySkills.map((skill) => ({
         type: "skill-reference" as const,
         skillId: skill.id,
@@ -1115,7 +1160,8 @@ function AutomationForm({
   const selectModel = (next: ModelReference) => {
     const nextModel = snapshot?.models.find(
       (item) =>
-        item.connectionId === next.connectionId && item.modelId === next.modelId,
+        item.connectionId === next.connectionId &&
+        item.modelId === next.modelId,
     );
     setModel(next);
     setThinkingLevel((current) => thinkingLevelForModel(nextModel, current));
@@ -1164,7 +1210,11 @@ function AutomationForm({
     ) {
       next.schedule = t("automationScheduleInvalid");
     }
-    if (activeFrom !== null && activeUntil !== null && activeFrom > activeUntil) {
+    if (
+      activeFrom !== null &&
+      activeUntil !== null &&
+      activeFrom > activeUntil
+    ) {
       next.activeDates = t("automationActiveDatesInvalid");
     }
     setFieldErrors(next);
@@ -1264,23 +1314,44 @@ function AutomationForm({
             />
           </Field>
           <Field label={t("automationWorkspaceOptional")}>
-            <select
-              className={control}
-              onChange={(event) => setWorkspaceId(event.target.value || null)}
-              value={workspaceId ?? ""}
+            <Select
+              onValueChange={(value) =>
+                setWorkspaceId(value === "none" ? null : value)
+              }
+              value={workspaceId ?? "none"}
             >
-              <option value="">{t("automationNoWorkspace")}</option>
-              {snapshot?.workspaces
-                .filter((item) => item.availability === "available")
-                .map((item) => (
-                  <option key={item.id} value={item.id}>
-                    {item.name}
-                  </option>
-                ))}
-            </select>
+              <SelectTrigger className="min-w-[170px] rounded-lg border-border bg-white px-3 py-2 text-left text-[12px] dark:bg-[#181912]">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent className="max-h-64">
+                <SelectItem
+                  className="min-h-7 px-2.5 py-1.5 text-[11px]"
+                  value="none"
+                >
+                  {t("automationNoWorkspace")}
+                </SelectItem>
+                {snapshot?.workspaces
+                  .filter((item) => item.availability === "available")
+                  .map((item) => (
+                    <SelectItem
+                      className="min-h-7 px-2.5 py-1.5 text-[11px]"
+                      key={item.id}
+                      value={item.id}
+                    >
+                      {item.name}
+                    </SelectItem>
+                  ))}
+              </SelectContent>
+            </Select>
           </Field>
-          <Field compound error={fieldErrors.prompt} label={t("automationPrompt")}>
-            <div className={`rounded-[10px] border bg-card shadow-[0_1px_2px_rgba(0,0,0,.025)] focus-within:border-[#96968f] dark:border-border ${fieldErrors.prompt ? "border-destructive focus-within:border-destructive" : "border-[#cfcfca]"}`}>
+          <Field
+            compound
+            error={fieldErrors.prompt}
+            label={t("automationPrompt")}
+          >
+            <div
+              className={`rounded-[10px] border bg-card shadow-[0_1px_2px_rgba(0,0,0,.025)] focus-within:border-[#96968f] dark:border-border ${fieldErrors.prompt ? "border-destructive focus-within:border-destructive" : "border-[#cfcfca]"}`}
+            >
               <InlineSkillComposer
                 ariaInvalid={Boolean(fieldErrors.prompt)}
                 ariaLabel={t("automationPrompt")}
@@ -1354,7 +1425,9 @@ function AutomationForm({
                       },
                     ]}
                     label={
-                      accessLevel === "full" ? t("automationFullAccess") : t("automationDefaultAccess")
+                      accessLevel === "full"
+                        ? t("automationFullAccess")
+                        : t("automationDefaultAccess")
                     }
                     onChange={(value) =>
                       setAccessLevel(value as SessionAccessLevel)
@@ -1378,7 +1451,9 @@ function AutomationForm({
                     onChange={selectModel}
                     providerAvatarId={selectedConnection?.avatarId}
                     providerId={selectedConnection?.providerId}
-                    selectedLabel={selectedModel?.displayName ?? t("automationSelectModel")}
+                    selectedLabel={
+                      selectedModel?.displayName ?? t("automationSelectModel")
+                    }
                   />
                 </div>
               </div>
@@ -1401,7 +1476,10 @@ function AutomationForm({
               setSchedule={updateSchedule}
             />
           </Field>
-          <Field error={fieldErrors.activeDates} label={t("automationActiveDates")}>
+          <Field
+            error={fieldErrors.activeDates}
+            label={t("automationActiveDates")}
+          >
             <div className="grid gap-2 sm:grid-cols-2">
               <input
                 aria-label={t("automationStartDate")}
@@ -1457,7 +1535,9 @@ function AutomationForm({
           </Field>
           <div className="flex min-h-11 items-center justify-between rounded-[8px] border border-border bg-card px-3">
             <div>
-              <p className="text-[12px] font-medium">{t("automationEnableAfterSave")}</p>
+              <p className="text-[12px] font-medium">
+                {t("automationEnableAfterSave")}
+              </p>
               <p className="mt-0.5 text-[10px] text-muted-foreground">
                 {t("automationEnableAfterSaveHelp")}
               </p>
@@ -1470,7 +1550,11 @@ function AutomationForm({
             />
           </div>
           {error ? (
-            <p aria-live="polite" className="text-[11px] text-destructive" role="alert">
+            <p
+              aria-live="polite"
+              className="text-[11px] text-destructive"
+              role="alert"
+            >
               {error}
             </p>
           ) : null}
@@ -1552,7 +1636,10 @@ function AutomationPermissionConfirmDialog({
       >
         <div className="flex items-start gap-3">
           <ShieldAlert className="mt-0.5 h-5 w-5 shrink-0 text-[#b34b42]" />
-          <h2 className="text-[15px] font-semibold" id="automation-permission-title">
+          <h2
+            className="text-[15px] font-semibold"
+            id="automation-permission-title"
+          >
             {t("automationPermissionConfirmTitle")}
           </h2>
         </div>
@@ -1585,10 +1672,22 @@ function AutomationPermissionConfirmDialog({
           <span>{t("fullAccessAcknowledgement")}</span>
         </label>
         <div className="mt-5 flex flex-wrap items-center justify-end gap-2">
-          <Button className="mr-auto h-8 whitespace-nowrap text-[11px]" disabled={saving} onClick={onUseSaferSettings} type="button" variant="ghost">
+          <Button
+            className="mr-auto h-8 whitespace-nowrap text-[11px]"
+            disabled={saving}
+            onClick={onUseSaferSettings}
+            type="button"
+            variant="ghost"
+          >
             {t("automationUseSaferSettings")}
           </Button>
-          <Button className="h-8 text-[11px]" disabled={saving} onClick={onCancel} type="button" variant="outline">
+          <Button
+            className="h-8 text-[11px]"
+            disabled={saving}
+            onClick={onCancel}
+            type="button"
+            variant="outline"
+          >
             {t("cancel")}
           </Button>
           <Button
@@ -1597,8 +1696,12 @@ function AutomationPermissionConfirmDialog({
             onClick={onConfirm}
             type="button"
           >
-            {saving ? <LoaderCircle className="h-3.5 w-3.5 animate-spin" /> : null}
-            {isEditing ? t("automationConfirmSave") : t("automationConfirmCreate")}
+            {saving ? (
+              <LoaderCircle className="h-3.5 w-3.5 animate-spin" />
+            ) : null}
+            {isEditing
+              ? t("automationConfirmSave")
+              : t("automationConfirmCreate")}
           </Button>
         </div>
       </section>
@@ -1672,12 +1775,14 @@ function MenuTrigger({
     >
       {icon}
       <span className="truncate">{label}</span>
-      <ChevronDown className={`h-3 w-3 shrink-0 ${danger || invalid ? "text-current" : "text-muted-foreground"}`} />
+      <ChevronDown
+        className={`h-3 w-3 shrink-0 ${danger || invalid ? "text-current" : "text-muted-foreground"}`}
+      />
     </DropdownMenuTrigger>
   );
 }
 
-function SingleSelectMenu({
+export function SingleSelectMenu({
   danger = false,
   icon,
   items,
@@ -1696,7 +1801,10 @@ function SingleSelectMenu({
   return (
     <DropdownMenu>
       <MenuTrigger danger={danger} icon={icon} label={label} />
-      <DropdownMenuContent align="start" className="w-[296px] max-w-[calc(100vw-24px)] p-1.5">
+      <DropdownMenuContent
+        align="start"
+        className="w-[296px] max-w-[calc(100vw-24px)] p-1.5"
+      >
         {items.map((item) => (
           <DropdownMenuItem
             className="min-h-[56px] items-start gap-2 px-2 py-2"
@@ -1704,12 +1812,14 @@ function SingleSelectMenu({
             onSelect={() => onChange(item.id)}
           >
             <span
-              className={`mt-0.5 grid h-3.5 w-3.5 shrink-0 place-items-center rounded-full border text-[9px] ${value === item.id ? danger ? "border-[#b34b42] bg-[#b34b42] text-white" : "border-[#6d8438] bg-[#6d8438] text-white" : "border-[#bdbdb6] text-transparent"}`}
+              className={`mt-0.5 grid h-3.5 w-3.5 shrink-0 place-items-center rounded-full border text-[9px] ${value === item.id ? (danger ? "border-[#b34b42] bg-[#b34b42] text-white" : "border-[#6d8438] bg-[#6d8438] text-white") : "border-[#bdbdb6] text-transparent"}`}
             >
               ✓
             </span>
             <span className="min-w-0 flex-1">
-              <span className={`block truncate text-[12px] font-medium ${danger && value === item.id ? "text-[#b34b42] dark:text-[#efaaa1]" : ""}`}>
+              <span
+                className={`block truncate text-[12px] font-medium ${danger && value === item.id ? "text-[#b34b42] dark:text-[#efaaa1]" : ""}`}
+              >
                 {item.label}
               </span>
               {item.description ? (
@@ -1725,7 +1835,7 @@ function SingleSelectMenu({
   );
 }
 
-function ThinkingLevelMenu({
+export function ThinkingLevelMenu({
   level,
   model,
   onChange,
@@ -1763,7 +1873,7 @@ function ThinkingLevelMenu({
   );
 }
 
-function ModelSelectMenu({
+export function ModelSelectMenu({
   connections,
   invalid = false,
   model,
@@ -1862,13 +1972,16 @@ function ScheduleEditor({
           .toISOString()
           .slice(0, 16)
       : "";
-  const weekdays = locale === "zh-CN"
-    ? ["日", "一", "二", "三", "四", "五", "六"]
-    : ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+  const weekdays =
+    locale === "zh-CN"
+      ? ["日", "一", "二", "三", "四", "五", "六"]
+      : ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
   return (
     <div
       aria-invalid={invalid || undefined}
-      className={invalid ? "rounded-[8px] border border-destructive/60 p-2" : ""}
+      className={
+        invalid ? "rounded-[8px] border border-destructive/60 p-2" : ""
+      }
       role="group"
       tabIndex={invalid ? -1 : undefined}
     >
@@ -1899,52 +2012,72 @@ function ScheduleEditor({
       <div className="mt-3 flex flex-wrap gap-2">
         {schedule.kind === "recurring" ? (
           <>
-            <select
-              className={`${control} w-auto`}
-              onChange={(event) =>
+            <Select
+              onValueChange={(value) =>
                 setSchedule({
                   ...schedule,
-                  cadence: event.target.value as typeof schedule.cadence,
-                  ...(event.target.value === "weekly" ? { weekdays: [1] } : {}),
-                  ...(event.target.value === "monthly"
-                    ? { dayOfMonth: 1 }
-                    : {}),
+                  cadence: value as typeof schedule.cadence,
+                  ...(value === "weekly" ? { weekdays: [1] } : {}),
+                  ...(value === "monthly" ? { dayOfMonth: 1 } : {}),
                 })
               }
               value={schedule.cadence}
             >
-              <option value="daily">{t("automationDaily")}</option>
-              <option value="weekdays">{t("automationWeekdays")}</option>
-              <option value="weekly">{t("automationWeekly")}</option>
-              <option value="monthly">{t("automationMonthly")}</option>
-            </select>
+              <SelectTrigger className="w-auto min-w-[120px] rounded-lg border-border bg-white px-3 py-2 text-left text-[12px] dark:bg-[#181912]">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem
+                  className="min-h-7 px-2.5 py-1.5 text-[11px]"
+                  value="daily"
+                >
+                  {t("automationDaily")}
+                </SelectItem>
+                <SelectItem
+                  className="min-h-7 px-2.5 py-1.5 text-[11px]"
+                  value="weekdays"
+                >
+                  {t("automationWeekdays")}
+                </SelectItem>
+                <SelectItem
+                  className="min-h-7 px-2.5 py-1.5 text-[11px]"
+                  value="weekly"
+                >
+                  {t("automationWeekly")}
+                </SelectItem>
+                <SelectItem
+                  className="min-h-7 px-2.5 py-1.5 text-[11px]"
+                  value="monthly"
+                >
+                  {t("automationMonthly")}
+                </SelectItem>
+              </SelectContent>
+            </Select>
             {schedule.cadence === "weekly" ? (
               <span className="flex h-9 max-w-full items-center gap-1 overflow-x-auto">
-                {weekdays.map(
-                  (label, index) => {
-                    const active = (schedule.weekdays ?? []).includes(index);
-                    return (
-                      <button
-                        aria-pressed={active}
-                        className={`grid h-8 min-w-8 place-items-center rounded-[6px] border px-1 text-[10px] ${active ? "border-[#7d963f] bg-[#edf4d9] text-[#40521a] dark:bg-[#303b1d]" : "border-border bg-card text-muted-foreground"}`}
-                        key={label}
-                        onClick={() => {
-                          const current = schedule.weekdays ?? [];
-                          const next = active
-                            ? current.filter((day) => day !== index)
-                            : [...current, index].sort();
-                          setSchedule({
-                            ...schedule,
-                            weekdays: next.length ? next : [index],
-                          });
-                        }}
-                        type="button"
-                      >
-                        {label}
-                      </button>
-                    );
-                  },
-                )}
+                {weekdays.map((label, index) => {
+                  const active = (schedule.weekdays ?? []).includes(index);
+                  return (
+                    <button
+                      aria-pressed={active}
+                      className={`grid h-8 min-w-8 place-items-center rounded-[6px] border px-1 text-[10px] ${active ? "border-[#7d963f] bg-[#edf4d9] text-[#40521a] dark:bg-[#303b1d]" : "border-border bg-card text-muted-foreground"}`}
+                      key={label}
+                      onClick={() => {
+                        const current = schedule.weekdays ?? [];
+                        const next = active
+                          ? current.filter((day) => day !== index)
+                          : [...current, index].sort();
+                        setSchedule({
+                          ...schedule,
+                          weekdays: next.length ? next : [index],
+                        });
+                      }}
+                      type="button"
+                    >
+                      {label}
+                    </button>
+                  );
+                })}
               </span>
             ) : null}
             {schedule.cadence === "monthly" ? (
@@ -1982,20 +2115,39 @@ function ScheduleEditor({
               type="number"
               value={schedule.every}
             />
-            <select
-              className={`${control} w-auto`}
-              onChange={(event) =>
+            <Select
+              onValueChange={(value) =>
                 setSchedule({
                   ...schedule,
-                  unit: event.target.value as typeof schedule.unit,
+                  unit: value as typeof schedule.unit,
                 })
               }
               value={schedule.unit}
             >
-              <option value="minutes">{t("automationMinutes")}</option>
-              <option value="hours">{t("automationHours")}</option>
-              <option value="days">{t("automationDays")}</option>
-            </select>
+              <SelectTrigger className="w-auto min-w-[120px] rounded-lg border-border bg-white px-3 py-2 text-left text-[12px] dark:bg-[#181912]">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem
+                  className="min-h-7 px-2.5 py-1.5 text-[11px]"
+                  value="minutes"
+                >
+                  {t("automationMinutes")}
+                </SelectItem>
+                <SelectItem
+                  className="min-h-7 px-2.5 py-1.5 text-[11px]"
+                  value="hours"
+                >
+                  {t("automationHours")}
+                </SelectItem>
+                <SelectItem
+                  className="min-h-7 px-2.5 py-1.5 text-[11px]"
+                  value="days"
+                >
+                  {t("automationDays")}
+                </SelectItem>
+              </SelectContent>
+            </Select>
           </>
         ) : (
           <input

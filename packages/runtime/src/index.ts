@@ -1,5 +1,13 @@
 import { createHash, randomUUID } from "node:crypto";
-import { access, mkdir, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
+import {
+  access,
+  mkdir,
+  readFile,
+  readdir,
+  rm,
+  stat,
+  writeFile,
+} from "node:fs/promises";
 import { homedir } from "node:os";
 import {
   basename,
@@ -32,6 +40,8 @@ import {
   SESSION_FILE_BASELINE_JOURNAL_TYPE,
   USER_REQUEST_JOURNAL_TYPE,
   projectUserMessageContent,
+  formatPromptWithSkillReferences,
+  selectedSkillIdsFromPromptParts,
   type AgentDriverEvent,
   type AgentDriverRegistry,
   type AgentDriverSession,
@@ -97,6 +107,11 @@ import type {
   UsageReport,
   UsageReportQuery,
   UserMessageSubmission,
+  PromptSessionOptions,
+  TaskRecord,
+  TaskRecordInput,
+  TaskStatus,
+  UserPromptPart,
   WorkbenchEntryDefinition,
   WorkspaceRecord,
   ExpertSelection,
@@ -229,7 +244,8 @@ const BUILTIN_TEAM_MEMBERS: Record<
       id: "content-writer",
       name: "内容撰稿人",
       portrait: { kind: "builtin", key: "product-strategist" },
-      systemPrompt: "You are the Content Writer. Write the complete deliverable from the assigned brief and upstream material. Maintain a consistent voice, concrete argument flow, and clear evidence boundaries. Do not replace missing facts with invention, and do not switch into reviewer or coordinator voice.",
+      systemPrompt:
+        "You are the Content Writer. Write the complete deliverable from the assigned brief and upstream material. Maintain a consistent voice, concrete argument flow, and clear evidence boundaries. Do not replace missing facts with invention, and do not switch into reviewer or coordinator voice.",
       skillIds: [],
       connectorIds: [],
       executionProfile: "workspace-write",
@@ -239,7 +255,8 @@ const BUILTIN_TEAM_MEMBERS: Record<
       id: "content-reviewer",
       name: "内容审校",
       portrait: { kind: "builtin", key: "research-analyst" },
-      systemPrompt: "You are the Content Reviewer. Independently inspect the draft for factual support, logical gaps, audience fit, structure, tone, repetition, and publication risk. Cite exact passages when raising issues and provide prioritized, directly actionable revisions. Do not merely summarize the draft or assume the writer's voice.",
+      systemPrompt:
+        "You are the Content Reviewer. Independently inspect the draft for factual support, logical gaps, audience fit, structure, tone, repetition, and publication risk. Cite exact passages when raising issues and provide prioritized, directly actionable revisions. Do not merely summarize the draft or assume the writer's voice.",
       skillIds: [],
       connectorIds: [],
       executionProfile: "workspace-write",
@@ -256,7 +273,8 @@ const BUILTIN_TEAM_LEADERS: Record<
     id: "content-lead",
     name: "内容主理人",
     portrait: { kind: "builtin", key: "content-studio" },
-    systemPrompt: "You are the Content Lead and the accountable editor speaking directly with the user. Lead with a clear editorial judgment, define the audience and promise, separate verified evidence from interpretation, and use precise, confident language rather than a generic assistant voice.",
+    systemPrompt:
+      "You are the Content Lead and the accountable editor speaking directly with the user. Lead with a clear editorial judgment, define the audience and promise, separate verified evidence from interpretation, and use precise, confident language rather than a generic assistant voice.",
     skillIds: [],
     connectorIds: [],
     executionProfile: "workspace-write",
@@ -628,8 +646,7 @@ function messageToolSourceFromUnknown(
     typeof source.connectorId !== "string" ||
     typeof source.connectorName !== "string" ||
     typeof source.toolName !== "string" ||
-    (source.transport !== "stdio" &&
-      source.transport !== "streamable-http")
+    (source.transport !== "stdio" && source.transport !== "streamable-http")
   )
     return undefined;
   const templateId =
@@ -1381,6 +1398,8 @@ type ActiveRun = {
   sequence: number;
   runId: string;
   userMessageId?: string;
+  taskId?: string;
+  runError?: string;
   unsubscribe: () => void;
 };
 
@@ -1600,8 +1619,14 @@ export class WordlessRuntime {
     return {
       id,
       name: name ?? "待补全成员",
-      portrait: structuredClone(local?.portrait ?? builtin?.portrait ?? { kind: "builtin", key: "research-analyst" }),
-      systemPrompt: local?.systemPrompt ?? BUILTIN_EXPERT_PROMPTS[expertId] ?? `You are a team member responsible for: ${responsibility}`,
+      portrait: structuredClone(
+        local?.portrait ??
+          builtin?.portrait ?? { kind: "builtin", key: "research-analyst" },
+      ),
+      systemPrompt:
+        local?.systemPrompt ??
+        BUILTIN_EXPERT_PROMPTS[expertId] ??
+        `You are a team member responsible for: ${responsibility}`,
       skillIds: [...new Set(local?.skillIds ?? [])],
       connectorIds: [...new Set(local?.connectorIds ?? [])],
       executionProfile,
@@ -1610,7 +1635,9 @@ export class WordlessRuntime {
     };
   }
 
-  private normalizeExpertTeam(stored: ExpertTeamDefinition): ExpertTeamDefinition {
+  private normalizeExpertTeam(
+    stored: ExpertTeamDefinition,
+  ): ExpertTeamDefinition {
     const record = stored as unknown as {
       leaderMemberId?: string;
       leaderExpertId?: string;
@@ -1623,7 +1650,15 @@ export class WordlessRuntime {
         executionProfile?: ExpertTeamMemberDefinition["executionProfile"];
       }>;
     };
-    if (typeof record.leaderMemberId === "string" && record.members.every((member) => typeof member.name === "string" && typeof member.systemPrompt === "string")) return stored;
+    if (
+      typeof record.leaderMemberId === "string" &&
+      record.members.every(
+        (member) =>
+          typeof member.name === "string" &&
+          typeof member.systemPrompt === "string",
+      )
+    )
+      return stored;
     if (!record.leaderExpertId) return stored;
     const leader = this.snapshotTeamMember(
       record.leaderExpertId,
@@ -1631,16 +1666,21 @@ export class WordlessRuntime {
       "负责主对话、任务调度和最终交付。",
       "workspace-write",
     );
-    const collaborators = record.members.flatMap((member) => member.expertId
-      ? [this.snapshotTeamMember(
-          member.expertId,
-          member.id ?? randomUUID(),
-          member.responsibility ?? "协助团队完成目标。",
-          member.executionProfile ?? "read-only",
-        )]
-      : []);
+    const collaborators = record.members.flatMap((member) =>
+      member.expertId
+        ? [
+            this.snapshotTeamMember(
+              member.expertId,
+              member.id ?? randomUUID(),
+              member.responsibility ?? "协助团队完成目标。",
+              member.executionProfile ?? "read-only",
+            ),
+          ]
+        : [],
+    );
     const members = [leader, ...collaborators].slice(0, 9);
-    const { leaderExpertId: _legacyLeaderExpertId, ...base } = stored as unknown as ExpertTeamDefinition & { leaderExpertId: string };
+    const { leaderExpertId: _legacyLeaderExpertId, ...base } =
+      stored as unknown as ExpertTeamDefinition & { leaderExpertId: string };
     void _legacyLeaderExpertId;
     return {
       ...base,
@@ -1648,7 +1688,8 @@ export class WordlessRuntime {
       members,
       memberCount: members.length,
       skillCount: new Set(members.flatMap((member) => member.skillIds)).size,
-      connectorCount: new Set(members.flatMap((member) => member.connectorIds)).size,
+      connectorCount: new Set(members.flatMap((member) => member.connectorIds))
+        .size,
     };
   }
   getExpertTeamDetail(id: string): ExpertTeamDetail {
@@ -1675,7 +1716,9 @@ export class WordlessRuntime {
       };
     const team = this.getExpertTeam(id);
     if (!team) throw new Error("Expert team not found");
-    const leader = team.members.find((member) => member.id === team.leaderMemberId);
+    const leader = team.members.find(
+      (member) => member.id === team.leaderMemberId,
+    );
     if (!leader) throw new Error("Expert team leader is unavailable");
     const members = team.members
       .filter((member) => member.id !== team.leaderMemberId)
@@ -1712,10 +1755,21 @@ export class WordlessRuntime {
       model: member.model ? { ...member.model } : undefined,
       needsReview: undefined,
     }));
-    if (members.length < 2) throw new Error("An expert team requires at least two members");
-    if (new Set(members.map((member) => member.id)).size !== members.length) throw new Error("Team member IDs must be unique");
-    if (!members.some((member) => member.id === input.leaderMemberId)) throw new Error("The team leader must be a team member");
-    if (members.some((member) => !member.name || !member.systemPrompt || !member.responsibility)) throw new Error("Each team member requires a name, responsibility, and instructions");
+    if (members.length < 2)
+      throw new Error("An expert team requires at least two members");
+    if (new Set(members.map((member) => member.id)).size !== members.length)
+      throw new Error("Team member IDs must be unique");
+    if (!members.some((member) => member.id === input.leaderMemberId))
+      throw new Error("The team leader must be a team member");
+    if (
+      members.some(
+        (member) =>
+          !member.name || !member.systemPrompt || !member.responsibility,
+      )
+    )
+      throw new Error(
+        "Each team member requires a name, responsibility, and instructions",
+      );
     const team: ExpertTeamDefinition = {
       id: existing?.id ?? randomUUID(),
       version: String((Number(existing?.version ?? "0") || 0) + 1),
@@ -1728,7 +1782,8 @@ export class WordlessRuntime {
       systemPrompt: input.systemPrompt.trim(),
       memberCount: members.length,
       skillCount: new Set(members.flatMap((member) => member.skillIds)).size,
-      connectorCount: new Set(members.flatMap((member) => member.connectorIds)).size,
+      connectorCount: new Set(members.flatMap((member) => member.connectorIds))
+        .size,
       source: "local",
       createdAt: existing?.createdAt ?? now,
       updatedAt: now,
@@ -1782,7 +1837,9 @@ export class WordlessRuntime {
     team?: ExpertTeamDefinition,
   ): SessionExpertTeamLeaderSnapshot | undefined {
     const builtin = BUILTIN_TEAM_LEADERS[id];
-    const leader = team?.members.find((member) => member.id === team.leaderMemberId) ?? builtin;
+    const leader =
+      team?.members.find((member) => member.id === team.leaderMemberId) ??
+      builtin;
     if (!leader) return undefined;
     const contentResearchSkill =
       id === "content-studio"
@@ -1809,7 +1866,11 @@ export class WordlessRuntime {
       expertName: leader.name,
       portrait: leader.portrait,
       systemPrompt: leader.systemPrompt,
-      skillIds: team ? leader.skillIds : (contentResearchSkill ? [contentResearchSkill.id] : leader.skillIds),
+      skillIds: team
+        ? leader.skillIds
+        : contentResearchSkill
+          ? [contentResearchSkill.id]
+          : leader.skillIds,
       connectorIds: team ? leader.connectorIds : contentResearchConnectorIds,
     };
   }
@@ -1822,7 +1883,10 @@ export class WordlessRuntime {
       (member) => member.id !== team?.leaderMemberId,
     );
     if (!definitions) return undefined;
-    return definitions.map((member) => ({ ...member, expertName: member.name }));
+    return definitions.map((member) => ({
+      ...member,
+      expertName: member.name,
+    }));
   }
 
   private createSessionExpertSnapshot(
@@ -1893,7 +1957,9 @@ export class WordlessRuntime {
     return await this.connectorRegistry.upsert(configuration);
   }
 
-  getConnectorConfiguration(connectorId: string): ConnectorConfiguration | undefined {
+  getConnectorConfiguration(
+    connectorId: string,
+  ): ConnectorConfiguration | undefined {
     return this.connectorRegistry.configuration(connectorId);
   }
 
@@ -2627,8 +2693,12 @@ export class WordlessRuntime {
     };
   }
 
-  async getSessionArtifacts(sessionId: string): Promise<SessionArtifactsSnapshot> {
-    const snapshot = await this.scanSessionArtifacts(this.requireSession(sessionId));
+  async getSessionArtifacts(
+    sessionId: string,
+  ): Promise<SessionArtifactsSnapshot> {
+    const snapshot = await this.scanSessionArtifacts(
+      this.requireSession(sessionId),
+    );
     this.artifactRevisions.set(sessionId, snapshot.revision);
     return snapshot;
   }
@@ -2644,7 +2714,8 @@ export class WordlessRuntime {
       artifact.path,
     );
     const details = await stat(source);
-    const maximumBytes = artifact.previewKind === "image" ? 12_582_912 : 1_048_576;
+    const maximumBytes =
+      artifact.previewKind === "image" ? 12_582_912 : 1_048_576;
     if (details.size > maximumBytes)
       return { status: "unavailable", reason: "too-large" };
     if (artifact.previewKind === "external")
@@ -2669,8 +2740,7 @@ export class WordlessRuntime {
           data: data.toString("base64"),
         };
       }
-      if (data.includes(0))
-        return { status: "unavailable", reason: "binary" };
+      if (data.includes(0)) return { status: "unavailable", reason: "binary" };
       return {
         status: "available",
         kind: "text",
@@ -2679,7 +2749,8 @@ export class WordlessRuntime {
       };
     } catch (cause) {
       const code = asRecord(cause)?.code;
-      if (code === "ENOENT") return { status: "unavailable", reason: "missing" };
+      if (code === "ENOENT")
+        return { status: "unavailable", reason: "missing" };
       throw cause;
     }
   }
@@ -2701,7 +2772,9 @@ export class WordlessRuntime {
     artifactId: string,
   ): Promise<SessionGeneratedArtifact> {
     const snapshot = await this.scanSessionArtifacts(record);
-    const artifact = snapshot.artifacts.find((candidate) => candidate.id === artifactId);
+    const artifact = snapshot.artifacts.find(
+      (candidate) => candidate.id === artifactId,
+    );
     if (!artifact) throw new Error("Session artifact is unavailable");
     return artifact;
   }
@@ -2757,7 +2830,10 @@ export class WordlessRuntime {
   ): Promise<SessionArtifactsSnapshot> {
     const root = join(record.runtimeRootPath, SESSION_ARTIFACTS_DIRECTORY);
     const artifacts: SessionGeneratedArtifact[] = [];
-    const visit = async (directory: string, relativeDirectory: string): Promise<void> => {
+    const visit = async (
+      directory: string,
+      relativeDirectory: string,
+    ): Promise<void> => {
       if (artifacts.length >= 1_000) return;
       let entries;
       try {
@@ -2795,7 +2871,8 @@ export class WordlessRuntime {
       PRIMARY_ARTIFACTS_DIRECTORY,
     );
     artifacts.sort(
-      (left, right) => right.mtimeMs - left.mtimeMs || left.path.localeCompare(right.path),
+      (left, right) =>
+        right.mtimeMs - left.mtimeMs || left.path.localeCompare(right.path),
     );
     const revision = createHash("sha256")
       .update(
@@ -2812,7 +2889,9 @@ export class WordlessRuntime {
     sessionId: string,
     active: ActiveRun,
   ): Promise<void> {
-    const snapshot = await this.scanSessionArtifacts(this.requireSession(sessionId));
+    const snapshot = await this.scanSessionArtifacts(
+      this.requireSession(sessionId),
+    );
     const previous = this.artifactRevisions.get(sessionId);
     this.artifactRevisions.set(sessionId, snapshot.revision);
     if (previous === snapshot.revision) return;
@@ -3062,6 +3141,7 @@ export class WordlessRuntime {
     prompt: string,
     skillIds: string[] = [],
     submission?: UserMessageSubmission,
+    options?: PromptSessionOptions,
   ): Promise<SessionRecord> {
     const entry = this.getEntry(draft.entryId);
     if (entry.mode !== draft.mode)
@@ -3201,7 +3281,7 @@ export class WordlessRuntime {
       entry.workbenchId === "presentation"
         ? `${prompt}\n\n<wordless-presentation mode="${draft.presentation?.generationMode ?? "guided"}" template="${draft.presentation?.templateId ?? "auto"}">\nUse the Presentation workflow. In guided mode, inspect the request, propose a slide outline, and wait for confirmation before creating the deck. In quick mode, create the first complete draft directly.\n</wordless-presentation>`
         : prompt;
-    await this.promptSession(id, initialPrompt, skillIds, submission);
+    await this.promptSession(id, initialPrompt, skillIds, submission, options);
     return this.requireSession(id);
   }
 
@@ -3210,6 +3290,7 @@ export class WordlessRuntime {
     prompt: string,
     skillIds: string[] = [],
     submission?: UserMessageSubmission,
+    options?: PromptSessionOptions,
   ): Promise<void> {
     const record = await this.ensureSessionModelForOpen(sessionId);
     const active = this.runs.get(sessionId);
@@ -3233,6 +3314,8 @@ export class WordlessRuntime {
       sessionId,
       automaticCompaction ? "compaction" : "prompt",
       submission?.messageId,
+      options?.connectorIds,
+      options?.taskId,
     );
     void this.executeActiveRun(
       sessionId,
@@ -3511,6 +3594,7 @@ export class WordlessRuntime {
     });
     if (session.workbenchId === "media-canvas")
       this.database.deleteMediaProject(sessionId);
+    this.database.clearTaskSession(sessionId);
     this.database.deleteSession(sessionId);
     this.historyCache.delete(sessionId);
     this.artifactRevisions.delete(sessionId);
@@ -4328,6 +4412,245 @@ export class WordlessRuntime {
     }
   }
 
+  listTasks(): TaskRecord[] {
+    return this.database.listTasks();
+  }
+
+  createTask(input: TaskRecordInput): TaskRecord {
+    this.validateTaskInput(input);
+    const now = Date.now();
+    const task: TaskRecord = {
+      ...structuredClone(input),
+      id: randomUUID(),
+      completedAt: null,
+      position:
+        input.position ??
+        this.database
+          .listTasks()
+          .filter((candidate) => candidate.status === input.status).length,
+      execution: {
+        status: "idle",
+        sessionId: null,
+        messageId: null,
+        runId: null,
+        startedAt: null,
+        completedAt: null,
+        error: null,
+      },
+      createdAt: now,
+      updatedAt: now,
+    };
+    this.database.upsertTask(task);
+    this.emitApp({ type: "task.changed", id: task.id });
+    return task;
+  }
+
+  updateTask(id: string, input: TaskRecordInput): TaskRecord {
+    const current = this.requireTask(id);
+    if (
+      current.execution.status === "starting" ||
+      current.execution.status === "running" ||
+      current.execution.status === "waiting"
+    )
+      throw new Error("A running task cannot be edited");
+    this.validateTaskInput(input);
+    const task: TaskRecord = {
+      ...structuredClone(input),
+      id,
+      completedAt: current.completedAt ?? null,
+      position: input.position ?? current.position,
+      execution: current.execution,
+      createdAt: current.createdAt,
+      updatedAt: Date.now(),
+    };
+    this.database.upsertTask(task);
+    this.emitApp({ type: "task.changed", id });
+    return task;
+  }
+
+  moveTask(id: string, status: TaskStatus, position?: number): TaskRecord {
+    const current = this.requireTask(id);
+    const task = {
+      ...current,
+      status,
+      completedAt:
+        status === "done" && current.completedAt == null
+          ? Date.now()
+          : current.completedAt,
+      position:
+        position ??
+        this.database
+          .listTasks()
+          .filter(
+            (candidate) => candidate.status === status && candidate.id !== id,
+          ).length,
+      updatedAt: Date.now(),
+    };
+    this.database.upsertTask(task);
+    this.emitApp({ type: "task.changed", id });
+    return task;
+  }
+
+  deleteTask(id: string): void {
+    const task = this.requireTask(id);
+    if (
+      task.execution.status === "starting" ||
+      task.execution.status === "running" ||
+      task.execution.status === "waiting"
+    )
+      throw new Error("A running task cannot be deleted");
+    this.database.deleteTask(id);
+    this.emitApp({ type: "task.changed", id });
+  }
+
+  async executeTask(id: string): Promise<TaskRecord> {
+    let task = this.requireTask(id);
+    if (["starting", "running", "waiting"].includes(task.execution.status))
+      throw new Error("The task is already running");
+    const submission: UserMessageSubmission = {
+      messageId: randomUUID(),
+      submittedAt: Date.now(),
+    };
+    task = {
+      ...task,
+      execution: {
+        status: "starting",
+        sessionId: task.sessionId,
+        messageId: submission.messageId,
+        runId: null,
+        startedAt: submission.submittedAt,
+        completedAt: null,
+        error: null,
+      },
+      updatedAt: Date.now(),
+    };
+    this.database.upsertTask(task);
+    this.emitApp({ type: "task.changed", id });
+    try {
+      const parts = this.taskPromptParts(task);
+      const prompt = formatPromptWithSkillReferences(parts);
+      const skillIds = selectedSkillIdsFromPromptParts(parts);
+      let sessionId = task.sessionId;
+      if (sessionId) {
+        const session = this.requireSession(sessionId);
+        if (this.runs.has(sessionId))
+          throw new Error("The linked session is currently running");
+        if (
+          task.model &&
+          (task.model.connectionId !== session.model.connectionId ||
+            task.model.modelId !== session.model.modelId)
+        )
+          await this.setSessionModel(sessionId, task.model, task.thinkingLevel);
+        else if (task.thinkingLevel !== session.thinkingLevel)
+          await this.setSessionThinkingLevel(sessionId, task.thinkingLevel);
+        if (task.accessLevel !== session.accessLevel)
+          this.setSessionAccess(sessionId, task.accessLevel);
+        if (task.toolApprovalMode !== session.toolApprovalMode)
+          await this.setSessionToolApprovalMode(
+            sessionId,
+            task.toolApprovalMode,
+          );
+        await this.promptSession(sessionId, prompt, skillIds, submission, {
+          connectorIds: task.connectorIds,
+          taskId: id,
+        });
+      } else {
+        const entry = this.getEntry(task.entryId ?? "general-work");
+        const session = await this.createAndPrompt(
+          {
+            mode: entry.mode,
+            entryId: entry.id,
+            title: task.title,
+            workspaceId: task.workspaceId,
+            accessLevel: task.accessLevel,
+            model: task.model,
+            thinkingLevel: task.thinkingLevel,
+            connectorIds: task.connectorIds,
+            interactionMode: "default",
+            toolApprovalMode: task.toolApprovalMode,
+            ...(task.expertSelection
+              ? { expertSelection: task.expertSelection }
+              : {}),
+          },
+          prompt,
+          skillIds,
+          submission,
+          { taskId: id },
+        );
+        sessionId = session.id;
+      }
+      const current = this.requireTask(id);
+      task = {
+        ...current,
+        sessionId,
+        execution: { ...current.execution, sessionId },
+        updatedAt: Date.now(),
+      };
+      this.database.upsertTask(task);
+      this.emitApp({ type: "task.changed", id });
+      return task;
+    } catch (cause) {
+      const message = cause instanceof Error ? cause.message : String(cause);
+      const current = this.requireTask(id);
+      task = {
+        ...current,
+        execution: {
+          ...current.execution,
+          status: "blocked",
+          completedAt: Date.now(),
+          error: message,
+        },
+        updatedAt: Date.now(),
+      };
+      this.database.upsertTask(task);
+      this.emitApp({ type: "task.changed", id });
+      throw cause;
+    }
+  }
+
+  private taskPromptParts(task: TaskRecord): UserPromptPart[] {
+    return [
+      { type: "text", text: `Task title: ${task.title}\n\nTask details:\n` },
+      ...task.detailParts,
+      ...(task.expectedResult?.trim()
+        ? [
+            {
+              type: "text" as const,
+              text: `\n\nExpected result:\n${task.expectedResult.trim()}`,
+            },
+          ]
+        : []),
+    ];
+  }
+
+  private validateTaskInput(input: TaskRecordInput): void {
+    if (!input.title.trim()) throw new Error("Task title is required");
+    if (
+      !input.detailParts.some(
+        (part) => part.type === "text" && part.text.trim(),
+      )
+    )
+      throw new Error("Task details are required");
+    if (!input.sessionId) return;
+    const session = this.requireSession(input.sessionId);
+    if (input.entryId && input.entryId !== session.entryId)
+      throw new Error("The task work type conflicts with the linked session");
+    if (input.workspaceId !== null && input.workspaceId !== session.workspaceId)
+      throw new Error("The task workspace conflicts with the linked session");
+    if (
+      input.expertSelection &&
+      (input.expertSelection.id !== session.expertSelection?.id ||
+        input.expertSelection.kind !== session.expertSelection?.kind)
+    )
+      throw new Error("The task employee conflicts with the linked session");
+  }
+
+  private requireTask(id: string): TaskRecord {
+    const task = this.database.getTask(id);
+    if (!task) throw new Error("Task not found");
+    return task;
+  }
+
   async resolveUserRequest(
     sessionId: string,
     requestId: string,
@@ -4561,6 +4884,7 @@ export class WordlessRuntime {
         selectedSkills,
         submission,
       });
+      if (active.runError) throw new Error(active.runError);
       this.emit(sessionId, active, {
         type: "run.completed",
         runId: active.runId,
@@ -4605,6 +4929,8 @@ export class WordlessRuntime {
     sessionId: string,
     kind: ActiveRun["kind"],
     userMessageId?: string,
+    connectorIdsOverride?: string[],
+    taskId?: string,
   ): Promise<ActiveRun> {
     const record = await this.ensureSessionModelForOpen(sessionId);
     if (this.runs.has(sessionId))
@@ -4659,8 +4985,11 @@ export class WordlessRuntime {
         readOnlyRoots: skills.map((skill) => skill.baseDir),
       },
     );
+    const effectiveConnectorIds = [
+      ...new Set([...record.connectorIds, ...(connectorIdsOverride ?? [])]),
+    ];
     const connectorScopes = expertConnectorScopes(
-      record.connectorIds,
+      effectiveConnectorIds,
       expertSnapshot,
     );
     const primaryConnectorTools = this.connectorRegistry.createTools(
@@ -4689,10 +5018,13 @@ export class WordlessRuntime {
       journalsRoot: this.options.paths.journalsRoot,
       resolveModel: (reference) => this.requireRuntimeModel(reference),
       resolveCapabilities: (reference) => {
-        const provider = this.modelConfiguration.snapshot().providers.find(
-          (candidate) =>
-            candidate.kind === "chat" && candidate.id === reference.connectionId,
-        );
+        const provider = this.modelConfiguration
+          .snapshot()
+          .providers.find(
+            (candidate) =>
+              candidate.kind === "chat" &&
+              candidate.id === reference.connectionId,
+          );
         if (provider?.authStatus !== "configured")
           throw new Error("The selected model connection is not configured");
         return this.requireEnabledModel(reference).capabilities;
@@ -4769,6 +5101,7 @@ export class WordlessRuntime {
       sequence: 0,
       runId: randomUUID(),
       ...(userMessageId ? { userMessageId } : {}),
+      ...(taskId ? { taskId } : {}),
       unsubscribe: () => {},
     };
     active.unsubscribe = driverSession.subscribe((event) =>
@@ -4866,6 +5199,9 @@ export class WordlessRuntime {
       this.emit(sessionId, active, event);
     if (event.type === "message.reasoning.delta")
       this.emit(sessionId, active, event);
+    if (event.type === "message.completed")
+      if (event.message.status === "error")
+        active.runError = event.message.errorMessage ?? "Model response failed";
     if (event.type === "message.completed")
       this.emit(sessionId, active, {
         type: "message.completed",
@@ -6097,6 +6433,57 @@ export class WordlessRuntime {
       event,
     };
     for (const listener of this.listeners) listener(envelope);
+    if (active.taskId || active.userMessageId) {
+      const task = active.taskId
+        ? this.database.getTask(active.taskId)
+        : this.database
+            .listTasks()
+            .find(
+              (candidate) =>
+                candidate.execution.messageId === active.userMessageId,
+            );
+      if (task) {
+        const status =
+          event.type === "run.started"
+            ? "running"
+            : event.type === "approval.requested" ||
+                event.type === "user-request.requested"
+              ? "waiting"
+              : event.type === "run.completed"
+                ? "completed"
+                : event.type === "run.failed"
+                  ? "failed"
+                  : event.type === "run.cancelled"
+                    ? "cancelled"
+                    : null;
+        if (status) {
+          const terminal =
+            status === "completed" ||
+            status === "failed" ||
+            status === "cancelled";
+          const next: TaskRecord = {
+            ...task,
+            sessionId,
+            execution: {
+              ...task.execution,
+              status,
+              sessionId,
+              runId: active.runId,
+              completedAt: terminal ? Date.now() : null,
+              error:
+                event.type === "run.failed"
+                  ? event.message
+                  : terminal
+                    ? null
+                    : task.execution.error,
+            },
+            updatedAt: Date.now(),
+          };
+          this.database.upsertTask(next);
+          this.emitApp({ type: "task.changed", id: task.id });
+        }
+      }
+    }
   }
 
   private emitExpertMemberEvent(

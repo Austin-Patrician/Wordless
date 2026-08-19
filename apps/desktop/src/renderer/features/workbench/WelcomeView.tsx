@@ -1,4 +1,5 @@
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue, cn } from "@wordless/ui-kit";
+import { Button, Select, SelectContent, SelectItem, SelectTrigger, SelectValue, cn } from "@wordless/ui-kit";
+import { ChevronDown, Folder } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import type { AgentInteractionModeId, ExpertSelection, ModelReference, PresentationGenerationMode, SessionAccessLevel, ThinkingLevel, ToolApprovalMode, UserPromptPart, WorkbenchEntryDefinition, WorkbenchMode } from "@wordless/domain";
 import type { PresentationTemplate } from "@wordless/protocol";
@@ -8,6 +9,7 @@ import uiDesignIcon from "../../../icons/common-icons/ui-design.svg";
 import { usePreferences } from "../../shared/preferences";
 import { useRuntime, useRuntimeClient } from "../../shared/runtime";
 import { Composer, EMPTY_INLINE_SKILL_COMPOSER_VALUE } from "../thread/Composer";
+import { AccessPicker } from "../thread/AccessPicker";
 import { createPendingThreadTurn, createUserMessageSubmission, type PendingThreadTurn } from "../thread/pending-thread-turn";
 import { ModelPicker, thinkingLevelForModelSelection } from "./ModelPicker";
 import { WorkspacePicker } from "./WorkspacePicker";
@@ -249,7 +251,7 @@ export function WelcomeView({ initialExpertPrompt, initialExpertSelection, onOpe
             })}
           </div>
           {entry?.workbenchId === "presentation" ? <PresentationLaunchControls generationMode={presentationMode} onGenerationModeChange={setPresentationMode} onTemplateChange={setPresentationTemplateId} templateId={presentationTemplateId} templates={presentationTemplates} /> : null}
-          <div className="relative">
+          <div className="relative rounded-t-[14px] bg-[#f1f1ef] dark:bg-[#252620]">
             <Composer
               accessLevel={accessLevel}
               connectors={snapshot?.connectors.connectors}
@@ -278,7 +280,6 @@ export function WelcomeView({ initialExpertPrompt, initialExpertSelection, onOpe
               }}
               onOpenSkills={onOpenSkills}
               onOpenModelPicker={() => setModelOpen(true)}
-              onOpenWorkspacePicker={() => setWorkspaceOpen(true)}
               onSend={send}
               searchWorkspaceReferences={workspaceId ? (query) => client.searchWorkspace(workspaceId, query) : undefined}
               workspaceSearchScope={workspaceId ?? "no-workspace"}
@@ -286,32 +287,12 @@ export function WelcomeView({ initialExpertPrompt, initialExpertSelection, onOpe
               skillContextWindow={selectedModel?.capabilities.contextWindow}
               selectedConnectorIds={connectorIds}
               skills={snapshot?.skills.skills.filter((skill) => skill.workspaceId === null || skill.workspaceId === workspaceId) ?? []}
-              showAccessControl={
-                workspaceRequired ||
-                supportsGeneralWorkAccessSelection(entry?.id)
-              }
+              showAccessControl={false}
+              showWorkspacePicker={false}
               workspaceLabel={selectedWorkspace?.name ?? t("selectWorkspace")}
             />
             {snapshot && entry ? (
               <>
-                <WorkspacePicker
-                  allowNoWorkspace={!workspaceRequired}
-                  onCreate={async (name) => {
-                    const workspace = await client.createManagedWorkspace(name);
-                    await refresh();
-                    return workspace;
-                  }}
-                  onOpenChange={setWorkspaceOpen}
-                  onOpenLocal={async () => {
-                    const workspace = await client.pickWorkspace();
-                    await refresh();
-                    return workspace;
-                  }}
-                  onSelect={setWorkspaceId}
-                  open={workspaceOpen}
-                  selectedWorkspaceId={workspaceId}
-                  workspaces={snapshot.workspaces}
-                />
                 <ModelPicker
                   connections={snapshot.connections}
                   entry={entry}
@@ -338,8 +319,51 @@ export function WelcomeView({ initialExpertPrompt, initialExpertSelection, onOpe
               </>
             ) : null}
           </div>
+          {snapshot && entry ? (
+            <div className="-mt-px flex flex-wrap items-center gap-1.5 rounded-b-[14px] border-x border-b border-[#e6e6e2] bg-[#f1f1ef] px-3.5 py-1.5 dark:border-border dark:bg-[#252620]">
+              <div className="relative">
+                <Button
+                  className="min-w-0 text-[#64645e]"
+                  disabled={submitting}
+                  onClick={() => setWorkspaceOpen(true)}
+                  size="sm"
+                  type="button"
+                  variant="ghost"
+                >
+                  <Folder className="h-3.5 w-3.5" />
+                  <span className="max-w-40 truncate">{selectedWorkspace?.name ?? t("selectWorkspace")}</span>
+                  <ChevronDown className="h-3.5 w-3.5" />
+                </Button>
+                <WorkspacePicker
+                  allowNoWorkspace={!workspaceRequired}
+                  onCreate={async (name) => {
+                    const workspace = await client.createManagedWorkspace(name);
+                    await refresh();
+                    return workspace;
+                  }}
+                  onOpenChange={setWorkspaceOpen}
+                  onOpenLocal={async () => {
+                    const workspace = await client.pickWorkspace();
+                    await refresh();
+                    return workspace;
+                  }}
+                  onSelect={setWorkspaceId}
+                  open={workspaceOpen}
+                  placement="below"
+                  selectedWorkspaceId={workspaceId}
+                  workspaces={snapshot.workspaces}
+                />
+              </div>
+              {workspaceRequired || supportsGeneralWorkAccessSelection(entry.id) ? (
+                <AccessPicker
+                  disabled={submitting}
+                  onChange={setAccessLevel}
+                  value={accessLevel}
+                />
+              ) : null}
+            </div>
+          ) : null}
           {submissionError ? <p className="mt-3 text-[11px] leading-5 text-destructive" role="alert">{submissionError}</p> : null}
-          <p className="mt-3 text-xs text-muted-foreground">{t("caution")}</p>
         </div>
       </div>
       {snapshot ? (
