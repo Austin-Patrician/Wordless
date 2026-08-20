@@ -90,6 +90,7 @@ import type {
   MediaCropRequest,
   MediaInlineImage,
   MediaLayoutUpdate,
+  MediaViewportUpdate,
   MediaLocalEditRequest,
   MediaMultiViewRequest,
   MediaOperation,
@@ -3716,7 +3717,10 @@ export class WordlessRuntime {
     return normalized;
   }
 
-  private saveMediaProject(project: MediaProject): MediaProject {
+  private saveMediaProject(
+    project: MediaProject,
+    source?: "viewport" | "layout" | "asset",
+  ): MediaProject {
     const session = this.requireSession(project.sessionId);
     if (session.workbenchId !== "media-canvas")
       throw new Error("The session is not a media project");
@@ -3734,7 +3738,11 @@ export class WordlessRuntime {
         updatedAt: now,
       });
     else this.database.upsertSession({ ...session, updatedAt: now });
-    this.emitApp({ type: "media.project.changed", sessionId: next.sessionId });
+    this.emitApp({
+      type: "media.project.changed",
+      sessionId: next.sessionId,
+      ...(source ? { source } : {}),
+    });
     return next;
   }
 
@@ -4107,23 +4115,38 @@ export class WordlessRuntime {
   updateMediaLayout(update: MediaLayoutUpdate): MediaProject {
     const project = this.getMediaProject(update.sessionId);
     const positions = new Map(update.assets.map((asset) => [asset.id, asset]));
-    return this.saveMediaProject({
-      ...project,
-      assets: project.assets.map((asset) => {
-        const position = positions.get(asset.id);
-        return position
-          ? {
-              ...asset,
-              x: position.x,
-              y: position.y,
-              width: position.width,
-              height: position.height,
-              updatedAt: Date.now(),
-            }
-          : asset;
-      }),
-      viewport: update.viewport,
-    });
+    return this.saveMediaProject(
+      {
+        ...project,
+        assets: project.assets.map((asset) => {
+          const position = positions.get(asset.id);
+          return position
+            ? {
+                ...asset,
+                x: position.x,
+                y: position.y,
+                width: position.width,
+                height: position.height,
+                updatedAt: Date.now(),
+              }
+            : asset;
+        }),
+        ...(update.viewport ? { viewport: update.viewport } : {}),
+      },
+      "layout",
+    );
+  }
+
+  updateMediaViewport(update: MediaViewportUpdate): MediaViewportUpdate["viewport"] {
+    const project = this.getMediaProject(update.sessionId);
+    this.saveMediaProject(
+      {
+        ...project,
+        viewport: update.viewport,
+      },
+      "viewport",
+    );
+    return update.viewport;
   }
 
   setMediaCoverAsset(sessionId: string, assetId: string): MediaProject {

@@ -25,6 +25,7 @@ import type {
   ExpertTeamDetail,
   MediaInlineImage,
   MediaLayoutUpdate,
+  MediaViewportUpdate,
   MediaOperationRequest,
   MediaProject,
   ModelReference,
@@ -191,6 +192,7 @@ export interface DesktopBridge {
   downloadMediaAsset(sessionId: string, assetId: string): Promise<string>;
   startMediaOperation(request: MediaOperationRequest): Promise<MediaProject>;
   updateMediaLayout(update: MediaLayoutUpdate): Promise<MediaProject>;
+  updateMediaViewport(update: MediaViewportUpdate): Promise<MediaViewportUpdate["viewport"]>;
   setMediaCoverAsset(sessionId: string, assetId: string): Promise<MediaProject>;
   cancelMediaOperation(sessionId: string, operationId: string): Promise<void>;
   openSessionFolder(sessionId: string): Promise<void>;
@@ -517,6 +519,7 @@ const requiredMethods: Array<Exclude<keyof DesktopBridge, "version">> = [
   "downloadMediaAsset",
   "startMediaOperation",
   "updateMediaLayout",
+  "updateMediaViewport",
   "setMediaCoverAsset",
   "cancelMediaOperation",
   "openSessionFolder",

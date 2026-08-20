@@ -848,6 +848,11 @@ export type MediaOperationRequest =
 export interface MediaLayoutUpdate {
   sessionId: string;
   assets: Array<Pick<MediaAsset, "id" | "x" | "y" | "width" | "height">>;
+  viewport?: MediaViewport;
+}
+
+export interface MediaViewportUpdate {
+  sessionId: string;
   viewport: MediaViewport;
 }
 

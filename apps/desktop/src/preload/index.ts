@@ -142,6 +142,8 @@ const wordlessBridge: DesktopBridge = {
     ipcRenderer.invoke("wordless:media:operation:start", request),
   updateMediaLayout: (update) =>
     ipcRenderer.invoke("wordless:media:layout", update),
+  updateMediaViewport: (update) =>
+    ipcRenderer.invoke("wordless:media:viewport", update),
   setMediaCoverAsset: (sessionId, assetId) =>
     ipcRenderer.invoke("wordless:media:cover", { sessionId, assetId }),
   cancelMediaOperation: (sessionId, operationId) =>

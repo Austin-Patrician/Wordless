@@ -77,6 +77,7 @@ import {
   SessionExtensionInteractionSchema,
   UpdateExtensionSettingsSchema,
   UpdateMediaLayoutSchema,
+  UpdateMediaViewportSchema,
   UsageReportQuerySchema,
   WorkspaceFileRequestSchema,
   WorkspaceDeleteSchema,
@@ -587,6 +588,12 @@ export function registerRuntimeIpc(
       Parameters<WordlessRuntime["updateMediaLayout"]>[0]
     >(UpdateMediaLayoutSchema, payload);
     return runtime.updateMediaLayout(input);
+  });
+  ipcMain.handle("wordless:media:viewport", (_event, payload: unknown) => {
+    const input = parsePayload<
+      Parameters<WordlessRuntime["updateMediaViewport"]>[0]
+    >(UpdateMediaViewportSchema, payload);
+    return runtime.updateMediaViewport(input);
   });
   ipcMain.handle("wordless:media:cover", (_event, payload: unknown) => {
     const input = parsePayload<{ sessionId: string; assetId: string }>(

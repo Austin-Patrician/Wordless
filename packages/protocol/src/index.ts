@@ -14,6 +14,7 @@ import type {
   EnabledModelRecord,
   ModelConfigurationSnapshot,
   MediaLayoutUpdate,
+  MediaViewportUpdate,
   MediaOperationRequest,
   MediaProject,
   MediaProjectSummary,
@@ -1118,6 +1119,14 @@ export const UpdateMediaLayoutSchema = Type.Object({
     }),
     { maxItems: 2_048 },
   ),
+  viewport: Type.Optional(Type.Object({
+    x: Type.Number(),
+    y: Type.Number(),
+    zoom: Type.Number({ minimum: 0.1, maximum: 3 }),
+  })),
+});
+export const UpdateMediaViewportSchema = Type.Object({
+  sessionId: Type.String({ minLength: 1 }),
   viewport: Type.Object({
     x: Type.Number(),
     y: Type.Number(),
@@ -1229,6 +1238,7 @@ export interface AppSnapshot {
 
 export type {
   MediaLayoutUpdate,
+  MediaViewportUpdate,
   MediaOperationRequest,
   MediaProject,
   MediaProjectSummary,
@@ -1734,7 +1744,11 @@ export type RuntimeEvent =
   | { type: "experts.changed" }
   | { type: "connectors.changed" }
   | { type: "model-configuration.changed" }
-  | { type: "media.project.changed"; sessionId: string }
+  | {
+      type: "media.project.changed";
+      sessionId: string;
+      source?: "viewport" | "layout" | "asset";
+    }
   | { type: "automation.changed"; id?: string }
   | { type: "automation-run.changed"; id?: string }
   | { type: "task.changed"; id: string }
