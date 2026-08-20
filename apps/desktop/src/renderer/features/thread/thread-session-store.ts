@@ -3,6 +3,7 @@ import type {
   RuntimeEventEnvelope,
   SessionHistoryPage,
   SessionSnapshot,
+  SessionTurnSummary,
   SessionViewSnapshot,
 } from "@wordless/protocol";
 import type {
@@ -30,6 +31,7 @@ import {
   TextDeltaAccumulator,
   ThreadProjectionPublisher,
 } from "./thread-projection-core.ts";
+import { buildSessionTurnSummary, sessionTurnSummaryEquals } from "./turn-summary.ts";
 
 export type ThreadTimelineDescriptor =
   | { type: "user"; key: string; turnId: string; messageId: string }
@@ -400,6 +402,7 @@ export class ThreadSessionStore {
     });
     this.patchMetadata({ isRunning: true });
     this.rebuildTimeline();
+    this.upsertTurnSummary(turnId);
   }
 
   removePendingTurn(messageId: string): void {
@@ -419,6 +422,7 @@ export class ThreadSessionStore {
     this.deleteRow(this.assistantKey(turnId));
     this.patchMetadata({ isRunning: false });
     this.rebuildTimeline();
+    this.removeTurnSummary(turnId);
   }
 
   patchSession(session: SessionSnapshot["session"]): void {
@@ -533,7 +537,7 @@ export class ThreadSessionStore {
       nextAfterCursor: view.history.nextAfterCursor,
       nextBeforeCursor: view.history.nextBeforeCursor,
       revision: view.history.revision,
-      turnSummaries: view.turnSummaries,
+      turnSummaries: this.withLocalTurnSummaries(view.turnSummaries),
     };
     this.patchMetadata({
       compactionError: view.compactionError,
@@ -682,6 +686,8 @@ export class ThreadSessionStore {
       this.upsertLiveMessage(turnId, event.message, presentation);
       this.activeTurnId = turnId;
       this.patchMetadata({ isRunning: true });
+      if (event.message.role === "user" || this.turnSummaryIndex(turnId) === -1)
+        this.upsertTurnSummary(turnId);
       return;
     }
     if (event.type === "message.completed") {
@@ -690,6 +696,7 @@ export class ThreadSessionStore {
       if (!turnId) return;
       this.upsertLiveMessage(turnId, previous ? mergeCompletedAssistantMessage(previous, event.message) : event.message);
       this.patchMetadata({ turnUsage: calculateCurrentTurnUsage([...this.messagesForTurn(turnId)]) ?? this.metadataSnapshot.turnUsage });
+      this.upsertTurnSummary(turnId);
       return;
     }
     if (event.type === "tool.started") {
@@ -1073,6 +1080,72 @@ export class ThreadSessionStore {
       ...(turn.userId ? [this.messagesById.get(turn.userId)] : []),
       ...turn.assistantIds.map((id) => this.messagesById.get(id)),
     ].filter((message): message is ConversationMessage => Boolean(message));
+  }
+
+  private turnSummaryIndex(turnId: string): number {
+    return this.historySnapshot.turnSummaries.findIndex((item) => item.turnId === turnId);
+  }
+
+  private summaryFromTurn(turn: TurnRecord, ordinal: number): SessionTurnSummary | null {
+    const messages = this.messagesForTurn(turn.turnId);
+    const messageId = turn.userId ?? messages[0]?.id;
+    if (!messageId) return null;
+    return buildSessionTurnSummary({
+      messageId,
+      messages,
+      ordinal,
+      timestamp: turn.timestamp,
+      turnId: turn.turnId,
+    });
+  }
+
+  private withLocalTurnSummaries(server: readonly SessionTurnSummary[]): SessionTurnSummary[] {
+    const known = new Set(server.map((item) => item.turnId));
+    const missing = [...this.turns.values()]
+      .filter((turn) => !known.has(turn.turnId))
+      .sort((left, right) => left.timestamp - right.timestamp)
+      .flatMap((turn, index) => {
+        const summary = this.summaryFromTurn(turn, server.length + index);
+        return summary ? [summary] : [];
+      });
+    return missing.length === 0 ? [...server] : [...server, ...missing];
+  }
+
+  private upsertTurnSummary(turnId: string): void {
+    const turn = this.turns.get(turnId);
+    if (!turn) return;
+    const summaries = this.historySnapshot.turnSummaries;
+    const index = this.turnSummaryIndex(turnId);
+    const next = this.summaryFromTurn(turn, index === -1 ? summaries.length : summaries[index]!.ordinal);
+    if (!next) return;
+    if (index === -1) {
+      this.historySnapshot = {
+        ...this.historySnapshot,
+        turnSummaries: [...summaries, next],
+      };
+      this.publishHistory();
+      return;
+    }
+    if (sessionTurnSummaryEquals(summaries[index]!, next)) return;
+    const copy = summaries.slice();
+    copy[index] = next;
+    this.historySnapshot = { ...this.historySnapshot, turnSummaries: copy };
+    this.publishHistory();
+  }
+
+  private removeTurnSummary(turnId: string): void {
+    const summaries = this.historySnapshot.turnSummaries;
+    const index = this.turnSummaryIndex(turnId);
+    if (index === -1) return;
+    this.historySnapshot = {
+      ...this.historySnapshot,
+      turnSummaries: summaries.flatMap((item, ordinal) => {
+        if (item.turnId === turnId) return [];
+        const nextOrdinal = ordinal > index ? ordinal - 1 : ordinal;
+        return item.ordinal === nextOrdinal ? [item] : [{ ...item, ordinal: nextOrdinal }];
+      }),
+    };
+    this.publishHistory();
   }
 
   private setRow(key: string, snapshot: ThreadRowSnapshot): void {

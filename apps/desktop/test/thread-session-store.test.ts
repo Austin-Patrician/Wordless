@@ -139,6 +139,8 @@ test("keeps timeline references stable and publishes one row update for 5,000 de
   store.subscribeRow("assistant:turn:user", () => { rowNotifications += 1; });
   store.subscribeTailGrowth(() => { tailGrowthNotifications += 1; });
   store.subscribeTimeline(() => { timelineNotifications += 1; });
+  let historyNotifications = 0;
+  store.subscribeHistory(() => { historyNotifications += 1; });
 
   for (let sequence = 1; sequence <= 5_000; sequence += 1)
     emit(envelope(sequence, { type: "message.text.delta", messageId: "assistant", delta: "x" }));
@@ -147,6 +149,7 @@ test("keeps timeline references stable and publishes one row update for 5,000 de
   assert.equal(store.getTimelineSnapshot(), timeline);
   assert.equal(store.getTimelineSnapshot().items, descriptors);
   assert.equal(timelineNotifications, 0);
+  assert.equal(historyNotifications, 0);
   assert.equal(rowNotifications, 1);
   assert.equal(tailGrowthNotifications, 1);
   assert.equal(store.getRowSnapshot("assistant:turn:user").messages[0]?.blocks[0]?.type, "text");
@@ -511,5 +514,132 @@ test("around-page and compaction merges retain newer live message content", asyn
   assert.equal((store.getMessage("assistant")?.blocks[0] as { text: string }).text, "live");
   assert.ok(store.getTimelineSnapshot().items.some((item) => item.key === "compaction:compaction-1"));
   assert.ok(store.getTimelineSnapshot().items.some((item) => item.key === "assistant:target"));
+  store.dispose();
+});
+
+function emptyView(): SessionViewSnapshot {
+  return {
+    extensions: [],
+    history: {
+      hasMoreAfter: false,
+      hasMoreBefore: false,
+      items: [],
+      revision: "0",
+    },
+    isCompacting: false,
+    isRunning: false,
+    session: { id: "session" } as SessionViewSnapshot["session"],
+    toolApprovalMode: "manual",
+    turnSummaries: [],
+  };
+}
+
+function pendingTurn(id: string, text: string, submittedAt: number) {
+  return {
+    submission: { messageId: id, submittedAt },
+    message: { ...message(id, "user", text), timestamp: submittedAt },
+  };
+}
+
+test("creates turn summaries from live user messages without a pending turn", async () => {
+  const { emit, store } = harness({ getSessionView: async () => emptyView() });
+  await store.start();
+  emit({
+    ...envelope(1, { type: "message.started", message: message("user-1", "user", "First request") }),
+    turnId: "turn:user-1",
+  });
+  emit({
+    ...envelope(2, { type: "message.started", message: message("user-2", "user", "Second request") }),
+    turnId: "turn:user-2",
+  });
+  assert.equal(store.getHistorySnapshot().turnSummaries.length, 2);
+  assert.deepEqual(store.getHistorySnapshot().turnSummaries.map((item) => item.turnId), ["turn:user-1", "turn:user-2"]);
+  store.dispose();
+});
+
+test("appends live turn summaries so the density rail can appear without reopening", async () => {
+  const { store } = harness({ getSessionView: async () => emptyView() });
+  await store.start();
+  assert.equal(store.getHistorySnapshot().turnSummaries.length, 0);
+
+  store.addPendingTurn(pendingTurn("user-1", "First request", 10));
+  assert.equal(store.getHistorySnapshot().turnSummaries.length, 1);
+  assert.equal(store.getHistorySnapshot().turnSummaries[0]?.turnId, "turn:user-1");
+  assert.equal(store.getHistorySnapshot().turnSummaries[0]?.excerpt, "First request");
+
+  store.addPendingTurn(pendingTurn("user-2", "Second request", 20));
+  assert.equal(store.getHistorySnapshot().turnSummaries.length, 2);
+  assert.deepEqual(store.getHistorySnapshot().turnSummaries.map((item) => item.turnId), ["turn:user-1", "turn:user-2"]);
+  store.dispose();
+});
+
+test("patches turn summary tokens on completion without duplicating the turn", async () => {
+  const { emit, store } = harness({ getSessionView: async () => emptyView() });
+  await store.start();
+  store.addPendingTurn(pendingTurn("user-1", "First request", 10));
+  emit({
+    ...envelope(1, {
+      type: "message.started",
+      message: { ...message("assistant-1", "assistant", ""), status: "streaming" },
+    }),
+    turnId: "turn:user-1",
+  });
+  emit({
+    ...envelope(2, {
+      type: "message.completed",
+      message: {
+        ...message("assistant-1", "assistant", "done"),
+        status: "complete",
+        usage: { inputTokens: 5, outputTokens: 4_000, cacheReadTokens: 0, cacheWriteTokens: 0, totalTokens: 4_005, totalCost: 0 },
+      },
+    }),
+    turnId: "turn:user-1",
+  });
+
+  assert.equal(store.getHistorySnapshot().turnSummaries.length, 1);
+  assert.ok((store.getHistorySnapshot().turnSummaries[0]?.tokens ?? 0) >= 4_000);
+  store.dispose();
+});
+
+test("drops a pending turn summary when the prompt fails", async () => {
+  const { store } = harness({ getSessionView: async () => emptyView() });
+  await store.start();
+  store.addPendingTurn(pendingTurn("user-1", "First request", 10));
+  store.addPendingTurn(pendingTurn("user-2", "Second request", 20));
+  store.removePendingTurn("user-2");
+  assert.equal(store.getHistorySnapshot().turnSummaries.length, 1);
+  assert.equal(store.getHistorySnapshot().turnSummaries[0]?.turnId, "turn:user-1");
+  store.dispose();
+});
+
+test("keeps server turn summaries for unloaded history and appends a live pending turn", async () => {
+  const turnSummaries = Array.from({ length: 10 }, (_, ordinal) => ({
+    excerpt: `Turn ${ordinal}`,
+    messageId: `user-${ordinal}`,
+    ordinal,
+    timestamp: ordinal,
+    tokens: 12,
+    turnId: `turn:user-${ordinal}`,
+  }));
+  const historical = view();
+  historical.turnSummaries = turnSummaries;
+  const loaded = historical.history.items[0];
+  if (loaded?.type === "turn") {
+    loaded.turn.id = "turn:user-9";
+    loaded.turn.anchorMessageId = "user-9";
+    loaded.turn.messages = [message("user-9", "user", "prompt"), message("assistant-9", "assistant", "")];
+  }
+  const { store } = harness({ getSessionView: async () => historical });
+  await store.start();
+  assert.equal(store.getHistorySnapshot().turnSummaries.length, 10);
+  assert.equal(store.getHistorySnapshot().turnSummaries[0]?.turnId, "turn:user-0");
+
+  store.addPendingTurn(pendingTurn("live-user", "Follow up", 100));
+  assert.equal(store.getHistorySnapshot().turnSummaries.length, 11);
+  assert.deepEqual(
+    store.getHistorySnapshot().turnSummaries.slice(0, 10).map((item) => item.turnId),
+    turnSummaries.map((item) => item.turnId),
+  );
+  assert.equal(store.getHistorySnapshot().turnSummaries[10]?.turnId, "turn:live-user");
   store.dispose();
 });

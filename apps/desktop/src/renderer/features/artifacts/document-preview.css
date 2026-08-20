@@ -44,3 +44,13 @@
   padding: 7px 9px;
   font-size: 11px;
 }
+
+.artifact-html-preview {
+  display: flex;
+  min-width: 0;
+}
+
+.artifact-html-preview iframe {
+  flex: 1;
+  min-width: 0;
+}
