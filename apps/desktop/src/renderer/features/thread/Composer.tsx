@@ -13,6 +13,7 @@ import {
   CircleHelp,
   Folder,
   Layers3,
+  ListTodo,
   Pin,
   PinOff,
   Plus,
@@ -30,6 +31,7 @@ import {
   type KeyboardEvent as ReactKeyboardEvent,
 } from "react";
 import { usePreferences } from "../../shared/preferences";
+import { useRuntime } from "../../shared/runtime";
 import type {
   AgentInteractionModeId,
   ConnectorSummary,
@@ -39,6 +41,7 @@ import type {
   SessionAccessLevel,
   SessionContextUsage,
   SkillSummary,
+  TaskRecord,
   ToolApprovalMode,
   UserPromptPart,
 } from "@wordless/domain";
@@ -63,6 +66,10 @@ import type { ArtifactSelection, WorkspaceFileEntry } from "@wordless/protocol";
 import { SkillIcon } from "../../shared/SkillIcon";
 import { FileTypeIcon } from "../../shared/FileTypeIcon";
 import { ExpertPortrait } from "../experts/ExpertPortrait";
+import {
+  composerTaskPromptParts,
+  filterComposerInsertableTasks,
+} from "./inline-skill-composer-model";
 
 type ComposerProps = {
   accessLevel?: SessionAccessLevel;
@@ -126,6 +133,7 @@ export const EMPTY_INLINE_SKILL_COMPOSER_VALUE: InlineSkillComposerValue = {
   skillIds: [],
   skillTokenCounts: {},
   skillQuery: null,
+  taskQuery: null,
   text: "",
   workspaceReferenceCount: 0,
   workspaceQuery: null,
@@ -376,6 +384,69 @@ function SkillsSubmenu({
   );
 }
 
+function TasksSubmenu({
+  emptyLabel,
+  inProgressLabel,
+  onInsertTask,
+  searchLabel,
+  tasks,
+  todoLabel,
+}: {
+  emptyLabel: string;
+  inProgressLabel: string;
+  onInsertTask: (task: TaskRecord) => void;
+  searchLabel: string;
+  tasks: TaskRecord[];
+  todoLabel: string;
+}) {
+  const [query, setQuery] = useState("");
+  const matches = useMemo(
+    () => filterComposerInsertableTasks(tasks, query),
+    [query, tasks],
+  );
+  return (
+    <div className="w-[240px] rounded-[10px] border border-[#dfdfdb] bg-white p-2 shadow-[0_14px_34px_rgba(28,28,25,0.12)] dark:border-border dark:bg-card">
+      <input
+        aria-label={searchLabel}
+        autoFocus
+        className="h-8 w-full rounded-[6px] border border-[#e4e4df] bg-[#fafaf8] px-2 text-[12px] text-[#3f3f3a] outline-none placeholder:text-[#9b9b94] focus:border-[#9dad75] dark:border-border dark:bg-muted dark:text-foreground"
+        onChange={(event) => setQuery(event.target.value)}
+        placeholder={searchLabel}
+        value={query}
+      />
+      <div className="mt-1 max-h-[232px] overflow-y-auto">
+        {matches.map((task) => (
+          <button
+            className="flex w-full min-w-0 items-center gap-2 rounded-[6px] px-1.5 py-1.5 text-left hover:bg-[#f3f3f0] dark:hover:bg-muted"
+            key={task.id}
+            onClick={() => onInsertTask(task)}
+            title={task.title}
+            type="button"
+          >
+            <span
+              aria-label={
+                task.status === "in-progress" ? inProgressLabel : todoLabel
+              }
+              className={cn(
+                "h-2 w-2 shrink-0 rounded-full",
+                task.status === "in-progress" ? "bg-[#3478c9]" : "bg-[#8b8f87]",
+              )}
+            />
+            <span className="min-w-0 flex-1 truncate text-[12px] font-medium text-[#3f3f3a] dark:text-foreground">
+              {task.title}
+            </span>
+          </button>
+        ))}
+        {matches.length === 0 ? (
+          <p className="px-2 py-3 text-[11px] text-[#8b8b84] dark:text-muted-foreground">
+            {emptyLabel}
+          </p>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
 export function Composer({
   compact = false,
   compacting = false,
@@ -432,6 +503,7 @@ export function Composer({
   const [menuOpen, setMenuOpen] = useState(false);
   const [modeOpen, setModeOpen] = useState(false);
   const [skillsOpen, setSkillsOpen] = useState(false);
+  const [tasksOpen, setTasksOpen] = useState(false);
   const [connectorsOpen, setConnectorsOpen] = useState(false);
   const [expertsOpen, setExpertsOpen] = useState(false);
   const [approvalOpen, setApprovalOpen] = useState(false);
@@ -449,6 +521,10 @@ export function Composer({
   const [workspacePickerOpen, setWorkspacePickerOpen] = useState(false);
   const [skillPickerIndex, setSkillPickerIndex] = useState(0);
   const [skillPickerOpen, setSkillPickerOpen] = useState(false);
+  const [taskPickerIndex, setTaskPickerIndex] = useState(0);
+  const [taskPickerOpen, setTaskPickerOpen] = useState(false);
+  const [taskSearch, setTaskSearch] = useState("");
+  const [tasks, setTasks] = useState<TaskRecord[]>([]);
   const [workspacePickerPosition, setWorkspacePickerPosition] = useState({
     left: 12,
     bottom: 52,
@@ -472,6 +548,7 @@ export function Composer({
   const menuTriggerRef = useRef<HTMLSpanElement>(null);
   const connectorDockRef = useRef<HTMLDivElement>(null);
   const workspacePickerListRef = useRef<HTMLDivElement>(null);
+  const taskSearchRef = useRef<HTMLInputElement>(null);
   const resizeStart = useRef<{ height: number; y: number } | null>(null);
   const draftRef = useRef<InlineSkillComposerValue>(
     initialDraft ?? EMPTY_INLINE_SKILL_COMPOSER_VALUE,
@@ -494,6 +571,7 @@ export function Composer({
   );
   const applyingHistoryRef = useRef(false);
   const { locale, t } = usePreferences();
+  const { client } = useRuntime();
   workspaceSearchReferencesRef.current = searchWorkspaceReferences;
   const hasActionMenu = Boolean(
     onInteractionModeChange ||
@@ -528,6 +606,14 @@ export function Composer({
       `${skill.name} ${skill.description}`.toLocaleLowerCase().includes(query),
     );
   }, [availableSkills, draft.skillQuery]);
+  const taskMatches = useMemo(
+    () => filterComposerInsertableTasks(tasks, taskSearch),
+    [taskSearch, tasks],
+  );
+  const highlightedTaskIndex =
+    taskMatches.length === 0
+      ? 0
+      : Math.min(taskPickerIndex, taskMatches.length - 1);
   const interactionModes: Array<{
     id: "clarify" | "plan";
     description: string;
@@ -603,12 +689,20 @@ export function Composer({
           : "Default mode is active. Wordless can answer and execute tasks directly.";
   const showActionSubmenu = useCallback(
     (
-      submenu: "approval" | "connectors" | "experts" | "mode" | "skills" | null,
+      submenu:
+        | "approval"
+        | "connectors"
+        | "experts"
+        | "mode"
+        | "skills"
+        | "tasks"
+        | null,
     ) => {
       setApprovalOpen(submenu === "approval");
       setConnectorsOpen(submenu === "connectors");
       setModeOpen(submenu === "mode");
       setSkillsOpen(submenu === "skills");
+      setTasksOpen(submenu === "tasks");
       setExpertsOpen(submenu === "experts");
     },
     [],
@@ -734,6 +828,33 @@ export function Composer({
   }, [disabled, draft.skillQuery]);
 
   useEffect(() => {
+    if (!client) return;
+    const refreshTasks = async () => {
+      try {
+        setTasks(await client.listTasks());
+      } catch {
+        setTasks([]);
+      }
+    };
+    void refreshTasks();
+    return client.subscribe((event) => {
+      if (event.event.type === "task.changed") void refreshTasks();
+    });
+  }, [client]);
+
+  useEffect(() => {
+    const open = draft.taskQuery !== null && !disabled;
+    setTaskPickerIndex(0);
+    setTaskPickerOpen(open);
+    if (!open) setTaskSearch("");
+  }, [disabled, draft.taskQuery]);
+
+  useEffect(() => {
+    if (!taskPickerOpen) return;
+    taskSearchRef.current?.focus();
+  }, [taskPickerOpen]);
+
+  useEffect(() => {
     if (pendingWorkspaceReferences.length === 0 || disabled) return;
     for (const reference of pendingWorkspaceReferences)
       inputRef.current?.insertWorkspaceReference(reference);
@@ -752,15 +873,22 @@ export function Composer({
   }, []);
 
   useEffect(() => {
-    if (!workspacePickerOpen && !skillPickerOpen) return;
+    if (!workspacePickerOpen && !skillPickerOpen && !taskPickerOpen) return;
+    const selectedIndex = taskPickerOpen
+      ? highlightedTaskIndex
+      : skillPickerOpen
+        ? skillPickerIndex
+        : workspacePickerIndex;
     const selectedOption =
       workspacePickerListRef.current?.querySelector<HTMLElement>(
-        `[data-reference-picker-index="${skillPickerOpen ? skillPickerIndex : workspacePickerIndex}"]`,
+        `[data-reference-picker-index="${selectedIndex}"]`,
       );
     selectedOption?.scrollIntoView({ block: "nearest" });
   }, [
+    highlightedTaskIndex,
     skillPickerIndex,
     skillPickerOpen,
+    taskPickerOpen,
     workspacePickerIndex,
     workspacePickerOpen,
   ]);
@@ -974,9 +1102,58 @@ export function Composer({
     window.setTimeout(() => inputRef.current?.focus(), 0);
   };
 
+  const insertTaskReference = (task: TaskRecord) => {
+    inputRef.current?.insertParts(
+      composerTaskPromptParts(task, {
+        title: t("composerInsertTaskTitle"),
+        details: t("composerInsertTaskDetails"),
+        expectedResult: t("composerInsertTaskExpected"),
+      }),
+    );
+    setTaskPickerOpen(false);
+    setTaskSearch("");
+    setMenuOpen(false);
+    showActionSubmenu(null);
+    window.setTimeout(() => inputRef.current?.focus(), 0);
+  };
+
+  const dismissTaskPicker = () => {
+    inputRef.current?.stripMention("task");
+    setTaskPickerOpen(false);
+    setTaskSearch("");
+    window.setTimeout(() => inputRef.current?.focus(), 0);
+  };
+
   const referencePickerKeyDown = (
-    event: ReactKeyboardEvent<HTMLDivElement>,
+    event: ReactKeyboardEvent<HTMLElement>,
   ): boolean => {
+    if (taskPickerOpen) {
+      if (event.nativeEvent.isComposing) return false;
+      if (event.key === "ArrowDown") {
+        if (taskMatches.length > 0)
+          setTaskPickerIndex((index) => (index + 1) % taskMatches.length);
+        return true;
+      }
+      if (event.key === "ArrowUp") {
+        if (taskMatches.length > 0)
+          setTaskPickerIndex(
+            (index) => (index - 1 + taskMatches.length) % taskMatches.length,
+          );
+        return true;
+      }
+      if (
+        (event.key === "Enter" || event.key === "Tab") &&
+        taskMatches[highlightedTaskIndex]
+      ) {
+        insertTaskReference(taskMatches[highlightedTaskIndex]!);
+        return true;
+      }
+      if (event.key === "Escape") {
+        dismissTaskPicker();
+        return true;
+      }
+      return false;
+    }
     if (skillPickerOpen) {
       if (event.key === "ArrowDown") {
         if (skillMatches.length > 0)
@@ -1156,23 +1333,93 @@ export function Composer({
             stopEnabled={running}
             submitDisabled={running}
           />
-          {skillPickerOpen || workspacePickerOpen ? (
+          {skillPickerOpen || workspacePickerOpen || taskPickerOpen ? (
             <div
-              className="absolute z-40 w-[min(520px,calc(100vw-3rem))] overflow-hidden rounded-[8px] border border-[#cadbd5] bg-white p-1 shadow-[0_14px_34px_rgba(27,46,40,0.16)] dark:border-[#3c655a] dark:bg-card"
+              className={cn(
+                "absolute z-40 overflow-hidden rounded-[8px] border border-[#cadbd5] bg-white p-1 shadow-[0_14px_34px_rgba(27,46,40,0.16)] dark:border-[#3c655a] dark:bg-card",
+                taskPickerOpen
+                  ? "w-[min(220px,calc(100vw-3rem))]"
+                  : "w-[min(520px,calc(100vw-3rem))]",
+              )}
               style={{
                 left: workspacePickerPosition.left,
                 bottom: workspacePickerPosition.bottom,
               }}
             >
-              <div className="px-2 py-1.5 font-mono text-[9px] uppercase tracking-[0.08em] text-[#688278] dark:text-[#9bbfb2]">
-                {skillPickerOpen ? "Skills" : "Workspace files"}
-              </div>
+              {taskPickerOpen ? null : (
+                <div className="px-2 py-1.5 font-mono text-[9px] uppercase tracking-[0.08em] text-[#688278] dark:text-[#9bbfb2]">
+                  {skillPickerOpen ? "Skills" : "Workspace files"}
+                </div>
+              )}
+              {taskPickerOpen ? (
+                <input
+                  aria-label={t("composerTaskSearch")}
+                  autoFocus
+                  className="mb-1 h-8 w-full rounded-[6px] border border-[#e4e4df] bg-[#fafaf8] px-2 text-[12px] text-[#3f3f3a] outline-none placeholder:text-[#9b9b94] focus:border-[#9dad75] dark:border-border dark:bg-muted dark:text-foreground"
+                  onChange={(event) => {
+                    setTaskSearch(event.target.value);
+                    setTaskPickerIndex(0);
+                  }}
+                  onKeyDown={(event) => {
+                    if (referencePickerKeyDown(event)) {
+                      event.preventDefault();
+                      event.stopPropagation();
+                    }
+                  }}
+                  placeholder={t("composerTaskSearch")}
+                  ref={taskSearchRef}
+                  value={taskSearch}
+                />
+              ) : null}
               <div
                 className="max-h-52 overflow-y-auto"
                 ref={workspacePickerListRef}
                 role="listbox"
               >
-                {skillPickerOpen ? (
+                {taskPickerOpen ? (
+                  taskMatches.length > 0 ? (
+                    taskMatches.map((task, index) => (
+                      <button
+                        aria-selected={index === highlightedTaskIndex}
+                        className={cn(
+                          "flex w-full min-w-0 items-center gap-2 rounded-[5px] px-2 py-1.5 text-left",
+                          index === highlightedTaskIndex
+                            ? "bg-[#eaf5f1] dark:bg-[#28443b]"
+                            : "hover:bg-[#f2f6f4] dark:hover:bg-muted",
+                        )}
+                        data-reference-picker-index={index}
+                        key={task.id}
+                        onMouseDown={(event) => event.preventDefault()}
+                        onMouseEnter={() => setTaskPickerIndex(index)}
+                        onClick={() => insertTaskReference(task)}
+                        role="option"
+                        title={task.title}
+                        type="button"
+                      >
+                        <span
+                          aria-label={
+                            task.status === "in-progress"
+                              ? t("tasksInProgress")
+                              : t("tasksTodo")
+                          }
+                          className={cn(
+                            "h-2 w-2 shrink-0 rounded-full",
+                            task.status === "in-progress"
+                              ? "bg-[#3478c9]"
+                              : "bg-[#8b8f87]",
+                          )}
+                        />
+                        <span className="min-w-0 flex-1 truncate text-[12px] font-medium text-[#3a4d47] dark:text-foreground">
+                          {task.title}
+                        </span>
+                      </button>
+                    ))
+                  ) : (
+                    <p className="px-2 py-3 text-[11px] text-muted-foreground">
+                      {t("composerNoTaskMatches")}
+                    </p>
+                  )
+                ) : skillPickerOpen ? (
                   skillMatches.length > 0 ? (
                     skillMatches.map((skill, index) => (
                       <button
@@ -1377,6 +1624,20 @@ export function Composer({
               <button
                 className={cn(
                   "flex w-full items-center gap-2 rounded-[7px] px-2.5 py-2 text-left text-[12px] text-[#3f3f3a] hover:bg-[#f3f3f0] dark:text-foreground dark:hover:bg-muted",
+                  tasksOpen && "bg-[#eeeeeb] dark:bg-muted",
+                )}
+                onClick={() => showActionSubmenu("tasks")}
+                onFocus={() => showActionSubmenu("tasks")}
+                onMouseEnter={() => showActionSubmenu("tasks")}
+                type="button"
+              >
+                <ListTodo className="h-4 w-4 text-[#697947]" />
+                <span>{t("tasks")}</span>
+                <ChevronRight className="ml-auto h-3 w-3 text-[#898981]" />
+              </button>
+              <button
+                className={cn(
+                  "flex w-full items-center gap-2 rounded-[7px] px-2.5 py-2 text-left text-[12px] text-[#3f3f3a] hover:bg-[#f3f3f0] dark:text-foreground dark:hover:bg-muted",
                   connectorsOpen && "bg-[#eeeeeb] dark:bg-muted",
                 )}
                 onClick={() => showActionSubmenu("connectors")}
@@ -1414,7 +1675,7 @@ export function Composer({
               ) : null}
             </div>
             {modeOpen && (onInteractionModeChange || onTogglePlanMode) ? (
-              <div className="absolute left-[187px] top-0 w-[244px] rounded-[10px] border border-[#dfdfdb] bg-white p-1.5 shadow-[0_14px_34px_rgba(28,28,25,0.12)] dark:border-border dark:bg-card">
+              <div className="absolute left-[194px] top-0 w-[244px] rounded-[10px] border border-[#dfdfdb] bg-white p-1.5 shadow-[0_14px_34px_rgba(28,28,25,0.12)] dark:border-border dark:bg-card">
                 <p className="px-2.5 pb-2 pt-1 text-[10px] leading-4 text-[#7f7f78] dark:text-muted-foreground">
                   {interactionModeDescription}
                 </p>
@@ -1552,6 +1813,16 @@ export function Composer({
                 pinnedSkillIds={pinnedSkillIds}
                 searchLabel={t("searchSkills")}
                 skillTokenCounts={draft.skillTokenCounts}
+              />
+            ) : null}
+            {tasksOpen ? (
+              <TasksSubmenu
+                emptyLabel={t("composerNoTaskMatches")}
+                inProgressLabel={t("tasksInProgress")}
+                onInsertTask={insertTaskReference}
+                searchLabel={t("composerTaskSearch")}
+                tasks={tasks}
+                todoLabel={t("tasksTodo")}
               />
             ) : null}
             {connectorsOpen ? (

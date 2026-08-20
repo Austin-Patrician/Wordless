@@ -1,5 +1,5 @@
 import { Button, DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger, Tooltip, TooltipContent, TooltipTrigger } from "@wordless/ui-kit";
-import { Bell, CalendarClock, ChevronDown, ChevronLeft, Cloud, Command, Ellipsis, Folder, FolderOpen, Images, LoaderCircle, LogIn, LogOut, Pin, PinOff, Search, Settings, Trash2, Pencil, UserRoundSearch, X, ListTodo } from "lucide-react";
+import { Bell, CalendarClock, ChevronDown, ChevronLeft, ChevronsDown, ChevronsUp, Cloud, Command, Ellipsis, Folder, FolderOpen, Images, LoaderCircle, LogIn, LogOut, Pin, PinOff, Search, Settings, Trash2, Pencil, UserRoundSearch, X, ListTodo } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import type { SessionRecord } from "@wordless/domain";
@@ -9,6 +9,7 @@ import folderIcon from "../../../icons/common-icons/floder.svg";
 import wordlessIcon from "../../../icons/common-icons/wordless.png";
 import { AgentEntryIcon } from "./AgentEntryIcon";
 import { SessionSearchDialog } from "./SessionSearchDialog";
+import { sortWorkspaceGroupsByRecentSession } from "./sidebar-sessions";
 import { useDesktopAccount } from "../../shared/account";
 import type { SettingsPage } from "../settings/SettingsDialog";
 
@@ -195,11 +196,31 @@ export function Sidebar({ automationActive, collapsed, expertsActive, mediaActiv
     ? recentSessions
     : recentSessions.slice(0, RECENT_SESSION_LIMIT);
   const workspaceGroups = useMemo(
-    () => workspaces
-      .map((workspace) => ({ workspace, sessions: sortSessions(sessions.filter((session) => session.workspaceId === workspace.id)) }))
-      .filter((group) => group.sessions.length > 0),
+    () =>
+      sortWorkspaceGroupsByRecentSession(
+        workspaces
+          .map((workspace) => ({
+            workspace,
+            sessions: sortSessions(
+              sessions.filter((session) => session.workspaceId === workspace.id),
+            ),
+          }))
+          .filter((group) => group.sessions.length > 0),
+      ),
     [sessions, workspaces],
   );
+  const allWorkspacesExpanded =
+    workspaceGroups.length > 0 &&
+    workspaceGroups.every((group) =>
+      expandedWorkspaceIds.has(group.workspace.id),
+    );
+  const toggleAllWorkspaces = () => {
+    setExpandedWorkspaceIds(
+      allWorkspacesExpanded
+        ? new Set()
+        : new Set(workspaceGroups.map((group) => group.workspace.id)),
+    );
+  };
 
   useEffect(() => {
     if (!selectedSession?.workspaceId) return;
@@ -299,7 +320,7 @@ export function Sidebar({ automationActive, collapsed, expertsActive, mediaActiv
         })}
       </nav>
 
-      {!collapsed ? <div className="wordless-sidebar-session-scroll mt-7 min-h-0 flex-1 overflow-y-auto pr-1"><section><div className="mb-2 flex items-center justify-between px-3"><p className="font-mono text-[10px] uppercase tracking-[0.14em] text-muted-foreground">{t("recentThreads")}</p><span className="font-mono text-[10px] text-muted-foreground">{recentSessions.length.toString().padStart(2, "0")}</span></div><div className="space-y-1">{visibleRecentSessions.map(sessionRow)}</div>{hiddenRecentSessionCount > 0 ? <Tooltip><TooltipTrigger asChild><button aria-expanded={recentSessionsExpanded} aria-label={recentSessionsExpanded ? t("collapseRecentThreads") : t("expandRecentThreads")} className="mt-1 flex h-7 w-full items-center justify-center rounded-[7px] text-[#85857e] outline-none transition-colors hover:bg-[#e7e7e3] hover:text-[#4d4d48] focus-visible:ring-2 focus-visible:ring-ring dark:text-muted-foreground dark:hover:bg-[#282a21] dark:hover:text-foreground" onClick={() => setRecentSessionsExpanded((current) => !current)} type="button"><Ellipsis className="h-4 w-4" /></button></TooltipTrigger><TooltipContent>{recentSessionsExpanded ? t("collapseRecentThreads") : t("expandRecentThreads")}</TooltipContent></Tooltip> : null}</section><section className={hiddenRecentSessionCount > 0 ? "mt-3" : "mt-6"}><div className="mb-2 flex items-center justify-between px-3"><p className="font-mono text-[10px] uppercase tracking-[0.14em] text-muted-foreground">{t("yourSpace")}</p><span className="font-mono text-[10px] text-muted-foreground">{workspaceGroups.length.toString().padStart(2, "0")}</span></div><div className="space-y-2">{workspaceGroups.map(({ workspace, sessions: workspaceSessions }) => {
+      {!collapsed ? <div className="wordless-sidebar-session-scroll mt-7 min-h-0 flex-1 overflow-y-auto pr-1"><section><div className="mb-2 flex items-center justify-between px-3"><span className="flex min-w-0 items-center gap-1.5"><p className="font-mono text-[10px] uppercase tracking-[0.14em] text-muted-foreground">{t("recentThreads")}</p>{hiddenRecentSessionCount > 0 ? <Tooltip><TooltipTrigger asChild><button aria-expanded={recentSessionsExpanded} aria-label={recentSessionsExpanded ? t("collapseRecentThreads") : t("expandRecentThreads")} className="grid h-5 w-5 shrink-0 place-items-center rounded-[5px] text-[#5d7a28] outline-none transition-colors hover:bg-[#eff8d3] hover:text-[#4f6c21] focus-visible:ring-2 focus-visible:ring-ring dark:text-[#d7e9a4] dark:hover:bg-[#303a1c] dark:hover:text-[#e4f2b8]" onClick={() => setRecentSessionsExpanded((current) => !current)} type="button">{recentSessionsExpanded ? <ChevronsUp className="h-3 w-3" /> : <ChevronsDown className="h-3 w-3" />}</button></TooltipTrigger><TooltipContent>{recentSessionsExpanded ? t("collapseRecentThreads") : t("expandRecentThreads")}</TooltipContent></Tooltip> : null}</span><span className="font-mono text-[10px] text-muted-foreground">{recentSessions.length.toString().padStart(2, "0")}</span></div><div className="space-y-1">{visibleRecentSessions.map(sessionRow)}</div>{hiddenRecentSessionCount > 0 ? <Tooltip><TooltipTrigger asChild><button aria-expanded={recentSessionsExpanded} aria-label={recentSessionsExpanded ? t("collapseRecentThreads") : t("expandRecentThreads")} className="mt-1 flex h-7 w-full items-center justify-center rounded-[7px] text-[#85857e] outline-none transition-colors hover:bg-[#e7e7e3] hover:text-[#4d4d48] focus-visible:ring-2 focus-visible:ring-ring dark:text-muted-foreground dark:hover:bg-[#282a21] dark:hover:text-foreground" onClick={() => setRecentSessionsExpanded((current) => !current)} type="button"><Ellipsis className="h-4 w-4" /></button></TooltipTrigger><TooltipContent>{recentSessionsExpanded ? t("collapseRecentThreads") : t("expandRecentThreads")}</TooltipContent></Tooltip> : null}</section><section className={hiddenRecentSessionCount > 0 ? "mt-3" : "mt-6"}><div className="mb-2 flex items-center justify-between px-3"><span className="flex min-w-0 items-center gap-1.5"><p className="font-mono text-[10px] uppercase tracking-[0.14em] text-muted-foreground">{t("yourSpace")}</p>{workspaceGroups.length > 0 ? <Tooltip><TooltipTrigger asChild><button aria-expanded={allWorkspacesExpanded} aria-label={allWorkspacesExpanded ? t("collapseYourSpace") : t("expandYourSpace")} className="grid h-5 w-5 shrink-0 place-items-center rounded-[5px] text-[#5d7a28] outline-none transition-colors hover:bg-[#eff8d3] hover:text-[#4f6c21] focus-visible:ring-2 focus-visible:ring-ring dark:text-[#d7e9a4] dark:hover:bg-[#303a1c] dark:hover:text-[#e4f2b8]" onClick={toggleAllWorkspaces} type="button">{allWorkspacesExpanded ? <ChevronsUp className="h-3 w-3" /> : <ChevronsDown className="h-3 w-3" />}</button></TooltipTrigger><TooltipContent>{allWorkspacesExpanded ? t("collapseYourSpace") : t("expandYourSpace")}</TooltipContent></Tooltip> : null}</span><span className="font-mono text-[10px] text-muted-foreground">{workspaceGroups.length.toString().padStart(2, "0")}</span></div><div className="space-y-2">{workspaceGroups.map(({ workspace, sessions: workspaceSessions }) => {
         const expanded = expandedWorkspaceIds.has(workspace.id);
         return <section key={workspace.id}><button aria-expanded={expanded} className="flex h-8 w-full items-center gap-2 rounded-[7px] px-2 text-left text-[11px] text-[#4f4f4a] outline-none hover:bg-[#e7e7e3] focus-visible:ring-2 focus-visible:ring-ring dark:text-muted-foreground dark:hover:bg-[#282a21]" onClick={() => setExpandedWorkspaceIds((current) => { const next = new Set(current); if (next.has(workspace.id)) next.delete(workspace.id); else next.add(workspace.id); return next; })} type="button"><img alt="" className="h-3.5 w-3.5 shrink-0 opacity-75 dark:invert" src={folderIcon} /><span className="min-w-0 flex-1 truncate font-medium">{workspace.name}</span><ChevronDown className={`h-3.5 w-3.5 transition-transform ${expanded ? "" : "-rotate-90"}`} /></button>{expanded ? <div className="mt-0.5 space-y-1 pl-2">{workspaceSessions.map(sessionRow)}</div> : null}</section>;
       })}</div></section></div> : null}

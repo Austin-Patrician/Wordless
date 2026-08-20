@@ -10,9 +10,11 @@ import { WordlessRuntime } from "../src/index.ts";
 
 test("indexes scoped General Work artifacts with expert producers", async (context) => {
   const root = await mkdtemp(join(tmpdir(), "wordless-session-artifacts-"));
-  context.after(async () => await rm(root, { force: true, recursive: true }));
   const database = new WordlessDatabase(join(root, "wordless.db"));
-  context.after(() => database.close());
+  context.after(async () => {
+    await database.close();
+    await rm(root, { force: true, recursive: true });
+  });
   const sessionId = "session-1";
   const runtimeRootPath = join(root, "session-root");
   const record: SessionRecord = {
@@ -84,7 +86,7 @@ test("indexes scoped General Work artifacts with expert producers", async (conte
   });
 
   const snapshot = await runtime.getSessionArtifacts(sessionId);
-  assert.equal(snapshot.artifacts.length, 1);
+  assert.equal(snapshot.artifacts.length, 2);
   const brief = snapshot.artifacts.find((artifact) => artifact.name === "brief.md");
   assert.equal(brief?.previewKind, "markdown");
   assert.deepEqual(brief?.producer, {
@@ -92,6 +94,15 @@ test("indexes scoped General Work artifacts with expert producers", async (conte
     id: "lead",
     name: "Editor",
     portrait: { kind: "builtin", key: "content-studio" },
+  });
+  assert.equal(brief?.group, "primary");
+  const draft = snapshot.artifacts.find((artifact) => artifact.name === "draft.txt");
+  assert.equal(draft?.group, "writer-1");
+  assert.deepEqual(draft?.producer, {
+    kind: "expert-member",
+    id: "writer-1",
+    name: "Writer",
+    portrait: { kind: "builtin", key: "product-strategist" },
   });
   assert.ok(brief);
   assert.deepEqual(await runtime.readSessionArtifact(sessionId, brief.id), {

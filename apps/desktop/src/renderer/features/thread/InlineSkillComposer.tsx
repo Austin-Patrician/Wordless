@@ -37,7 +37,7 @@ import { forwardRef, useEffect, useImperativeHandle, useRef, useState, type JSX,
 import type { SkillSource, UserPromptPart } from "@wordless/domain";
 import { FileTypeIcon } from "../../shared/FileTypeIcon";
 import { skillIconText } from "../../shared/skill-icon";
-import { countSkillTokenOccurrences, normalizeUserPromptParts, uniqueSkillIdsInDocumentOrder } from "./inline-skill-composer-model";
+import { countSkillTokenOccurrences, mentionQueryAtEnd, normalizeUserPromptParts, stripTrailingMentionStart, uniqueSkillIdsInDocumentOrder, type ComposerMentionKind } from "./inline-skill-composer-model";
 
 export type InlineSkillToken = {
   id: string;
@@ -57,6 +57,7 @@ export type InlineSkillComposerValue = {
   skillTokenCounts: Record<string, number>;
   text: string;
   skillQuery: string | null;
+  taskQuery: string | null;
   workspaceReferenceCount: number;
   workspaceQuery: string | null;
 };
@@ -67,9 +68,11 @@ export type InlineSkillComposerHandle = {
   focus(): void;
   getCursorRect(): DOMRect | null;
   getValue(): InlineSkillComposerValue;
+  insertParts(parts: readonly UserPromptPart[]): void;
   insertSkill(skill: InlineSkillToken, options?: { atEnd?: boolean }): void;
   insertWorkspaceReference(reference: InlineWorkspaceReferenceToken): void;
   setValue(parts: readonly UserPromptPart[], options?: { focus?: boolean }): void;
+  stripMention(kind: ComposerMentionKind): void;
 };
 
 type InlineSkillComposerProps = {
@@ -84,7 +87,7 @@ type InlineSkillComposerProps = {
   readOnly?: boolean;
   stopEnabled?: boolean;
   submitDisabled?: boolean;
-  onReferencePickerKeyDown?(event: ReactKeyboardEvent<HTMLDivElement>): boolean;
+  onReferencePickerKeyDown?(event: ReactKeyboardEvent<HTMLElement>): boolean;
   placeholderClassName?: string;
 };
 
@@ -240,6 +243,91 @@ function $canRestoreSelection(selection: RangeSelection): boolean {
   return pointIsValid(selection.anchor) && pointIsValid(selection.focus);
 }
 
+function $restoreComposerSelection(selection: RangeSelection | null): void {
+  if (selection && $canRestoreSelection(selection)) $setSelection(selection.clone());
+  else $getRoot().selectEnd();
+}
+
+function $stripMentionAtCursor(kind: ComposerMentionKind): void {
+  const selection = $getSelection();
+  if (!$isRangeSelection(selection) || !selection.isCollapsed()) return;
+  const node = selection.anchor.getNode();
+  if (!$isTextNode(node)) return;
+  const value = node.getTextContent();
+  const prefix = value.slice(0, selection.anchor.offset);
+  const start = stripTrailingMentionStart(prefix, kind);
+  if (start === null) return;
+  node.setTextContent(`${value.slice(0, start)}${value.slice(selection.anchor.offset)}`);
+  selection.setTextNodeRange(node, start, node, start);
+}
+
+function $collectEditorParts(): { parts: UserPromptPart[]; tokenIds: string[] } {
+  const parts: UserPromptPart[] = [];
+  const tokenIds: string[] = [];
+  const appendText = (text: string) => {
+    if (text) parts.push({ type: "text", text });
+  };
+  const visit = (node: LexicalNode) => {
+    if ($isSkillTokenNode(node)) {
+      tokenIds.push(node.getSkillId());
+      parts.push({ type: "skill-reference", skillId: node.getSkillId(), name: node.getSkillName(), source: node.getSource() });
+      return;
+    }
+    if ($isWorkspaceReferenceNode(node)) {
+      parts.push({ type: "workspace-reference", path: node.getPath(), name: node.getName(), kind: node.getKind() });
+      return;
+    }
+    if ($isElementNode(node)) {
+      node.getChildren().forEach(visit);
+      return;
+    }
+    appendText(node.getTextContent());
+  };
+  const rootChildren = $getRoot().getChildren();
+  rootChildren.forEach((node, index) => {
+    visit(node);
+    if (index < rootChildren.length - 1) appendText("\n");
+  });
+  return { parts: normalizeUserPromptParts(parts), tokenIds };
+}
+
+function $nodesFromPromptParts(parts: readonly UserPromptPart[]): LexicalNode[] {
+  const nodes: LexicalNode[] = [];
+  for (const part of parts) {
+    if (part.type === "text") {
+      if (part.text) nodes.push($createTextNode(part.text));
+    } else if (part.type === "skill-reference") {
+      nodes.push($createSkillTokenNode(part.skillId, part.name, part.source));
+    } else if (part.type === "workspace-reference") {
+      nodes.push($createWorkspaceReferenceNode(part.path, part.name, part.kind));
+    }
+  }
+  return nodes;
+}
+
+function $setRootFromParts(parts: readonly UserPromptPart[]): void {
+  const root = $getRoot();
+  root.clear();
+  let paragraph = $createParagraphNode();
+  root.append(paragraph);
+  for (const part of parts) {
+    if (part.type === "text") {
+      const lines = part.text.split("\n");
+      lines.forEach((line, index) => {
+        if (index > 0) {
+          paragraph = $createParagraphNode();
+          root.append(paragraph);
+        }
+        if (line) paragraph.append($createTextNode(line));
+      });
+    } else if (part.type === "skill-reference") {
+      paragraph.append($createSkillTokenNode(part.skillId, part.name, part.source));
+    } else if (part.type === "workspace-reference") {
+      paragraph.append($createWorkspaceReferenceNode(part.path, part.name, part.kind));
+    }
+  }
+}
+
 function removeToken(editor: LexicalEditor, nodeKey: NodeKey): void {
   editor.update(() => {
     const node = $getNodeByKey(nodeKey);
@@ -292,44 +380,17 @@ function WorkspaceReferenceToken({ nodeKey, name, path, kind }: { nodeKey: NodeK
 
 function editorValue(editorState: EditorState): InlineSkillComposerValue {
   return editorState.read(() => {
-    const parts: UserPromptPart[] = [];
-    const tokenIds: string[] = [];
-    const appendText = (text: string) => {
-      if (text) parts.push({ type: "text", text });
-    };
-    const visit = (node: LexicalNode) => {
-      if ($isSkillTokenNode(node)) {
-        tokenIds.push(node.getSkillId());
-        parts.push({ type: "skill-reference", skillId: node.getSkillId(), name: node.getSkillName(), source: node.getSource() });
-        return;
-      }
-      if ($isWorkspaceReferenceNode(node)) {
-        parts.push({ type: "workspace-reference", path: node.getPath(), name: node.getName(), kind: node.getKind() });
-        return;
-      }
-      if ($isElementNode(node)) {
-        node.getChildren().forEach(visit);
-        return;
-      }
-      appendText(node.getTextContent());
-    };
-    const rootChildren = $getRoot().getChildren();
-    rootChildren.forEach((node, index) => {
-      visit(node);
-      if (index < rootChildren.length - 1) appendText("\n");
-    });
-    const normalizedParts = normalizeUserPromptParts(parts);
-    const text = normalizedParts.flatMap((part) => part.type === "text" ? [part.text] : []).join("");
-    const atMatch = /(?:^|\s)@([^\s@$]*)$/.exec(text);
-    const skillMatch = /(?:^|\s)\$([^\s@$]*)$/.exec(text);
+    const { parts, tokenIds } = $collectEditorParts();
+    const text = parts.flatMap((part) => part.type === "text" ? [part.text] : []).join("");
     return {
-      parts: normalizedParts,
+      parts,
       skillIds: uniqueSkillIdsInDocumentOrder(tokenIds),
       skillTokenCounts: countSkillTokenOccurrences(tokenIds),
-      skillQuery: skillMatch ? skillMatch[1] ?? "" : null,
+      skillQuery: mentionQueryAtEnd(text, "skill"),
+      taskQuery: mentionQueryAtEnd(text, "task"),
       text,
-      workspaceReferenceCount: normalizedParts.filter((part) => part.type === "workspace-reference").length,
-      workspaceQuery: atMatch ? atMatch[1] ?? "" : null,
+      workspaceReferenceCount: parts.filter((part) => part.type === "workspace-reference").length,
+      workspaceQuery: mentionQueryAtEnd(text, "workspace"),
     };
   });
 }
@@ -476,7 +537,35 @@ export const InlineSkillComposer = forwardRef<InlineSkillComposerHandle, InlineS
     },
     getValue() {
       const editor = editorRef.current;
-      return editor ? editorValue(editor.getEditorState()) : { parts: [], skillIds: [], skillTokenCounts: {}, skillQuery: null, text: "", workspaceReferenceCount: 0, workspaceQuery: null };
+      return editor ? editorValue(editor.getEditorState()) : { parts: [], skillIds: [], skillTokenCounts: {}, skillQuery: null, taskQuery: null, text: "", workspaceReferenceCount: 0, workspaceQuery: null };
+    },
+    insertParts(parts) {
+      const editor = editorRef.current;
+      if (!editor || disabled || readOnly) return;
+      editor.update(() => {
+        $restoreComposerSelection(selectionRef.current);
+        $stripMentionAtCursor("task");
+        const nodes = $nodesFromPromptParts(parts);
+        const selection = $getSelection();
+        if ($isRangeSelection(selection) && nodes.length > 0) {
+          selection.insertNodes(nodes);
+          nodes.at(-1)?.selectNext();
+          return;
+        }
+        if (nodes.length === 0) return;
+        $setRootFromParts(normalizeUserPromptParts([...$collectEditorParts().parts, ...parts]));
+        $getRoot().selectEnd();
+      });
+      editor.focus();
+    },
+    stripMention(kind) {
+      const editor = editorRef.current;
+      if (!editor || disabled || readOnly) return;
+      editor.update(() => {
+        $restoreComposerSelection(selectionRef.current);
+        $stripMentionAtCursor(kind);
+      });
+      editor.focus();
     },
     insertSkill(skill, options) {
       const editor = editorRef.current;
@@ -493,25 +582,10 @@ export const InlineSkillComposer = forwardRef<InlineSkillComposerHandle, InlineS
           token.selectNext();
           return;
         }
-        const savedSelection = selectionRef.current;
-        if (!options?.atEnd && savedSelection && $canRestoreSelection(savedSelection)) {
-          $setSelection(savedSelection.clone());
-        } else {
-          $getRoot().selectEnd();
-        }
+        $restoreComposerSelection(selectionRef.current);
+        $stripMentionAtCursor("skill");
         const selection = $getSelection();
         if ($isRangeSelection(selection)) {
-          const node = selection.anchor.getNode();
-          if (selection.isCollapsed() && $isTextNode(node)) {
-            const value = node.getTextContent();
-            const prefix = value.slice(0, selection.anchor.offset);
-            const match = /(?:^|\s)\$[^\s@$]*$/.exec(prefix);
-            if (match) {
-              const start = prefix.length - match[0].length + (match[0].startsWith(" ") ? 1 : 0);
-              node.setTextContent(`${value.slice(0, start)}${value.slice(selection.anchor.offset)}`);
-              selection.setTextNodeRange(node, start, node, start);
-            }
-          }
           selection.insertNodes([token]);
           token.selectNext();
           return;
@@ -528,22 +602,10 @@ export const InlineSkillComposer = forwardRef<InlineSkillComposerHandle, InlineS
       const editor = editorRef.current;
       if (!editor || disabled || readOnly) return;
       editor.update(() => {
-        const savedSelection = selectionRef.current;
-        if (savedSelection && $canRestoreSelection(savedSelection)) $setSelection(savedSelection.clone());
-        else $getRoot().selectEnd();
+        $restoreComposerSelection(selectionRef.current);
+        $stripMentionAtCursor("workspace");
         const selection = $getSelection();
         if ($isRangeSelection(selection)) {
-          const node = selection.anchor.getNode();
-          if (selection.isCollapsed() && $isTextNode(node)) {
-            const value = node.getTextContent();
-            const prefix = value.slice(0, selection.anchor.offset);
-            const match = /(?:^|\s)@[^\s@]*$/.exec(prefix);
-            if (match) {
-              const start = prefix.length - match[0].length + (match[0].startsWith(" ") ? 1 : 0);
-              node.setTextContent(`${value.slice(0, start)}${value.slice(selection.anchor.offset)}`);
-              selection.setTextNodeRange(node, start, node, start);
-            }
-          }
           const token = $createWorkspaceReferenceNode(reference.path, reference.name, reference.kind);
           selection.insertNodes([token]);
           token.selectNext();
@@ -560,27 +622,8 @@ export const InlineSkillComposer = forwardRef<InlineSkillComposerHandle, InlineS
       hasContentRef.current = nextHasContent;
       setHasContent(nextHasContent);
       editor.update(() => {
-        const root = $getRoot();
-        root.clear();
-        let paragraph = $createParagraphNode();
-        root.append(paragraph);
-        for (const part of parts) {
-          if (part.type === "text") {
-            const lines = part.text.split("\n");
-            lines.forEach((line, index) => {
-              if (index > 0) {
-                paragraph = $createParagraphNode();
-                root.append(paragraph);
-              }
-              if (line) paragraph.append($createTextNode(line));
-            });
-          } else if (part.type === "skill-reference") {
-            paragraph.append($createSkillTokenNode(part.skillId, part.name, part.source));
-          } else if (part.type === "workspace-reference") {
-            paragraph.append($createWorkspaceReferenceNode(part.path, part.name, part.kind));
-          }
-        }
-        root.selectEnd();
+        $setRootFromParts(parts);
+        $getRoot().selectEnd();
       });
       if (options?.focus !== false) editor.focus();
     },

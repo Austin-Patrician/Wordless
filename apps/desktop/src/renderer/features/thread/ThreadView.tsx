@@ -3330,7 +3330,19 @@ export function ThreadView({
 
   const resolvePlanResult = async (action: "implement" | "stay") => {
     if (action === "stay") return;
-    await setPlanMode("executing");
+    const currentState = threadMetadata.extensions.find(
+      (item) => item.extensionId === "wordless.plan-mode",
+    )?.state;
+    const updatedSession = await client.setSessionInteractionMode(
+      sessionId,
+      "default",
+    );
+    threadStore.patchSession(updatedSession);
+    await client.setSessionExtensionState(sessionId, "wordless.plan-mode", {
+      mode: "executing",
+      plan: Array.isArray(currentState?.plan) ? currentState.plan : [],
+    });
+    threadStore.mergeSessionView(await client.getSessionView(sessionId));
     await send([
       {
         type: "text",

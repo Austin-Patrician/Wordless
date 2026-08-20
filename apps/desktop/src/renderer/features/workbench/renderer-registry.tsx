@@ -1131,7 +1131,7 @@ function CodeToolActivity({
       />
       {oldText !== undefined && newText !== undefined ? (
         <details className="group mt-2">
-          <summary className="flex w-fit cursor-pointer list-none items-center gap-1 font-mono text-[11px] font-semibold text-[#777770] outline-none focus-visible:ring-2 focus-visible:ring-ring [&::-webkit-details-marker]:hidden">
+          <summary className="flex w-fit cursor-pointer list-none items-center gap-1 font-mono text-[11px] font-semibold text-[#b3413a] outline-none focus-visible:ring-2 focus-visible:ring-ring [&::-webkit-details-marker]:hidden">
             {t("toolViewChange")}
             <ChevronDown
               aria-hidden

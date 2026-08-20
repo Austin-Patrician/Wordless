@@ -9,6 +9,7 @@ import {
   SelectValue,
 } from "@wordless/ui-kit";
 import {
+  Activity,
   CalendarDays,
   ChartNoAxesCombined,
   CheckCircle2,
@@ -82,6 +83,7 @@ const emptyValue: InlineSkillComposerValue = {
   skillIds: [],
   skillTokenCounts: {},
   skillQuery: null,
+  taskQuery: null,
   text: "",
   workspaceReferenceCount: 0,
   workspaceQuery: null,
@@ -180,8 +182,10 @@ export function TasksView({
   const [tasks, setTasks] = useState<TaskRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [query, setQuery] = useState("");
-  const [view, setView] = useState<"board" | "timeline" | "list" | "dashboard">(
-    "board",
+  const [view, setView] = useState<
+    "overview" | "board" | "timeline" | "list" | "dashboard"
+  >(
+    "overview",
   );
   const [editing, setEditing] = useState<TaskRecord | null | "new">(null);
   const [error, setError] = useState<string | null>(null);
@@ -318,48 +322,82 @@ export function TasksView({
                 <ChevronLeft className="h-4 w-4 rotate-180" />
               </Button>
             ) : null}
-            <div className="flex h-9 gap-5">
+            <div className="flex h-9 items-center gap-4">
               <button
-                className={`flex items-center gap-1.5 border-b-2 px-1 text-[12px] ${view === "board" ? "border-[#4c6f2e] text-foreground" : "border-transparent text-muted-foreground"}`}
-                onClick={() => setView("board")}
+                className={`flex h-full items-center gap-1.5 border-b-2 px-1 text-[12px] ${view === "overview" ? "border-[#4c6f2e] text-foreground" : "border-transparent text-muted-foreground"}`}
+                onClick={() => setView("overview")}
+                type="button"
               >
-                <Columns3 className="h-3.5 w-3.5" />
-                {t("tasksBoard")}
+                <Activity className="h-3.5 w-3.5" />
+                {t("tasksOverview")}
               </button>
-              <button
-                className={`flex items-center gap-1.5 border-b-2 px-1 text-[12px] ${view === "timeline" ? "border-[#4c6f2e] text-foreground" : "border-transparent text-muted-foreground"}`}
-                onClick={() => setView("timeline")}
+              <div
+                className={`flex h-full items-center gap-2 border-b-2 px-1 text-[12px] ${["board", "timeline", "list"].includes(view) ? "border-[#4c6f2e] text-foreground" : "border-transparent text-muted-foreground"}`}
               >
-                <CalendarDays className="h-3.5 w-3.5" />
-                {t("tasksTimeline")}
-              </button>
+                <button
+                  aria-label={t("tasksBoard")}
+                  className="flex items-center gap-1.5"
+                  onClick={() => setView("board")}
+                  title={t("tasksBoard")}
+                >
+                  <Columns3 className="h-3.5 w-3.5" />
+                  {t("tasksBoard")}
+                </button>
+                {["board", "timeline", "list"].includes(view) ? (
+                  <div className="ml-1 flex items-center gap-0.5 rounded-[6px] bg-muted/60 p-0.5">
+                    <button
+                      aria-label={t("tasksBoard")}
+                      className={`grid h-6 w-6 place-items-center rounded-[4px] transition-colors ${view === "board" ? "bg-card text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"}`}
+                      onClick={() => setView("board")}
+                      title={t("tasksBoard")}
+                      type="button"
+                    >
+                      <Columns3 className="h-3.5 w-3.5" />
+                    </button>
+                    <button
+                      aria-label={t("tasksTimeline")}
+                      className={`grid h-6 w-6 place-items-center rounded-[4px] transition-colors ${view === "timeline" ? "bg-card text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"}`}
+                      onClick={() => setView("timeline")}
+                      title={t("tasksTimeline")}
+                      type="button"
+                    >
+                      <CalendarDays className="h-3.5 w-3.5" />
+                    </button>
+                    <button
+                      aria-label={t("tasksList")}
+                      className={`grid h-6 w-6 place-items-center rounded-[4px] transition-colors ${view === "list" ? "bg-card text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"}`}
+                      onClick={() => setView("list")}
+                      title={t("tasksList")}
+                      type="button"
+                    >
+                      <List className="h-3.5 w-3.5" />
+                    </button>
+                  </div>
+                ) : null}
+              </div>
               <button
-                className={`flex items-center gap-1.5 border-b-2 px-1 text-[12px] ${view === "list" ? "border-[#4c6f2e] text-foreground" : "border-transparent text-muted-foreground"}`}
-                onClick={() => setView("list")}
-              >
-                <List className="h-3.5 w-3.5" />
-                {t("tasksList")}
-              </button>
-              <button
-                className={`flex items-center gap-1.5 border-b-2 px-1 text-[12px] ${view === "dashboard" ? "border-[#4c6f2e] text-foreground" : "border-transparent text-muted-foreground"}`}
+                className={`flex h-full items-center gap-1.5 border-b-2 px-1 text-[12px] ${view === "dashboard" ? "border-[#4c6f2e] text-foreground" : "border-transparent text-muted-foreground"}`}
                 onClick={() => setView("dashboard")}
+                type="button"
               >
                 <ChartNoAxesCombined className="h-3.5 w-3.5" />
                 {t("tasksDashboard")}
               </button>
             </div>
           </div>
-          {view === "board" || view === "list" ? (
+          {view === "overview" || view === "board" || view === "list" ? (
             <div className="flex min-w-0 items-center gap-2">
-              <label className="relative w-[min(30vw,240px)] min-w-[150px]">
-                <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-                <input
-                  className="h-8 w-full rounded-[7px] border border-border bg-card pl-9 pr-3 text-[12px] outline-none focus:border-[#9aaf61]"
-                  onChange={(event) => setQuery(event.target.value)}
-                  placeholder={t("tasksSearchPlaceholder")}
-                  value={query}
-                />
-              </label>
+              {view === "board" || view === "list" ? (
+                <label className="relative w-[min(30vw,240px)] min-w-[150px]">
+                  <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                  <input
+                    className="h-8 w-full rounded-[7px] border border-border bg-card pl-9 pr-3 text-[12px] outline-none focus:border-[#9aaf61]"
+                    onChange={(event) => setQuery(event.target.value)}
+                    placeholder={t("tasksSearchPlaceholder")}
+                    value={query}
+                  />
+                </label>
+              ) : null}
               <Button
                 className="h-8 shrink-0 text-[11px]"
                 onClick={() => setEditing("new")}
@@ -383,6 +421,16 @@ export function TasksView({
             <div className="grid h-52 place-items-center">
               <LoaderCircle className="h-5 w-5 animate-spin text-muted-foreground" />
             </div>
+          ) : view === "overview" ? (
+            <TaskOverview
+              tasks={tasks}
+              agentIconKey={agentIconKey}
+              agentName={agentName}
+              locale={locale}
+              onOpenSession={onOpenSession}
+              onOpenTask={setEditing}
+              t={t}
+            />
           ) : view === "timeline" ? (
             <TaskTimeline
               tasks={tasks}
@@ -612,7 +660,7 @@ function TaskCard({
             </button>
           ) : null}
           <button
-            className="rounded p-1 text-muted-foreground hover:bg-muted hover:text-foreground"
+            className="grid h-7 w-7 place-items-center rounded-[6px] bg-[#e6f2e8] text-[#287744] transition-colors hover:bg-[#d8eadd] disabled:opacity-60 disabled:hover:bg-[#e6f2e8]"
             disabled={running}
             onClick={onExecute}
             title={t("taskRun")}
@@ -626,6 +674,307 @@ function TaskCard({
         </div>
       </div>
     </article>
+  );
+}
+
+function relativeTaskTime(
+  timestamp: number,
+  now: number,
+  locale: Intl.LocalesArgument,
+  t: (key: MessageKey) => string,
+): string {
+  const elapsed = Math.max(0, now - timestamp);
+  const minutes = Math.floor(elapsed / 60_000);
+  if (minutes < 1) return t("tasksOverviewUpdatedJustNow");
+  if (minutes < 60) {
+    return locale === "zh-CN"
+      ? `${minutes} ${t("tasksOverviewMinutesAgo")}`
+      : `${minutes} ${t("tasksOverviewMinutesAgo")}`;
+  }
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours} ${t("tasksOverviewHoursAgo")}`;
+  const days = Math.floor(hours / 24);
+  if (days < 7) return `${days} ${t("tasksOverviewDaysAgo")}`;
+  return new Intl.DateTimeFormat(locale, {
+    month: "short",
+    day: "numeric",
+  }).format(timestamp);
+}
+
+function TaskOverview({
+  tasks,
+  agentIconKey,
+  agentName,
+  locale,
+  onOpenSession,
+  onOpenTask,
+  t,
+}: {
+  tasks: TaskRecord[];
+  agentIconKey: (task: TaskRecord) => string;
+  agentName: (task: TaskRecord) => string;
+  locale: Intl.LocalesArgument;
+  onOpenSession: (sessionId: string) => void;
+  onOpenTask: (task: TaskRecord) => void;
+  t: (key: MessageKey) => string;
+}) {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const timer = window.setInterval(() => setNow(Date.now()), 60_000);
+    return () => window.clearInterval(timer);
+  }, []);
+
+  const attentionTasks = [...tasks]
+    .filter((task) => {
+      const executionNeedsAttention = [
+        "failed",
+        "blocked",
+        "interrupted",
+        "waiting",
+      ].includes(task.execution.status);
+      const overdue =
+        task.status !== "done" && task.dueAt !== null && task.dueAt < now;
+      return overdue || executionNeedsAttention || task.status === "review";
+    })
+    .sort((a, b) => {
+      const aOverdue = a.dueAt !== null && a.dueAt < now && a.status !== "done";
+      const bOverdue = b.dueAt !== null && b.dueAt < now && b.status !== "done";
+      if (aOverdue !== bOverdue) return aOverdue ? -1 : 1;
+      return b.updatedAt - a.updatedAt;
+    })
+    .slice(0, 8);
+  const startOfDay = (timestamp: number) => {
+    const date = new Date(timestamp);
+    date.setHours(0, 0, 0, 0);
+    return date.getTime();
+  };
+  const todayStart = startOfDay(now);
+  const priorityOrder = { high: 0, medium: 1, low: 2 } as const;
+  const upcomingGroups = [
+    { label: t("tasksOverviewToday"), tone: "text-[#288a55]" },
+    { label: t("tasksOverviewTomorrow"), tone: "text-[#d97908]" },
+    { label: t("tasksOverviewDayAfterTomorrow"), tone: "text-[#2d6dad]" },
+  ].map(({ label, tone }, offset) => {
+    const start = todayStart + offset * 86_400_000;
+    const end = start + 86_400_000;
+    const groupTasks = tasks
+      .filter(
+        (task) =>
+          task.status !== "done" &&
+          task.dueAt !== null &&
+          task.dueAt >= now &&
+          task.dueAt >= start &&
+          task.dueAt < end,
+      )
+      .sort(
+        (a, b) =>
+          priorityOrder[a.priority ?? "low"] -
+            priorityOrder[b.priority ?? "low"] ||
+          b.updatedAt - a.updatedAt,
+      )
+      .slice(0, 2);
+    return { label, tone, tasks: groupTasks };
+  });
+  const upcomingTaskCount = upcomingGroups.reduce(
+    (count, group) => count + group.tasks.length,
+    0,
+  );
+  const recentTasks = [...tasks]
+    .sort((a, b) => b.updatedAt - a.updatedAt)
+    .slice(0, 8);
+  const formatDueTime = (dueAt: number) =>
+    new Intl.DateTimeFormat(locale, {
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: false,
+    }).format(dueAt);
+  const agentInitials = (task: TaskRecord) => {
+    const words = agentName(task).trim().split(/\s+/).filter(Boolean);
+    if (words.length > 1)
+      return words.map((word) => word[0]).join("").slice(0, 2).toUpperCase();
+    return Array.from(words[0] ?? "?").slice(0, 2).join("").toUpperCase();
+  };
+  const overviewCardClass =
+    "overflow-hidden rounded-[8px] border border-border bg-card shadow-sm dark:shadow-none";
+  const sessionAvatar = (task: TaskRecord) => {
+    const avatar = (
+      <span className="grid h-7 w-7 shrink-0 place-items-center rounded-full bg-[#edf5ef] text-[9px] font-medium text-[#287744]">
+        {agentInitials(task)}
+      </span>
+    );
+    return task.sessionId ? (
+      <button
+        aria-label={t("taskOpenSession")}
+        className="rounded-full outline-none transition-opacity hover:opacity-75 focus-visible:ring-2 focus-visible:ring-[#9aaf61]"
+        onClick={() => onOpenSession(task.sessionId!)}
+        title={t("taskOpenSession")}
+        type="button"
+      >
+        {avatar}
+      </button>
+    ) : (
+      avatar
+    );
+  };
+
+  return (
+    <div className="relative overflow-hidden pb-6">
+      <div className="space-y-5 pt-2">
+        <div className="grid gap-5 xl:grid-cols-2">
+          <section className={overviewCardClass}>
+            <div className="flex h-[54px] items-center justify-between gap-3 border-b border-border px-5">
+              <h2 className="text-[16px] font-semibold text-[#e14343]">
+                {t("tasksOverviewNeedsAttention")}
+              </h2>
+              <span className="font-mono text-[11px] text-[#e14343]">
+                {attentionTasks.length}
+              </span>
+            </div>
+            {attentionTasks.length ? (
+              <div className="px-5">
+                {attentionTasks.map((task) => {
+                  const overdue =
+                    task.status !== "done" &&
+                    task.dueAt !== null &&
+                    task.dueAt < now;
+                  return (
+                    <div className="group flex min-h-[68px] items-center gap-3 border-b border-border last:border-b-0" key={task.id}>
+                      <span className="grid h-7 w-7 shrink-0 place-items-center rounded-full bg-[#f8e8e5] text-[#b34b42]">
+                        <CircleAlert className="h-3.5 w-3.5" />
+                      </span>
+                      <button
+                        className="min-w-0 flex-1 text-left"
+                        onClick={() => onOpenTask(task)}
+                        title={task.title}
+                        type="button"
+                      >
+                        <span className="block truncate text-[12px] font-medium group-hover:text-[#4c6f2e]">
+                          {task.title}
+                        </span>
+                        <span className="mt-1 block truncate text-[10px] text-muted-foreground">
+                          {agentName(task)}
+                          {task.priority
+                            ? ` · ${t(taskPriorityVisual(task.priority).labelKey)}`
+                            : ` · ${executionLabel(task.execution.status, t)}`}
+                        </span>
+                      </button>
+                      <span className={`shrink-0 text-[10px] ${overdue || ["failed", "blocked", "interrupted"].includes(task.execution.status) ? "text-[#b34b42]" : "text-muted-foreground"}`}>
+                        {overdue
+                          ? t("tasksOverviewOverdue")
+                          : executionLabel(task.execution.status, t)}
+                      </span>
+                      {sessionAvatar(task)}
+                    </div>
+                  );
+                })}
+              </div>
+            ) : (
+              <p className="px-5 py-10 text-[12px] text-muted-foreground">
+                {t("tasksOverviewNoAttention")}
+              </p>
+            )}
+          </section>
+
+          <section className={overviewCardClass}>
+            <div className="flex h-[54px] items-center justify-between gap-3 border-b border-border px-5">
+              <h2 className="text-[16px] font-semibold">
+                {t("tasksOverviewRecentActivity")}
+              </h2>
+              <span className="font-mono text-[11px] text-muted-foreground">
+                {recentTasks.length}
+              </span>
+            </div>
+            {recentTasks.length ? (
+              <div className="px-5">
+                {recentTasks.map((task) => (
+                  <div className="group flex min-h-[58px] items-center gap-3 border-b border-border last:border-b-0" key={task.id}>
+                    <span className="grid h-7 w-7 shrink-0 place-items-center rounded-full bg-muted/60">
+                      <AgentEntryIcon className="h-3.5 w-3.5 opacity-75" iconKey={agentIconKey(task)} />
+                    </span>
+                    <button
+                      className="min-w-0 flex-1 text-left"
+                      onClick={() => onOpenTask(task)}
+                      title={task.title}
+                      type="button"
+                    >
+                      <span className="block truncate text-[12px] font-medium group-hover:text-[#4c6f2e]">
+                        {task.title}
+                      </span>
+                      <span className="mt-1 block truncate text-[10px] text-muted-foreground">
+                        {agentName(task)} · {executionLabel(task.execution.status, t)}
+                      </span>
+                    </button>
+                    <span className="shrink-0 font-mono text-[9px] text-muted-foreground">
+                      {relativeTaskTime(task.updatedAt, now, locale, t)}
+                    </span>
+                    {sessionAvatar(task)}
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <p className="px-5 py-10 text-[12px] text-muted-foreground">
+                {t("tasksOverviewNoRecentActivity")}
+              </p>
+            )}
+          </section>
+        </div>
+
+        <section className={overviewCardClass}>
+          <div className="flex h-[58px] items-center justify-between gap-3 border-b border-border px-5">
+            <div className="flex min-w-0 items-baseline gap-2">
+              <CalendarDays className="h-4 w-4 shrink-0 text-[#288a55]" />
+              <h2 className="text-[16px] font-semibold text-[#287744]">
+                {t("tasksOverviewUpcoming")}
+              </h2>
+              <span className="shrink-0 text-[10px] text-muted-foreground">
+                {t("tasksOverviewNextThreeDays")}
+              </span>
+            </div>
+            <span className="font-mono text-[11px] text-muted-foreground">
+              {upcomingTaskCount}
+            </span>
+          </div>
+          {upcomingTaskCount ? (
+            <div className="grid divide-y divide-border xl:grid-cols-3 xl:divide-x xl:divide-y-0">
+              {upcomingGroups.map((group) => (
+                <div className="grid min-w-0 grid-cols-[68px_minmax(0,1fr)] px-5 py-4" key={group.label}>
+                  <div className={`flex flex-col gap-1 pt-1 ${group.tone}`}>
+                    <span className="text-[11px] font-medium">{group.label}</span>
+                    <span className="font-mono text-[22px] font-semibold leading-none">
+                      {group.tasks.length}
+                    </span>
+                  </div>
+                  <div className="grid min-w-0 grid-cols-1 gap-2 sm:grid-cols-2 xl:grid-cols-1 2xl:grid-cols-2">
+                    {group.tasks.map((task) => (
+                      <div className="group flex min-w-0 items-center gap-2" key={task.id}>
+                        <button
+                          className="min-w-0 flex-1 text-left"
+                          onClick={() => onOpenTask(task)}
+                          title={task.title}
+                          type="button"
+                        >
+                          <span className="block truncate text-[12px] font-medium group-hover:text-[#4c6f2e]">
+                            {task.title}
+                          </span>
+                          <span className="mt-1 block truncate text-[10px] text-muted-foreground">
+                            {formatDueTime(task.dueAt!)}
+                          </span>
+                        </button>
+                        {sessionAvatar(task)}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <p className="px-5 py-8 text-[12px] text-muted-foreground">
+              {t("tasksOverviewNoUpcoming")}
+            </p>
+          )}
+        </section>
+      </div>
+    </div>
   );
 }
 

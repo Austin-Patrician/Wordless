@@ -8,6 +8,7 @@ import {
   stat,
   writeFile,
 } from "node:fs/promises";
+import type { Dirent } from "node:fs";
 import { homedir } from "node:os";
 import {
   basename,
@@ -1055,6 +1056,18 @@ function persistedSubagentFileChange(
 function artifactDirectoryName(id: string): string {
   const safe = id.replace(/[^a-zA-Z0-9._-]/g, "_");
   return safe || "member";
+}
+
+function artifactGroup(
+  relativePath: string,
+  memberByDirectory: Map<string, SessionExpertTeamMemberSnapshot>,
+): string {
+  const directory = relativePath.split("/")[0] ?? "";
+  if (!directory) return "primary";
+  if (directory === PRIMARY_ARTIFACTS_DIRECTORY) return "primary";
+  if (directory === SHARED_ARTIFACTS_DIRECTORY) return "shared";
+  const member = memberByDirectory.get(directory);
+  return member ? member.id : directory;
 }
 
 function artifactPreviewKind(
@@ -2830,6 +2843,12 @@ export class WordlessRuntime {
   ): Promise<SessionArtifactsSnapshot> {
     const root = join(record.runtimeRootPath, SESSION_ARTIFACTS_DIRECTORY);
     const artifacts: SessionGeneratedArtifact[] = [];
+    const expert = this.sessionExpertSnapshot(record);
+    const memberByDirectory = new Map<string, SessionExpertTeamMemberSnapshot>();
+    if (expert?.kind === "team") {
+      for (const member of expert.teamMembers)
+        memberByDirectory.set(artifactDirectoryName(member.id), member);
+    }
     const visit = async (
       directory: string,
       relativeDirectory: string,
@@ -2863,13 +2882,22 @@ export class WordlessRuntime {
           mtimeMs: details.mtimeMs,
           previewKind: artifactPreviewKind(entry.name),
           producer: this.artifactProducer(record, relativePath),
+          group: artifactGroup(relativePath, memberByDirectory),
         });
       }
     };
-    await visit(
-      join(root, PRIMARY_ARTIFACTS_DIRECTORY),
-      PRIMARY_ARTIFACTS_DIRECTORY,
-    );
+    let rootEntries: Dirent[];
+    try {
+      rootEntries = await readdir(root, { withFileTypes: true });
+    } catch (cause) {
+      if (asRecord(cause)?.code !== "ENOENT") throw cause;
+      rootEntries = [];
+    }
+    for (const entry of rootEntries) {
+      if (!entry.isDirectory() || entry.isSymbolicLink()) continue;
+      if (entry.name === "subagents") continue;
+      await visit(join(root, entry.name), entry.name);
+    }
     artifacts.sort(
       (left, right) =>
         right.mtimeMs - left.mtimeMs || left.path.localeCompare(right.path),

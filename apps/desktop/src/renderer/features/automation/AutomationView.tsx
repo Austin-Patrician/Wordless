@@ -100,6 +100,7 @@ const EMPTY_PROMPT_VALUE: InlineSkillComposerValue = {
   skillIds: [],
   skillTokenCounts: {},
   skillQuery: null,
+  taskQuery: null,
   text: "",
   workspaceReferenceCount: 0,
   workspaceQuery: null,

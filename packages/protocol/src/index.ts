@@ -1424,6 +1424,7 @@ export interface SessionGeneratedArtifact {
   mtimeMs: number;
   previewKind: "text" | "markdown" | "image" | "external";
   producer: SessionArtifactProducer;
+  group: "primary" | "shared" | string;
 }
 
 export interface SessionArtifactsSnapshot {

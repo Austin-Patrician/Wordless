@@ -18,7 +18,7 @@ import {
   Save,
   Sparkles,
 } from "lucide-react";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { FileTypeIcon } from "../../shared/FileTypeIcon";
 import { usePreferences } from "../../shared/preferences";
 import { useRuntimeClient } from "../../shared/runtime";
@@ -119,6 +119,30 @@ export function GeneralWorkArtifactsPanel({ sessionId }: WorkbenchContextPanelPr
     }
   };
 
+  const groups = useMemo(() => {
+    const sections = new Map<string, SessionGeneratedArtifact[]>();
+    for (const artifact of snapshot.artifacts) {
+      const list = sections.get(artifact.group) ?? [];
+      list.push(artifact);
+      sections.set(artifact.group, list);
+    }
+    return [...sections.entries()].sort(([left], [right]) => {
+      const rank = (group: string) =>
+        group === "primary" ? 0 : group === "shared" ? 1 : 2;
+      return rank(left) - rank(right) || left.localeCompare(right);
+    });
+  }, [snapshot.artifacts]);
+
+  const groupLabel = (group: string, first: SessionGeneratedArtifact): string => {
+    if (group === "primary") return t("artifactsDeliverables");
+    if (group === "shared") return t("artifactsShared");
+    return first.producer.name;
+  };
+
+  const renderArtifact = (artifact: SessionGeneratedArtifact) => (
+    <div className="group relative flex min-h-12 items-center gap-2 rounded-[6px] px-2 py-1.5 hover:bg-[#eeeeea] dark:hover:bg-muted" key={artifact.id}><button className="flex min-w-0 flex-1 items-center gap-2 text-left" onClick={() => setSelected(artifact)} type="button"><FileTypeIcon className="h-5 w-5 [&_svg]:h-5 [&_svg]:w-5" kind="file" name={artifact.name} /><span className="min-w-0 flex-1"><span className="block truncate text-[11px] font-semibold text-[#3f403b] dark:text-foreground">{artifact.name}</span><span className="mt-0.5 flex min-w-0 items-center gap-1.5 text-[9px] text-[#898a83]">{artifact.producer.portrait ? <ExpertPortrait className="h-3.5 w-3.5" name={artifact.producer.name} portrait={artifact.producer.portrait} /> : <span className="grid h-3.5 w-3.5 shrink-0 place-items-center rounded-full bg-[#e5ead9] text-[#657647]"><Sparkles className="h-2.5 w-2.5" /></span>}<span className="truncate">{producerLabel(artifact, locale)}</span><span aria-hidden>·</span><span className="shrink-0 font-mono">{formatSize(artifact.size)}</span></span></span></button><DropdownMenu><DropdownMenuTrigger asChild><button aria-label={`${artifact.name} actions`} className="grid h-6 w-6 shrink-0 place-items-center rounded-[5px] text-[#85867f] opacity-0 hover:bg-white hover:text-[#40413c] focus:opacity-100 group-hover:opacity-100 dark:hover:bg-card" type="button"><MoreHorizontal className="h-3.5 w-3.5" /></button></DropdownMenuTrigger><DropdownMenuContent align="end" className="w-40"><DropdownMenuItem onSelect={() => void action(artifact, "open")}><ExternalLink className="h-3.5 w-3.5" />{t("openFile")}</DropdownMenuItem><DropdownMenuItem onSelect={() => void action(artifact, "reveal")}><FolderOpen className="h-3.5 w-3.5" />{t("openFileLocation")}</DropdownMenuItem><DropdownMenuItem onSelect={() => void action(artifact, "save")}><Save className="h-3.5 w-3.5" />{t("saveAs")}</DropdownMenuItem></DropdownMenuContent></DropdownMenu></div>
+  );
+
   if (selected) {
     if (!preview)
       return (
@@ -167,7 +191,7 @@ export function GeneralWorkArtifactsPanel({ sessionId }: WorkbenchContextPanelPr
 
   return (
     <div className="min-h-0 flex-1 p-3">
-      {loading ? <div className="grid h-24 place-items-center"><LoaderCircle className="h-4 w-4 animate-spin text-[#718052]" /></div> : snapshot.artifacts.length === 0 ? <div className="grid min-h-[220px] place-items-center px-5 text-center"><div><span className="mx-auto grid h-9 w-9 place-items-center rounded-full bg-[#edf0e5] text-[#6b7b49] dark:bg-[#29301f]"><Sparkles className="h-4 w-4" /></span><p className="mt-3 text-[11px] text-muted-foreground">{t("noArtifacts")}</p></div></div> : <div className="space-y-0.5">{snapshot.artifacts.map((artifact) => <div className="group relative flex min-h-12 items-center gap-2 rounded-[6px] px-2 py-1.5 hover:bg-[#eeeeea] dark:hover:bg-muted" key={artifact.id}><button className="flex min-w-0 flex-1 items-center gap-2 text-left" onClick={() => setSelected(artifact)} type="button"><FileTypeIcon className="h-5 w-5 [&_svg]:h-5 [&_svg]:w-5" kind="file" name={artifact.name} /><span className="min-w-0 flex-1"><span className="block truncate text-[11px] font-semibold text-[#3f403b] dark:text-foreground">{artifact.name}</span><span className="mt-0.5 flex min-w-0 items-center gap-1.5 text-[9px] text-[#898a83]">{artifact.producer.portrait ? <ExpertPortrait className="h-3.5 w-3.5" name={artifact.producer.name} portrait={artifact.producer.portrait} /> : <span className="grid h-3.5 w-3.5 shrink-0 place-items-center rounded-full bg-[#e5ead9] text-[#657647]"><Sparkles className="h-2.5 w-2.5" /></span>}<span className="truncate">{producerLabel(artifact, locale)}</span><span aria-hidden>·</span><span className="shrink-0 font-mono">{formatSize(artifact.size)}</span></span></span></button><DropdownMenu><DropdownMenuTrigger asChild><button aria-label={`${artifact.name} actions`} className="grid h-6 w-6 shrink-0 place-items-center rounded-[5px] text-[#85867f] opacity-0 hover:bg-white hover:text-[#40413c] focus:opacity-100 group-hover:opacity-100 dark:hover:bg-card" type="button"><MoreHorizontal className="h-3.5 w-3.5" /></button></DropdownMenuTrigger><DropdownMenuContent align="end" className="w-40"><DropdownMenuItem onSelect={() => void action(artifact, "open")}><ExternalLink className="h-3.5 w-3.5" />{t("openFile")}</DropdownMenuItem><DropdownMenuItem onSelect={() => void action(artifact, "reveal")}><FolderOpen className="h-3.5 w-3.5" />{t("openFileLocation")}</DropdownMenuItem><DropdownMenuItem onSelect={() => void action(artifact, "save")}><Save className="h-3.5 w-3.5" />{t("saveAs")}</DropdownMenuItem></DropdownMenuContent></DropdownMenu></div>)}</div>}
+      {loading ? <div className="grid h-24 place-items-center"><LoaderCircle className="h-4 w-4 animate-spin text-[#718052]" /></div> : snapshot.artifacts.length === 0 ? <div className="grid min-h-[220px] place-items-center px-5 text-center"><div><span className="mx-auto grid h-9 w-9 place-items-center rounded-full bg-[#edf0e5] text-[#6b7b49] dark:bg-[#29301f]"><Sparkles className="h-4 w-4" /></span><p className="mt-3 text-[11px] text-muted-foreground">{t("noArtifacts")}</p></div></div> : <div className="space-y-2">{groups.map(([group, artifacts]) => <section key={group}><h3 className="mb-0.5 flex items-center gap-1.5 px-1 font-mono text-[10px] font-bold uppercase tracking-wide text-[#4f504a] dark:text-[#c9cbc2]">{groupLabel(group, artifacts[0]!)}<span className="shrink-0 font-semibold text-[#9a9a92]">({artifacts.length})</span></h3><div className="space-y-0.5">{artifacts.map(renderArtifact)}</div></section>)}</div>}
       {error ? <p className="mt-3 px-2 text-[10px] leading-4 text-destructive">{error}</p> : null}
     </div>
   );

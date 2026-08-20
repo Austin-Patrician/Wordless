@@ -1,6 +1,5 @@
 import { Button, Dialog, DialogClose, DialogContent, DialogTitle, Switch, Tooltip, TooltipContent, TooltipTrigger, cn } from "@wordless/ui-kit";
-import type { LucideIcon } from "lucide-react";
-import { ArrowLeft, AudioLines, BookOpen, Bot, Boxes, BrainCircuit, CalendarDays, Cable, ChartNoAxesCombined, CheckCircle2, CircleAlert, CircleOff, Code2, Command, Container, CreditCard, Database, ExternalLink, FileText, FolderTree, GitBranch, HardDrive, Image, KanbanSquare, KeyRound, Layers3, LoaderCircle, Mail, MapPin, MessagesSquare, Network, Plus, RefreshCw, Search, Settings2, ShieldCheck, Sparkles, Star, Terminal, Trash2, Upload, Video, Workflow, X } from "lucide-react";
+import { ArrowLeft, Cable, CheckCircle2, CircleAlert, CircleOff, Command, ExternalLink, GitBranch, Layers3, LoaderCircle, Plus, RefreshCw, Search, Settings2, ShieldCheck, Star, Terminal, Trash2, Upload, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -10,14 +9,8 @@ import { usePreferences } from "../../shared/preferences";
 import { useRuntime, useRuntimeClient } from "../../shared/runtime";
 import { SkillIcon } from "../../shared/SkillIcon";
 import { ConnectorsView } from "./ConnectorsView";
-import githubIcon from "../../../icons/mcp/github-fill.svg";
-import figmaIcon from "../../../icons/mcp/figma-color.svg";
-import firecrawlIcon from "../../../icons/mcp/firecrawl-color.svg";
-import postgresqlIcon from "../../../icons/mcp/PostgreSQL.svg";
-import cloudflareIcon from "../../../icons/provider-icons/cloudflare-color.svg";
-import openaiIcon from "../../../icons/provider-icons/openai.svg";
-import vercelIcon from "../../../icons/provider-icons/vercel.svg";
-import googleCloudIcon from "../../../icons/common-icons/google_cloud-icon.svg";
+import { mcpMarketplaceIconAssets } from "../../shared/mcp-brand-icons";
+import { resolveMcpMarketplaceIcon } from "../../shared/mcp-marketplace-icon-rules";
 
 type Translate = (key: MessageKey) => string;
 
@@ -150,8 +143,7 @@ function SkillMarketplaceDetailDialog({ busy, entry, error, installed, onInstall
 type MarketplaceIconTone = "source" | "collaboration" | "documents" | "projects" | "data" | "web" | "cloud" | "automation" | "security" | "ai" | "media" | "neutral";
 
 type MarketplaceIconPresentation = {
-  Icon?: LucideIcon;
-  imageSrc?: string;
+  imageSrc: string;
   label: string;
   tone: MarketplaceIconTone;
 };
@@ -171,62 +163,21 @@ const marketplaceIconTones: Record<MarketplaceIconTone, string> = {
   neutral: "bg-[#edf1e8] text-[#536349] dark:bg-[#35402d] dark:text-[#d7e4cb]",
 };
 
-function includesAny(value: string, terms: string[]) {
-  const tokens = ` ${value.replace(/[^a-z0-9]+/g, " ")} `;
-  return terms.some((term) => tokens.includes(` ${term.toLowerCase().replace(/[^a-z0-9]+/g, " ")} `));
-}
-
 function marketplaceIconPresentation(entry: McpMarketplaceEntry): MarketplaceIconPresentation {
-  const identity = `${entry.name} ${entry.title} ${entry.publisher}`.toLowerCase();
-  const context = `${identity} ${entry.description} ${entry.capabilities.join(" ")}`.toLowerCase();
-  const matchesIdentity = (...terms: string[]) => includesAny(identity, terms);
-  const matches = (...terms: string[]) => includesAny(context, terms);
-
-  // Specific service marks take precedence, then the broader job the MCP server performs.
-  if (matchesIdentity("github")) return { imageSrc: githubIcon, label: "GitHub", tone: "source" };
-  if (matchesIdentity("figma")) return { imageSrc: figmaIcon, label: "Figma", tone: "projects" };
-  if (matchesIdentity("firecrawl")) return { imageSrc: firecrawlIcon, label: "Firecrawl", tone: "web" };
-  if (matchesIdentity("postgres", "postgresql")) return { imageSrc: postgresqlIcon, label: "PostgreSQL", tone: "data" };
-  if (matchesIdentity("openai", "chatgpt")) return { imageSrc: openaiIcon, label: "OpenAI", tone: "ai" };
-  if (matchesIdentity("cloudflare")) return { imageSrc: cloudflareIcon, label: "Cloudflare", tone: "cloud" };
-  if (matchesIdentity("vercel")) return { imageSrc: vercelIcon, label: "Vercel", tone: "cloud" };
-  if (matchesIdentity("google cloud", "gcp")) return { imageSrc: googleCloudIcon, label: "Google Cloud", tone: "cloud" };
-
-  if (matches("gitlab", "bitbucket", "source control", "repository", "version control", "git")) return { Icon: GitBranch, label: "Source control", tone: "source" };
-  if (matches("slack", "discord", "microsoft teams", "mattermost", "feishu", "lark", "dingtalk", "chat")) return { Icon: MessagesSquare, label: "Team communication", tone: "collaboration" };
-  if (matches("linear", "jira", "trello", "asana", "clickup", "project management", "issue tracker", "kanban")) return { Icon: KanbanSquare, label: "Project management", tone: "projects" };
-  if (matches("notion", "confluence", "documentation", "knowledge base", "wiki")) return { Icon: BookOpen, label: "Documentation", tone: "documents" };
-  if (matches("calendar", "schedule", "scheduling")) return { Icon: CalendarDays, label: "Calendar", tone: "collaboration" };
-  if (matches("gmail", "outlook", "email", "mail")) return { Icon: Mail, label: "Email", tone: "collaboration" };
-  if (matches("google drive", "gdrive", "dropbox", "onedrive", "file system", "filesystem", "file storage")) return { Icon: FolderTree, label: "File storage", tone: "documents" };
-  if (matches("mysql", "sqlite", "supabase", "mongodb", "database", " sql ", "data warehouse")) return { Icon: Database, label: "Database", tone: "data" };
-  if (matches("airtable", "spreadsheet", "table", "dataset")) return { Icon: Boxes, label: "Structured data", tone: "data" };
-  if (matches("analytics", "metrics", "dashboard", "business intelligence")) return { Icon: ChartNoAxesCombined, label: "Analytics", tone: "data" };
-  if (matches("stripe", "paypal", "payment", "billing", "invoice")) return { Icon: CreditCard, label: "Payments", tone: "automation" };
-  if (matches("map", "geocode", "location", "places")) return { Icon: MapPin, label: "Location", tone: "web" };
-  if (matches("image", "vision", "photo", "illustration")) return { Icon: Image, label: "Images", tone: "media" };
-  if (matches("video", "youtube", "recording")) return { Icon: Video, label: "Video", tone: "media" };
-  if (matches("audio", "music", "podcast", "speech", "voice")) return { Icon: AudioLines, label: "Audio", tone: "media" };
-  if (matches("openapi", "browser", "web search", "search", "crawl", "scrape", "website", "http")) return { Icon: Search, label: "Web research", tone: "web" };
-  if (matches("aws", "azure", "cloud", "kubernetes", "docker", "container", "deployment")) return { Icon: Container, label: "Cloud infrastructure", tone: "cloud" };
-  if (matches("security", "authentication", "authorization", "oauth", "secret", "credential")) return { Icon: KeyRound, label: "Security", tone: "security" };
-  if (matches("workflow", "automation", "zapier", "n8n", "webhook", "integration")) return { Icon: Workflow, label: "Automation", tone: "automation" };
-  if (matches("ai", "llm", "model", "agent", "assistant", "embedding")) return { Icon: BrainCircuit, label: "AI", tone: "ai" };
-  if (matches("code", "developer", "programming", "debug", "terminal", "ide")) return { Icon: Code2, label: "Developer tools", tone: "source" };
-  if (matches("document", "pdf", "markdown", "text")) return { Icon: FileText, label: "Documents", tone: "documents" };
-  if (matches("storage", "disk", "directory", "folder")) return { Icon: HardDrive, label: "Storage", tone: "documents" };
-  if (entry.transport === "streamable-http") return { Icon: Network, label: "Remote MCP server", tone: "web" };
-  if (entry.transport === "stdio") return { Icon: Terminal, label: "Local MCP server", tone: "automation" };
-  return { Icon: Bot, label: "MCP server", tone: "neutral" };
+  const icon = resolveMcpMarketplaceIcon(entry);
+  return {
+    imageSrc: mcpMarketplaceIconAssets[icon.id],
+    label: icon.label,
+    tone: icon.tone,
+  };
 }
 
 function MarketplaceConnectorIcon({ entry }: { entry: McpMarketplaceEntry }) {
   const [available, setAvailable] = useState(Boolean(entry.iconUrl));
   useEffect(() => setAvailable(Boolean(entry.iconUrl)), [entry.iconUrl]);
   const presentation = marketplaceIconPresentation(entry);
-  const Icon = presentation.Icon;
   return <span aria-hidden className={cn("grid h-10 w-10 shrink-0 place-items-center overflow-hidden rounded-[7px]", marketplaceIconTones[presentation.tone])} title={presentation.label}>
-    {available && entry.iconUrl ? <img alt="" className="h-7 w-7 object-contain" decoding="async" loading="lazy" onError={() => setAvailable(false)} referrerPolicy="no-referrer" src={entry.iconUrl} /> : presentation.imageSrc ? <img alt="" className="h-7 w-7 object-contain" src={presentation.imageSrc} /> : Icon ? <Icon className="h-[19px] w-[19px] stroke-[1.85]" /> : null}
+    {available && entry.iconUrl ? <img alt="" className="h-7 w-7 object-contain" decoding="async" loading="lazy" onError={() => setAvailable(false)} referrerPolicy="no-referrer" src={entry.iconUrl} /> : <img alt="" className="h-7 w-7 object-contain" src={presentation.imageSrc} />}
   </span>;
 }
 
