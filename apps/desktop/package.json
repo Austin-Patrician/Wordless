@@ -16,6 +16,7 @@
     "build:electron": "node scripts/build-electron.mjs",
     "build:renderer": "vite build --config vite.renderer.config.ts && node scripts/verify-renderer-build.mjs",
     "verify:packaged-fff": "node scripts/verify-packaged-fff.mjs",
+    "verify:packaged-icon": "node scripts/verify-packaged-icon.mjs",
     "prepare:officecli": "node scripts/prepare-officecli-assets.mjs",
     "update:officecli": "node scripts/update-officecli-lock.mjs",
     "build:desktop": "npm run prepare:officecli && npm run build:renderer && npm run build:electron",
@@ -24,7 +25,7 @@
     "test:thread-browser": "vitest run --config vitest.thread-browser.config.ts",
     "dist:mac": "npm run build:desktop && electron-builder --config electron-builder.yml --mac --publish never",
     "dist:mac:preview": "npm run build:desktop && CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --config electron-builder.yml --mac --publish never",
-    "dist:win": "npm run build:desktop && electron-builder --config electron-builder.yml --win --x64 --publish never"
+    "dist:win": "npm run build:desktop && electron-builder --config electron-builder.yml --win --x64 --publish never && node scripts/verify-packaged-icon.mjs release/win-unpacked"
   },
   "dependencies": {
     "@ff-labs/fff-node": "0.10.1",

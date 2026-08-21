@@ -3,6 +3,7 @@ import { copyFile } from "node:fs/promises";
 import { builtinModules } from "node:module";
 import { fileURLToPath } from "node:url";
 import { build } from "vite";
+import { readWindowsIcon } from "./windows-icon.mjs";
 
 const scriptDirectory = dirname(fileURLToPath(import.meta.url));
 const appRoot = resolve(scriptDirectory, "..");
@@ -46,5 +47,6 @@ async function buildEntry(entry, name, emptyOutDir) {
 
 await buildEntry(resolve(appRoot, "src/main/index.ts"), "main", true);
 await buildEntry(resolve(appRoot, "src/preload/index.ts"), "preload", false);
+await readWindowsIcon(windowsApplicationIcon);
 await copyFile(applicationIcon, resolve(outputDirectory, "wordless.png"));
 await copyFile(windowsApplicationIcon, resolve(outputDirectory, "wordless.ico"));

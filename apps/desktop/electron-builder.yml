@@ -43,7 +43,10 @@ win:
   # The internal release certificate is not installed in end-user trust stores.
   # Keep signing the binaries, but do not emit a publisher check that would block updates.
   verifyUpdateCodeSignature: false
-  icon: build/icon.ico
+  # Same PNG as macOS. Do not set this to build/icon.ico: buildResources is already
+  # `build`, so that path is resolved as build/build/icon.ico and electron-builder
+  # falls back to the default Electron icon.
+  icon: src/icons/common-icons/wordless.png
   signtoolOptions:
     signingHashAlgorithms:
       - sha256
@@ -54,6 +57,8 @@ nsis:
   perMachine: false
   allowToChangeInstallationDirectory: true
   createDesktopShortcut: always
+  installerIcon: icon.ico
+  uninstallerIcon: icon.ico
 publish:
   provider: github
   owner: Austin-Patrician

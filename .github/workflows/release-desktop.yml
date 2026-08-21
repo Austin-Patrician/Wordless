@@ -184,6 +184,9 @@ jobs:
       - name: Verify packaged FFF native search
         working-directory: apps/desktop
         run: npm run verify:packaged-fff -- release/win-unpacked
+      - name: Verify packaged Windows icon
+        working-directory: apps/desktop
+        run: npm run verify:packaged-icon -- release/win-unpacked
       - uses: actions/upload-artifact@v4
         with:
           name: wordless-windows-x64
