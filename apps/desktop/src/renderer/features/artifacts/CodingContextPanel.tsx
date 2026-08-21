@@ -7,12 +7,14 @@ import { usePreferences } from "../../shared/preferences";
 import { useRuntimeClient } from "../../shared/runtime";
 import type { InlineWorkspaceReferenceToken } from "../thread/InlineSkillComposer";
 import { DocumentPreview } from "./DocumentPreview";
-import type { ContextPanelView } from "../workbench/context-panel-types";
+import type { ContextPanelView, FileChangeSelection } from "../workbench/context-panel-types";
 
 export type { ContextPanelView } from "../workbench/context-panel-types";
 
 type CodingContextPanelProps = {
+  fileChangeSelection?: FileChangeSelection | null;
   onAttachFile: (reference: InlineWorkspaceReferenceToken) => void;
+  onFileChangeSelectionConsumed?: () => void;
   onViewChange: (view: ContextPanelView) => void;
   sessionId: string;
   view: ContextPanelView;
@@ -40,7 +42,7 @@ function DiffPreview({ diff, name, onBack }: { diff: SessionArtifactDiff | null;
   return <section className="flex min-h-0 flex-1 flex-col"><header className="flex shrink-0 items-center gap-2 border-b border-[#e4e4df] px-3 py-2 dark:border-border"><button aria-label={t("back")} className="grid h-6 w-6 place-items-center rounded-[5px] text-[#74746d] hover:bg-[#f0f0ec] dark:hover:bg-muted" onClick={onBack} type="button">&larr;</button><span className="min-w-0 flex-1 truncate text-[12px] font-semibold text-[#3e3e39] dark:text-foreground">{name}</span></header><div className="min-h-0 overflow-auto py-2 font-mono text-[11px] leading-5">{diff.patch.split("\n").map((line, index) => <div className={`min-w-max px-3 ${line.startsWith("+") && !line.startsWith("+++") ? "bg-[#eff7e7] text-[#547c36] dark:bg-[#29351d] dark:text-[#d8f28a]" : line.startsWith("-") && !line.startsWith("---") ? "bg-[#fbefec] text-[#9a564b] dark:bg-[#3a211d] dark:text-[#ffb4a8]" : line.startsWith("@@") ? "bg-[#f0f0ed] text-[#777770] dark:bg-muted dark:text-muted-foreground" : "text-[#65655f] dark:text-muted-foreground"}`} key={`${line}:${index}`}>{line || " "}</div>)}</div></section>;
 }
 
-export function CodingContextPanel({ onAttachFile, onViewChange, sessionId, view }: CodingContextPanelProps) {
+export function CodingContextPanel({ fileChangeSelection, onAttachFile, onFileChangeSelectionConsumed, onViewChange, sessionId, view }: CodingContextPanelProps) {
   const client = useRuntimeClient();
   const { locale, t } = usePreferences();
   const [context, setContext] = useState<SessionContextSnapshot>(emptyContext);
@@ -94,6 +96,13 @@ export function CodingContextPanel({ onAttachFile, onViewChange, sessionId, view
     });
     return unsubscribe;
   }, [client, loadDirectory, refreshContext, sessionId]);
+
+  useEffect(() => {
+    if (!fileChangeSelection) return;
+    if (fileChangeSelection.path === null) setPreview(null);
+    else setPreview({ kind: "diff", path: fileChangeSelection.path, name: fileChangeSelection.name });
+    onFileChangeSelectionConsumed?.();
+  }, [fileChangeSelection, onFileChangeSelectionConsumed]);
 
   useEffect(() => {
     if (!preview) return;

@@ -427,7 +427,6 @@ export function TasksView({
               agentIconKey={agentIconKey}
               agentName={agentName}
               locale={locale}
-              onOpenSession={onOpenSession}
               onOpenTask={setEditing}
               t={t}
             />
@@ -706,7 +705,6 @@ function TaskOverview({
   agentIconKey,
   agentName,
   locale,
-  onOpenSession,
   onOpenTask,
   t,
 }: {
@@ -714,7 +712,6 @@ function TaskOverview({
   agentIconKey: (task: TaskRecord) => string;
   agentName: (task: TaskRecord) => string;
   locale: Intl.LocalesArgument;
-  onOpenSession: (sessionId: string) => void;
   onOpenTask: (task: TaskRecord) => void;
   t: (key: MessageKey) => string;
 }) {
@@ -788,34 +785,8 @@ function TaskOverview({
       minute: "2-digit",
       hour12: false,
     }).format(dueAt);
-  const agentInitials = (task: TaskRecord) => {
-    const words = agentName(task).trim().split(/\s+/).filter(Boolean);
-    if (words.length > 1)
-      return words.map((word) => word[0]).join("").slice(0, 2).toUpperCase();
-    return Array.from(words[0] ?? "?").slice(0, 2).join("").toUpperCase();
-  };
   const overviewCardClass =
     "overflow-hidden rounded-[8px] border border-border bg-card shadow-sm dark:shadow-none";
-  const sessionAvatar = (task: TaskRecord) => {
-    const avatar = (
-      <span className="grid h-7 w-7 shrink-0 place-items-center rounded-full bg-[#edf5ef] text-[9px] font-medium text-[#287744]">
-        {agentInitials(task)}
-      </span>
-    );
-    return task.sessionId ? (
-      <button
-        aria-label={t("taskOpenSession")}
-        className="rounded-full outline-none transition-opacity hover:opacity-75 focus-visible:ring-2 focus-visible:ring-[#9aaf61]"
-        onClick={() => onOpenSession(task.sessionId!)}
-        title={t("taskOpenSession")}
-        type="button"
-      >
-        {avatar}
-      </button>
-    ) : (
-      avatar
-    );
-  };
 
   return (
     <div className="relative overflow-hidden pb-6">
@@ -863,7 +834,6 @@ function TaskOverview({
                           ? t("tasksOverviewOverdue")
                           : executionLabel(task.execution.status, t)}
                       </span>
-                      {sessionAvatar(task)}
                     </div>
                   );
                 })}
@@ -907,7 +877,6 @@ function TaskOverview({
                     <span className="shrink-0 font-mono text-[9px] text-muted-foreground">
                       {relativeTaskTime(task.updatedAt, now, locale, t)}
                     </span>
-                    {sessionAvatar(task)}
                   </div>
                 ))}
               </div>
@@ -960,7 +929,6 @@ function TaskOverview({
                             {formatDueTime(task.dueAt!)}
                           </span>
                         </button>
-                        {sessionAvatar(task)}
                       </div>
                     ))}
                   </div>

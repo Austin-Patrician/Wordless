@@ -58,7 +58,8 @@ import { usePreferences } from "../../shared/preferences";
 import type { MessageKey } from "../../shared/i18n";
 import { useRuntime, useRuntimeClient } from "../../shared/runtime";
 import { ModelPicker } from "../workbench/ModelPicker";
-import type { ResearchTaskSelection } from "../workbench/context-panel-types";
+import type { FileChangeSelection, ResearchTaskSelection } from "../workbench/context-panel-types";
+import { AssistantTurnFileChanges } from "./AssistantTurnFileChanges";
 import { workbenchRendererRegistry } from "../workbench/renderer-registry";
 import { groupResearchDelegationBlocks } from "../workbench/research-delegation";
 import { Composer } from "./Composer";
@@ -121,6 +122,7 @@ type ThreadViewProps = {
   onOpenModels: () => void;
   onOpenSkillImport: () => void;
   onOpenSkills: () => void;
+  onOpenFileChange?: (selection: FileChangeSelection) => void;
   onOpenResearchTask?: (selection: ResearchTaskSelection) => void;
   sessionId: string;
   initialPendingTurn?: PendingThreadTurn | null;
@@ -2020,6 +2022,7 @@ function AssistantMessageBody({
   onEnableAutoApprove,
   onHandoffClarification,
   onLoadToolOutput,
+  onOpenFileChange,
   onOpenResearchTask,
   onResolveApproval,
   onResolveClarificationQuestion,
@@ -2038,6 +2041,7 @@ function AssistantMessageBody({
     interactionMode: "default" | "clarify" | "plan",
   ) => Promise<void>;
   onLoadToolOutput: (callId: string) => Promise<void>;
+  onOpenFileChange?: (selection: FileChangeSelection) => void;
   onOpenResearchTask?: (selection: ResearchTaskSelection) => void;
   onResolveApproval: (
     approvalId: string,
@@ -2166,6 +2170,15 @@ function AssistantMessageBody({
             </span>
           </div>
         ) : null}
+        {showFooter &&
+        !isStreaming &&
+        !hasPendingInteraction &&
+        workbenchId === "code" ? (
+          <AssistantTurnFileChanges
+            messages={messages}
+            onOpen={onOpenFileChange}
+          />
+        ) : null}
       </div>
     </article>
   );
@@ -2235,6 +2248,7 @@ function MessageBody({
   onEnableAutoApprove,
   onHandoffClarification,
   onLoadToolOutput,
+  onOpenFileChange,
   onOpenResearchTask,
   onResolveApproval,
   onResolveClarificationQuestion,
@@ -2255,6 +2269,7 @@ function MessageBody({
     interactionMode: "default" | "clarify" | "plan",
   ) => Promise<void>;
   onLoadToolOutput: (callId: string) => Promise<void>;
+  onOpenFileChange?: (selection: FileChangeSelection) => void;
   onOpenResearchTask?: (selection: ResearchTaskSelection) => void;
   onResolveApproval: (
     approvalId: string,
@@ -2293,6 +2308,7 @@ function MessageBody({
         onEnableAutoApprove={onEnableAutoApprove}
         onHandoffClarification={onHandoffClarification}
         onLoadToolOutput={onLoadToolOutput}
+        onOpenFileChange={onOpenFileChange}
         onOpenResearchTask={onOpenResearchTask}
         onResolveApproval={onResolveApproval}
         onResolveClarificationQuestion={onResolveClarificationQuestion}
@@ -2426,6 +2442,7 @@ function MessageBody({
       onEnableAutoApprove={onEnableAutoApprove}
       onHandoffClarification={onHandoffClarification}
       onLoadToolOutput={onLoadToolOutput}
+      onOpenFileChange={onOpenFileChange}
       onOpenResearchTask={onOpenResearchTask}
       onResolveApproval={onResolveApproval}
       onResolveClarificationQuestion={onResolveClarificationQuestion}
@@ -2444,6 +2461,7 @@ type ThreadRowActions = {
     interactionMode: "default" | "clarify" | "plan",
   ) => Promise<void>;
   loadToolOutput: (callId: string) => Promise<void>;
+  onOpenFileChange?: (selection: FileChangeSelection) => void;
   onOpenResearchTask?: (selection: ResearchTaskSelection) => void;
   resolveApproval: (
     approvalId: string,
@@ -2482,6 +2500,7 @@ class ThreadRowEnvironment {
   readonly actions: ThreadRowActions = {
     handoffClarification: (...args) => this.requireActions().handoffClarification(...args),
     loadToolOutput: (...args) => this.requireActions().loadToolOutput(...args),
+    onOpenFileChange: (...args) => this.requireActions().onOpenFileChange?.(...args),
     onOpenResearchTask: (...args) => this.requireActions().onOpenResearchTask?.(...args),
     resolveApproval: (...args) => this.requireActions().resolveApproval(...args),
     resolveClarificationQuestion: (...args) => this.requireActions().resolveClarificationQuestion(...args),
@@ -2727,6 +2746,7 @@ function ThreadStoreRow({
           }
           onHandoffClarification={context.environment.actions.handoffClarification}
           onLoadToolOutput={context.environment.actions.loadToolOutput}
+          onOpenFileChange={context.environment.actions.onOpenFileChange}
           onOpenResearchTask={context.environment.actions.onOpenResearchTask}
           onResolveApproval={context.environment.actions.resolveApproval}
           onResolveClarificationQuestion={context.environment.actions.resolveClarificationQuestion}
@@ -3024,6 +3044,7 @@ export function ThreadView({
   onComposerDraftChange,
   onMessageNavigationConsumed,
   onOpenModels,
+  onOpenFileChange,
   onOpenResearchTask,
   onOpenSkillImport,
   onOpenSkills,
@@ -3418,6 +3439,7 @@ export function ThreadView({
   threadRowEnvironment.setActions({
     handoffClarification,
     loadToolOutput,
+    onOpenFileChange,
     onOpenResearchTask,
     resolveApproval,
     resolveClarificationQuestion,

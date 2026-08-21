@@ -20,9 +20,16 @@ export type ResearchTaskSelection = {
   details?: ResearchDelegationDetails;
 };
 
+export type FileChangeSelection = {
+  path: string | null;
+  name: string;
+};
+
 export type WorkbenchContextPanelProps = {
+  fileChangeSelection?: FileChangeSelection | null;
   onArtifactSelection?: (selection: ArtifactSelection) => void;
   onAttachFile: (reference: InlineWorkspaceReferenceToken) => void;
+  onFileChangeSelectionConsumed?: () => void;
   onViewChange: (view: ContextPanelView) => void;
   onClearResearchSelection?: () => void;
   researchSelection?: ResearchTaskSelection | null;
