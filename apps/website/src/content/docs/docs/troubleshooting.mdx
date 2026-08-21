@@ -1,5 +1,5 @@
 ---
-title: Troubleshooting（故障排查）
+title: 故障排查
 description: 按错误文本定位提供商、权限、OfficeCLI、研究、更新和渲染问题。
 ---
 import TroubleshootingTable from '../../../components/docs/TroubleshootingTable.astro';
@@ -17,14 +17,22 @@ import TroubleshootingTable from '../../../components/docs/TroubleshootingTable.
 | `Google access_denied` | OAuth 应用仍处于测试状态 | 将账号加入 Google Cloud OAuth 的测试用户，或完成验证流程。 |
 | `client_secret is missing` | 把桌面 OAuth 当作 Web OAuth 交换 | 使用桌面客户端配置和 PKCE；不要在客户端硬编码 secret。 |
 | `Secure credential storage is unavailable` | 系统钥匙串/凭据服务不可用 | 修复系统凭据服务，或仅在本机使用临时环境变量。 |
-| macOS 更新代码签名验证失败 | 未使用 Developer ID 签名/公证 | 使用 Release DMG 手动安装，自动更新只能在签名满足系统要求时工作。 |
+| macOS 更新代码签名验证失败 | 未使用 Developer ID 签名/公证 | 从[官方下载页](/#download)手动安装匹配架构的包；自动更新只能在签名满足系统要求时工作。 |
 | 公式预览显示旧值 | 工作簿公式缓存未重算 | 用 Excel/WPS 打开、重新计算并保存后再验证。 |
 | 预览文字竖排或被遮挡 | 文本框尺寸/旋转/父路径错误 | 检查渲染结果，修正文本框属性后重新 render。 |
 | MCP 连接超时 | URL、OAuth、进程或网络问题 | 测试连接，检查服务日志与凭据，必要时降低工具范围。 |
+| SkillsMP 无匹配或一直离线缓存 | 网络、目录服务或关键词过窄 | 换关键词、点刷新；离线缓存不是最新目录。导入本地 `SKILL.md` 可绕过目录。 |
+| 官方 MCP Registry 无法自动安装 | 条目需要手工命令或密钥 | 打开配置指引，按发布者文档用自定义连接器；不要把建议命令直接当已执行。 |
+| `The task is already running` | 任务处于准备中、执行中或等待处理 | 打开关联会话等待当前回合结束，不要重复点执行。 |
+| `The linked session is currently running` | 任务绑定的会话已有进行中的回合 | 等该会话结束后再执行，或取消关联后新建会话。 |
+| 数字员工像普通助手 | 指令过空，或会话用的是旧快照 | 把职责和禁止事项写入员工指令后重新召唤；已开始的会话不会随编辑更新。 |
+| `请先选择图片模型` / `请先配置图片模型` | 未启用图片模型 | 在 **设置 → 模型 → 图片** 启用模型后再打开[图片生成](/docs/image-generation/)。对话模型不会出现在画布选择器里。 |
+| `此模型不支持参考图片` / `此模型不支持蒙版编辑` | 当前模型未声明该能力 | 换一个支持参考图或蒙版的图片模型；自定义配置不要把供应商不支持的 `capabilities` 写成 `true`。 |
+| 找不到刚建的画布 | 画布会话不进最近会话 | 从左侧 **图片视频生成** 打开列表，用 **搜索项目**。 |
 | 页面 WebGL 空白 | GPU/驱动不支持或资源加载失败 | 更新驱动，检查控制台资源错误；营销首页会回退到静态视觉。 |
 </TroubleshootingTable>
 
 ## 报告问题时附带
 
-版本号、操作系统与架构、当前工作区类型、脱敏后的工具参数、完整错误文本和是否能在新会话复现。不要附 API Key、OAuth token 或私人文件内容。
+版本号、操作系统与架构、当前工作区类型、脱敏后的工具参数、完整错误文本和是否能在新会话复现。不要附 API 密钥、OAuth 令牌或私人文件内容。
 

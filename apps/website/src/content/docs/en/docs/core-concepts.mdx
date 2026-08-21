@@ -13,7 +13,8 @@ Each session is bound to a workspace. File references, Workspace Files, and Defa
 
 <Tabs>
   <TabItem label="@ files and folders">Type `@` to search workspace files, filtered by `.gitignore` when present. Use ↑/↓ and Enter to insert a token; Esc closes the list.</TabItem>
-  <TabItem label="$ Skills">Type `$` to search enabled Skills. Enter inserts the Skill token; sending remains a separate action. The `+` menu offers the same selection.</TabItem>
+  <TabItem label="$ Skills">Type `$` to search enabled Skills. Enter inserts the Skill token; sending remains a separate action. The `+` menu offers the same selection. Skills come from the Installed list in [Skills & MCP](/en/docs/skills-mcp/), including entries installed from Discover.</TabItem>
+  <TabItem label="! tasks">Type `!` to search To do and In progress items on the task board. Enter inserts the title, details, and expected result; it does not run the task or change board status. See [Task board](/en/docs/tasks/) for execution.</TabItem>
 </Tabs>
 
 Tokens are structured context, not plain path text. Focusing a token replaces its leading icon with the remove action.
@@ -30,7 +31,9 @@ Tokens are structured context, not plain path text. Focusing a token replaces it
 
 ## Sessions, search, and compaction
 
-Wordless stores user messages, model messages, and tool states locally. Long contexts may be compacted; that does not create a new user task. Message search highlights the matching keyword and scrolls the virtual list to the exact message. With an empty Composer, ↑ and ↓ move through user-message history.
+Wordless stores each conversation as a local session record. Finding, pinning, renaming, and deleting those records is covered in [Manage conversations](/en/docs/sessions/).
+
+Long contexts may be compacted; that does not create a new user task. **Search messages** highlights the matching keyword and scrolls the virtual list to the exact message. With an empty Composer and no `@`/`$`/`!` picker, ↑ and ↓ move through user-message history.
 
 ## Models and thinking depth
 

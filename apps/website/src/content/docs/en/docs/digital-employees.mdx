@@ -3,51 +3,66 @@ title: Digital employees
 description: Create roles with explicit identity, responsibility, and tool boundaries, then coordinate separable work through a team lead.
 ---
 import { Steps } from '@astrojs/starlight/components';
-import OperationalBlueprint from '../../../../components/docs/OperationalBlueprint.astro';
-import Prerequisites from '../../../../components/docs/Prerequisites.astro';
 import PromptBlock from '../../../../components/docs/PromptBlock.astro';
 import ExpectedResult from '../../../../components/docs/ExpectedResult.astro';
 import ApprovalCheckpoint from '../../../../components/docs/ApprovalCheckpoint.astro';
+import ScreenshotFrame from '../../../../components/docs/ScreenshotFrame.astro';
 
 A digital employee is not a different model name. It is a **reusable session role**: a name, description, portrait, instructions, and explicitly enabled Skills and MCP. Summoning an employee creates a new session and stores the role configuration as that session’s snapshot.
-
-<OperationalBlueprint kind="employees" locale="en" />
-
-## Choose the right shape
 
 | Shape | Use it for | Accountability |
 | --- | --- | --- |
 | Individual employee | A stable writing, research, review, or execution role | The role works in the primary session; you still verify the result |
 | Employee team | Work with separable research, review, synthesis, or independent perspectives | The Team Lead owns the main conversation, delegation decisions, conflicts, and final delivery |
 
-A team has two to nine members. The lead is not an “extra powerful member”; the lead is the coordinator in the primary session. Other members run only when the lead delegates a task.
+A team has two to nine members. The lead is not an extra-powerful member; the lead is the coordinator in the primary session. Other members run only when the lead delegates a task.
+
+## Browse employees
+
+Open **Digital employees** in the left rail and stay on the **Employees** tab. Cards show the name, summary, and portrait. Use `+` to create one. **Summon** from a card or detail view opens a new session from the current snapshot. Later edits do not rewrite a session that has already started.
+
+<ScreenshotFrame src="/images/digital-employee/digital-employee.png" alt="Digital employee cards and search" caption="The Employees tab shows role cards. Use + to create one. Summon uses the current snapshot." />
 
 ## Create an individual employee
 
-Open **Digital Employees** in the left rail, stay on the **Employees** tab, and choose `+`.
+Enter the name, description, and employee instructions. Keep durable rules in the instructions: identity, responsibility, input boundary, output format, prohibited actions, and evidence requirements. Leave one-off outcomes in the summon prompt. Select only the Skills and MCP this role actually needs.
 
-<Steps>
-1. Enter the name, description, and portrait. The portrait identifies the role in cards, sessions, and rosters; it does not change model capability.
-2. In **Employee instructions**, state the identity, responsibility, input boundary, output format, prohibited actions, and evidence requirements. Keep durable rules here and one-off outcomes in the summon prompt.
-3. Select only the Skills and MCP this role actually needs. Connector availability still follows the current configuration and approval policy.
-4. Save, then choose **Summon** from the card or detail view. Suggested prompts in the detail view can be sent as the initial task.
-</Steps>
+<ScreenshotFrame src="/images/digital-employee/digital-employee-add.png" alt="Create employee: name, instructions, Skills, and MCP" caption="The create dialog holds the name, description, employee instructions, and only the Skills and MCP this role needs." />
+
+The portrait identifies the role in cards, sessions, and rosters. It **does not change model capability**. Open the portrait editor from the avatar to randomize or adjust face, hair, and clothing, then apply.
+
+<ScreenshotFrame src="/images/digital-employee/digital-employee-diy-portrait.png" alt="Portrait editor for face, hair, and clothing" caption="The portrait only identifies the role. Randomize it or adjust each option, then apply." />
 
 <PromptBlock label="Employee instruction example">You are a product researcher. Separate verified facts, inference, and unknowns. When using external material, preserve the URL, date, and source name. Produce a competitor comparison table, evidence gaps, and three recommendations for the product owner. Never present an uncited market-size claim as fact, and never modify workspace files unless the user explicitly asks in the current session.</PromptBlock>
 
-The employee configuration enters a new session as a snapshot. Editing an employee later does not rewrite a session that has already started; summon it again to use the new instructions. Before deleting a role or removing it from a team, check which sessions and teams still reference it.
+Before deleting a role or removing it from a team, check which sessions, teams, and [task board](/en/docs/tasks/) items still reference it.
 
-## Build an employee team
+## Select a role in a thread
 
-Switch to the **Teams** tab and choose `+`. The team editor separates team information from the member roster:
+In an existing thread, open Composer’s `+` menu and choose **Experts** to switch to an employee or team. **Use General Work** returns to the generic agent. **Run** on the task board and **Summon** on the employee page both create a new session. Typing `!` in Composer only inserts task text; it does not summon the employee.
+
+<ScreenshotFrame src="/images/digital-employee/digital-team-how-to-enable.png" alt="Composer Experts menu for selecting an employee or team" caption="Use + → Experts in a thread to search and select a digital employee or team. The composer badge shows the active role." />
+
+On the [task board](/en/docs/tasks/), you can also set the agent type to that employee or team and click **Run**. Wordless opens a session from the saved snapshot.
+
+## Browse teams
+
+Switch to the **Teams** tab. Cards show how many members collaborate and their specialty tags. Use `+` to create a team.
+
+<ScreenshotFrame src="/images/digital-employee/digital-teams.png" alt="Digital employee team list" caption="The Teams tab lists collaborative teams. Cards show specialty tags and member count." />
+
+## Configure team members
+
+The team editor separates team information from the roster. Team instructions describe the shared outcome, delivery standard, when to delegate, and how the lead should synthesize results.
 
 <Steps>
-1. Enter the team name, description, and team instructions. Describe the shared outcome, delivery standard, delegation criteria, and how the lead should synthesize member results.
-2. Add at least two members, or copy existing employees. Every member needs a name, responsibility, and member instructions; a team can contain up to nine members.
-3. Choose a Team Lead. The lead owns the main conversation, task scheduling, and final response. Changing the lead sets its execution boundary to `workspace-write`.
-4. Choose a profile for collaborators: `read-only`, `review`, `research`, or `workspace-write`. Only non-lead members can set a separate model and thinking depth; leaving them unset follows the primary session.
-5. Save and summon the team. When delegation is worthwhile, the lead calls `delegate_expert` and chooses single, parallel, or sequential work based on task dependencies.
+1. Add at least two members, or copy existing employees. Every member needs a name, responsibility, and member instructions; a team can contain up to nine members.
+2. Choose a Team Lead. The lead owns the main conversation, task scheduling, and final response. Changing the lead sets its execution boundary to `workspace-write`.
+3. Choose a profile for collaborators: `read-only`, `review`, `research`, or `workspace-write`. Only non-lead members can set a separate model and thinking depth; leaving them unset follows the primary session.
+4. Save and summon the team. When delegation is worthwhile, the lead calls `delegate_expert` and chooses single, parallel, or sequential work.
 </Steps>
+
+<ScreenshotFrame src="/images/digital-employee/digital-team-add.png" alt="Create team: lead and member execution profiles" caption="The members step names a lead and collaborators. Member profiles are stored on the team and do not follow later edits in the employee library." />
 
 ## Member execution profiles
 
@@ -58,11 +73,11 @@ Switch to the **Teams** tab and choose `+`. The team editor separates team infor
 | `research` | Use allowed search connectors and separate evidence from assumptions | Destructive connector operations are filtered out |
 | `workspace-write` | Use in-scope workspace tools for the assigned work | Approvals, path boundaries, and task scope still apply |
 
-Each member can have its own Skills, MCP, model, and thinking depth. If a selected model is unavailable, runtime capability resolution may fall back to another enabled model; avoid making a role depend on a temporary connection.
+Each member can have its own Skills, MCP, model, and thinking depth. If a selected model is unavailable, runtime capability resolution may fall back to another enabled model.
 
 <ApprovalCheckpoint risk="high">Delegation is not an approval bypass. Member tools still follow the primary session’s access level, tool approval mode, and connector policies. Review targets and parameters for writes, deletes, commands, and out-of-workspace access.</ApprovalCheckpoint>
 
-## Delegation modes and boundaries
+## Delegate work
 
 | Mode | Use it when | Important limit |
 | --- | --- | --- |
@@ -70,7 +85,21 @@ Each member can have its own Skills, MCP, model, and thinking depth. If a select
 | Parallel | Two or more tasks have no dependency | Multiple `workspace-write` members cannot run in parallel until file ownership is coordinated |
 | Sequential | A later member needs the previous result | If the prerequisite fails, dependent tasks are skipped |
 
-The lead does not need to delegate every turn. Handle simple questions, clarification, formatting, and work the lead can already complete without delegation. Members cannot delegate again; the lead must read every result, resolve conflicts, and deliver in the lead’s own voice.
+The lead does not need to delegate every turn. Handle simple questions, clarification, and work the lead can already complete. Members cannot delegate again; the lead must read every result, resolve conflicts, and deliver in the lead’s own voice.
+
+<ScreenshotFrame src="/images/digital-employee/digital-team-deleglate-task.png" alt="Delegated member task card and roster status in a team thread" caption="After the lead delegates, the thread shows a member task card and completed or interrupted states." />
+
+## Inspect a member turn
+
+Open a member task to enter a nested session, inspect that member’s output, then return to the main conversation. Do not paste raw member output into the final deliverable.
+
+<ScreenshotFrame src="/images/digital-employee/digital-team-member-view.png" alt="Member turn showing a writer result" caption="A member turn is a nested session. Return to the main conversation to verify the result." />
+
+## Check Artifacts
+
+The right Artifacts panel groups deliverables, shared material, and member output. Open the files to verify; do not rely on the chat summary alone.
+
+<ScreenshotFrame src="/images/digital-employee/digital-employee-artifacts.png" alt="Team session Artifacts panel with deliverables and member drafts" caption="Artifacts groups deliverables, shared material, and member output. Open the files instead of trusting the summary." />
 
 <PromptBlock label="Team summon example">Prepare a verifiable competitor brief for this product review. First decide whether delegation adds value. If it does, ask one research member to collect public evidence and pricing, ask a review member to check the evidence boundary, then synthesize a one-page conclusion. Cite a URL and date for every factual claim, list conflicts separately, and never paste raw member output into the final answer.</PromptBlock>
 
@@ -86,3 +115,4 @@ Start with a small task. Check that the role follows its responsibility, disting
 - **The team never delegates:** Confirm that the task has separable expertise and state delegation criteria in the team instructions; delegation is a judgment, not a required step.
 - **Parallel work is rejected:** Check for multiple `workspace-write` members. Use sequential work or define non-overlapping file ownership first.
 - **A member is waiting for approval:** Open its approval card and review the connector, path, parameters, and overwrite behavior. Do not hide an unclear responsibility behind broader access.
+- **Instruction edits did not change an old task:** Sessions and board runs already started use the snapshot from summon time. Summon again after editing, or create a new task and run it.

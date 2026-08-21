@@ -3,17 +3,13 @@ title: Automation
 description: Schedule bounded General Work tasks locally and inspect every run, approval, session, and result.
 ---
 import { Steps } from '@astrojs/starlight/components';
-import OperationalBlueprint from '../../../../components/docs/OperationalBlueprint.astro';
 import Prerequisites from '../../../../components/docs/Prerequisites.astro';
 import PromptBlock from '../../../../components/docs/PromptBlock.astro';
 import ExpectedResult from '../../../../components/docs/ExpectedResult.astro';
 import ApprovalCheckpoint from '../../../../components/docs/ApprovalCheckpoint.astro';
+import ScreenshotFrame from '../../../../components/docs/ScreenshotFrame.astro';
 
-Automation is for repeatable work whose **inputs, output, and permission boundary can be written down in advance**: daily digests, periodic checks, or a one-time reminder. Every trigger creates a fresh General Work session; it does not reuse the temporary context of an older conversation.
-
-<OperationalBlueprint kind="automation" locale="en" />
-
-## Before you start
+Automation is for repeatable work whose **inputs, output, and permission boundary can be written down in advance**: daily digests, periodic checks, or a one-time reminder. Every trigger creates a fresh General Work session; it does not reuse the temporary context of an older conversation. For one-off to-dos, work that should wait for a person, or continuing an existing thread, use the [task board](/en/docs/tasks/).
 
 <Prerequisites>
 - At least one enabled, configured model; the model, workspace, Skill, and MCP must still be available when the run starts
@@ -22,9 +18,21 @@ Automation is for repeatable work whose **inputs, output, and permission boundar
 - An understanding that Automation is a local desktop scheduler, not a cloud cron service
 </Prerequisites>
 
-## Create an automation
+## Open the automation list
 
-Open **Automations** in the left rail and choose **New**, or start from a template. Automations currently use **General Work** by design, so there is no Agent selector. Choose a model, then configure the workspace, Skills, MCP, tool approval, and access scope.
+Open **Automations** in the left rail. **Scheduled tasks** lists each automation’s name, schedule, and next run. The toggle keeps the definition without scheduling. The play control runs it immediately, without waiting for the clock.
+
+<ScreenshotFrame src="/images/automations/automation-view.png" alt="Automation list with schedule, enable toggle, and Run now" caption="Scheduled tasks lists name, schedule, and next run. The toggle controls scheduling; the play control runs once now." />
+
+## Start from a template
+
+Use **Add from template** when you do not want to write the prompt from scratch. Templates cover digests, reminders, and routine checklists. Review the prompt, model, and permissions before saving.
+
+<ScreenshotFrame src="/images/automations/automation-add-from-template.png" alt="Add an automation from a template" caption="A template is a starting point. Review the prompt, model, and permissions before you save." />
+
+## Fill in an automation
+
+Automations currently use **General Work**, so there is no Agent selector. Choose a model, then configure the workspace, Skills, MCP, tool approval, and access scope.
 
 <Steps>
 1. Enter a name and prompt. State the output format, input scope, output path, prohibited actions, and acceptance checks.
@@ -34,11 +42,13 @@ Open **Automations** in the left rail and choose **New**, or start from a templa
 5. Save. Missing name, prompt, or model, an invalid schedule, and an invalid date range are shown next to the relevant field before a request is sent.
 </Steps>
 
-<PromptBlock label="Daily digest example">Every weekday at 09:15, read files updated in the last 24 hours under `inbox/` and `notes/` in the current workspace. Write a Markdown brief to `reports/daily-brief.md` with items, source paths, suggested priority, and questions requiring confirmation. Do not delete, overwrite, or move existing files. If there is no new material, write “No new material today” and state the checked scope. Before finishing, verify that every conclusion has a source path.</PromptBlock>
+<ScreenshotFrame src="/images/automations/automation-add.png" alt="Add automation: prompt, Skills, permissions, and schedule" caption="Enter the name, prompt, model, and workspace, then choose recurring, interval, or once. Full access and bypass approval stay visible." />
 
 <ApprovalCheckpoint risk="high">Full Access and Bypass tool approval are highlighted because they let background work continue while you are away. They do not bypass system elevation, explicit security blocks, or unavailable resources.</ApprovalCheckpoint>
 
-New automations default to **Full Access + Bypass tool approval** and require confirmation before saving. For a task that only reads and organizes workspace material, use the confirmation dialog to switch to **Default Access + Auto-approve normal actions**, then validate it once with **Run now**.
+New automations default to **Full Access + Bypass tool approval** and require confirmation before saving. For a task that only reads and organizes workspace material, switch to **Default Access + Auto-approve normal actions**, then validate once with **Run now**.
+
+<PromptBlock label="Daily digest example">Every weekday at 09:15, read files updated in the last 24 hours under `inbox/` and `notes/` in the current workspace. Write a Markdown brief to `reports/daily-brief.md` with items, source paths, suggested priority, and questions requiring confirmation. Do not delete, overwrite, or move existing files. If there is no new material, write “No new material today” and state the checked scope. Before finishing, verify that every conclusion has a source path.</PromptBlock>
 
 ## Schedule, active dates, and recovery
 
@@ -61,11 +71,13 @@ The scheduler is active while the Wordless desktop process is running. When the 
 | Default Access | File tools stay inside the selected workspace | Most local automations |
 | Full Access | A wider file and tool boundary is available | The target paths and impact are understood |
 
-With **Ask every time**, or when Auto-approve reaches a high-risk action, the run becomes `waiting` until you resolve an approval or user question. The save confirmation can switch to **Default Access + Auto-approve normal actions** before the automation is created.
+With **Ask every time**, or when Auto-approve reaches a high-risk action, the run becomes `waiting` until you resolve an approval or user question.
 
 ## Inspect every run
 
-Use the **Runs** tab to inspect the trigger time, status, and linked session. Do not treat `completed` as proof of a correct result; open the session and check the artifact, sources, tool parameters, and errors.
+Open **Run history**, filter by status, and expand a row. Do not treat `completed` as proof of a correct result; open the linked session and check the artifact, sources, tool parameters, and errors.
+
+<ScreenshotFrame src="/images/automations/automation-history.png" alt="Automation run history with status filters" caption="Run history filters by queued, running, waiting, completed, failed, and related states. Expand a row for the completion time and linked session." />
 
 | Status | Meaning | Next action |
 | --- | --- | --- |

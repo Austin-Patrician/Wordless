@@ -1,0 +1,115 @@
+---
+title: Image generation
+description: Generate, iterate, and crop images on an infinite canvas, and keep candidates in the same project.
+---
+import { Steps } from '@astrojs/starlight/components';
+import Prerequisites from '../../../../components/docs/Prerequisites.astro';
+import PromptBlock from '../../../../components/docs/PromptBlock.astro';
+import ExpectedResult from '../../../../components/docs/ExpectedResult.astro';
+import ScreenshotFrame from '../../../../components/docs/ScreenshotFrame.astro';
+
+Image generation is not a chat thread. Open **Image & video** in the left rail. Each project is an infinite canvas: references, prompts, and outputs are connected nodes. These canvas sessions do not appear under [Recent threads](/en/docs/sessions/).
+
+**Add video** in the **Add** menu is currently disabled. This page covers still images only.
+
+<Prerequisites>
+- At least one image model enabled under **Settings → Models → Images**. Built-in providers need an API key; custom protocols are in [Configure a model](/en/docs/models/)
+- A target: subject, framing, use (cover, illustration, UI mock), and what must not change
+</Prerequisites>
+
+## Open or create a canvas
+
+**Search projects** filters the library by title. The `ASSETS` badge is ready count / total count for that canvas.
+
+<Steps>
+1. Click **Image & video** in the left rail.
+2. Click **New canvas**. An empty library also offers **Create your first image canvas**.
+3. The default title is `Untitled canvas`. Double-click the title on the canvas to rename, or use **Canvas actions** on a library card to **Rename** or **Delete**.
+</Steps>
+
+<ScreenshotFrame src="/images/imagesCanvas/image-view.png" alt="Image & video project library and New canvas" caption="Each card is one canvas. Search projects filters by name; New canvas opens a blank board." />
+
+Deleting a canvas also deletes its images and generation history. Download a node first if you need to keep the file.
+
+## Generate the first image
+
+The empty canvas shows a prompt box. You can also **Upload reference images** on the dashed drop zone (PNG, JPEG, WEBP, or drag onto the canvas).
+
+<Steps>
+1. Describe the image. Placeholder text is **Describe the image you want to create…**
+2. Pick an enabled image model. If none appear, open **Settings → Models → Images**.
+3. Open **Image settings** and, for what the model supports, set **Scale**, **Resolution**, **Generation count**, **Quality**, and **Output format**. Use **Reset advanced** to clear extras.
+4. Send. The node shows GENERATING, then a finished image with its name and model id.
+</Steps>
+
+<ScreenshotFrame src="/images/imagesCanvas/image-node.png" alt="Empty canvas prompt, model picker, and Image settings summary" caption="Empty canvas: upload a reference or write a prompt. The model picker is on the left; the summary chip opens Image settings." />
+<ScreenshotFrame src="/images/imagesCanvas/image-advance-settings.png" alt="Image settings for scale, resolution, generation count, and quality" caption="Image settings only lists capabilities the current model declares. Do not mark unsupported capabilities as true in a custom config." />
+
+<PromptBlock>
+16:9 cover: an orange kitten sitting on a light bed, soft window light, shallow depth of field, no text, no watermark. Subject slightly below center, simple background, suitable as a product illustration.
+</PromptBlock>
+
+<ExpectedResult>One or more selectable image nodes appear on the canvas. If generation count is greater than 1, candidates sit side by side; later actions apply to the node you select.</ExpectedResult>
+
+The right rail **Add** menu offers **Add image** and **Upload**. **Select** clicks nodes; **Pan** moves the canvas. The bottom control is zoom.
+
+## Iterate on a node
+
+Select a finished image. The toolbar lists operations the current model supports. Edge labels name the operation, for example **Create variation**.
+
+| Action | What it does |
+| --- | --- |
+| Generate image | Start another text-to-image pass from this node |
+| Regenerate | Redraw with a new prompt while keeping subject and composition |
+| Create variation | New candidate, same subject and visual language |
+| Crop | Local crop; does not call the image model |
+| Local edit | Regenerate only the painted area; needs mask support |
+| Remove background | Cut out the subject; needs transparent-background support |
+| Remove object | Erase a painted object and fill the hole; needs mask support |
+| Multi-view | Generate the same subject from a camera angle |
+
+The `+` on the right of a node is **Generate with this image as reference**. The toolbar also has **Preview**, **Download** (saves to the system Downloads folder), and **Set as cover** (`COVER` badge; used as the library thumbnail).
+
+<PromptBlock label="Create variation example">
+Create a new variation with the same subject and visual language. Shift the color to a green palette; keep layout and type hierarchy unchanged.
+</PromptBlock>
+
+<ScreenshotFrame src="/images/imagesCanvas/image-assets.png" alt="Canvas nodes, Create variation edge, and Assets dock" caption="Each iteration leaves an edge. The dock lists canvas nodes and prompts, or generated vs uploaded assets." />
+
+Open the dock with **Assets**. Switch **Canvas** and **Assets**, filter **All elements** / **Generated** / **Uploads**, and search names or prompts. An empty project shows **Blank canvas**.
+
+If an action is disabled, the tooltip says to configure an image model first, or that no enabled model supports that action. Switch to a model that declares reference images, masks, or transparent backgrounds.
+
+## Crop
+
+**Crop** runs locally. Drag the frame; ratio can be **Original**, **Custom**, or a fixed ratio such as `1:1` or `16:9`. **Apply** writes a new node; cancel closes the editor.
+
+<ScreenshotFrame src="/images/imagesCanvas/image-crop.png" alt="Crop editor with Custom ratio and Apply" caption="Crop does not use image-model quota. Apply creates a new image; the original node stays on the canvas." />
+
+## Remove object and local edit
+
+**Remove object** and **Local edit** share the paint UI. **Brush** adds to the mask, **Eraser** subtracts, **Brush size** sets the radius. Only the green area may be regenerated.
+
+<Steps>
+1. Select an image, choose **Remove object** or **Local edit**, then a model that supports masks.
+2. Paint the target. Unpainted areas should stay unchanged.
+3. Optionally fill **Edit description**. For remove object you can write “remove only the trousers and preserve the rest of the person”.
+4. Click **Apply**. If the mask is empty, you are asked to paint the area first.
+</Steps>
+
+<ScreenshotFrame src="/images/imagesCanvas/image-remove-object.png" alt="Remove object with brush mask and Edit description" caption="Only the green area is redrawn. The description is optional; the default is to remove the selected object and reconstruct the surroundings." />
+
+## Multi-view
+
+**Multi-view** opens **Angle**: **Rotate** and **Tilt** on the left, **Camera** presets on the right (**Eye level**, **Top view**, **Low angle**, **3/4 view**, and more). You can also describe the camera effect, then generate.
+
+<ScreenshotFrame src="/images/imagesCanvas/image-multi-view.png" alt="Multi-view Angle panel with rotate, tilt, and camera presets" caption="Multi-view keeps subject identity, materials, and proportions, then generates from the chosen camera angle." />
+
+## Common issues
+
+- **No model in the prompt box:** no image model is enabled. Chat models and image models are configured separately. See [Configure a model](/en/docs/models/).
+- **Create variation or Remove object is disabled:** the current model does not declare reference or mask support. Switch models, or only enable capabilities the vendor actually supports.
+- **Cannot find the canvas:** it never appears in Recent threads. Return to the **Image & video** library and use **Search projects**.
+- **File still on the canvas after Download:** **Download** copies to Downloads; it does not delete the node.
+- **Files gone after deleting the canvas:** expected. Delete canvas removes images and generation history.
+- **Need video:** **Add video** is currently disabled. Do not treat this canvas as a video timeline.

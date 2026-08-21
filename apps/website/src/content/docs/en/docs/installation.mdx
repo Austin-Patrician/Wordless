@@ -5,18 +5,14 @@ description: Choose the correct package from the official Wordless download page
 import { Steps, Tabs, TabItem } from '@astrojs/starlight/components';
 import Prerequisites from '../../../../components/docs/Prerequisites.astro';
 import ExpectedResult from '../../../../components/docs/ExpectedResult.astro';
-import ScreenshotFrame from '../../../../components/docs/ScreenshotFrame.astro';
 
 ## Download
 
-Wordless desktop installers are available from the official download page, with GitHub Releases retained as a fallback:
+Installers are distributed only from the official download page. The file links are the same ones used by [Download](/#download) on the website, served from `download.wordless.20250230.xyz`:
 
-- **Latest stable release:** [Open the official Wordless download page](https://wordless.20250230.xyz/#download)
-- **Previous releases:** [View all releases](https://github.com/Austin-Patrician/Wordless/releases)
+- **Open the download page:** [wordless.20250230.xyz/#download](/#download)
 
-To choose an architecture manually from the GitHub fallback, scroll to **Assets** and expand it if necessary. The version changes between releases, as in `Wordless-0.1.1-mac-arm64.dmg`; identify the package by the platform and architecture at the end of its filename.
-
-<ScreenshotFrame src="/images/settings/github-release-assets.png" alt="Expanded Assets section on a Wordless GitHub Release" caption="In the Release Assets section, choose the DMG or Windows installer that matches your device. Do not download .blockmap, .yml, or Source code files." />
+The page lists the current Apple Silicon, Intel Mac, and Windows x64 packages. Click the matching row to download. Do not install a copy forwarded through chat, a file host, or another website.
 
 ## Choose the correct package
 
@@ -27,53 +23,47 @@ To choose an architecture manually from the GitHub fallback, scroll to **Assets*
 | Typical Windows 10/11 PC | **Settings → System → About** shows an x64 system type | `Wordless-<version>-win-x64.exe` |
 | Windows on ARM | System type shows ARM64 | No native package is currently available; do not install the x64 build |
 
-macOS currently requires **macOS 13 or later**. Windows currently has an **x64-only** installer.
-
-Do not use these files as installers:
-
-- `Source code (zip)` and `Source code (tar.gz)` contain source code, not the desktop app.
-- `.blockmap`, `latest.yml`, and `latest-mac.yml` are updater metadata.
-- The macOS `.zip` primarily supports the update flow; use the `.dmg` for a normal installation.
+macOS currently requires **macOS 13 or later**. Windows currently has an **x64-only** installer. The version number changes between releases; identify the package by the platform and architecture at the end of the filename.
 
 ## Install
 
 <Tabs>
   <TabItem label="macOS">
     <Steps>
-    1. Download either the `mac-arm64.dmg` or `mac-x64.dmg` identified above.
+    1. From the official download page, download the `mac-arm64.dmg` or `mac-x64.dmg` identified above.
     2. Double-click the DMG and wait for its installation window to open.
     3. Drag **Wordless** into **Applications**.
     4. Wait for the copy to finish, eject the DMG, and open Wordless from Applications. Do not keep running it from the DMG window.
     5. Because test builds are not notarized with an Apple Developer ID, macOS may say it cannot verify the developer. In Finder, Control-click Wordless in Applications and choose **Open**; alternatively, use **System Settings → Privacy & Security → Open Anyway** for the blocked Wordless launch.
-    6. Confirm this only for a package downloaded from the official Wordless download domain or GitHub repository above. Do not disable Gatekeeper or globally lower macOS security.
+    6. Confirm this only for a package from the official download page or `download.wordless.20250230.xyz`. Do not disable Gatekeeper or globally lower macOS security.
     </Steps>
   </TabItem>
   <TabItem label="Windows">
     <Steps>
-    1. Download `Wordless-<version>-win-x64.exe`.
+    1. From the official download page, download `Wordless-<version>-win-x64.exe`.
     2. Run the installer, choose an installation folder, and complete the wizard.
-    3. If SmartScreen displays “Windows protected your PC,” first verify the official Wordless download domain or GitHub Release source, then choose **More info → Run anyway**.
+    3. If SmartScreen displays “Windows protected your PC,” first verify the official download page or `download.wordless.20250230.xyz`, then choose **More info → Run anyway**.
     4. Start Wordless from the Start menu or desktop shortcut.
     </Steps>
   </TabItem>
 </Tabs>
 
 <Prerequisites title="Safety check before installation">
-- The browser address must be `wordless.20250230.xyz`, `download.wordless.20250230.xyz`, or `github.com/Austin-Patrician/Wordless`
-- Use a release with a clear version and release notes, not an installer forwarded through chat or file sharing
+- The browser should be on `wordless.20250230.xyz`, and the actual file should come from `download.wordless.20250230.xyz`
+- The download page should show a clear version; do not use an installer from an unknown source
 - Quit Wordless before upgrading; installation does not remove your workspace files
 </Prerequisites>
 
 ## Verify the installation
 
-A successful launch shows the Wordless workbench rather than a persistent blank window. Open **Settings → About & Updates** and verify that the version matches the downloaded release.
+A successful launch shows the Wordless workbench rather than a persistent blank window. Open **Settings → About & Updates** and verify that the version matches the package you just downloaded.
 
-<ExpectedResult>Wordless is in Applications on macOS or installed on Windows, opens normally, and displays the workbench. Continue to [Your first task](/en/docs/getting-started/) to configure a model.</ExpectedResult>
+<ExpectedResult>Wordless is in Applications on macOS or installed on Windows, opens normally, and displays the workbench. Next, [configure a model](/en/docs/models/), then complete [your first task](/en/docs/getting-started/).</ExpectedResult>
 
 ## Installation problems
 
 - **macOS cannot verify the developer:** use Control-click → Open or Privacy & Security → Open Anyway as described above. This is expected for the current unnotarized test build.
-- **macOS says the app is damaged:** remove the app and DMG, then download the correct architecture from the official Release again. Do not bypass integrity checks.
-- **The app opens to a blank window:** verify that you installed the latest release. If it persists, include the OS, chip, and Wordless versions in a [GitHub issue](https://github.com/Austin-Patrician/Wordless/issues).
-- **The Windows installer does not run:** verify that the system type is x64 and download the `.exe` again. `.blockmap` and `.yml` files are not executable.
-- **Upgrading:** follow the in-app link to the latest Release, quit Wordless, and install the new package. Unsigned macOS test builds may require manually replacing the old app in Applications.
+- **macOS says the app is damaged:** remove the app and DMG, then download the correct architecture from the official download page again. Do not bypass integrity checks.
+- **The app opens to a blank window:** verify that you installed the latest package. If it persists, include the OS, chip, and Wordless versions in a [GitHub issue](https://github.com/Austin-Patrician/Wordless/issues).
+- **The Windows installer does not run:** verify that the system type is x64 and download the `.exe` from the official download page again.
+- **Upgrading:** open the [official download page](/#download), quit Wordless, and install the new package. Unsigned macOS test builds may require manually replacing the old app in Applications.

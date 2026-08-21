@@ -14,36 +14,36 @@ import { Aside } from '@astrojs/starlight/components';
 
 | 层 | 主要位置 | 负责 | 关键边界 |
 | --- | --- | --- | --- |
-| Renderer Process | `apps/desktop/src/renderer` | Workbench、Composer、会话、搜索、审批卡、Artifact 预览、Settings、Skills & MCP | 不直接获得 Node.js 或任意 IPC 权限 |
+| Renderer Process | `apps/desktop/src/renderer` | 工作台、对话输入区、会话、搜索、审批卡、产物预览、设置、技能与 MCP | 不直接获得 Node.js 或任意 IPC 权限 |
 | Preload + DesktopBridge | `apps/desktop/src/preload`、`apps/desktop/src/bridge` | 通过 `contextBridge` 暴露强类型、白名单化的方法和事件 | Renderer 不能构造任意 IPC channel |
-| Electron Main Process | `apps/desktop/src/main` | 窗口、菜单、更新、通知、账号、Cloud Sync、凭据和协议处理 | 承担操作系统权限与资源生命周期 |
-| WordlessRuntime | `packages/runtime` | 会话、上下文、模型配置、Profile/Driver 选择、工具事件、审批、Skill/Connector registry | 不依赖某个具体 Renderer 组件 |
-| Profiles | `packages/profile-*` | 定义 General、Coding、Presentation、Spreadsheet、Data Analysis 的说明、默认能力和连接器 | Profile 声明工作模式，不直接执行工具 |
+| Electron Main Process | `apps/desktop/src/main` | 窗口、菜单、更新、通知、账号、云同步、凭据和协议处理 | 承担操作系统权限与资源生命周期 |
+| WordlessRuntime | `packages/runtime` | 会话、上下文、模型配置、Profile/Driver 选择、工具事件、审批、技能与连接器注册 | 不依赖某个具体 Renderer 组件 |
+| Profiles | `packages/profile-*` | 定义通用、代码、演示文稿、电子表格、数据分析的说明、默认能力和连接器 | Profile 声明工作模式，不直接执行工具 |
 | Agent Drivers | `packages/agent-driver-*` | 创建 Agent session、组装工具、把内核事件转换为 Runtime 事件 | Driver 通过 SDK 与 Runtime 解耦 |
 | Agent kernel + extensions | `packages/agent`、`packages/ai`、`packages/agent-extension-*` | 模型流、Agent loop、tool call、计划、子任务和上下文压缩 | Pi 派生内核不绕过 Wordless 权限策略 |
 | Workspace policy | `packages/agent-workspace-policy` | 工具执行前检查路径、访问级别和风险，产生审批决定 | 审批发生在副作用之前 |
 | Capability services | `apps/desktop/src/main`、`packages/platform-node` | OfficeCLI、数据分析、深度研究、工作区搜索、媒体与预览协议 | 只通过 Main/Runtime 受控调用 |
-| Persistence | `packages/persistence`、Electron userData、工作区 | SQLite、JSON、session journals、凭据、工作区文件和 artifacts | 默认本地保存；安全设置同步需要用户主动开启 |
+| Persistence | `packages/persistence`、Electron userData、工作区 | SQLite、JSON、会话日志、凭据、工作区文件和产物 | 默认本地保存；安全设置同步需要用户主动开启 |
 
 ## 一次请求如何流动
 
-1. Composer 将文本、`@` 文件/文件夹、`$` Skill、当前模型、思考深度与访问级别组合成结构化提交。
+1. 对话输入区将文本、`@` 文件/文件夹、`$` 技能、`!` 任务上下文、当前模型、思考深度与访问级别组合成结构化提交。
 2. `DesktopBridge` 通过 Preload 中的白名单方法发送 `wordless:*` IPC 请求；Renderer 不能直接调用 Node.js。
-3. Main Process 把请求交给 `WordlessRuntime`。Runtime 加载会话、Profile、Driver、已启用的 Skills、Connectors 和 Extensions。
+3. Main Process 把请求交给 `WordlessRuntime`。Runtime 加载会话、Profile、Driver、已启用的技能、连接器和扩展。
 4. Driver 创建对应的 Agent session；Pi 派生 loop 调用配置的模型并流式产生文本或 tool call。
 5. 工具执行前，Workspace Policy 检查工作区边界、访问模式和风险。需要用户决定时，Runtime 发出 approval event 并暂停该操作。
-6. 获批工具由 Main Process 的 capability service、内置工具或已启用 MCP 执行。结果进入 session journal，并以 running、success 或 failed 事件返回 Renderer。
-7. Thread 和右侧 Artifact workspace 消费事件；Presentation、Spreadsheet 或 Data Analysis 产物变化时刷新对应预览。
+6. 获批工具由 Main Process 的 capability service、内置工具或已启用 MCP 执行。结果进入会话日志，并以运行中、成功或失败事件返回 Renderer。
+7. 会话和右侧产物工作区消费事件；演示文稿、电子表格或数据分析产物变化时刷新对应预览。
 
 ## 数据与网络边界
 
-- **始终本地：** 工作区文件、会话 journals、SQLite 数据、artifacts、API Key 与 OAuth 凭据。
-- **按任务发送：** 只有完成当前请求所需的提示词和上下文会发送给用户选择的模型 Provider。
-- **显式启用：** MCP Connector 必须配置并启用后才能提供工具；高风险操作仍进入审批流程。
-- **可选同步：** Google Drive `appDataFolder` 仅在用户开启 Cloud Sync 后同步允许的偏好和安全模型元数据。
+- **始终本地：** 工作区文件、会话日志、SQLite 数据、产物、API 密钥与 OAuth 凭据。
+- **按任务发送：** 只有完成当前请求所需的提示词和上下文会发送给用户选择的模型提供商。
+- **显式启用：** MCP 连接器必须配置并启用后才能提供工具；高风险操作仍进入审批流程。
+- **可选同步：** Google Drive `appDataFolder` 仅在用户开启云同步后同步允许的偏好和安全模型元数据。
 
 <Aside type="note" title="可替换边界">
-Renderer、模型 Provider、MCP、OfficeCLI 和数据服务都位于明确接口之后。替换其中一个不需要重写会话存储、Profile/Driver 注册和审批策略，这也是 Wordless 内核可迁移设计的基础。
+Renderer、模型提供商、MCP、OfficeCLI 和数据服务都位于明确接口之后。替换其中一个不需要重写会话存储、Profile/Driver 注册和审批策略，这也是 Wordless 内核可迁移设计的基础。
 </Aside>
 
 ## Desktop 相关上游项目

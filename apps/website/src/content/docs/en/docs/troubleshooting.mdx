@@ -16,9 +16,17 @@ Copy the complete error text first. Then verify the selected workspace, model, a
 | `Research confirmation is missing or expired` | Expired plan token | Prepare and confirm a fresh plan, then pass its token. |
 | Google `access_denied` | OAuth app is in testing | Add the account as a test user or complete verification. |
 | `Secure credential storage is unavailable` | OS credential service unavailable | Repair the keychain/credential manager; do not hard-code keys. |
-| macOS signature validation failure | Unsigned or unnotarized build | Install the GitHub Release DMG manually. |
+| macOS signature validation failure | Unsigned or unnotarized build | Install the matching package from the [official download page](/#download). |
 | Stale spreadsheet formula preview | Formula cache not recalculated | Recalculate and save in Excel/WPS, then verify again. |
 | MCP timeout | URL, process, OAuth, or network issue | Test the connection and inspect the service logs. |
+| SkillsMP has no matches or stays on offline cache | Network, catalog, or a narrow keyword | Change the query and refresh; the offline cache is not a live catalog. Import a local `SKILL.md` to bypass Discover. |
+| Official MCP Registry will not auto-install | The entry needs a manual command or secret | Open the setup guide and create a custom connector from the publisher docs. The suggested command is not executed for you. |
+| `The task is already running` | The task is starting, running, or waiting | Open the linked session and wait for the turn to finish; do not click Run again. |
+| `The linked session is currently running` | The bound session already has an active turn | Wait for that session, or unlink the task and create a new session. |
+| A digital employee sounds generic | Empty instructions, or an old session snapshot | Put responsibility and prohibitions in the employee instructions, then summon again. Started sessions do not pick up later edits. |
+| `Select an image model first` / `Configure an image model first` | No image model enabled | Enable a model under **Settings → Models → Images**, then open [Image generation](/en/docs/image-generation/). Chat models do not appear in the canvas picker. |
+| `This model does not support reference images` / `This model does not support mask editing` | Capability not declared | Switch to an image model that supports references or masks. Do not set unsupported `capabilities` to `true` in a custom config. |
+| Cannot find a new canvas | Canvas sessions are not in Recent threads | Open the **Image & video** library and use **Search projects**. |
 </TroubleshootingTable>
 
 When reporting an issue include version, OS/architecture, workspace type, redacted tool arguments, full error, and reproduction steps. Never attach API keys or OAuth tokens.

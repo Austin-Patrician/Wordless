@@ -27,7 +27,7 @@ This diagram covers Wordless Desktop only. It starts with the React workbench, c
 
 ## Request flow
 
-1. Composer combines text, `@` file or folder references, `$` Skills, model, thinking depth, and access level into a structured submission.
+1. Composer combines text, `@` file or folder references, `$` Skills, `!` task context, model, thinking depth, and access level into a structured submission.
 2. `DesktopBridge` sends an allowlisted `wordless:*` IPC request through Preload; Renderer never calls Node.js directly.
 3. Main delegates to `WordlessRuntime`, which loads the session, Profile, Driver, enabled Skills, Connectors, and Extensions.
 4. The Driver creates the matching agent session. The Pi-derived loop calls the configured model and streams text or tool calls.

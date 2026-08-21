@@ -1,46 +1,82 @@
 ---
-title: Skills & MCP
-description: 安装 Skill、选择 Skill、连接自定义 MCP，并安全管理 OAuth 与凭据。
+title: 技能与 MCP
+description: 从 SkillsMP 和官方 MCP Registry 发现扩展，审阅后再安装；也可导入本地技能或添加自定义连接器。
 ---
 import { Steps } from '@astrojs/starlight/components';
 import { Tabs, TabItem } from '@astrojs/starlight/components';
 import Prerequisites from '../../../components/docs/Prerequisites.astro';
 import ApprovalCheckpoint from '../../../components/docs/ApprovalCheckpoint.astro';
 import ScreenshotFrame from '../../../components/docs/ScreenshotFrame.astro';
+import ExpectedResult from '../../../components/docs/ExpectedResult.astro';
 
 <Prerequisites>
-- 只有信任来源的 Skill 或 MCP 才应安装
-- 远程服务的 URL、OAuth 配置或 bearer token 已由服务提供方给出
-- 不要把 token 写入 JSON、截图或会话消息
+- 只有你审阅过来源的技能或 MCP 才应安装
+- 远程服务的地址、OAuth 配置或 Bearer 令牌已由服务提供方给出
+- 不要把令牌写入 JSON、截图或会话消息
 </Prerequisites>
 
-## 安装与选择 Skill
+打开左侧 **技能与 MCP**。页面分成 **技能** 和 **MCP** 两个标签；每个标签下再切换 **发现** 与 **已安装**。发现目录来自网络，安装只发生在本机；连接器是否真正可用仍取决于当前配置、启用状态和审批策略。
+
+## 发现技能（SkillsMP）
+
+**发现** 默认打开 SkillsMP 开放技能目录。用搜索框或热门关键词浏览，卡片会标明是否已安装。网络不可用时，界面可能显示离线缓存，目录不一定是最新版本。
 
 <Steps>
-1. 打开左侧 **Skills & MCP**，导入或安装 Skill，确认它的来源、工具和权限说明。
-2. 启用后回到 Composer，输入 `$`；用 ↑/↓ 选择 Skill，Enter 插入 token。
-3. 在提示词中说明要使用的输入文件、输出路径和验收标准。
-4. 发送后观察 Skill 工具调用的状态与审批卡。
+1. 留在 **技能** 标签，选择 **发现**。
+2. 按名称搜索，或点热门关键词缩小范围；需要时点「加载更多」。
+3. 打开条目查看 GitHub 源文件。安装前阅读 `SKILL.md` 和所有伴随文件；第三方仓库会显示明确警告。
+4. 确认来源、工具和权限说明后再安装。安装不会自动在每个会话启用该技能。
+5. 切到 **已安装**，启用后回到对话输入区，输入 `$` 插入引用。
 </Steps>
 
-<ScreenshotFrame src="/images/skills-mcp/skills.png" alt="Skills 列表和启用状态" caption="Skills 页面区分全局与工作区 Skill，并显示搜索、导入、刷新和启用状态。" />
-<ScreenshotFrame src="/images/skills-mcp/skill-import.png" alt="导入 Skill 文件或文件夹" caption="导入前确认压缩包或目录包含 SKILL.md；自动安装只应用于你确认过的非高风险 Skill。" />
+<ApprovalCheckpoint>发现目录中的技能来自第三方 GitHub 仓库。Wordless 不会替你证明仓库安全；不要对未审阅或高风险技能使用自动安装。</ApprovalCheckpoint>
+
+<ScreenshotFrame src="/images/skills-mcp/discover-skills.png" alt="技能发现目录：SkillsMP 卡片和热门关键词" caption="发现视图浏览 SkillsMP 开放目录。搜索或点热门关键词；卡片会标明是否已安装。" />
+<ScreenshotFrame src="/images/skills-mcp/skill-review.png" alt="发现技能详情：审阅 SKILL.md 后再安装" caption="打开条目后先阅读 SKILL.md 和伴随文件。第三方仓库会显示警告；安装不会自动在每个会话启用该技能。" />
+
+本地压缩包或文件夹仍可通过导入按钮安装。导入前确认目录包含 `SKILL.md`。
+
+<ScreenshotFrame src="/images/skills-mcp/skills.png" alt="技能列表和启用状态" caption="已安装视图区分全局与工作区技能，并显示搜索、导入、刷新和启用状态。" />
+<ScreenshotFrame src="/images/skills-mcp/skill-import.png" alt="导入技能文件或文件夹" caption="导入前确认压缩包或目录包含 SKILL.md；自动安装只应用于你确认过的非高风险技能。" />
+
+## 发现 MCP（官方 Registry）
+
+MCP 标签的 **发现** 浏览官方 MCP Registry。安装和授权是分开的：先看传输方式、能力、发布者网站和源码仓库，再决定是否安装。
+
+<Steps>
+1. 打开 **MCP → 发现**，搜索服务名称或描述。
+2. 打开详情，核对该条目是远程 Streamable HTTP 还是本地 stdio 包，以及身份验证类型。
+3. 可以自动安装的条目会进入本机连接器列表；安装后仍要完成 OAuth 或 API 密钥，并在已安装列表中启用。
+4. 不能自动安装的条目会提供配置指引（建议命令、请求头、环境变量）。这只是说明，Wordless 不会替你执行命令。按指引改用 **自定义连接器**。
+5. 已安装且 Registry 有新版本时，卡片会显示更新；先看变更再更新。
+</Steps>
+
+<ApprovalCheckpoint>首次连接、启动 stdio 进程、访问远程服务或使用 MCP 工具时可能需要审批。验证服务名称、域名、工具名称和参数；发现目录里的条目不构成预授权。</ApprovalCheckpoint>
+
+<ScreenshotFrame src="/images/skills-mcp/discover-mcp.png" alt="MCP 发现目录：官方 Registry 卡片" caption="发现视图浏览官方 MCP Registry。安装和授权分开；不能自动安装的条目只提供配置指引。" />
 
 ## 添加自定义 MCP
+
+发现目录覆盖不到、或必须按发布者文档手工配置时，使用自定义连接器：
 
 <Tabs>
   <TabItem label="stdio">
     填写命令和参数，确认二进制文件存在且可执行。环境变量只在 MCP 进程需要时传入。
   </TabItem>
-  <TabItem label="Remote HTTP">
-    填写 HTTPS URL，选择 OAuth 或 bearer token。优先 OAuth，不要把长期 token 写在共享配置中。
+  <TabItem label="远程 HTTP">
+    填写 HTTPS 地址，选择 OAuth 或 Bearer 令牌。优先 OAuth，不要把长期令牌写在共享配置中。
   </TabItem>
 </Tabs>
 
-<ScreenshotFrame src="/images/skills-mcp/mcp.png" alt="MCP 连接器列表、状态和管理操作" caption="连接器卡片展示可用性、连接状态、启用开关和删除入口；失败状态会保留明确错误。" />
-<ScreenshotFrame src="/images/skills-mcp/mcp-new.png" alt="添加 Remote HTTP 或 Local command MCP 连接器" caption="新增连接器时选择 Remote HTTP 或 Local command，并只填写服务要求的 URL、OAuth 或请求凭据。" />
-<ApprovalCheckpoint>首次连接、启动 stdio 进程、访问远程服务或使用 MCP 工具时可能需要审批。验证服务名称、域名和工具参数。</ApprovalCheckpoint>
+<ScreenshotFrame src="/images/skills-mcp/mcp.png" alt="MCP 连接器列表、状态和管理操作" caption="已安装连接器卡片展示可用性、连接状态、启用开关和删除入口；失败状态会保留明确错误。" />
+<ScreenshotFrame src="/images/skills-mcp/mcp-new.png" alt="添加远程 HTTP 或本地命令 MCP 连接器" caption="新增自定义连接器时选择远程 HTTP 或本地命令，并只填写服务要求的地址、OAuth 或请求凭据。" />
+
+## 在会话中使用
+
+启用技能后，在对话输入区输入 `$`，用 ↑/↓ 选择，回车插入引用。提示词里写清输入文件、输出路径和验收标准。MCP 工具只在连接器已启用且通过审批后才会进入该会话。数字员工和任务也可以各自勾选技能与 MCP；未启用的能力不会因为出现在发现目录里就被调用。
 
 ## 测试与删除
 
-点击 **Test connection**，确认工具列表和健康状态；失败时保留原始错误。删除连接只移除本地配置，不代表撤销远程服务端的 OAuth 授权，需要在服务方单独撤销。
+在已安装的连接器上点击 **测试连接**，确认工具列表和健康状态；失败时保留原始错误。删除连接只移除本地配置，不代表撤销远程服务端的 OAuth 授权，需要在服务方单独撤销。
+
+<ExpectedResult>发现目录可以浏览，安装前能审阅技能源文件或 MCP 元数据；安装后的技能和连接器出现在已安装列表，只有启用后才会进入对话或任务执行。</ExpectedResult>

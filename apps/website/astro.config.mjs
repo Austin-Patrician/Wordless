@@ -4,33 +4,50 @@ import starlight from '@astrojs/starlight'
 
 const zhSidebar = [
   {
-    label: '开始使用',
-    translations: { en: 'Start here' },
-    items: ['docs', 'docs/installation', 'docs/getting-started', 'docs/models'],
-  },
-  { label: '核心概念', translations: { en: 'Core concepts' }, items: ['docs/core-concepts'] },
-  { label: '技术架构', translations: { en: 'Architecture' }, items: ['docs/architecture', 'docs/pi-agent'] },
-  {
-    label: 'Agent 工作流',
-    translations: { en: 'Agent workflows' },
+    label: '入门指南',
+    translations: { en: 'Get started' },
     items: [
-      'docs/workflows/general',
-      'docs/workflows/presentation',
-      'docs/workflows/spreadsheet',
-      'docs/workflows/data-analysis',
-      'docs/workflows/code',
+      { slug: 'docs', label: '简介', translations: { en: 'Overview' } },
+      { slug: 'docs/installation', label: '快速开始', translations: { en: 'Quick start' } },
+      { slug: 'docs/models', label: '配置模型', translations: { en: 'Configure a model' } },
+      { slug: 'docs/getting-started', label: '完成首次任务', translations: { en: 'Your first task' } },
+      { slug: 'docs/sessions', label: '对话管理', translations: { en: 'Manage conversations' } },
+      { slug: 'docs/changelog', label: '更新日志', translations: { en: 'Changelog' } },
     ],
   },
   {
-    label: '自动化与数字员工',
-    translations: { en: 'Automation & digital employees' },
-    items: ['docs/automation', 'docs/digital-employees'],
+    label: '从入门到精通',
+    translations: { en: 'From basics to mastery' },
+    items: [
+      { slug: 'docs/core-concepts', label: '核心概念', translations: { en: 'Core concepts' } },
+      { slug: 'docs/tasks', label: '任务管理', translations: { en: 'Manage tasks' } },
+      { slug: 'docs/image-generation', label: '图片生成', translations: { en: 'Image generation' } },
+      {
+        label: '工作流',
+        translations: { en: 'Workflows' },
+        items: [
+          'docs/workflows/general',
+          'docs/workflows/presentation',
+          'docs/workflows/spreadsheet',
+          'docs/workflows/data-analysis',
+          'docs/workflows/code',
+        ],
+      },
+      { slug: 'docs/automation', label: '自动化', translations: { en: 'Automation' } },
+      { slug: 'docs/digital-employees', label: '数字员工', translations: { en: 'Digital employees' } },
+      { slug: 'docs/skills-mcp', label: '技能与 MCP', translations: { en: 'Skills & MCP' } },
+      { slug: 'docs/security-privacy', label: '安全与隐私', translations: { en: 'Security & privacy' } },
+      { slug: 'docs/settings-updates', label: '设置', translations: { en: 'Settings' } },
+      {
+        label: '技术架构',
+        translations: { en: 'Architecture' },
+        collapsed: true,
+        items: ['docs/architecture', 'docs/pi-agent'],
+      },
+      { slug: 'docs/troubleshooting', label: '故障排查', translations: { en: 'Troubleshooting' } },
+      { slug: 'docs/business', label: '商务合作', translations: { en: 'Commercial' } },
+    ],
   },
-  { label: '扩展与连接', translations: { en: 'Extensions' }, items: ['docs/skills-mcp'] },
-  { label: '安全与隐私', translations: { en: 'Security & privacy' }, items: ['docs/security-privacy'] },
-  { label: '设置与更新', translations: { en: 'Settings & updates' }, items: ['docs/settings-updates'] },
-  { label: '故障排查', translations: { en: 'Troubleshooting' }, items: ['docs/troubleshooting'] },
-  { label: '商务合作', translations: { en: 'Commercial' }, items: ['docs/business'] },
 ]
 
 export default defineConfig({

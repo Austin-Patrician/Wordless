@@ -1,23 +1,53 @@
 ---
-title: Wordless 使用手册
-description: 从安装、模型配置到完整 Agent 工作流的 Wordless 桌面端文档。
-template: splash
-hero:
-  tagline: 把模型、工具与工作区上下文组织进一个可控的桌面 Agent 工作空间。
-  actions:
-    - text: 安装 Wordless
-      link: /docs/installation/
-      icon: right-arrow
-      variant: primary
-    - text: 查看核心概念
-      link: /docs/core-concepts/
-      icon: open-book
-      variant: minimal
+title: 简介
+description: Wordless 的核心能力、适用场景，以及和 WorkBuddy、Codex 的差别。
 ---
-import ManualHome from '../../../components/docs/ManualHome.astro';
 
-<ManualHome locale="zh-CN" />
+Wordless 是一个面向真实办公场景的 Agent 平台：理解用户的需求，执行精准稳定，减少无效往返和 Token 消耗，交付可编辑、可验证的结果。。
+
+## 核心能力
+
+- **理解自然语言：** 用日常说法说明目标、约束和验收标准，不必先拆成工具指令。
+- **自主规划与执行：** 拆解步骤、调用工具、根据中间结果调整，直到给出可核对的产出。改文件、跑命令等高影响操作仍可停下来等你确认。
+- **多模态任务处理：** 同一会话覆盖文档、代码、演示文稿、电子表格、数据分析和图像视频，而不只是返回一段文字。
+- **角色协作与复用：** 把稳定职责交给数字员工或团队，把重复工作做成任务或本地计划，不必每次从零口述。
+
+## 适用场景
+
+- **文档生成：** 纪要、简报、方案和可继续编辑的文稿
+- **数据分析：** 清洗、汇总、出图，以及可复核的结论
+- **PPT / 报告生成：** 从提纲到可预览、可修改的演示文稿
+- **深度研究：** 分维度检索、对照来源、整理证据缺口
+- **代码编辑：** 阅读仓库、做小范围修改，并用测试或 diff 验收
+- **电子表格处理：** 公式、透视、图表和报表
+- **图像与视频：** 按任务生成或改视觉素材
+
+## 和 WorkBuddy、Codex 的差别
+
+三者都能「让 Agent 干活」，重心不同：
+
+| | Wordless | WorkBuddy | Codex |
+| --- | --- | --- | --- |
+| 形态 | 本地桌面工作台 | 腾讯的办公 Agent 工作台，账号与额度在云侧 | OpenAI 的编程 Agent（CLI / 云端沙箱） |
+| 模型 | 自选提供商和网关 | 产品内的模型与额度 | 绑定 OpenAI / ChatGPT 生态 |
+| 交付 | 办公文件、表格、幻灯片和代码都在同一会话 | 偏日常办公与云端任务闭环 | 偏仓库、命令和代码评审 |
+| 数据 | 会话和文件默认本机；云同步可选且不含会话 | 可远程触发，关闭客户端后任务仍可在云端继续 | 云端执行时工作发生在隔离环境，不在你的桌面会话里 |
+| 控制 | 工具审批和访问级别写在会话中 | 按产品账号与权限模型 | 按 Codex 的沙箱与仓库流程 |
+
+需要文件不出本机、自己选模型、并且 PPT / 表格要在当场改和验收时，用 Wordless。需要腾讯办公生态和云端续跑时看 WorkBuddy。主要在仓库里写代码、走 OpenAI 编程链路时看 Codex。
+
+## 入门顺序
+
+按这个顺序走完最短路径，再打开其余功能：
+
+1. [快速开始](/docs/installation/)：从官方下载页安装与你的 Mac 芯片或 Windows 架构匹配的包，并打开工作台。
+2. [配置模型](/docs/models/)：填写提供商凭据；自定义网关可用「获取模型」拉取目录，再启用要出现在对话输入区的模型。
+3. [完成首次任务](/docs/getting-started/)：选择工作区，用 `@` 引用文件，并核对实际产出。
+4. [对话管理](/docs/sessions/)：在侧边栏找回、重命名或删除本地会话记录。
+5. [更新日志](/docs/changelog/)：在应用内查看当前版本与更新说明。
+
+首次任务可以验收之后，再按交付物阅读[任务管理](/docs/tasks/)、[图片生成](/docs/image-generation/)、工作流、自动化、数字员工和技能 / MCP。需要先建立共同语言时，从[核心概念](/docs/core-concepts/)开始。
 
 ## 开源项目与致谢
 
-Wordless 复用了并适配了多个优秀的开源项目：Agent 内核来自 [Pi Agent Harness](https://github.com/earendil-works/pi)，文档站基于 [Astro Starlight](https://github.com/withastro/starlight)，桌面容器使用 [Electron](https://github.com/electron/electron)，首页 3D 场景使用 [Three.js](https://github.com/mrdoob/three.js)。二次分发时请保留各项目的许可证和原始仓库地址。
+Agent 内核来自 [Pi Agent Harness](https://github.com/earendil-works/pi)，文档站基于 [Astro Starlight](https://github.com/withastro/starlight)，桌面容器使用 [Electron](https://github.com/electron/electron)，首页 3D 场景使用 [Three.js](https://github.com/mrdoob/three.js)。二次分发时请保留各项目的许可证和原始仓库地址。

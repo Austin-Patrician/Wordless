@@ -9,9 +9,23 @@ import ExpectedResult from '../../../../components/docs/ExpectedResult.astro';
 
 <Prerequisites>
 - An API key or a reachable local model service
-- The exact model ID, base URL, context limit, and thinking-depth support
+- A custom gateway needs a reachable Base URL; model IDs can be pulled with **Fetch models** instead of copying the full catalog first
 - For OpenAI-compatible APIs, confirmation that the gateway uses Chat Completions or Responses
 </Prerequisites>
+
+## Fetch available models
+
+A built-in provider already lists its catalog. Enable entries under **Enabled models** to show them in Composer.
+
+A custom chat provider does not require a handwritten `models` array. After you set **Base URL** and the API key, open **Settings → Models**, select that provider, and click **Fetch models** next to **Enabled models**. Wordless requests the remote catalog from that Base URL and opens the picker.
+
+<ScreenshotFrame src="/images/settings/models-fetch-models.png" alt="Enabled models list and Fetch models on a custom provider" caption="On a custom chat provider, Fetch models appears next to Enabled models once the Base URL is valid." />
+
+Search the catalog, expand groups, add a single model with `+`, or use **Add all models**. Pending rows show Will add / Will remove. **Apply to configuration** writes the selection into the provider JSON. Then enable the models that should appear in Composer and **Save**.
+
+<ScreenshotFrame src="/images/settings/models-avaliable-models.png" alt="Remote model catalog after Fetch models, with search and add actions" caption="The remote catalog is grouped by provider. Search, add or remove rows, then Apply to configuration." />
+
+**Fetch models** appears only on custom chat providers, and only when the Base URL is a valid `http(s)` URL and the advanced JSON has no syntax errors. Image providers do not use this flow. If the catalog endpoint is not the default OpenAI `/v1/models` shape, set `modelFetcher` in the advanced JSON before fetching.
 
 ## Field reference
 
@@ -21,7 +35,8 @@ import ExpectedResult from '../../../../components/docs/ExpectedResult.astro';
 | `baseUrl` | API root | Usually ends in `/v1`; do not append `/chat/completions` twice |
 | `api` | Request protocol | Usually `openai-completions` or `openai-responses` |
 | `headers` | Extra HTTP headers | Include only gateway-required headers, not the API key |
-| `models[].id` | Server-side model ID | Copy it exactly from the provider |
+| `modelFetcher` | How to fetch the remote catalog | Omit to auto-match from the Base URL; set it when the catalog API is non-default |
+| `models[].id` | Server-side model ID | Copy it exactly from the provider, or let Fetch models write it |
 | `models[].name` | Composer label | Human-readable and not sent as the ID |
 | `reasoning` | Reasoning capability | Set only when the model really supports it |
 | `input` | Input modalities | `['text']` or `['text', 'image']` |
@@ -37,10 +52,11 @@ import ExpectedResult from '../../../../components/docs/ExpectedResult.astro';
 1. Open **Settings → Models** and select **Chat**.
 2. Click **Add custom provider**, enter a unique Provider ID using letters, numbers, `.`, `_`, or `-`, choose an avatar, and create it.
 3. Enter the API key on the right. It is kept separate from the advanced JSON.
-4. Enable **Custom provider configuration** and adapt the example below.
-5. Click **Save**; schema errors appear below the API key section.
-6. Enable the new model under **Enabled models** or it will not appear in Composer.
-7. Select it in Composer. A thinking-depth submenu appears only when `thinkingLevelMap` is configured.
+4. On a custom chat provider, set **Base URL**, click **Fetch models**, add entries from the remote catalog, then **Apply to configuration**.
+5. Edit **Custom provider configuration** only when you still need to change the protocol, headers, or thinking depth.
+6. Click **Save**; schema errors appear below the API key section.
+7. Enable the new model under **Enabled models** or it will not appear in Composer.
+8. Select it in Composer. A thinking-depth submenu appears only when `thinkingLevelMap` is configured.
 </Steps>
 
 ```json title="OpenAI-compatible Chat Completions example"
@@ -76,4 +92,6 @@ For a built-in provider, use `modelOverrides` in Custom provider configuration i
 
 ## Troubleshooting configuration
 
-401/403 usually means an invalid key or missing model permission. A 404 usually means the base URL has the wrong `/v1` suffix or the Model ID is wrong. A timeout points to proxy, VPN, IPv6, or local routing. HTML means a console URL was entered instead of an API endpoint. An empty model list means `models` is empty, JSON validation failed, or the model is not enabled. If thinking depth is absent, `thinkingLevelMap` is not configured.
+401/403 usually means an invalid key or missing model permission. A 404 usually means the base URL has the wrong `/v1` suffix or the Model ID is wrong. A timeout points to proxy, VPN, IPv6, or local routing. HTML means a console URL was entered instead of an API endpoint. An empty model list means `models` is empty, **Apply to configuration** was skipped, JSON validation failed, or the model is not enabled. **Fetch models** is disabled when this is not a custom chat provider, the Base URL is not a valid `http(s)` URL, or the advanced JSON has a syntax error. A failed or empty catalog means the key, Base URL, network, or `modelFetcher` does not match the provider. If thinking depth is absent, `thinkingLevelMap` is not configured.
+
+When the model responds, continue to [Your first task](/en/docs/getting-started/). Image models are selected on the [Image generation](/en/docs/image-generation/) canvas, not in Composer. Keep this page open if you still need custom provider fields.

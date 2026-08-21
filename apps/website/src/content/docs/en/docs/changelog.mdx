@@ -1,0 +1,30 @@
+---
+title: Changelog
+description: Check the installed version and update notes, then install updates when you need them.
+---
+import { Steps } from '@astrojs/starlight/components';
+import ScreenshotFrame from '../../../../components/docs/ScreenshotFrame.astro';
+import ExpectedResult from '../../../../components/docs/ExpectedResult.astro';
+
+The docs do not keep a second copy of every release note. The installed version, notes, and release history live in **Settings → About & Updates**. Installers always come from the [official download page](/#download), the same distribution used by Download on the website.
+
+- **Installed version and updates:** **Settings → About & Updates**
+- **Reinstall by architecture:** [Quick start / Install](/en/docs/installation/)
+- **Appearance, privacy, and other settings:** [Settings](/en/docs/settings-updates/)
+
+## Check the current version
+
+<Steps>
+1. Open **Settings → About & Updates**.
+2. Confirm the app name, version, and architecture match the package you installed.
+3. Expand the release history for notes relative to the current version.
+4. To install an update, check for a release, read the notes, then defer or download. When the download finishes, use **Restart & Install**.
+</Steps>
+
+<ScreenshotFrame src="/images/settings/settings-update.png" alt="About & Updates version and release history" caption="About & Updates shows the current version and architecture, manual check action, and expandable release history." />
+
+<ExpectedResult>
+About & Updates shows the installed version and the matching notes. A failed update leaves the current installation in place.
+</ExpectedResult>
+
+Unsigned macOS test builds may fail system code-signature checks. Do not retry auto-update in a loop; follow [Quick start](/en/docs/installation/) and install the matching package from the official download page.

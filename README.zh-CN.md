@@ -3,7 +3,7 @@
   <img src="docs/assets/desktop/wordless-logo.webp" alt="Wordless" width="112" />
   <h1>Wordless</h1>
   <p><strong>少说废话，把工作做完。</strong></p>
-  <p>一个面向真实需求的本地优先 Agent 平台：精确使用上下文，减少无效往返和 Token 消耗，交付可编辑、可验证的结果。</p>
+  <p>一个面向真实办公场景的 Agent 平台：理解用户的需求，执行精准稳定，减少无效往返和 Token 消耗，交付可编辑、可验证的结果。</p>
 
   <p>
     <a href="https://github.com/Austin-Patrician/Wordless/releases/latest"><img alt="GitHub Release" src="https://img.shields.io/github/v/release/Austin-Patrician/Wordless?display_name=tag&style=flat-square" /></a>

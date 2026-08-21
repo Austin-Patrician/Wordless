@@ -1,5 +1,5 @@
 ---
-title: Presentation（演示文稿）
+title: 演示文稿
 description: 在 Wordless 内选中幻灯片元素、发出修改指令，并即时预览可编辑 PPTX。
 ---
 import { Steps } from '@astrojs/starlight/components';
@@ -11,33 +11,33 @@ import ScreenshotFrame from '../../../../components/docs/ScreenshotFrame.astro';
 
 ## 目标
 
-生成一个可编辑、可预览、结构与视觉都经过检查的 `.pptx`。更重要的是，你不必反复下载、打开和重新上传文件：幻灯片始终显示在右侧工作区，选中具体元素后即可在 Composer 中要求 Agent 定点修改。
+生成一个可编辑、可预览、结构与视觉都经过检查的 `.pptx`。更重要的是，你不必反复下载、打开和重新上传文件：幻灯片始终显示在右侧工作区，选中具体元素后即可在对话输入区要求 Agent 定点修改。
 
 ## 在页面内完成设计闭环
 
-右侧 Presentation 不是最终结果的静态截图，而是当前会话的工作界面。你可以浏览页面、缩放预览、刷新结果、选中页面元素，并把选择结果作为结构化上下文送入 Composer。Agent 修改完成后，预览会在同一位置更新，下一轮修改可以立即继续。
+右侧演示文稿区不是最终结果的静态截图，而是当前会话的工作界面。你可以浏览页面、缩放预览、刷新结果、选中页面元素，并把选择结果作为结构化上下文送入对话。Agent 修改完成后，预览会在同一位置更新，下一轮修改可以立即继续。
 
 <Steps>
-1. 选择 **Presentation**，在 Guided 或 Quick 流程中选择模板和起始方式。
+1. 选择 **演示文稿**，在 Guided 或 Quick 流程中选择模板和起始方式。
 2. 确认语言、风格、受众和页面数量，让 Agent 生成第一版。
 3. 在右侧预览中切换幻灯片，使用缩放和刷新检查细节。
 4. 进入选择模式，点击需要修改的标题、文本框或其他元素，并确认选择。
-5. 点击 **Use selection**。Composer 接收到的是被选元素的结构化信息，而不只是“第 3 页标题”这段文字。
+5. 点击 **使用选区**。对话输入区接收到的是被选元素的结构化信息，而不只是“第 3 页标题”这段文字。
 6. 描述局部修改，并明确哪些元素不能改变。
 7. 等待工具执行成功；右侧预览会刷新到最新版本，无需下载或重新打开 PPTX。
-8. 继续选择下一个元素迭代，最后运行 **Check presentation** 检查溢出、遮挡和对比度。
+8. 继续选择下一个元素迭代，最后运行 **检查演示文稿** 检查溢出、遮挡和对比度。
 </Steps>
 
 <PromptBlock>
 只修改我刚刚选中的标题：将它改成“可迁移的 Agent 内核”，保持当前位置和左对齐；字号缩小到不换行，其他元素不要改。修改后立即重新渲染当前页，并检查文字溢出和对比度。
 </PromptBlock>
 
-<ScreenshotFrame src="/images/workflows/presentation-template-structure.png" alt="Presentation 模板和起始结构选择" caption="选择 Guided 或 Quick 流程，并确定模板与起始结构。" />
-<ScreenshotFrame src="/images/workflows/presentation-confirm-template.png" alt="Presentation 语言和视觉方向确认" caption="在生成前确认语言、视觉风格和关键约束，减少生成后的大范围返工。" />
+<ScreenshotFrame src="/images/workflows/presentation-template-structure.png" alt="演示文稿模板和起始结构选择" caption="选择 Guided 或 Quick 流程，并确定模板与起始结构。" />
+<ScreenshotFrame src="/images/workflows/presentation-confirm-template.png" alt="演示文稿语言和视觉方向确认" caption="在生成前确认语言、视觉风格和关键约束，减少生成后的大范围返工。" />
 <ScreenshotFrame src="/images/workflows/presentation-preview-slides.png" alt="Wordless 右侧幻灯片预览" caption="第一版生成后直接在右侧工作区浏览各页，不需要先导出文件。" />
-<ScreenshotFrame src="/images/workflows/presentation-preview-tools.png" alt="Presentation 预览、工具状态和检查操作" caption="工具执行状态、当前预览和质量检查保留在同一个会话界面中。" />
+<ScreenshotFrame src="/images/workflows/presentation-preview-tools.png" alt="演示文稿预览、工具状态和检查操作" caption="工具执行状态、当前预览和质量检查保留在同一个会话界面中。" />
 
-<ExpectedResult>选中的元素会成为 Composer 中可追踪的上下文；修改完成后右侧预览立即更新，并且最终 PPTX 仍可在 PowerPoint 或 Keynote 中继续编辑。</ExpectedResult>
+<ExpectedResult>选中的元素会成为对话中可追踪的上下文；修改完成后右侧预览立即更新，并且最终 PPTX 仍可在 PowerPoint 或 Keynote 中继续编辑。</ExpectedResult>
 
 ## 完整制作流程
 
@@ -50,9 +50,9 @@ import ScreenshotFrame from '../../../../components/docs/ScreenshotFrame.astro';
 <Steps>
 1. 用 `@` 引用提纲、数据和模板文件，明确 16:9 比例、字体和输出路径。
 2. 让 Agent 先创建页面结构和每页结论，再分批执行 `presentation_apply`。
-3. Tool Approval 出现时，检查 `parent` 和 `path` 使用 `/slide[N]`（例如 `/slide[1]`），而不是 `/slides/1`。
+3. 出现工具审批时，检查 `parent` 和 `path` 使用 `/slide[N]`（例如 `/slide[1]`），而不是 `/slides/1`。
 4. 每批操作后等待 `presentation_render` 成功，在右侧检查文字方向、溢出、遮挡和对比度。
-5. 使用元素选择完成定点修复，再运行 **Check presentation**。
+5. 使用元素选择完成定点修复，再运行 **检查演示文稿**。
 6. 最后导出，并用 PowerPoint 或 Keynote 验证字体替换、动画和可编辑性。
 </Steps>
 

@@ -1,5 +1,5 @@
 ---
-title: Spreadsheet（电子表格）
+title: 电子表格
 description: 在工作簿内选中范围、发起分析或修改，并即时复核结果。
 ---
 import { Steps } from '@astrojs/starlight/components';
@@ -15,29 +15,29 @@ import ScreenshotFrame from '../../../../components/docs/ScreenshotFrame.astro';
 
 ## 工作表就是交互上下文
 
-选中一块连续区域后，Wordless 会记录工作表、地址、公式和值等结构化信息。你可以选择 **Reference**、**Analyze**、**Formula**、**Chart** 或 **Pivot**，再在 Composer 中说明目标；Agent 不需要猜测 `A1:H500` 代表什么。工具完成后预览刷新，修改历史和质量检查仍留在当前会话中。
+选中一块连续区域后，Wordless 会记录工作表、地址、公式和值等结构化信息。你可以选择 **引用**、**分析**、**公式**、**图表** 或 **透视表**，再在对话中说明目标；Agent 不需要猜测 `A1:H500` 代表什么。工具完成后预览刷新，修改历史和质量检查仍留在当前会话中。
 
 <Steps>
-1. 在 Workspace Files 打开工作簿和目标工作表，右侧显示可交互的工作簿预览。
-2. 直接拖选需要处理的连续区域，检查当前选区的 locator、公式和值。
-3. 从选区操作中选择 **Reference**（引用）、**Analyze**（分析）、**Formula**（公式）、**Chart**（图表）或 **Pivot**（透视）。
-4. 选区会作为结构化 token 进入 Composer；补充处理目标、输出位置和不可修改的原始范围。
+1. 在 **工作空间文件** 打开工作簿和目标工作表，右侧显示可交互的工作簿预览。
+2. 直接拖选需要处理的连续区域，检查当前选区的定位、公式和值。
+3. 从选区操作中选择 **引用**、**分析**、**公式**、**图表** 或 **透视表**。
+4. 选区会作为结构化引用进入对话输入区；补充处理目标、输出位置和不可修改的原始范围。
 5. 先要求质量扫描或分析计划，写入操作出现审批卡时逐项确认。
 6. 让 Agent 在副本中执行公式、图表或透视修改。
 7. 工具成功后，工作簿预览会在右侧立即刷新；继续选中另一块区域即可迭代。
-8. 查看 Changes 和质量检查结果，再在 Excel/WPS 中完成最终复算和发布。
+8. 查看 **变更** 和质量检查结果，再在 Excel/WPS 中完成最终复算和发布。
 </Steps>
 
 <PromptBlock>
 分析我刚刚选择的区域：检查空值、重复记录和金额异常。然后在 Analysis 工作表创建按月份汇总的收入表与折线图。不要覆盖原始数据；完成后立即刷新工作簿预览，并列出新增公式和图表的数据源范围。
 </PromptBlock>
 
-<ScreenshotFrame src="/images/workflows/spreadsheet-selection-actions.png" alt="Spreadsheet 交互选区与结构化上下文" caption="在右侧工作簿选中连续区域，通过 Chart 操作把精确的工作表与范围作为 token 送入 Composer。" />
-<ScreenshotFrame src="/images/workflows/spreadsheet-live-update.png" alt="Spreadsheet 多选区分析操作" caption="Analyze 可以携带多个选区；右侧同时显示每个选区的 locator 与质量概览。" />
-<ScreenshotFrame src="/images/workflows/spreadsheet-generate-chart.png" alt="Spreadsheet 修改和图表即时渲染" caption="编辑成功后立即渲染目标范围，工具状态与最新图表在同一屏幕中可见。" />
-<ScreenshotFrame src="/images/workflows/spreadsheet-changes-quality.png" alt="Spreadsheet Changes 修改历史" caption="Changes 按 revision 展示新增表格、单元格更新和目标工作表，方便逐项复核。" />
+<ScreenshotFrame src="/images/workflows/spreadsheet-selection-actions.png" alt="电子表格交互选区与结构化上下文" caption="在右侧工作簿选中连续区域，通过「图表」把精确的工作表与范围作为引用送入对话。" />
+<ScreenshotFrame src="/images/workflows/spreadsheet-live-update.png" alt="电子表格多选区分析操作" caption="「分析」可以携带多个选区；右侧同时显示每个选区的定位与质量概览。" />
+<ScreenshotFrame src="/images/workflows/spreadsheet-generate-chart.png" alt="电子表格修改和图表即时渲染" caption="编辑成功后立即渲染目标范围，工具状态与最新图表在同一屏幕中可见。" />
+<ScreenshotFrame src="/images/workflows/spreadsheet-changes-quality.png" alt="电子表格变更历史" caption="「变更」按版本展示新增表格、单元格更新和目标工作表，方便逐项复核。" />
 
-<ExpectedResult>Agent 获得明确的工作表和范围上下文，副本中的公式、图表或透视操作完成后，右侧预览、Changes 和质量状态同步更新；原始文件保持不变。</ExpectedResult>
+<ExpectedResult>Agent 获得明确的工作表和范围上下文，副本中的公式、图表或透视操作完成后，右侧预览、变更和质量状态同步更新；原始文件保持不变。</ExpectedResult>
 
 ## 完整分析流程
 
@@ -52,7 +52,7 @@ import ScreenshotFrame from '../../../../components/docs/ScreenshotFrame.astro';
 2. 先做质量扫描：空值、重复、异常范围、类型混杂、公式错误和隐藏行。
 3. 让 Agent 给出分析计划，明确副本路径、目标工作表和单元格范围。
 4. 通过审批后写入副本，并在预览中检查数字格式、公式和图表轴。
-5. 查看 Changes 和质量检查，再使用 Excel/WPS 复算公式缓存并保存。
+5. 查看 **变更** 和质量检查，再使用 Excel/WPS 复算公式缓存并保存。
 </Steps>
 
 <PromptBlock>
@@ -67,9 +67,9 @@ import ScreenshotFrame from '../../../../components/docs/ScreenshotFrame.astro';
 
 | 场景 | Wordless 中的操作 | 验收方式 |
 | --- | --- | --- |
-| 数据质量审计 | 直接选区并选择 Analyze | 每个问题带行号和字段 |
-| 月度经营分析 | 选区后选择 Formula/Chart，在副本中写入 | 原文件不变，图表源范围正确 |
-| 模板化报表 | 引用工作表并选择 Pivot | 保留工作表与格式，复算无错误 |
+| 数据质量审计 | 直接选区并选择「分析」 | 每个问题带行号和字段 |
+| 月度经营分析 | 选区后选择「公式」或「图表」，在副本中写入 | 原文件不变，图表源范围正确 |
+| 模板化报表 | 引用工作表并选择「透视表」 | 保留工作表与格式，复算无错误 |
 
 ## 公式缓存注意事项
 

@@ -1,0 +1,30 @@
+---
+title: 更新日志
+description: 在应用内查看当前版本与更新说明，并按需安装更新。
+---
+import { Steps } from '@astrojs/starlight/components';
+import ScreenshotFrame from '../../../components/docs/ScreenshotFrame.astro';
+import ExpectedResult from '../../../components/docs/ExpectedResult.astro';
+
+Wordless 不在文档里维护一份平行的版本年表。当前版本、更新说明和发布历史以应用内 **设置 → 关于与更新** 为准。安装包始终从[官方下载页](/#download)获取，与首页下载使用同一分发地址。
+
+- **当前版本与更新：** 打开 **设置 → 关于与更新**
+- **按架构重新安装：** [快速开始 / 安装](/docs/installation/)
+- **外观、隐私和其他设置：** [设置](/docs/settings-updates/)
+
+## 查看当前版本
+
+<Steps>
+1. 打开 **设置 → 关于与更新**。
+2. 核对应用名称、版本号和当前设备架构是否与你安装的包一致。
+3. 展开发布历史，阅读相对当前版本的功能变化。
+4. 若要安装更新，点击检查更新，阅读说明后选择稍后提醒或下载。下载完成后使用 **重启并安装**。
+</Steps>
+
+<ScreenshotFrame src="/images/settings/settings-update.png" alt="关于与更新：当前版本和发布历史" caption="关于与更新展示当前版本与设备架构、手动检查入口和可展开的发布历史。" />
+
+<ExpectedResult>
+关于与更新显示当前版本，并能展开对应说明。更新失败时现有安装仍可使用。
+</ExpectedResult>
+
+未签名的 macOS 内测包可能无法通过系统代码签名验证。此时不要反复重试自动更新，按[快速开始](/docs/installation/)从官方下载页手动安装匹配架构的包。

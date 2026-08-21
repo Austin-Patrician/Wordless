@@ -10,37 +10,37 @@ import ExpectedResult from '../../../components/docs/ExpectedResult.astro';
 import ApprovalCheckpoint from '../../../components/docs/ApprovalCheckpoint.astro';
 
 <Prerequisites>
-- 已按照[安装 Wordless](/docs/installation/)完成安装，并能看到工作台
-- 一个受支持模型提供商的 API Key 或本地模型配置
+- 已按照[快速开始](/docs/installation/)完成安装，并能看到工作台
+- 已在[配置模型](/docs/models/)中启用至少一个可用模型；自定义提供商的字段也在发送前提交
 - 一个包含 `README.md` 的非敏感示例文件夹
 </Prerequisites>
 
 ## 1. 认识首次启动界面
 
-启动 Wordless 后选择 **General Work**。需要读取本地文件时再选择工作区；不涉及文件的问答可以暂时跳过工作区。
+启动 Wordless 后选择 **通用工作**。需要读取本地文件时再选择工作区；不涉及文件的问答可以暂时跳过工作区。
 
-<ScreenshotFrame src="/images/Wordless%20first%20launch.png" alt="Wordless 首次启动工作台" caption="首次启动工作台：General Work 适合完成通用资料整理、写作和文件理解任务。" />
+<ScreenshotFrame src="/images/Wordless%20first%20launch.png" alt="Wordless 首次启动工作台" caption="首次启动工作台：通用工作适合完成资料整理、写作和文件理解任务。" />
 
 ## 2. 配置并选择模型
 
 <Steps>
-1. 打开 **Settings → Models**。
-2. 选择模型提供商，填写 API Key；自定义提供商还需要正确填写 Base URL、Provider ID 和模型配置。
-3. 保存配置，并在 **Enabled models** 中启用希望出现在 Composer 的模型。
-4. 回到 Composer，点击模型选择器并直接选择该模型。
-5. 支持思考深度的模型在未手动指定时默认使用 `medium`。
+1. 打开 **设置 → 模型**。
+2. 选择模型提供商，填写 API 密钥。自定义提供商还要填写 Base URL；填好后用 **获取模型** 拉取目录，**应用到配置**，再启用需要的模型。
+3. 保存配置，并在 **已启用模型** 中启用希望出现在对话输入区的模型。
+4. 回到对话输入区，点击模型选择器并直接选择该模型。
+5. 支持思考深度的模型在未手动指定时默认使用「中」。
 </Steps>
 
-API Key 只应填写在设置界面，不要写进提示词、项目文件或截图。自定义模型字段的完整解释和示例见[模型配置](/docs/models/)。
+API 密钥只应填写在设置界面，不要写进提示词、项目文件或截图。自定义模型字段的完整解释和示例见[模型配置](/docs/models/)。
 
-<ScreenshotFrame src="/images/model%20setup.png" alt="Wordless 模型提供商设置" caption="填写 Provider 凭据、保存配置，并只启用希望在 Composer 中使用的模型。" />
+<ScreenshotFrame src="/images/model%20setup.png" alt="Wordless 模型提供商设置" caption="填写提供商凭据、保存配置，并只启用希望在对话中使用的模型。" />
 
 ## 3. 创建工作区会话
 
 <Steps>
-1. 创建新会话并选择 **General Work**。
+1. 创建新会话并选择 **通用工作**。
 2. 点击工作区选择器，选择包含 `README.md` 的示例文件夹。
-3. 确认右侧 Workspace Files 能看到该文件。工作区决定 Default Access 下 Agent 可以读取和修改的边界。
+3. 确认右侧 **工作空间文件** 能看到该文件。工作区决定「默认访问」下 Agent 可以读取和修改的边界。
 4. 如果提示 `The selected workspace is unavailable`，重新选择当前用户可读取、尚未被移动或删除的文件夹。
 </Steps>
 
@@ -48,7 +48,7 @@ API Key 只应填写在设置界面，不要写进提示词、项目文件或截
 
 ## 4. 引用文件并发送任务
 
-在 Composer 输入 `@`，继续输入 `README` 过滤文件。使用 ↑/↓ 选择目标，按 Enter 只会把引用 token 插入输入区，不会立即发送消息；补充任务说明后再发送。
+在对话输入区输入 `@`，继续输入 `README` 过滤文件。使用 ↑/↓ 选择目标，按回车只会把引用标记插入输入区，不会立即发送消息；补充任务说明后再发送。
 
 <PromptBlock>
 请阅读 @README.md，总结这个项目的用途、启动步骤与目录结构。不要修改文件；结论中引用对应的文件位置，并指出信息不足的部分。
@@ -63,12 +63,20 @@ API Key 只应填写在设置界面，不要写进提示词、项目文件或截
 不要只判断回答是否“看起来合理”。展开工具卡确认执行状态，打开 `README.md`，逐项核对用途、启动命令和目录说明是否有原文依据。
 
 <ExpectedResult>
-会话中出现基于 `README.md` 的结构化总结；工具卡显示 running、success 或 failed 状态，且任务没有修改任何文件。
+会话中出现基于 `README.md` 的结构化总结；工具卡显示运行中、成功或失败状态，且任务没有修改任何文件。
 </ExpectedResult>
 
 ## 状态与恢复
 
-- **Running：** Agent 仍在生成或执行工具，不要重复发送同一任务。
-- **Awaiting approval：** 需要在会话中的审批卡做出选择。
-- **Failed：** 展开工具结果，复制原始错误文本后按[故障排查](/docs/troubleshooting/)处理。
-- **Organizing earlier conversation：** 正在压缩较早上下文；完成后会继续当前任务。
+- **正在响应：** Agent 仍在生成或执行工具，不要重复发送同一任务。
+- **等待你的批准：** 需要在会话中的审批卡做出选择。
+- **失败：** 展开工具结果，复制原始错误文本后按[故障排查](/docs/troubleshooting/)处理。
+- **正在压缩上下文：** 正在整理较早对话；完成后会继续当前任务。
+
+## 下一步
+
+首次任务通过后，再按需打开这些模块：
+
+- [对话管理](/docs/sessions/)：在侧边栏找回这次会话，或重命名、置顶、删除记录。
+- [从入门到精通](/docs/core-concepts/)：先看核心概念，再按交付物选择任务看板、图片生成、工作流、自动化或数字员工。
+- [技能与 MCP](/docs/skills-mcp/)：从「发现」审阅并安装技能或 MCP，再在对话输入区用 `$` 引用。

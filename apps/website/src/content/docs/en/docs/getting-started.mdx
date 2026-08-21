@@ -10,8 +10,8 @@ import ApprovalCheckpoint from '../../../../components/docs/ApprovalCheckpoint.a
 import ScreenshotFrame from '../../../../components/docs/ScreenshotFrame.astro';
 
 <Prerequisites>
-- Wordless installed and opening normally by following [Install Wordless](/en/docs/installation/)
-- An API key or local configuration for a supported model provider
+- Wordless installed and opening normally by following [Quick start](/en/docs/installation/)
+- At least one enabled model from [Configure a model](/en/docs/models/); custom provider fields are saved before you send
 - A non-sensitive example folder containing a `README.md`
 </Prerequisites>
 
@@ -25,7 +25,7 @@ Launch Wordless and choose **General Work**. Select a workspace when the task us
 
 <Steps>
 1. Open **Settings → Models**.
-2. Choose a provider and enter its API key. A custom provider also requires the correct Base URL, Provider ID, and model configuration.
+2. Choose a provider and enter its API key. A custom provider also needs a Base URL; then use **Fetch models**, **Apply to configuration**, and enable the models you need.
 3. Save the provider and enable the models that should appear in Composer.
 4. Return to Composer, open the model picker, and click the model you want to use.
 5. A supported model uses `medium` thinking depth until you explicitly choose another value.
@@ -68,3 +68,11 @@ Do not accept an answer only because it looks plausible. Expand the tool card, c
 - **Awaiting approval:** an approval card in the thread needs your decision.
 - **Failed:** expand the tool result, preserve the original error, and use [Troubleshooting](/en/docs/troubleshooting/).
 - **Organizing earlier conversation:** Wordless is compacting older context and will continue afterward.
+
+## Next steps
+
+After the first task verifies, open these modules when you need them:
+
+- [Manage conversations](/en/docs/sessions/): find this session in the sidebar, then search, pin, or delete records.
+- [From basics to mastery](/en/docs/core-concepts/): start with core concepts, then pick the task board, image generation, a workflow, automation, or digital employee by deliverable.
+- [Skills & MCP](/en/docs/skills-mcp/): review and install Skills or MCP from Discover, then reference enabled Skills with `$`.

@@ -1,0 +1,113 @@
+---
+title: Task board
+description: Track to-do, in-progress, and done work, then run it, continue a session, or insert it into Composer.
+---
+import { Steps } from '@astrojs/starlight/components';
+import Prerequisites from '../../../../components/docs/Prerequisites.astro';
+import PromptBlock from '../../../../components/docs/PromptBlock.astro';
+import ExpectedResult from '../../../../components/docs/ExpectedResult.astro';
+import ApprovalCheckpoint from '../../../../components/docs/ApprovalCheckpoint.astro';
+import ScreenshotFrame from '../../../../components/docs/ScreenshotFrame.astro';
+
+The task board stores a **trackable work item** separately from a **single agent run**. Each card has a title, status, due date, and execution boundary. **Run** creates or continues a session. Automation fires a fresh session on a local clock; the board waits until you decide which item to run.
+
+<Prerequisites>
+- At least one enabled, configured model; the model, workspace, Skill, and MCP must still be available when the task runs
+- A title and details that name inputs, output location, prohibited actions, and acceptance checks
+- If a digital employee or team should own the run, save that role first in [Digital employees](/en/docs/digital-employees/)
+</Prerequisites>
+
+Open **Tasks** in the left rail, or use the workbench task control. The same records appear in Overview, Board, Timeline, List, and Dashboard. Dragging a card changes status only; it does not execute the agent.
+
+## Overview
+
+Use Overview to see what needs attention now: overdue items, recent activity, and work due in the next three days. **New task** in the header is shared across views.
+
+<ScreenshotFrame src="/images/tasks/Taskview.png" alt="Task overview with attention, recent activity, and upcoming due dates" caption="Overview lists overdue items that need attention, recent activity, and work due in the next three days." />
+
+## Board
+
+The board splits work into To do, In progress, In review, and Done. Drag a card to change status. The play control on a card is **Run**: it builds a prompt from the title, details, Skills, and expected result, then creates or continues a session.
+
+<ScreenshotFrame src="/images/tasks/task-board.png" alt="Task board columns and the Run control on a card" caption="Dragging changes status only. The play control on a card starts the agent; Not run and Run complete appear on the card." />
+
+## Timeline
+
+Timeline lays tasks out by due date. Switch week, month, quarter, year, or a custom range. Colors match In progress, In review, and Done. Use it to read load across a period, not to change status.
+
+<ScreenshotFrame src="/images/tasks/task-timeline.png" alt="Task timeline by week with status-colored bars" caption="Bars follow due dates. Colors match In progress, In review, and Done." />
+
+## List
+
+List is for filtering and paging: status, agent, priority, or overdue-only. Each row shows the due date and execution state.
+
+<ScreenshotFrame src="/images/tasks/task-list.png" alt="Task list with status, priority, agent, and execution filters" caption="List view filters by status, agent, priority, and overdue-only, and shows each task’s execution state." />
+
+## Dashboard
+
+Dashboard summarizes the queue: totals, completion rate, overdue count, seven-day delivery, status mix, and agent workload. It does not run tasks.
+
+<ScreenshotFrame src="/images/tasks/task-dashboard.png" alt="Task dashboard with completion rate, delivery trend, and agent workload" caption="Dashboard shows totals, completion rate, overdue count, seven-day delivery, status mix, and agent workload." />
+
+## Create a task
+
+Choose **New task**. Title and details are required. Expected result, due date, priority, workspace, linked session, and agent type are optional.
+
+<Steps>
+1. Enter a title. It appears on the card, in Overview, and in Composer’s `!` picker.
+2. Write the goal, background, inputs, and constraints in the details field. The field accepts enabled Skills the same way Composer’s `$` picker does.
+3. Optionally add an expected result. A run appends it to the prompt.
+4. Choose a workspace. To continue an existing thread, link a historical session. After linking, workspace, work type, and digital employee must match that session.
+5. Choose an agent type: General Work, another available work mode, or a saved digital employee or team. Leaving it unset uses the generic agent.
+6. Set model, thinking depth, MCP connectors, access level, and tool approval when needed.
+</Steps>
+
+<ScreenshotFrame src="/images/tasks/task-new.png" alt="New task editor with details, agent type, and permission defaults" caption="Title and details are required. The details field can insert Skills and choose connectors, model, and access level." />
+
+<ApprovalCheckpoint risk="high">New tasks default to **Full Access** and **Bypass tool approval**, and saving asks you to confirm. A run may then reach files outside the workspace, execute local commands, and skip both ordinary and high-risk approval cards. For read-and-organize work, switch back to **Default Access + Manual approve**, then validate once with **Run**.</ApprovalCheckpoint>
+
+<PromptBlock label="Task details example">Read files updated in the last 24 hours under `inbox/` in the current workspace. Write a one-page Markdown decision brief to `reports/inbox-brief.md` covering items, source paths, suggested priority, and open questions. Do not delete or overwrite existing files. If nothing is new, write “no new material today” and state the scan range. Every conclusion must cite a source path.</PromptBlock>
+
+## Run or open a session
+
+**Run** on the board or list creates a session, or sends the prompt to a linked session. **Open session** jumps to that thread without sending. A task that is starting, running, or waiting cannot be run again or deleted. If the linked session already has an active turn, wait until it finishes.
+
+## Insert a task into Composer
+
+When you are already in a thread and only need the task as context, type `!` in Composer. It searches To do and In progress only. Enter inserts the title, details, and expected result; it **does not run** the task and does not change board status. Sending stays a separate confirmation. The `+` menu exposes the same picker.
+
+<ScreenshotFrame src="/images/tasks/task-command-insert-to-composer.png" alt="Composer ! picker listing To do and In progress tasks" caption="The ! picker lists To do and In progress only. Enter inserts text; it does not start a run." />
+
+## Status and overdue work
+
+| Status | Meaning |
+| --- | --- |
+| To do | Not started; draggable on the board and listed in the `!` picker |
+| In progress | Started or currently executing; still available to `!` |
+| Review | Waiting for you to inspect the output before moving it to Done |
+| Done | Hidden from the `!` picker; overdue filters ignore completed items |
+
+Tasks with a due date that has passed and are not Done appear under Overview’s attention list and the list view’s overdue filter. Dragging a card to Done records a completion time; it does not start another agent run.
+
+Agent type can be a work mode or a saved digital employee or team. A run uses that role’s snapshot. Editing the employee later does not rewrite a session that already ran.
+
+<ExpectedResult>A task with a visible status and permission boundary: it can be executed from the board into an inspectable session, or inserted into Composer with `!` without starting a run on insert.</ExpectedResult>
+
+## How this differs from Automation
+
+| | Task board | Automation |
+| --- | --- | --- |
+| Trigger | You click Run, or insert the text into the current thread | A local clock fires on a recurring, interval, or once schedule |
+| Session | New session, or continue a linked session | Every run is a fresh General Work session |
+| Work mode | General Work, another mode, or a digital employee | General Work only |
+| Fit | Project to-dos, one-off deliverables, work that should wait for a person | Repeatable work whose inputs and permissions can be written in advance |
+
+Unrun tasks stay on disk after you quit Wordless. They do not continue in the background.
+
+## Troubleshooting
+
+- **The task appeared in Composer but nothing ran:** `!` only inserts prompt text. Use **Run** on the board, or send the Composer draft yourself.
+- **Run is blocked:** The task is already starting, running, or waiting, or the linked session has an active turn.
+- **Linked session conflict:** Workspace, work type, or digital employee does not match the session. Align the task fields, or unlink and create a new session.
+- **Permissions are too wide:** Edit the task, switch back to Default Access and manual approval, and confirm the high-permission warning is gone before saving.
+- **Composer cannot find the task:** `!` lists To do and In progress only. Done and Review items are omitted.

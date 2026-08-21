@@ -1,35 +1,77 @@
 ---
 title: Skills & MCP
-description: Install Skills, configure custom MCP transports, and manage trust and credentials.
+description: Discover Skills and MCP connectors from SkillsMP and the official registry, review them, then install or add a custom transport.
 ---
 import { Steps, Tabs, TabItem } from '@astrojs/starlight/components';
 import Prerequisites from '../../../../components/docs/Prerequisites.astro';
 import ApprovalCheckpoint from '../../../../components/docs/ApprovalCheckpoint.astro';
 import ScreenshotFrame from '../../../../components/docs/ScreenshotFrame.astro';
+import ExpectedResult from '../../../../components/docs/ExpectedResult.astro';
 
 <Prerequisites>
-- A trusted Skill or MCP source
+- A Skill or MCP source you have reviewed
 - The service URL, OAuth configuration, or bearer token supplied by its owner
 - A plan for which tools and permissions the connection should expose
 </Prerequisites>
 
+Open **Skills & MCP** in the left rail. The page has **Skills** and **MCP** tabs; each tab switches between **Discover** and **Installed**. Catalogs come from the network; installation is local. A connector is usable only after it is configured, enabled, and allowed by the current approval policy.
+
+## Discover Skills (SkillsMP)
+
+**Discover** opens the SkillsMP public catalog. Search by name or browse popular keywords. Cards show whether the Skill is already installed. If the network is unavailable, the UI may show an offline cache that is not necessarily current.
+
 <Steps>
-1. Open **Skills & MCP**, inspect the source, tools, and permission summary, then install or import the Skill.
-2. Enable it and type `$` in Composer. Use ↑/↓ and Enter to insert its token; sending remains separate.
-3. For custom MCP, choose a transport and enter only the required settings.
-4. Test the connection and inspect the tool list before using it in a task.
-5. Remove the local configuration when it is no longer trusted; revoke remote OAuth separately at the provider.
+1. Stay on the **Skills** tab and choose **Discover**.
+2. Search by name or click a popular keyword. Use **Load more** when the catalog has another page.
+3. Open an entry and inspect the GitHub sources. Read `SKILL.md` and every accompanying file before installing. Third-party repositories show an explicit warning.
+4. Install only after you accept the source, tools, and permission summary. Installation does not enable the Skill in every session.
+5. Switch to **Installed**, enable it, then type `$` in Composer to insert its token.
 </Steps>
 
-<ScreenshotFrame src="/images/skills-mcp/skills.png" alt="Skills list and enabled states" caption="The Skills page separates global and workspace Skills and exposes search, import, refresh, and enabled states." />
+<ApprovalCheckpoint>Catalog Skills come from third-party GitHub repositories. Wordless does not certify the repository. Do not auto-install unreviewed or high-risk Skills.</ApprovalCheckpoint>
+
+<ScreenshotFrame src="/images/skills-mcp/discover-skills.png" alt="Skills Discover catalog from SkillsMP with popular keywords" caption="Discover browses the SkillsMP public catalog. Search or use popular keywords; cards show whether the Skill is already installed." />
+<ScreenshotFrame src="/images/skills-mcp/skill-review.png" alt="Skill details with SKILL.md review before install" caption="Open an entry and read SKILL.md plus accompanying files. Third-party repositories show a warning; install does not enable the Skill in every session." />
+
+A local archive or folder can still be imported. Confirm the directory contains `SKILL.md` before importing.
+
+<ScreenshotFrame src="/images/skills-mcp/skills.png" alt="Skills list and enabled states" caption="The Installed view separates global and workspace Skills and exposes search, import, refresh, and enabled states." />
 <ScreenshotFrame src="/images/skills-mcp/skill-import.png" alt="Importing a Skill file or folder" caption="Verify that the archive or folder contains SKILL.md; auto-install should be limited to reviewed, non-high-risk Skills." />
+
+## Discover MCP (official registry)
+
+**MCP → Discover** browses the official MCP Registry. Installation and authorization are separate: inspect transport, capabilities, publisher site, and source repository before you install.
+
+<Steps>
+1. Open **MCP → Discover** and search by service name or description.
+2. Open the details and confirm whether the entry is remote Streamable HTTP or a local stdio package, and which authentication it uses.
+3. Entries Wordless can install land in the local connector list. Complete OAuth or API key setup afterward, then enable the connector on **Installed**.
+4. Entries that cannot be installed automatically show a setup guide (suggested command, headers, environment variables). That text is documentation only; Wordless does not run the command. Use **Custom connector** and follow the publisher’s instructions.
+5. When the registry has a newer version than the installed connector, the card offers an update. Read the change before updating.
+</Steps>
+
+<ApprovalCheckpoint>Review the service domain, process command, tool name, and arguments on first connect and on every risky tool call. A registry listing is not a pre-approval.</ApprovalCheckpoint>
+
+<ScreenshotFrame src="/images/skills-mcp/discover-mcp.png" alt="MCP Discover catalog from the official registry" caption="Discover browses the official MCP Registry. Installation and authorization stay separate; entries that cannot auto-install only show a setup guide." />
+
+## Add a custom MCP
+
+Use a custom connector when the catalog does not cover the service, or when the publisher requires a manual command:
 
 <Tabs>
   <TabItem label="stdio">Enter the command and arguments. Verify the binary exists and pass secrets through environment variables only when required.</TabItem>
   <TabItem label="Remote HTTP">Use HTTPS and prefer OAuth over long-lived bearer tokens. Never paste a token into a shared config or prompt.</TabItem>
 </Tabs>
 
-<ScreenshotFrame src="/images/skills-mcp/mcp.png" alt="MCP connector list, states, and management actions" caption="Connector cards expose availability, connection state, enablement, and removal while preserving explicit failures." />
+<ScreenshotFrame src="/images/skills-mcp/mcp.png" alt="MCP connector list, states, and management actions" caption="Installed connector cards expose availability, connection state, enablement, and removal while preserving explicit failures." />
 <ScreenshotFrame src="/images/skills-mcp/mcp-new.png" alt="Adding a Remote HTTP or Local command MCP connector" caption="Choose Remote HTTP or Local command and enter only the URL, OAuth, or request credentials required by the service." />
 
-<ApprovalCheckpoint>Review the service domain, process command, tool name, and arguments on first connect and on every risky tool call.</ApprovalCheckpoint>
+## Use them in a session
+
+After a Skill is enabled, type `$` in Composer, use ↑/↓, and press Enter to insert its token. State input files, output paths, and acceptance checks in the prompt. MCP tools enter a session only when the connector is enabled and approved. Digital employees and board tasks can select their own Skills and MCP; a catalog listing is not enough to invoke them.
+
+## Test and remove
+
+Use **Test connection** on an installed connector and inspect the tool list and health. Keep the original error on failure. Removing a connector deletes the local configuration only; revoke OAuth at the provider separately.
+
+<ExpectedResult>The catalog is browsable, Skill sources or MCP metadata can be reviewed before install, and installed items appear under Installed. Only enabled Skills and connectors enter Composer or a task run.</ExpectedResult>
