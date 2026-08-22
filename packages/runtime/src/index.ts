@@ -1,8 +1,10 @@
 import { createHash, randomUUID } from "node:crypto";
 import {
   access,
+  copyFile,
   mkdir,
   readFile,
+  realpath,
   readdir,
   rm,
   stat,
@@ -42,6 +44,7 @@ import {
   USER_REQUEST_JOURNAL_TYPE,
   projectUserMessageContent,
   formatPromptWithSkillReferences,
+  formatPromptWithWorkspaceAttachments,
   selectedSkillIdsFromPromptParts,
   type AgentDriverEvent,
   type AgentDriverRegistry,
@@ -109,6 +112,7 @@ import type {
   UsageReport,
   UsageReportQuery,
   UserMessageSubmission,
+  PromptAttachmentInput,
   PromptSessionOptions,
   TaskRecord,
   TaskRecordInput,
@@ -3323,6 +3327,11 @@ export class WordlessRuntime {
     options?: PromptSessionOptions,
   ): Promise<void> {
     const record = await this.ensureSessionModelForOpen(sessionId);
+    const promptWithAttachments = await this.preparePromptAttachments(
+      record,
+      prompt,
+      options?.attachments,
+    );
     const active = this.runs.get(sessionId);
     if (active) {
       if (active.kind === "compaction")
@@ -3333,7 +3342,7 @@ export class WordlessRuntime {
         );
       await active.driverSession.execute({
         type: "steer",
-        text: prompt,
+        text: promptWithAttachments,
         submission,
       });
       return;
@@ -3350,7 +3359,7 @@ export class WordlessRuntime {
     void this.executeActiveRun(
       sessionId,
       run,
-      prompt,
+      promptWithAttachments,
       selectedSkills,
       automaticCompaction,
       submission,
@@ -3600,6 +3609,13 @@ export class WordlessRuntime {
     await beforeDelete?.(session);
     if (this.isInternalSessionRoot(session.runtimeRootPath))
       await rm(session.runtimeRootPath, {
+        force: true,
+        recursive: true,
+        maxRetries: 10,
+        retryDelay: 200,
+      });
+    else
+      await rm(this.sessionAttachmentRoot(session), {
         force: true,
         recursive: true,
         maxRetries: 10,
@@ -4911,7 +4927,7 @@ export class WordlessRuntime {
   private async executeActiveRun(
     sessionId: string,
     active: ActiveRun,
-    prompt: string,
+    promptWithAttachments: string,
     selectedSkills: ReturnType<SkillRegistry["getSessionSkills"]>,
     automaticCompaction: boolean,
     submission?: UserMessageSubmission,
@@ -4932,7 +4948,7 @@ export class WordlessRuntime {
       });
       await active.driverSession.execute({
         type: "prompt",
-        text: prompt,
+        text: promptWithAttachments,
         selectedSkills,
         submission,
       });
@@ -5030,11 +5046,12 @@ export class WordlessRuntime {
       this.artifactRevisions.set(sessionId, artifactSnapshot.revision);
     }
     const skills = this.skillRegistry.getSessionSkills(record.workspaceId);
+    await mkdir(this.sessionAttachmentRoot(record), { recursive: true });
     const env = this.pathService.createExecutionEnv(
       record.runtimeRootPath,
       record.accessLevel,
       {
-        readOnlyRoots: skills.map((skill) => skill.baseDir),
+        readOnlyRoots: [...skills.map((skill) => skill.baseDir), this.sessionAttachmentRoot(record)],
       },
     );
     const effectiveConnectorIds = [
@@ -5615,6 +5632,58 @@ export class WordlessRuntime {
     const session = this.database.getSession(id);
     if (!session) throw new Error("Session not found");
     return session;
+  }
+
+  private async preparePromptAttachments(
+    record: SessionRecord,
+    prompt: string,
+    attachments?: PromptAttachmentInput[],
+  ): Promise<string> {
+    if (!attachments?.length) return prompt;
+    const attachmentRoot = this.sessionAttachmentRoot(record);
+    const directory = join(attachmentRoot, ".attachments");
+    await mkdir(directory, { recursive: true });
+    const staged: Array<{ path: string; name: string; mediaType: string; size: number }> = [];
+    const created: string[] = [];
+    try {
+      for (const attachment of attachments) {
+        if (!Number.isInteger(attachment.size) || attachment.size < 0 || attachment.size > 52_428_800)
+          throw new Error(`Attachment exceeds the 50 MB limit: ${attachment.name}`);
+        const safeName = basename(attachment.name).replace(/[^a-zA-Z0-9._-]/g, "_").slice(0, 160) || "attachment";
+        const relativePath = `.attachments/${randomUUID()}-${safeName}`;
+        const target = join(attachmentRoot, relativePath);
+        if (attachment.source.type === "path") {
+          const source = await realpath(attachment.source.path);
+          const details = await stat(source);
+          if (!details.isFile()) throw new Error(`Attachment is not a file: ${attachment.name}`);
+          if (details.size > 52_428_800) throw new Error(`Attachment exceeds the 50 MB limit: ${attachment.name}`);
+          await copyFile(source, target);
+          staged.push({ path: this.sessionAttachmentPathForModel(record, relativePath), name: safeName, mediaType: attachment.mediaType, size: details.size });
+        } else {
+          const data = Buffer.from(attachment.source.base64, "base64");
+          if (data.byteLength > 52_428_800) throw new Error(`Attachment exceeds the 50 MB limit: ${attachment.name}`);
+          await writeFile(target, data, { flag: "wx" });
+          staged.push({ path: this.sessionAttachmentPathForModel(record, relativePath), name: safeName, mediaType: attachment.mediaType, size: data.byteLength });
+        }
+        created.push(target);
+      }
+      return `${prompt}${formatPromptWithWorkspaceAttachments(staged)}`;
+    } catch (error) {
+      await Promise.all(created.map((file) => rm(file, { force: true })));
+      throw error;
+    }
+  }
+
+  private sessionAttachmentRoot(record: SessionRecord): string {
+    return this.isInternalSessionRoot(record.runtimeRootPath)
+      ? record.runtimeRootPath
+      : join(this.options.paths.sessionWorkspacesRoot, record.id);
+  }
+
+  private sessionAttachmentPathForModel(record: SessionRecord, relativePath: string): string {
+    return this.isInternalSessionRoot(record.runtimeRootPath)
+      ? relativePath
+      : join(this.options.paths.sessionWorkspacesRoot, record.id, relativePath);
   }
 
   private securityPolicy(): SecurityPolicySnapshot {

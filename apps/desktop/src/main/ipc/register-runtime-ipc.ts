@@ -668,12 +668,14 @@ export function registerRuntimeIpc(
         draft: Parameters<WordlessRuntime["createAndPrompt"]>[0];
         parts: UserPromptPart[];
         submission: UserMessageSubmission;
+        attachments?: Parameters<WordlessRuntime["createAndPrompt"]>[4] extends infer T ? T extends { attachments?: infer A } ? A : never : never;
       }>(CreateAndPromptSchema, payload);
       return await runtime.createAndPrompt(
         input.draft,
         formatPromptWithSkillReferences(input.parts),
         selectedSkillIdsFromPromptParts(input.parts),
         input.submission,
+        input.attachments ? { attachments: input.attachments } : undefined,
       );
     },
   );
@@ -759,12 +761,14 @@ export function registerRuntimeIpc(
         sessionId: string;
         parts: UserPromptPart[];
         submission: UserMessageSubmission;
+        attachments?: Parameters<WordlessRuntime["promptSession"]>[4] extends infer T ? T extends { attachments?: infer A } ? A : never : never;
       }>(PromptSessionSchema, payload);
       await runtime.promptSession(
         input.sessionId,
         formatPromptWithSkillReferences(input.parts),
         selectedSkillIdsFromPromptParts(input.parts),
         input.submission,
+        input.attachments ? { attachments: input.attachments } : undefined,
       );
     },
   );

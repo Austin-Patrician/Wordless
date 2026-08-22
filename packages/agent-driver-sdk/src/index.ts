@@ -182,8 +182,9 @@ type SerializedArtifactReference = {
 
 export function formatPromptWithSkillReferences(
   parts: readonly UserPromptPart[],
+  attachments: readonly { path: string; name: string; mediaType: string; size: number }[] = [],
 ): string {
-  return parts
+  const prompt = parts
     .map((part, index) => {
       if (part.type === "text") return part.text;
       if (part.type === "workspace-reference") {
@@ -221,6 +222,29 @@ export function formatPromptWithSkillReferences(
       return `${SKILL_REFERENCE_START}${encodeURIComponent(JSON.stringify(reference))}${SKILL_REFERENCE_END}`;
     })
     .join("");
+  if (attachments.length === 0) return prompt;
+  return `${prompt}${WORKSPACE_ATTACHMENT_START}${JSON.stringify({ version: 2, attachments })}${WORKSPACE_ATTACHMENT_END}`;
+}
+
+export function formatPromptWithWorkspaceAttachments(
+  attachments: readonly { path: string; name: string; mediaType: string; size: number }[],
+): string {
+  if (attachments.length === 0) return "";
+  return `${WORKSPACE_ATTACHMENT_START}${JSON.stringify({ version: 2, attachments })}${WORKSPACE_ATTACHMENT_END}`;
+}
+
+export function formatPromptWorkspaceAttachmentsForModel(text: string): string {
+  const start = text.lastIndexOf(WORKSPACE_ATTACHMENT_START);
+  if (start === -1 || !text.endsWith(WORKSPACE_ATTACHMENT_END)) return text;
+  const payload = text.slice(start + WORKSPACE_ATTACHMENT_START.length, -WORKSPACE_ATTACHMENT_END.length);
+  try {
+    const value = JSON.parse(payload) as { attachments?: Array<{ path?: string; name?: string; mediaType?: string; size?: number }> };
+    const entries = (value.attachments ?? []).filter((item) => item.path && item.name);
+    const formatted = entries.map((item) => ["<wordless_workspace_attachment>", `path=${JSON.stringify(item.path)}`, `name=${JSON.stringify(item.name)}`, `media_type=${JSON.stringify(item.mediaType ?? "application/octet-stream")}`, `size=${item.size ?? 0}`, "Inspect this user-attached file with the available workspace tools when needed.", "</wordless_workspace_attachment>"].join("\n")).join("\n");
+    return `${text.slice(0, start)}${formatted}`;
+  } catch {
+    return text;
+  }
 }
 
 export function selectedSkillIdsFromPromptParts(

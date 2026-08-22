@@ -204,11 +204,13 @@ export interface DesktopBridge {
     draft: SessionDraft,
     parts: UserPromptPart[],
     submission: UserMessageSubmission,
+    attachments?: File[],
   ): Promise<SessionRecord>;
   promptSession(
     sessionId: string,
     parts: UserPromptPart[],
     submission: UserMessageSubmission,
+    attachments?: File[],
   ): Promise<void>;
   compactSession(sessionId: string): Promise<void>;
   getSessionContext(sessionId: string): Promise<SessionContextSnapshot>;

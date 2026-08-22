@@ -12,6 +12,7 @@ export function createUserMessageSubmission(now = Date.now()): UserMessageSubmis
 export function createPendingThreadTurn(
   parts: readonly UserPromptPart[],
   submission: UserMessageSubmission,
+  attachments: readonly Pick<File, "name" | "type" | "size">[] = [],
 ): PendingThreadTurn {
   const blocks: MessageBlock[] = parts.map((part, index): MessageBlock => {
     if (part.type === "text") return { type: "text", text: part.text };
@@ -23,6 +24,13 @@ export function createPendingThreadTurn(
     }
     return { type: "artifact", artifactId: part.artifactId, kind: part.kind, name: part.name, revision: part.revision, surfaceId: part.surfaceId, locator: part.locator };
   });
+  blocks.push(...attachments.map((attachment, index) => ({
+    type: "attachment" as const,
+    id: `${submission.messageId}:attachment:${index}`,
+    name: attachment.name,
+    mediaType: attachment.type || "application/octet-stream",
+    size: attachment.size,
+  })));
   return {
     submission,
     message: {

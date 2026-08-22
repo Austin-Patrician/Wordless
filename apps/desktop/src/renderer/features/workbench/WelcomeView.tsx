@@ -164,7 +164,7 @@ export function WelcomeView({ initialExpertPrompt, initialExpertSelection, onOpe
     void client.listPresentationTemplates().then(setPresentationTemplates).catch(() => setPresentationTemplates([]));
   }, [client, entry?.workbenchId]);
 
-  const send = async (parts: UserPromptPart[]) => {
+  const send = async (parts: UserPromptPart[], attachments?: File[]) => {
     if (!entry || entry.availability !== "available" || !model) return;
     if (!selectedWorkspaceAvailable) {
       setSubmissionError(t("unavailable"));
@@ -174,9 +174,9 @@ export function WelcomeView({ initialExpertPrompt, initialExpertSelection, onOpe
     setSubmitting(true);
     setSubmissionError(null);
     const submission = createUserMessageSubmission();
-    const pendingTurn = createPendingThreadTurn(parts, submission);
+    const pendingTurn = createPendingThreadTurn(parts, submission, attachments);
     try {
-      const session = await client.createAndPrompt({ mode, entryId: entry.id, workspaceId, accessLevel, model, thinkingLevel, connectorIds, interactionMode, toolApprovalMode, ...(expertSelection ? { expertSelection } : {}), ...(entry.workbenchId === "presentation" ? { presentation: { generationMode: presentationMode, templateId: presentationTemplateId === "auto" ? null : presentationTemplateId } } : {}) }, parts, submission);
+      const session = await client.createAndPrompt({ mode, entryId: entry.id, workspaceId, accessLevel, model, thinkingLevel, connectorIds, interactionMode, toolApprovalMode, ...(expertSelection ? { expertSelection } : {}), ...(entry.workbenchId === "presentation" ? { presentation: { generationMode: presentationMode, templateId: presentationTemplateId === "auto" ? null : presentationTemplateId } } : {}) }, parts, submission, attachments);
       onSessionCreated(session.id, pendingTurn);
       void refresh();
     } catch (cause) {

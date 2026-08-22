@@ -3137,12 +3137,12 @@ export function ThreadView({
   const selectedExpertMember = expertCollaborationMembers.find(
     (member) => member.memberId === selectedExpertMemberId,
   );
-  const send = async (parts: UserPromptPart[]) => {
+  const send = async (parts: UserPromptPart[], attachments?: File[]) => {
     const submission = createUserMessageSubmission();
-    const pendingTurn = createPendingThreadTurn(parts, submission);
+    const pendingTurn = createPendingThreadTurn(parts, submission, attachments);
     threadStore.addPendingTurn(pendingTurn);
     try {
-      await client.promptSession(sessionId, parts, submission);
+      await client.promptSession(sessionId, parts, submission, attachments);
     } catch (cause) {
       threadStore.removePendingTurn(submission.messageId);
       throw cause;

@@ -4,6 +4,16 @@ import {
   type DesktopBridge,
 } from "../bridge/desktop-bridge";
 
+async function fileToPromptAttachment(file: File) {
+  const path = webUtils.getPathForFile(file);
+  if (path) return { id: crypto.randomUUID(), name: file.name, mediaType: file.type, size: file.size, source: { type: "path" as const, path } };
+  if (file.size > 52_428_800) throw new Error(`Attachment exceeds the 50 MB limit: ${file.name}`);
+  const bytes = new Uint8Array(await file.arrayBuffer());
+  let binary = "";
+  for (let index = 0; index < bytes.length; index += 0x8000) binary += String.fromCharCode(...bytes.subarray(index, index + 0x8000));
+  return { id: crypto.randomUUID(), name: file.name, mediaType: file.type, size: file.size, source: { type: "bytes" as const, base64: btoa(binary) } };
+}
+
 const wordlessBridge: DesktopBridge = {
   version: DESKTOP_BRIDGE_VERSION,
   getHostInfo: () => ipcRenderer.invoke("wordless:host:info"),
@@ -160,17 +170,19 @@ const wordlessBridge: DesktopBridge = {
   pickWorkspace: () => ipcRenderer.invoke("wordless:workspace:pick"),
   openExternalUrl: (url) =>
     ipcRenderer.invoke("wordless:external:open", { url }),
-  createAndPrompt: (draft, parts, submission) =>
-    ipcRenderer.invoke("wordless:session:create-and-prompt", {
+  createAndPrompt: async (draft, parts, submission, attachments) =>
+    await ipcRenderer.invoke("wordless:session:create-and-prompt", {
       draft,
       parts,
       submission,
+      ...(attachments ? { attachments: await Promise.all(attachments.map(fileToPromptAttachment)) } : {}),
     }),
-  promptSession: (sessionId, parts, submission) =>
-    ipcRenderer.invoke("wordless:session:prompt", {
+  promptSession: async (sessionId, parts, submission, attachments) =>
+    await ipcRenderer.invoke("wordless:session:prompt", {
       sessionId,
       parts,
       submission,
+      ...(attachments ? { attachments: await Promise.all(attachments.map(fileToPromptAttachment)) } : {}),
     }),
   compactSession: (sessionId) =>
     ipcRenderer.invoke("wordless:session:compact", { sessionId }),

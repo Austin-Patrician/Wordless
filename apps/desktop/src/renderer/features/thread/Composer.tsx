@@ -16,6 +16,7 @@ import {
   ListTodo,
   Pin,
   PinOff,
+  Paperclip,
   Plus,
   Send,
   Square,
@@ -30,6 +31,7 @@ import {
   useState,
   type KeyboardEvent as ReactKeyboardEvent,
 } from "react";
+import { createPortal } from "react-dom";
 import { usePreferences } from "../../shared/preferences";
 import { useRuntime } from "../../shared/runtime";
 import type {
@@ -106,7 +108,7 @@ type ComposerProps = {
     interactionMode: AgentInteractionModeId,
   ) => void | Promise<void>;
   onOpenSkills?: () => void;
-  onSend: (parts: UserPromptPart[]) => void | Promise<void>;
+  onSend: (parts: UserPromptPart[], attachments?: File[]) => void | Promise<void>;
   onStop?: () => void | Promise<void>;
   running?: boolean;
   skillContextWindow?: number;
@@ -447,6 +449,153 @@ function TasksSubmenu({
   );
 }
 
+function FannedAttachmentStack({
+  files,
+  onRemove,
+}: {
+  files: File[];
+  onRemove: (index: number) => void;
+}) {
+  const { t } = usePreferences();
+  const anchorRef = useRef<HTMLDivElement>(null);
+  const portalRef = useRef<HTMLDivElement>(null);
+  const closeTimerRef = useRef<number | null>(null);
+  const [expanded, setExpanded] = useState(false);
+  const [portalReady, setPortalReady] = useState(false);
+  const [position, setPosition] = useState({ left: 0, top: 0, direction: "up" as "up" | "down" });
+  const [hoveredIndex, setHoveredIndex] = useState<number | null>(null);
+  const shouldFan = files.length > 2;
+
+  const updatePosition = useCallback(() => {
+    const anchor = anchorRef.current;
+    if (!anchor) return;
+    const rect = anchor.getBoundingClientRect();
+    const width = Math.max(180, Math.min(560, window.innerWidth - 24));
+    const height = 104;
+    const up = rect.top > height + 12 || rect.bottom > window.innerHeight * 0.56;
+    setPosition({
+      left: Math.max(12, Math.min(rect.left, window.innerWidth - width - 12)),
+      // Keep the fan's inner edge aligned with the folded attachment row so it
+      // grows out of the Composer instead of appearing detached above it.
+      top: up ? rect.bottom - height : rect.top,
+      direction: up ? "up" : "down",
+    });
+  }, []);
+
+  useEffect(() => {
+    setPortalReady(true);
+    if (!expanded) return;
+    updatePosition();
+    const onViewportChange = () => updatePosition();
+    window.addEventListener("resize", onViewportChange);
+    window.addEventListener("scroll", onViewportChange, true);
+    return () => {
+      window.removeEventListener("resize", onViewportChange);
+      window.removeEventListener("scroll", onViewportChange, true);
+    };
+  }, [expanded, updatePosition]);
+
+  useEffect(() => {
+    if (!expanded) return;
+    const onPointerDown = (event: PointerEvent) => {
+      const target = event.target as Node | null;
+      if (!target || anchorRef.current?.contains(target) || portalRef.current?.contains(target)) return;
+      setExpanded(false);
+      setHoveredIndex(null);
+    };
+    document.addEventListener("pointerdown", onPointerDown, true);
+    return () => document.removeEventListener("pointerdown", onPointerDown, true);
+  }, [expanded]);
+
+  useEffect(() => {
+    if (!expanded) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setExpanded(false);
+        anchorRef.current?.querySelector<HTMLElement>("button")?.focus();
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [expanded]);
+
+  const open = () => {
+    if (!shouldFan) return;
+    if (closeTimerRef.current !== null) window.clearTimeout(closeTimerRef.current);
+    setExpanded(true);
+    updatePosition();
+  };
+  const scheduleClose = () => {
+    if (closeTimerRef.current !== null) window.clearTimeout(closeTimerRef.current);
+    closeTimerRef.current = window.setTimeout(() => {
+      setExpanded(false);
+      setHoveredIndex(null);
+      closeTimerRef.current = null;
+    }, 140);
+  };
+  const cancelClose = () => {
+    if (closeTimerRef.current !== null) {
+      window.clearTimeout(closeTimerRef.current);
+      closeTimerRef.current = null;
+    }
+  };
+  const closeIfBlurred = (event: React.FocusEvent<HTMLDivElement>) => {
+    const related = event.relatedTarget as Node | null;
+    if (!related || (!anchorRef.current?.contains(related) && !portalRef.current?.contains(related))) scheduleClose();
+  };
+  const fan = shouldFan && expanded;
+  const availableWidth = Math.max(180, window.innerWidth - 24);
+  const fanWidth = Math.min(520, availableWidth, Math.max(220, files.length * 68));
+  const cards = files.map((file, index) => {
+    const center = (files.length - 1) / 2;
+    const rotation = fan ? (index - center) * Math.min(5, 24 / files.length) : 0;
+    const maxSpread = files.length > 1 ? (fanWidth - 150) / (files.length - 1) : 0;
+    const spread = fan ? (index - center) * Math.min(62, maxSpread) : 0;
+    return { file, index, rotation, spread };
+  });
+  const fanContent = fan && portalReady ? createPortal(
+    <div
+      aria-label={t("attachments")}
+      className="fixed z-[80]"
+      ref={portalRef}
+      onBlur={closeIfBlurred}
+      onMouseLeave={scheduleClose}
+      onMouseEnter={cancelClose}
+      style={{ left: position.left, top: position.top, width: fanWidth, height: 104 }}
+    >
+      {cards.map(({ file, index, rotation, spread }) => (
+        <div className="group absolute left-1/2 top-1/2" key={`${file.name}:${file.lastModified}:${index}`} onMouseEnter={() => setHoveredIndex(index)} onMouseLeave={() => setHoveredIndex(null)} style={{ transform: `translate(-50%, -50%) translateX(${spread}px) rotate(${rotation}deg)${hoveredIndex === index ? " translateY(-7px)" : ""}`, zIndex: hoveredIndex === index ? 100 : index + 1 }}>
+          {hoveredIndex === index ? <span className="pointer-events-none absolute bottom-full left-1/2 z-20 mb-1 -translate-x-1/2 whitespace-nowrap rounded-[4px] bg-[#30332b] px-1.5 py-1 text-[10px] text-white shadow-lg dark:bg-[#e8eedf] dark:text-[#30332b]">{file.name}</span> : null}
+          <div
+            aria-label={file.name}
+            className="flex h-9 w-[min(150px,calc(100vw-32px))] items-center gap-1.5 rounded-[7px] border border-[#cfd3d0] bg-[#e9ecea] px-2 text-left text-[10px] text-[#4f5552] shadow-[0_6px_14px_rgba(40,46,42,0.14)] dark:border-[#515a55] dark:bg-[#303632] dark:text-[#d7ded9]"
+            role="group"
+          >
+            <span className="relative grid h-4 w-4 shrink-0 place-items-center transition-opacity group-hover:opacity-0 group-focus-within:opacity-0"><FileTypeIcon className="h-3.5 w-3.5 [&_svg]:h-3.5 [&_svg]:w-3.5" kind="file" name={file.name} /></span>
+            <span className="min-w-0 flex-1 truncate">{file.name}</span>
+          </div>
+          <button aria-label={t("removeAttachment").replace("{name}", file.name)} className="absolute left-2 top-1/2 grid h-4 w-4 -translate-y-1/2 place-items-center rounded text-[#59634d]/70 opacity-0 transition-opacity hover:bg-black/5 hover:text-[#59634d] group-hover:opacity-100 focus:opacity-100 dark:text-[#d2dfb9]/70 dark:hover:text-[#d2dfb9]" onClick={(event) => { event.stopPropagation(); onRemove(index); }} type="button"><X className="h-3 w-3" /></button>
+        </div>
+      ))}
+    </div>,
+    document.body,
+  ) : null;
+
+  return <>
+    <div className={cn("relative h-8 shrink-0", shouldFan ? "w-[128px]" : "flex w-full flex-wrap gap-1.5")} onBlur={closeIfBlurred} onMouseEnter={cancelClose} onMouseLeave={shouldFan ? scheduleClose : undefined} ref={anchorRef}>
+      {shouldFan && !expanded ? (
+        <>
+          <span aria-hidden="true" className="absolute left-1 top-1 h-7 w-[128px] rounded-[6px] border border-[#c7cdca] bg-[#dfe4e1] dark:border-[#464e4a] dark:bg-[#292e2b]" />
+          <span aria-hidden="true" className="absolute left-0.5 top-0.5 h-7 w-[128px] rounded-[6px] border border-[#cbd1ce] bg-[#e7ebe9] dark:border-[#4b544f] dark:bg-[#2d332f]" />
+          <button aria-label={t("expandAttachments").replace("{count}", String(files.length))} className="absolute left-0 top-0 z-10 flex h-7 w-[128px] items-center gap-1.5 rounded-[6px] border border-[#c4cbc7] bg-[#edf0ef] px-2 text-left text-[10px] text-[#505753] shadow-[2px_3px_0_rgba(72,82,76,0.12),4px_5px_0_rgba(72,82,76,0.08)] transition-colors dark:border-[#4d5651] dark:bg-[#343a36] dark:text-[#d0d8d3]" onClick={open} onFocus={open} onMouseEnter={open} type="button"><Paperclip className="h-3 w-3 shrink-0" /><span className="min-w-0 flex-1 truncate">{t("expandAttachments").replace("{count}", String(files.length))}</span></button>
+        </>
+      ) : null}
+      {!shouldFan ? files.map((file, index) => <div className="group relative" key={`${file.name}:${file.lastModified}:${index}`}><div aria-label={file.name} className="flex h-7 max-w-[210px] items-center gap-1 rounded-[6px] border border-[#d9ded0] bg-[#edf0ef] px-2 text-left text-[10px] text-[#505753] dark:border-[#48504c] dark:bg-[#343a36] dark:text-[#d0d8d3]" role="group"><span className="relative grid h-4 w-4 shrink-0 place-items-center transition-opacity group-hover:opacity-0 group-focus-within:opacity-0"><FileTypeIcon className="h-3 w-3 [&_svg]:h-3 [&_svg]:w-3" kind="file" name={file.name} /></span><span className="min-w-0 truncate">{file.name}</span></div><button aria-label={t("removeAttachment").replace("{name}", file.name)} className="absolute left-2 top-1/2 grid h-4 w-4 -translate-y-1/2 place-items-center rounded text-current/70 opacity-0 group-hover:opacity-100 focus:opacity-100" onClick={() => onRemove(index)} type="button"><X className="h-3 w-3" /></button></div>) : null}
+    </div>
+    {fanContent}
+  </>;
+}
+
 export function Composer({
   compact = false,
   compacting = false,
@@ -510,6 +659,8 @@ export function Composer({
   const [approvalChanging, setApprovalChanging] = useState(false);
   const [approvalError, setApprovalError] = useState<string | null>(null);
   const [sendError, setSendError] = useState<string | null>(null);
+  const [attachments, setAttachments] = useState<File[]>([]);
+  const [dragActive, setDragActive] = useState(false);
   const [bypassConfirmOpen, setBypassConfirmOpen] = useState(false);
   const [activeConnectorId, setActiveConnectorId] = useState<string | null>(
     null,
@@ -543,6 +694,7 @@ export function Composer({
   });
   const [composerHeight, setComposerHeight] = useState<number | undefined>();
   const composerRef = useRef<HTMLDivElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const inputRef = useRef<InlineSkillComposerHandle>(null);
   const menuRef = useRef<HTMLDivElement>(null);
   const menuTriggerRef = useRef<HTMLSpanElement>(null);
@@ -573,17 +725,7 @@ export function Composer({
   const { locale, t } = usePreferences();
   const { client } = useRuntime();
   workspaceSearchReferencesRef.current = searchWorkspaceReferences;
-  const hasActionMenu = Boolean(
-    onInteractionModeChange ||
-    onTogglePlanMode ||
-    onCompactContext ||
-    onImportSkill ||
-    onOpenSkills ||
-    onToolApprovalModeChange ||
-    skills.length > 0 ||
-    connectors.length > 0 ||
-    (showExpertPicker && experts.length > 0),
-  );
+  const hasActionMenu = true;
   const interactionDisabled = disabled || compacting;
   const effectiveInteractionMode =
     interactionMode ?? (planMode === "off" ? "default" : "plan");
@@ -954,7 +1096,7 @@ export function Composer({
   const send = async () => {
     const currentDraft = inputRef.current?.getValue() ?? draftRef.current;
     if (
-      currentDraft.parts.length === 0 ||
+      (currentDraft.parts.length === 0 && attachments.length === 0) ||
       interactionDisabled ||
       running ||
       sendDisabled
@@ -982,7 +1124,7 @@ export function Composer({
       : currentDraft.parts;
     setSendError(null);
     try {
-      await onSend(parts);
+      await onSend(parts, attachments);
       if (artifactSelection) onArtifactSelectionConsumed?.();
       inputRef.current?.clear();
       if (draftFrameRef.current !== undefined)
@@ -991,11 +1133,24 @@ export function Composer({
       draftRef.current = EMPTY_INLINE_SKILL_COMPOSER_VALUE;
       onDraftChange?.(EMPTY_INLINE_SKILL_COMPOSER_VALUE);
       setDraft(EMPTY_INLINE_SKILL_COMPOSER_VALUE);
+      setAttachments([]);
       historyIndexRef.current = null;
       historyDraftRef.current = EMPTY_INLINE_SKILL_COMPOSER_VALUE;
     } catch (cause) {
       setSendError(cause instanceof Error ? cause.message : String(cause));
     }
+  };
+
+  const addAttachments = (files: FileList | File[]) => {
+    const next = Array.from(files);
+    const accepted = next.filter((file) => file.size <= 52_428_800);
+    if (accepted.length !== next.length) {
+      setSendError(t("attachmentSizeLimit"));
+    }
+    setAttachments((current) => {
+      const seen = new Set(current.map((file) => `${file.name}:${file.size}:${file.lastModified}`));
+      return [...current, ...accepted.filter((file) => !seen.has(`${file.name}:${file.size}:${file.lastModified}`))].slice(0, 10);
+    });
   };
 
   const selectedSkills = draft.skillIds.flatMap((id) => {
@@ -1272,7 +1427,14 @@ export function Composer({
             : "min-h-[170px] rounded-[14px] px-3.5 py-3 shadow-[0_14px_28px_rgba(34,34,30,0.045)]",
         )}
         style={{ height: composerHeight ?? (compact ? 120 : 170) }}
+        onDragEnter={(event) => { if (event.dataTransfer.types.includes("Files")) { event.preventDefault(); setDragActive(true); } }}
+        onDragOver={(event) => { if (event.dataTransfer.types.includes("Files")) event.preventDefault(); }}
+        onDragLeave={(event) => { if (event.currentTarget === event.target) setDragActive(false); }}
+        onDrop={(event) => { if (!event.dataTransfer.files.length) return; event.preventDefault(); setDragActive(false); addAttachments(event.dataTransfer.files); }}
+        onPasteCapture={(event) => { if (event.clipboardData.files.length > 0) { event.preventDefault(); addAttachments(event.clipboardData.files); } }}
       >
+        <input accept="*/*" className="hidden" multiple onChange={(event) => { if (event.target.files) addAttachments(event.target.files); event.currentTarget.value = ""; }} ref={fileInputRef} type="file" />
+        {dragActive ? <div className="pointer-events-none absolute inset-1 z-20 grid place-items-center rounded-[11px] border-2 border-dashed border-[#8da65a] bg-[#f4f8e9]/95 text-[12px] font-semibold text-[#596f2f] dark:bg-[#29321f]/95 dark:text-[#d9eaa9]">{t("dropFilesToAttach")}</div> : null}
         <div
           aria-label="Resize message input"
           className="absolute -top-1.5 left-0 z-10 h-3 w-full cursor-row-resize touch-none before:absolute before:left-1/2 before:top-1.5 before:h-px before:w-8 before:-translate-x-1/2 before:bg-transparent before:content-[''] hover:before:bg-[#b8b8b0] dark:hover:before:bg-muted-foreground"
@@ -1309,6 +1471,16 @@ export function Composer({
                 <X className="h-3 w-3" />
               </button>
             </div>
+          ) : null}
+          {attachments.length > 0 ? (
+            <FannedAttachmentStack
+              files={attachments}
+              onRemove={(index) =>
+                setAttachments((current) =>
+                  current.filter((_, itemIndex) => itemIndex !== index),
+                )
+              }
+            />
           ) : null}
           <InlineSkillComposer
             ariaLabel={t("send")}
@@ -1533,6 +1705,17 @@ export function Composer({
             ref={menuRef}
           >
             <div className="w-[188px] rounded-[10px] border border-[#dfdfdb] bg-white p-1.5 shadow-[0_14px_34px_rgba(28,28,25,0.12)] dark:border-border dark:bg-card">
+              <button
+                className="flex w-full items-center gap-2 rounded-[7px] px-2.5 py-2 text-left text-[12px] text-[#3f3f3a] hover:bg-[#f3f3f0] dark:text-foreground dark:hover:bg-muted"
+                onClick={() => { fileInputRef.current?.click(); setMenuOpen(false); showActionSubmenu(null); }}
+                onFocus={() => showActionSubmenu(null)}
+                onMouseEnter={() => showActionSubmenu(null)}
+                type="button"
+              >
+                <Paperclip className="h-4 w-4 text-[#697947]" />
+                <span>{t("addAttachment")}</span>
+              </button>
+              <div className="my-1 border-t border-[#ecece8] dark:border-border" />
               {onInteractionModeChange || onTogglePlanMode ? (
                 <button
                   className={cn(
@@ -2097,7 +2280,7 @@ export function Composer({
                   ? false
                   : interactionDisabled ||
                     sendDisabled ||
-                    draft.parts.length === 0
+                    draft.parts.length === 0 && attachments.length === 0
               }
               onClick={() => (running ? void onStop?.() : void send())}
               size="icon"

@@ -320,6 +320,17 @@ export const UserPromptPartsSchema = Type.Array(UserPromptPartSchema, {
   minItems: 1,
   maxItems: 1_024,
 });
+export const PromptAttachmentInputSchema = Type.Object({
+  id: Type.String({ minLength: 1, maxLength: 128 }),
+  name: Type.String({ minLength: 1, maxLength: 512 }),
+  mediaType: Type.String({ maxLength: 256 }),
+  size: Type.Integer({ minimum: 0, maximum: 52_428_800 }),
+  source: Type.Union([
+    Type.Object({ type: Type.Literal("path"), path: Type.String({ minLength: 1, maxLength: 4_096 }) }),
+    Type.Object({ type: Type.Literal("bytes"), base64: Type.String({ minLength: 1, maxLength: 70_000_000 }) }),
+  ]),
+});
+export const PromptAttachmentsSchema = Type.Array(PromptAttachmentInputSchema, { maxItems: 10 });
 export type ProtocolUserPromptPart = Static<typeof UserPromptPartSchema> &
   UserPromptPart;
 
@@ -382,6 +393,7 @@ export const CreateAndPromptSchema = Type.Object({
   draft: SessionDraftSchema,
   parts: UserPromptPartsSchema,
   submission: UserMessageSubmissionSchema,
+  attachments: Type.Optional(PromptAttachmentsSchema),
 });
 
 const TaskStatusSchema = Type.Union([
@@ -514,6 +526,7 @@ export const PromptSessionSchema = Type.Object({
   sessionId: Type.String({ minLength: 1 }),
   parts: UserPromptPartsSchema,
   submission: UserMessageSubmissionSchema,
+  attachments: Type.Optional(PromptAttachmentsSchema),
 });
 
 export const WorkspaceReferenceSearchSchema = Type.Object({

@@ -38,6 +38,7 @@ import {
   projectUserMessageContent,
   formatPromptArtifactReferencesForModel,
   formatPromptWorkspaceReferencesForModel,
+  formatPromptWorkspaceAttachmentsForModel,
   stripPromptSkillReferences,
   type PersistedOperationApproval,
   type PersistedSessionFileBaseline,
@@ -290,9 +291,7 @@ function stripSkillReferenceMarkers(messages: AgentMessage[]): AgentMessage[] {
     if (!value || value.role !== "user") return message;
     if (typeof value.content === "string") {
       const content = formatPromptWorkspaceReferencesForModel(
-        formatPromptArtifactReferencesForModel(
-          stripPromptSkillReferences(value.content),
-        ),
+        formatPromptWorkspaceAttachmentsForModel(formatPromptArtifactReferencesForModel(stripPromptSkillReferences(value.content))),
       );
       if (content === value.content) return message;
       changed = true;
@@ -304,9 +303,7 @@ function stripSkillReferenceMarkers(messages: AgentMessage[]): AgentMessage[] {
       if (!block || block.type !== "text" || typeof block.text !== "string")
         return item;
       const text = formatPromptWorkspaceReferencesForModel(
-        formatPromptArtifactReferencesForModel(
-          stripPromptSkillReferences(block.text),
-        ),
+        formatPromptWorkspaceAttachmentsForModel(formatPromptArtifactReferencesForModel(stripPromptSkillReferences(block.text))),
       );
       if (text === block.text) return item;
       changed = true;

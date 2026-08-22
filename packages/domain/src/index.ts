@@ -1218,7 +1218,18 @@ export interface UserMessageSubmission {
 export interface PromptSessionOptions {
   connectorIds?: string[];
   taskId?: string;
+  attachments?: PromptAttachmentInput[];
 }
+
+export type PromptAttachmentInput = {
+  id: string;
+  name: string;
+  mediaType: string;
+  size: number;
+  source:
+    | { type: "path"; path: string }
+    | { type: "bytes"; base64: string };
+};
 
 export interface MessageTextBlock {
   type: "text";
@@ -1501,6 +1512,8 @@ export interface MessageAttachmentBlock {
   id: string;
   name: string;
   mediaType: string;
+  path?: string;
+  size?: number;
 }
 
 export interface MessageSkillReferenceBlock {
