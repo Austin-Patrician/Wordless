@@ -3,6 +3,7 @@ import type { WorkbenchId } from "@wordless/domain";
 import type { ResearchDelegationDetails } from "@wordless/domain";
 import type { ArtifactSelection } from "@wordless/protocol";
 import type { InlineWorkspaceReferenceToken } from "../thread/InlineSkillComposer";
+import type { MessageKey } from "../../shared/i18n";
 
 export type ContextPanelView = "overview" | "files" | "changes" | "preview" | "slides" | "sheets" | "assets" | "artifacts" | "issues" | "report" | "research" | "data" | "charts";
 
@@ -10,6 +11,10 @@ export type ContextPanelTab = {
   id: ContextPanelView;
   label: string;
   icon: ComponentType<{ className?: string }>;
+};
+
+export type ContextPanelTabDefinition = Omit<ContextPanelTab, "label"> & {
+  labelKey: MessageKey;
 };
 
 export type ResearchTaskSelection = {
@@ -39,6 +44,6 @@ export type WorkbenchContextPanelProps = {
 
 export type WorkbenchContextPanelDefinition = {
   component: ComponentType<WorkbenchContextPanelProps>;
-  tabs: ContextPanelTab[];
+  tabs: ContextPanelTabDefinition[];
   workbenchId: WorkbenchId;
 };

@@ -5,8 +5,12 @@ import { codeLanguageLabel, hasClosedCodeFence, isOversizedMermaid, markdownUrlT
 test("normalizes common fenced-code language aliases", () => {
   assert.equal(normalizeCodeLanguage("language-tsx"), "typescript");
   assert.equal(normalizeCodeLanguage("PS1"), "powershell");
+  assert.equal(normalizeCodeLanguage("html"), "html");
+  assert.equal(normalizeCodeLanguage("svg"), "svg");
   assert.equal(normalizeCodeLanguage(undefined), "plaintext");
   assert.equal(codeLanguageLabel("cpp"), "C++");
+  assert.equal(codeLanguageLabel("html"), "HTML");
+  assert.equal(codeLanguageLabel("svg"), "SVG");
 });
 
 test("allows only browser-safe external URL protocols", () => {

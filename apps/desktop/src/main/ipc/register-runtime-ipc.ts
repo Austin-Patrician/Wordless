@@ -1,6 +1,6 @@
 import { copyFile } from "node:fs/promises";
 import path from "node:path";
-import { app, BrowserWindow, dialog, ipcMain, shell } from "electron";
+import { app, BrowserWindow, clipboard, dialog, ipcMain, shell } from "electron";
 import { Type } from "typebox";
 import { Value } from "typebox/value";
 import type { TSchema } from "typebox";
@@ -262,6 +262,28 @@ export function registerRuntimeIpc(
   appearanceAssets: AppearanceAssetService,
   options: DesktopIpcOptions,
 ): void {
+  const showDeviceCodeDialog = async ({
+    verificationUri,
+    userCode,
+    providerLabel,
+  }: {
+    verificationUri: string;
+    userCode: string;
+    providerLabel: string;
+  }) => {
+    await shell.openExternal(verificationUri);
+    const result = await dialog.showMessageBox({
+      title: `Connect ${providerLabel}`,
+      message: "Complete the connection in your browser",
+      detail: `Enter the verification code ${userCode} in the browser window that just opened.`,
+      buttons: [`Copy ${userCode}`, "Done"],
+      defaultId: 1,
+      cancelId: 1,
+      noLink: true,
+      icon: path.join(__dirname, process.platform === "win32" ? "wordless.ico" : "wordless.png"),
+    });
+    if (result.response === 0) clipboard.writeText(userCode);
+  };
   ipcMain.handle("wordless:host:info", () => options.hostInfo);
   ipcMain.handle("wordless:app:info", () => options.getAppInfo());
   ipcMain.handle("wordless:menu:open", (event, payload: unknown) => {
@@ -1624,10 +1646,7 @@ export function registerRuntimeIpc(
           await shell.openExternal(url);
         },
         showDeviceCode: async ({ verificationUri, userCode }) => {
-          await shell.openExternal(verificationUri);
-          await dialog.showMessageBox({
-            message: `Enter code ${userCode} in your browser to connect GitHub.`,
-          });
+          await showDeviceCodeDialog({ verificationUri, userCode, providerLabel: "GitHub" });
         },
       });
     },
@@ -1823,9 +1842,10 @@ export function registerRuntimeIpc(
             event.verificationUri &&
             event.userCode
           ) {
-            await shell.openExternal(event.verificationUri);
-            await dialog.showMessageBox({
-              message: `Enter code ${event.userCode} in your browser to continue.`,
+            await showDeviceCodeDialog({
+              verificationUri: event.verificationUri,
+              userCode: event.userCode,
+              providerLabel: "Wordless",
             });
           }
         },

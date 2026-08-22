@@ -2,7 +2,7 @@ const LANGUAGE_ALIASES: Record<string, string> = {
   cxx: "cpp",
   cs: "csharp",
   csharp: "csharp",
-  html: "xml",
+  html: "html",
   js: "javascript",
   jsx: "javascript",
   md: "markdown",
@@ -14,6 +14,8 @@ const LANGUAGE_ALIASES: Record<string, string> = {
   shell: "bash",
   ts: "typescript",
   tsx: "typescript",
+  svg: "svg",
+  xml: "xml",
   yml: "yaml",
 };
 
@@ -24,6 +26,7 @@ const LANGUAGE_LABELS: Record<string, string> = {
   csharp: "C#",
   css: "CSS",
   diff: "Diff",
+  html: "HTML",
   go: "Go",
   java: "Java",
   javascript: "JavaScript",
@@ -35,8 +38,9 @@ const LANGUAGE_LABELS: Record<string, string> = {
   python: "Python",
   rust: "Rust",
   sql: "SQL",
+  svg: "SVG",
   typescript: "TypeScript",
-  xml: "HTML / XML",
+  xml: "XML",
   yaml: "YAML",
 };
 

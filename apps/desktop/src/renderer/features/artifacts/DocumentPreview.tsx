@@ -44,10 +44,29 @@ function HtmlPreview({ content }: { content: string }) {
   );
 }
 
+function SvgPreview({ content }: { content: string }) {
+  const srcDoc = useMemo(
+    () => `<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data: blob:; style-src 'unsafe-inline'; font-src data:;"></head><body style="margin:0;min-height:100vh;display:grid;place-items:center;padding:16px;box-sizing:border-box;background:#fff"><style>svg{max-width:100%;height:auto}</style>${content}</body></html>`,
+    [content],
+  );
+  return (
+    <div className="artifact-html-preview h-full min-h-0 bg-white">
+      <iframe
+        className="h-full w-full border-0"
+        referrerPolicy="no-referrer"
+        sandbox=""
+        srcDoc={srcDoc}
+        title="SVG preview"
+      />
+    </div>
+  );
+}
+
 export function DocumentPreview({ content, name, onBack, onOpen, unavailableReason }: DocumentPreviewProps) {
   const { t } = usePreferences();
   const markdown = /\.(md|markdown|mdx)$/i.test(name);
   const html = /\.(html|htm)$/i.test(name);
+  const svg = /\.svg$/i.test(name);
   const detail = unavailableReason === "binary" ? t("filePreviewBinary") : unavailableReason === "too-large" ? t("filePreviewTooLarge") : t("filePreviewUnavailable");
-  return <section className="flex min-h-0 flex-1 flex-col"><header className="flex shrink-0 items-center gap-2 border-b border-[#e4e4df] px-3 py-2 dark:border-border"><button aria-label={t("back")} className="grid h-6 w-6 place-items-center rounded-[5px] text-[#74746d] hover:bg-[#f0f0ec] dark:hover:bg-muted" onClick={onBack} type="button"><ArrowLeft className="h-3.5 w-3.5" /></button><FileTypeIcon kind="file" name={name} /><span className="min-w-0 flex-1 truncate text-[12px] font-semibold text-[#3e3e39] dark:text-foreground">{name}</span><button aria-label={t("openFile")} className="grid h-6 w-6 place-items-center rounded-[5px] text-[#74746d] hover:bg-[#f0f0ec] dark:hover:bg-muted" onClick={onOpen} type="button"><ExternalLink className="h-3.5 w-3.5" /></button></header><div className="min-h-0 min-w-0 flex-1 overflow-auto overscroll-contain">{content === null ? <div className="grid min-h-full place-items-center px-5 text-center"><div><FileWarning className="mx-auto h-4 w-4 text-[#93938b]" /><p className="mt-3 text-[11px] leading-5 text-muted-foreground">{detail}</p></div></div> : markdown ? <MarkdownPreview content={content} /> : html ? <HtmlPreview content={content} /> : <TextPreview content={content} />}</div></section>;
+  return <section className="flex min-h-0 flex-1 flex-col"><header className="flex shrink-0 items-center gap-2 border-b border-[#e4e4df] px-3 py-2 dark:border-border"><button aria-label={t("back")} className="grid h-6 w-6 place-items-center rounded-[5px] text-[#74746d] hover:bg-[#f0f0ec] dark:hover:bg-muted" onClick={onBack} type="button"><ArrowLeft className="h-3.5 w-3.5" /></button><FileTypeIcon kind="file" name={name} /><span className="min-w-0 flex-1 truncate text-[12px] font-semibold text-[#3e3e39] dark:text-foreground">{name}</span><button aria-label={t("openFile")} className="grid h-6 w-6 place-items-center rounded-[5px] text-[#74746d] hover:bg-[#f0f0ec] dark:hover:bg-muted" onClick={onOpen} type="button"><ExternalLink className="h-3.5 w-3.5" /></button></header><div className="min-h-0 min-w-0 flex-1 overflow-auto overscroll-contain">{content === null ? <div className="grid min-h-full place-items-center px-5 text-center"><div><FileWarning className="mx-auto h-4 w-4 text-[#93938b]" /><p className="mt-3 text-[11px] leading-5 text-muted-foreground">{detail}</p></div></div> : markdown ? <MarkdownPreview content={content} /> : html ? <HtmlPreview content={content} /> : svg ? <SvgPreview content={content} /> : <TextPreview content={content} />}</div></section>;
 }

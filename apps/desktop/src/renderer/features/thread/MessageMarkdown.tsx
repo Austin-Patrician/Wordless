@@ -18,7 +18,7 @@ import typescript from "highlight.js/lib/languages/typescript";
 import xml from "highlight.js/lib/languages/xml";
 import yaml from "highlight.js/lib/languages/yaml";
 import mermaid from "mermaid";
-import { Check, ChevronDown, ChevronUp, Code2, Copy, ImageOff, LoaderCircle, Maximize2, Minus, Plus, RotateCcw, TextWrap, X } from "lucide-react";
+import { Check, ChevronDown, ChevronUp, Code2, Copy, Eye, ImageOff, LoaderCircle, Maximize2, Minus, Plus, RotateCcw, TextWrap, X } from "lucide-react";
 import { Children, isValidElement, memo, useEffect, useMemo, useRef, useState, type ComponentPropsWithoutRef, type PointerEvent as ReactPointerEvent, type ReactNode, type WheelEvent as ReactWheelEvent } from "react";
 import ReactMarkdown, { type Components, type ExtraProps } from "react-markdown";
 import rehypeKatex from "rehype-katex";
@@ -37,34 +37,42 @@ for (const [name, definition] of Object.entries(HIGHLIGHT_LANGUAGES)) hljs.regis
 
 let mermaidRenderSequence = 0;
 let mermaidRenderQueue: Promise<void> = Promise.resolve();
+const MERMAID_RENDER_CACHE_LIMIT = 24;
+const mermaidRenderCache = new Map<string, Promise<string>>();
 
 type MermaidTheme = "default" | "dark";
 
 function renderMermaid(source: string, theme: MermaidTheme): Promise<string> {
+  const cacheKey = `${theme}\u0000${source}`;
+  const cached = mermaidRenderCache.get(cacheKey);
+  if (cached) {
+    mermaidRenderCache.delete(cacheKey);
+    mermaidRenderCache.set(cacheKey, cached);
+    return cached;
+  }
   const id = `wordless-mermaid-${++mermaidRenderSequence}`;
-  let resolveResult: (value: string) => void;
-  let rejectResult: (reason: unknown) => void;
-  const result = new Promise<string>((resolve, reject) => {
-    resolveResult = resolve;
-    rejectResult = reject;
+  const task = mermaidRenderQueue.catch(() => undefined).then(async () => {
+    mermaid.initialize({
+      startOnLoad: false,
+      securityLevel: "strict",
+      secure: ["securityLevel", "startOnLoad", "maxTextSize", "suppressErrorRendering", "themeCSS", "themeVariables", "fontFamily"],
+      suppressErrorRendering: true,
+      maxTextSize: 20_000,
+      theme,
+      fontFamily: '"Segoe UI", system-ui, sans-serif',
+    });
+    const rendered = await mermaid.render(id, source);
+    return sanitizeMermaidSvg(rendered.svg);
   });
-  mermaidRenderQueue = mermaidRenderQueue.catch(() => undefined).then(async () => {
-    try {
-      mermaid.initialize({
-        startOnLoad: false,
-        securityLevel: "strict",
-        secure: ["securityLevel", "startOnLoad", "maxTextSize", "suppressErrorRendering", "themeCSS", "themeVariables", "fontFamily"],
-        suppressErrorRendering: true,
-        maxTextSize: 20_000,
-        theme,
-        fontFamily: '"Segoe UI", system-ui, sans-serif',
-      });
-      const rendered = await mermaid.render(id, source);
-      resolveResult(sanitizeMermaidSvg(rendered.svg));
-    } catch (error) {
-      rejectResult(error);
-    }
+  mermaidRenderQueue = task.then(() => undefined, () => undefined);
+  const result = task.catch((error) => {
+    if (mermaidRenderCache.get(cacheKey) === result) mermaidRenderCache.delete(cacheKey);
+    throw error;
   });
+  mermaidRenderCache.set(cacheKey, result);
+  while (mermaidRenderCache.size > MERMAID_RENDER_CACHE_LIMIT) {
+    mermaidRenderCache.delete(mermaidRenderCache.keys().next().value!);
+  }
   return result;
 }
 
@@ -123,8 +131,8 @@ function useCopyFeedback(value: string): { copied: boolean; copy: () => Promise<
   };
 }
 
-function IconAction({ active = false, disabled = false, label, onClick, children }: { active?: boolean; disabled?: boolean; label: string; onClick: () => void; children: ReactNode }) {
-  return <Tooltip><TooltipTrigger asChild><button aria-label={label} className={cn("grid h-7 w-7 place-items-center rounded-[5px] text-[#74746d] transition-colors hover:bg-[#ecece8] hover:text-[#343430] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-35 dark:text-muted-foreground dark:hover:bg-[#34362f] dark:hover:text-foreground", active && "bg-[#e8ebe2] text-[#4e6238] dark:bg-[#3b422e] dark:text-[#d1e79b]")} disabled={disabled} onClick={onClick} type="button">{children}</button></TooltipTrigger><TooltipContent>{label}</TooltipContent></Tooltip>;
+function IconAction({ active = false, disabled = false, label, onClick, pressed, children }: { active?: boolean; disabled?: boolean; label: string; onClick: () => void; pressed?: boolean; children: ReactNode }) {
+  return <Tooltip><TooltipTrigger asChild><button aria-label={label} aria-pressed={pressed} className={cn("grid h-7 w-7 place-items-center rounded-[5px] text-[#74746d] transition-colors hover:bg-[#ecece8] hover:text-[#343430] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-35 dark:text-muted-foreground dark:hover:bg-[#34362f] dark:hover:text-foreground", active && "bg-[#e8ebe2] text-[#4e6238] dark:bg-[#3b422e] dark:text-[#d1e79b]")} disabled={disabled} onClick={onClick} type="button">{children}</button></TooltipTrigger><TooltipContent>{label}</TooltipContent></Tooltip>;
 }
 
 const CodeBlock = memo(function CodeBlock({ code, highlight = true, language }: { code: string; highlight?: boolean; language: string }) {
@@ -152,6 +160,39 @@ const CodeBlock = memo(function CodeBlock({ code, highlight = true, language }: 
     </section>
   );
 });
+
+const EmbeddedCodeSource = memo(function EmbeddedCodeSource({ code, language }: { code: string; language: string }) {
+  const normalizedLanguage = normalizeCodeLanguage(language);
+  const highlightLanguage = normalizedLanguage === "html" || normalizedLanguage === "svg" ? "xml" : normalizedLanguage;
+  const highlighted = useMemo(() => hljs.getLanguage(highlightLanguage)
+    ? hljs.highlight(code, { language: highlightLanguage, ignoreIllegals: true }).value
+    : null, [code, highlightLanguage]);
+  return <pre className="message-code-scroll m-0 max-h-96 overflow-auto whitespace-pre px-3 py-3 font-mono text-[12px] leading-5 text-[#42423e] dark:text-[#d8dbd2]"><code className="hljs" dangerouslySetInnerHTML={highlighted === null ? undefined : { __html: highlighted }}>{highlighted === null ? code : undefined}</code></pre>;
+});
+
+function sandboxPreviewDocument(source: string, language: "html" | "svg"): string {
+  const policy = "default-src 'none'; img-src data: blob:; style-src 'unsafe-inline'; font-src data:;";
+  const securityHead = `<meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="${policy}">`;
+  if (language === "svg") {
+    return `<!doctype html><html><head>${securityHead}<style>html,body{margin:0;min-height:100%;background:transparent}body{display:grid;place-items:center;padding:16px;box-sizing:border-box}svg{max-width:100%;height:auto}</style></head><body>${source}</body></html>`;
+  }
+  if (/<html\b/i.test(source)) {
+    return /<head\b[^>]*>/i.test(source)
+      ? source.replace(/<head\b[^>]*>/i, (head) => `${head}${securityHead}`)
+      : source.replace(/<html\b[^>]*>/i, (html) => `${html}<head>${securityHead}</head>`);
+  }
+  return `<!doctype html><html><head>${securityHead}<style>html,body{margin:0;min-height:100%;box-sizing:border-box}body{padding:16px;font:14px/1.5 system-ui,sans-serif;color:#343431;background:#fff}*{max-width:100%;box-sizing:border-box}img{height:auto}</style></head><body>${source}</body></html>`;
+}
+
+function HtmlSvgBlock({ closed, language, source }: { closed: boolean; language: "html" | "svg"; source: string }) {
+  const { locale } = usePreferences();
+  const [mode, setMode] = useState<"preview" | "source">("source");
+  const { copied, copy } = useCopyFeedback(source);
+  const canPreview = closed && source.trim().length > 0;
+  useEffect(() => setMode("source"), [source, language]);
+  if (!closed) return <CodeBlock code={source} language={language} />;
+  return <section className="message-code-block my-4 overflow-hidden rounded-[7px] border border-[#deded9] bg-[#fafaf8] dark:border-border dark:bg-[#1b1d19]"><header className="flex h-8 items-center border-b border-[#e5e5e0] bg-[#f3f3f0] pl-1.5 pr-1 dark:border-border dark:bg-[#252722]"><div className="inline-flex items-center gap-0.5"><IconAction disabled={!canPreview} label={locale === "zh-CN" ? "预览" : "Preview"} onClick={() => setMode("preview")} pressed={mode === "preview"}><Eye className="h-3.5 w-3.5" /></IconAction><IconAction label={locale === "zh-CN" ? "源码" : "Source"} onClick={() => setMode("source")} pressed={mode === "source"}><Code2 className="h-3.5 w-3.5" /></IconAction></div><span className="ml-2 min-w-0 flex-1 truncate font-mono text-[10px] font-medium text-[#696963] dark:text-muted-foreground">{codeLanguageLabel(language)}</span><IconAction label={copied ? locale === "zh-CN" ? "已复制" : "Copied" : locale === "zh-CN" ? "复制源码" : "Copy source"} onClick={() => void copy()}>{copied ? <Check className="h-3.5 w-3.5 text-[#66833d]" /> : <Copy className="h-3.5 w-3.5" />}</IconAction></header>{mode === "preview" ? <iframe className="h-64 w-full border-0 bg-white" referrerPolicy="no-referrer" sandbox="" srcDoc={sandboxPreviewDocument(source, language)} title={locale === "zh-CN" ? `${codeLanguageLabel(language)} 预览` : `${codeLanguageLabel(language)} preview`} /> : <EmbeddedCodeSource code={source} language={language} />}</section>;
+}
 
 function MermaidCanvas({ svg }: { svg: string }) {
   return <div className="message-mermaid-svg" dangerouslySetInnerHTML={{ __html: svg }} />;
@@ -185,12 +226,8 @@ function MermaidBlock({ closed, source }: { closed: boolean; source: string }) {
   const [fullscreen, setFullscreen] = useState(false);
   const { copied, copy } = useCopyFeedback(source);
   const oversized = isOversizedMermaid(source);
-  const renderedKeyRef = useRef<string | null>(null);
   useEffect(() => {
     if (!closed || oversized) return;
-    const renderKey = `${theme}\u0000${source}`;
-    if (renderedKeyRef.current === renderKey) return;
-    renderedKeyRef.current = renderKey;
     let active = true;
     setSvg(null);
     setError(null);
@@ -202,7 +239,7 @@ function MermaidBlock({ closed, source }: { closed: boolean; source: string }) {
     return () => { active = false; };
   }, [closed, oversized, source, theme]);
   if (!closed) return <CodeBlock code={source} language="mermaid" />;
-  return <section className="my-4 overflow-hidden rounded-[7px] border border-[#deded9] bg-[#fafaf8] dark:border-border dark:bg-[#1b1d19]"><header className="flex h-8 items-center border-b border-[#e5e5e0] bg-[#f3f3f0] pl-1.5 pr-1 dark:border-border dark:bg-[#252722]"><div className="inline-flex rounded-[5px] bg-[#e8e8e4] p-0.5 dark:bg-[#30322c]"><button className={cn("h-6 rounded-[4px] px-2 text-[9px] font-semibold text-muted-foreground", mode === "preview" && "bg-white text-[#41413d] shadow-sm dark:bg-[#20221e] dark:text-foreground")} onClick={() => setMode("preview")} type="button">{locale === "zh-CN" ? "图表" : "Diagram"}</button><button className={cn("h-6 rounded-[4px] px-2 text-[9px] font-semibold text-muted-foreground", mode === "source" && "bg-white text-[#41413d] shadow-sm dark:bg-[#20221e] dark:text-foreground")} onClick={() => setMode("source")} type="button">{locale === "zh-CN" ? "源码" : "Source"}</button></div><div className="ml-auto flex items-center"><IconAction label={copied ? locale === "zh-CN" ? "已复制" : "Copied" : locale === "zh-CN" ? "复制源码" : "Copy source"} onClick={() => void copy()}>{copied ? <Check className="h-3.5 w-3.5 text-[#66833d]" /> : <Copy className="h-3.5 w-3.5" />}</IconAction><IconAction disabled={!svg} label={locale === "zh-CN" ? "全屏查看" : "Open fullscreen"} onClick={() => setFullscreen(true)}><Maximize2 className="h-3.5 w-3.5" /></IconAction></div></header>{mode === "source" ? <CodeBlock code={source} language="mermaid" /> : oversized ? <div className="flex min-h-28 items-center gap-2 px-4 py-5 text-[11px] text-[#8d5e4e] dark:text-[#e4a694]"><ImageOff className="h-4 w-4 shrink-0" />{locale === "zh-CN" ? "Mermaid 源码过长，已停止渲染。请查看源码。" : "This Mermaid source is too large to render. View the source instead."}</div> : error ? <div className="px-4 py-4 text-[11px] leading-5 text-[#8d5e4e] dark:text-[#e4a694]"><p className="font-semibold">{locale === "zh-CN" ? "图表渲染失败" : "Diagram could not be rendered"}</p><p className="mt-1 line-clamp-3 font-mono text-[9px] opacity-80">{error}</p></div> : svg ? <div className="min-h-40 overflow-auto p-5"><MermaidCanvas svg={svg} /></div> : <div className="flex min-h-40 items-center justify-center gap-2 text-[10px] text-muted-foreground"><LoaderCircle className="h-3.5 w-3.5 animate-spin" />{locale === "zh-CN" ? "正在渲染图表" : "Rendering diagram"}</div>}{svg ? <MermaidFullscreen onOpenChange={setFullscreen} open={fullscreen} source={source} svg={svg} /> : null}</section>;
+  return <section className="my-4 overflow-hidden rounded-[7px] border border-[#deded9] bg-[#fafaf8] dark:border-border dark:bg-[#1b1d19]"><header className="flex h-8 items-center border-b border-[#e5e5e0] bg-[#f3f3f0] pl-1.5 pr-1 dark:border-border dark:bg-[#252722]"><div className="inline-flex items-center gap-0.5"><IconAction label={locale === "zh-CN" ? "图表预览" : "Diagram preview"} onClick={() => setMode("preview")} pressed={mode === "preview"}><Eye className="h-3.5 w-3.5" /></IconAction><IconAction label={locale === "zh-CN" ? "源码" : "Source"} onClick={() => setMode("source")} pressed={mode === "source"}><Code2 className="h-3.5 w-3.5" /></IconAction></div><div className="ml-auto flex items-center"><IconAction label={copied ? locale === "zh-CN" ? "已复制" : "Copied" : locale === "zh-CN" ? "复制源码" : "Copy source"} onClick={() => void copy()}>{copied ? <Check className="h-3.5 w-3.5 text-[#66833d]" /> : <Copy className="h-3.5 w-3.5" />}</IconAction><IconAction disabled={!svg || mode === "source"} label={locale === "zh-CN" ? "全屏查看" : "Open fullscreen"} onClick={() => setFullscreen(true)}><Maximize2 className="h-3.5 w-3.5" /></IconAction></div></header>{mode === "source" ? <EmbeddedCodeSource code={source} language="mermaid" /> : oversized ? <div className="flex min-h-28 items-center gap-2 px-4 py-5 text-[11px] text-[#8d5e4e] dark:text-[#e4a694]"><ImageOff className="h-4 w-4 shrink-0" />{locale === "zh-CN" ? "Mermaid 源码过长，已停止渲染。请查看源码。" : "This Mermaid source is too large to render. View the source instead."}</div> : error ? <div className="px-4 py-4 text-[11px] leading-5 text-[#8d5e4e] dark:text-[#e4a694]"><p className="font-semibold">{locale === "zh-CN" ? "图表渲染失败" : "Diagram could not be rendered"}</p><p className="mt-1 line-clamp-3 font-mono text-[9px] opacity-80">{error}</p></div> : svg ? <div className="min-h-40 overflow-auto p-5"><MermaidCanvas svg={svg} /></div> : <div className="flex min-h-40 items-center justify-center gap-2 text-[10px] text-muted-foreground"><LoaderCircle className="h-3.5 w-3.5 animate-spin" />{locale === "zh-CN" ? "正在渲染图表" : "Rendering diagram"}</div>}{svg ? <MermaidFullscreen onOpenChange={setFullscreen} open={fullscreen} source={source} svg={svg} /> : null}</section>;
 }
 
 function RemoteMarkdownImage({ alt, src }: { alt?: string; src?: string }) {
@@ -312,6 +349,7 @@ export const MessageMarkdown = memo(function MessageMarkdown({ streaming = false
       const language = normalizeCodeLanguage(element?.props.className);
       const closed = !streamingRef.current || hasClosedCodeFence(visibleTextRef.current, node?.position?.start.offset, node?.position?.end.offset);
       if (language === "mermaid") return <MermaidBlock closed={closed} source={code} />;
+      if (language === "html" || language === "svg") return <HtmlSvgBlock closed={closed} language={language} source={code} />;
       return <CodeBlock code={code} highlight={closed} language={language} />;
     },
     table: ({ children }) => <div className="message-markdown-table my-4 overflow-x-auto rounded-[6px] border border-[#e0e0db] dark:border-border"><table className="w-full min-w-max border-collapse text-left text-[12px]">{children}</table></div>,

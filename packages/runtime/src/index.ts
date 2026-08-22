@@ -1089,6 +1089,7 @@ function artifactPreviewKind(
       ".jsx",
       ".ts",
       ".tsx",
+      ".svg",
       ".yaml",
       ".yml",
       ".xml",

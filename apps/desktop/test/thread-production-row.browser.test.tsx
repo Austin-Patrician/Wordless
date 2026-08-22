@@ -82,6 +82,46 @@ describe("production thread row performance", () => {
     );
   });
 
+  it("rerenders a completed Mermaid block after the row is recycled", async () => {
+    const root = createRoot(document.querySelector("#root")!);
+    roots.push(root);
+    const text = "```mermaid\ngraph TD\n  A[Session] --> B[Rendered]\n```";
+    await act(async () => {
+      root.render(<StrictMode><ProductionRow streaming={false} text={text} /></StrictMode>);
+      await delay(300);
+    });
+    expect(document.querySelector(".message-mermaid-svg svg")).not.toBeNull();
+
+    await act(async () => {
+      root.render(<div />);
+      await delay(20);
+      root.render(<StrictMode><ProductionRow streaming={false} text={text} /></StrictMode>);
+      await delay(300);
+    });
+    expect(document.querySelector(".message-mermaid-svg svg")).not.toBeNull();
+  });
+
+  it("keeps HTML previews opt-in and sandboxed", async () => {
+    const root = createRoot(document.querySelector("#root")!);
+    roots.push(root);
+    const text = "```html\n<div data-preview>Safe preview</div><script>document.body.dataset.executed = 'yes'</script>\n```";
+    await act(async () => {
+      root.render(<ProductionRow streaming={false} text={text} />);
+      await delay(40);
+    });
+    expect(document.querySelector("iframe")).toBeNull();
+    const previewButton = Array.from(document.querySelectorAll("button")).find((button) => button.textContent === "Preview");
+    expect(previewButton).not.toBeUndefined();
+    await act(async () => {
+      previewButton?.click();
+      await delay(40);
+    });
+    const frame = document.querySelector<HTMLIFrameElement>("iframe");
+    expect(frame?.sandbox.value).toBe("");
+    expect(frame?.srcdoc).toContain("Content-Security-Policy");
+    expect(document.body.dataset.executed).toBeUndefined();
+  });
+
   it("keeps a long streaming response visible before the terminal event", async () => {
     const root = createRoot(document.querySelector("#root")!);
     roots.push(root);

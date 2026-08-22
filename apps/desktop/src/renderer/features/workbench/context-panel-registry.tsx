@@ -10,9 +10,7 @@ import changesIcon from "../../../icons/workspaces/changes.svg";
 import chartsIcon from "../../../icons/workspaces/charts.svg";
 import dataIcon from "../../../icons/workspaces/data.svg";
 import filesIcon from "../../../icons/workspaces/files.svg";
-import issuesIcon from "../../../icons/workspaces/issues.svg";
 import reportIcon from "../../../icons/workspaces/REPORT.svg";
-import sheetsIcon from "../../../icons/workspaces/sheets.svg";
 
 function workspaceIcon(source: string) {
   return function WorkspaceIcon({ className }: { className?: string }) {
@@ -24,9 +22,7 @@ const ChangesIcon = workspaceIcon(changesIcon);
 const ChartsIcon = workspaceIcon(chartsIcon);
 const DataIcon = workspaceIcon(dataIcon);
 const FilesIcon = workspaceIcon(filesIcon);
-const IssuesIcon = workspaceIcon(issuesIcon);
 const ReportIcon = workspaceIcon(reportIcon);
-const SheetsIcon = workspaceIcon(sheetsIcon);
 
 function UnsupportedContextPanel(_props: WorkbenchContextPanelProps) {
   return <div className="p-4 text-[12px] text-muted-foreground">No session context is available for this workbench.</div>;
@@ -40,7 +36,7 @@ class WorkbenchContextPanelRegistry {
   }
 
   resolve(workbenchId: WorkbenchId | undefined): WorkbenchContextPanelDefinition {
-    const fallback: WorkbenchContextPanelDefinition = { workbenchId: "conversation", component: UnsupportedContextPanel, tabs: [{ id: "overview", label: "Context", icon: LayoutDashboard }] };
+    const fallback: WorkbenchContextPanelDefinition = { workbenchId: "conversation", component: UnsupportedContextPanel, tabs: [{ id: "overview", labelKey: "context", icon: LayoutDashboard }] };
     return workbenchId ? this.panels.get(workbenchId) ?? fallback : fallback;
   }
 }
@@ -49,46 +45,41 @@ export const workbenchContextPanelRegistry = new WorkbenchContextPanelRegistry([
   {
     workbenchId: "conversation",
     component: GeneralWorkArtifactsPanel,
-    tabs: [{ id: "artifacts", label: "Artifacts", icon: PackageOpen }],
+    tabs: [{ id: "artifacts", labelKey: "artifacts", icon: PackageOpen }],
   },
   {
     workbenchId: "code",
     component: CodingContextPanel,
     tabs: [
-      { id: "overview", label: "Overview", icon: LayoutDashboard },
-      { id: "files", label: "Workspace files", icon: FilesIcon },
-      { id: "changes", label: "Changes", icon: ChangesIcon },
+      { id: "overview", labelKey: "contextOverview", icon: LayoutDashboard },
+      { id: "files", labelKey: "workspaceFiles", icon: FilesIcon },
+      { id: "changes", labelKey: "changes", icon: ChangesIcon },
     ],
   },
   {
     workbenchId: "presentation",
     component: PresentationContextPanel,
     tabs: [
-      { id: "preview", label: "Preview", icon: PanelTop },
-      { id: "slides", label: "Slides", icon: Presentation },
-      { id: "assets", label: "Assets", icon: FilesIcon },
-      { id: "issues", label: "Issues", icon: IssuesIcon },
+      { id: "preview", labelKey: "contextPreview", icon: PanelTop },
+      { id: "slides", labelKey: "contextSlides", icon: Presentation },
     ],
   },
   {
     workbenchId: "workbook",
     component: SpreadsheetContextPanel,
     tabs: [
-      { id: "preview", label: "Preview", icon: PanelTop },
-      { id: "sheets", label: "Sheets", icon: SheetsIcon },
-      { id: "changes", label: "Changes", icon: ChangesIcon },
-      { id: "issues", label: "Issues", icon: IssuesIcon },
+      { id: "preview", labelKey: "contextPreview", icon: PanelTop },
     ],
   },
   {
     workbenchId: "analysis",
     component: AnalysisContextPanel,
     tabs: [
-      { id: "report", label: "Report", icon: ReportIcon },
-      { id: "research", label: "Deep Research", icon: BookOpenCheck },
-      { id: "data", label: "Data", icon: DataIcon },
-      { id: "charts", label: "Charts", icon: ChartsIcon },
-      { id: "files", label: "Files", icon: FilesIcon },
+      { id: "report", labelKey: "contextReport", icon: ReportIcon },
+      { id: "research", labelKey: "contextResearch", icon: BookOpenCheck },
+      { id: "data", labelKey: "contextData", icon: DataIcon },
+      { id: "charts", labelKey: "contextCharts", icon: ChartsIcon },
+      { id: "files", labelKey: "contextFiles", icon: FilesIcon },
     ],
   },
 ]);

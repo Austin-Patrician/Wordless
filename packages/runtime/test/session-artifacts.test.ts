@@ -74,6 +74,7 @@ test("indexes scoped General Work artifacts with expert producers", async (conte
   await mkdir(join(runtimeRootPath, "artifacts", "writer-1"), { recursive: true });
   await mkdir(join(runtimeRootPath, "artifacts", "subagents", "worker", "task-1"), { recursive: true });
   await writeFile(join(runtimeRootPath, "artifacts", "primary", "brief.md"), "# Brief\n");
+  await writeFile(join(runtimeRootPath, "artifacts", "primary", "diagram.svg"), "<svg viewBox=\"0 0 10 10\"><circle cx=\"5\" cy=\"5\" r=\"4\" /></svg>\n");
   await writeFile(join(runtimeRootPath, "artifacts", "writer-1", "draft.txt"), "Draft copy");
   await writeFile(join(runtimeRootPath, "artifacts", "subagents", "worker", "task-1", "notes.json"), "{}\n");
   await writeFile(join(runtimeRootPath, "private.txt"), "not an artifact");
@@ -86,7 +87,7 @@ test("indexes scoped General Work artifacts with expert producers", async (conte
   });
 
   const snapshot = await runtime.getSessionArtifacts(sessionId);
-  assert.equal(snapshot.artifacts.length, 2);
+  assert.equal(snapshot.artifacts.length, 3);
   const brief = snapshot.artifacts.find((artifact) => artifact.name === "brief.md");
   assert.equal(brief?.previewKind, "markdown");
   assert.deepEqual(brief?.producer, {
@@ -110,6 +111,14 @@ test("indexes scoped General Work artifacts with expert producers", async (conte
     kind: "text",
     name: "brief.md",
     content: "# Brief\n",
+  });
+  const diagram = snapshot.artifacts.find((artifact) => artifact.name === "diagram.svg");
+  assert.equal(diagram?.previewKind, "text");
+  assert.deepEqual(await runtime.readSessionArtifact(sessionId, diagram!.id), {
+    status: "available",
+    kind: "text",
+    name: "diagram.svg",
+    content: "<svg viewBox=\"0 0 10 10\"><circle cx=\"5\" cy=\"5\" r=\"4\" /></svg>\n",
   });
   await assert.rejects(
     runtime.readSessionArtifact(sessionId, "../../private.txt"),
