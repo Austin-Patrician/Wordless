@@ -3,7 +3,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { ModelConfigurationSnapshot } from "@wordless/domain";
 import { Button, Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@wordless/ui-kit";
 import { Check, ChevronLeft, ChevronRight, ExternalLink, Eye, EyeOff, LoaderCircle, Settings2, X } from "lucide-react";
-import wordlessIcon from "../../../icons/common-icons/wordless.png";
+import wordlessIcon from "../../../icons/common-icons/wordless.jpeg";
 import { usePreferences } from "../../shared/preferences";
 import { useRuntime, useRuntimeClient } from "../../shared/runtime";
 import { ProviderIcon } from "../settings/provider-icons";

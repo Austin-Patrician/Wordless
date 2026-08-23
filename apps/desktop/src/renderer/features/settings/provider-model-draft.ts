@@ -15,7 +15,15 @@ export function parseProviderConfigurationDraft(raw: string): Record<string, unk
 }
 
 export function providerDraftModelIds(raw: string): string[] {
-  const configuration = parseProviderConfigurationDraft(raw);
+  // This helper is also called while the editor is rendering. A draft can be
+  // temporarily invalid while the user is typing, so an invalid draft has no
+  // model ids rather than escaping into the renderer error boundary.
+  let configuration: Record<string, unknown>;
+  try {
+    configuration = parseProviderConfigurationDraft(raw);
+  } catch {
+    return [];
+  }
   if (!Array.isArray(configuration.models)) return [];
   return configuration.models.flatMap((model) => {
     if (typeof model !== "object" || model === null || Array.isArray(model)) return [];

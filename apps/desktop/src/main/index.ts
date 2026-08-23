@@ -10,6 +10,7 @@ import { registerAppearanceProtocol } from "./protocols/appearance";
 import { registerMediaProtocol } from "./protocols/media";
 import { registerPresentationProtocol } from "./protocols/presentation";
 import { registerAnalysisProtocol } from "./protocols/analysis";
+import { registerAttachmentProtocol } from "./protocols/attachment";
 import { createMainWindow, updateTitleBarOverlays } from "./windows/main-window";
 import { createDesktopHostInfo } from "./platform/desktop-platform";
 import { ApplicationMenuController } from "./menu/application-menu";
@@ -125,6 +126,7 @@ app.whenReady().then(async () => {
   await account.initialize();
   runtime = createDesktopRuntime(userData.path, office, credentialVault, dataAnalysis);
   await runtime.initialize();
+  registerAttachmentProtocol(async (sessionId, previewPath) => await runtime!.resolveSessionAttachmentPreview(sessionId, previewPath));
   automation = new AutomationService({
     databasePath: path.join(userData.path, "wordless.db"),
     runtime,
@@ -181,7 +183,7 @@ app.whenReady().then(async () => {
   mainWindow = createMainWindow(path.join(__dirname, "preload.cjs"), runtime.getSnapshot().preferences);
   mainWindow.on("close", (event) => { if (!quitting) { event.preventDefault(); mainWindow?.hide(); } });
   mainWindow.on("focus", () => notifications.clearBadge());
-  tray = new Tray(path.join(__dirname, process.platform === "win32" ? "wordless.ico" : "wordless.png"));
+  tray = new Tray(path.join(__dirname, process.platform === "win32" ? "wordless.ico" : "wordless.jpeg"));
   tray.setToolTip("Wordless");
   tray.on("click", showWindow);
   updateTrayMenu(runtime.getSnapshot().preferences);

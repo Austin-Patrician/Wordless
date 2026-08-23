@@ -166,7 +166,17 @@ export function ProviderConfigurationPanel({ error, models, onDelete, onLoginWit
           </div>
         </section>
       </div>
-      {isCustomChat ? <ProviderModelDiscoveryDialog error={discoveryError} loading={discoveryLoading} models={discoveredModels} onApply={(presentIds) => { const result = applyProviderModelDraftChange(raw, discoveredModels, presentIds); setRaw(result.raw); setCustomConfiguration(true); setDraftEnabledModelIds((current) => [...new Set([...current.filter((id) => !result.change.removedIds.includes(id)), ...result.change.addedIds])]); setDiscoveryOpen(false); }} onOpenChange={setDiscoveryOpen} onRetry={() => void fetchRemoteModels()} open={discoveryOpen} presentModelIds={providerDraftModelIds(raw)} providerName={provider.displayName} /> : null}
+      {isCustomChat ? <ProviderModelDiscoveryDialog error={discoveryError} loading={discoveryLoading} models={discoveredModels} onApply={(presentIds) => {
+        try {
+          const result = applyProviderModelDraftChange(raw, discoveredModels, presentIds);
+          setRaw(result.raw);
+          setCustomConfiguration(true);
+          setDraftEnabledModelIds((current) => [...new Set([...current.filter((id) => !result.change.removedIds.includes(id)), ...result.change.addedIds])]);
+          setDiscoveryOpen(false);
+        } catch (reason) {
+          setDiscoveryError(reason instanceof Error ? reason.message : String(reason));
+        }
+      }} onOpenChange={setDiscoveryOpen} onRetry={() => void fetchRemoteModels()} open={discoveryOpen} presentModelIds={providerDraftModelIds(raw)} providerName={provider.displayName} /> : null}
       <DeleteCustomProviderDialog onCancel={() => setDeleteOpen(false)} onConfirm={() => { void onDelete(provider).then(() => setDeleteOpen(false)).catch(() => undefined); }} open={deleteOpen} providerName={provider.displayName} saving={saving} />
     </main>
   );

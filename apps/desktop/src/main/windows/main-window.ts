@@ -18,7 +18,7 @@ export function updateTitleBarOverlays(preferences: AppPreferences): void {
 
 export function createMainWindow(preloadPath: string, preferences: AppPreferences): BrowserWindow {
   const host = createDesktopHostInfo();
-  const iconName = process.platform === "win32" ? "wordless.ico" : "wordless.png";
+  const iconName = process.platform === "win32" ? "wordless.ico" : "wordless.jpeg";
   const mainWindow = new BrowserWindow({ ...mainWindowOptions(preloadPath, preferences, isDark(preferences), host), icon: path.join(__dirname, iconName) });
   if (host.menuPresentation === "in-window") mainWindow.setMenuBarVisibility(false);
 

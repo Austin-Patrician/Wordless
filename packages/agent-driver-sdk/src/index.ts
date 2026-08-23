@@ -5,7 +5,7 @@ import type {
   SessionMetadata,
   ThinkingLevel,
 } from "@wordless/agent";
-import type { Api, Model, Models } from "@wordless/ai";
+import type { Api, ImageContent, Model, Models } from "@wordless/ai";
 import type { WorkspaceSearchProvider } from "@wordless/workspace-search";
 import type {
   AgentExtensionEvent,
@@ -227,24 +227,72 @@ export function formatPromptWithSkillReferences(
 }
 
 export function formatPromptWithWorkspaceAttachments(
-  attachments: readonly { path: string; name: string; mediaType: string; size: number }[],
+  attachments: readonly { id: string; path: string; previewPath?: string; name: string; mediaType: string; size: number }[],
 ): string {
   if (attachments.length === 0) return "";
-  return `${WORKSPACE_ATTACHMENT_START}${JSON.stringify({ version: 2, attachments })}${WORKSPACE_ATTACHMENT_END}`;
+  return `${WORKSPACE_ATTACHMENT_START}${JSON.stringify({ version: 3, attachments })}${WORKSPACE_ATTACHMENT_END}`;
+}
+
+export interface PromptImageReference {
+  id: string;
+  name: string;
+  mediaType: string;
+  size: number;
+  path: string;
+  previewPath?: string;
+}
+
+export type ResolvePromptImage = (
+  reference: PromptImageReference,
+) => Promise<ImageContent | undefined>;
+
+export function parsePromptAttachmentReferences(text: string): {
+  text: string;
+  attachments: PromptImageReference[];
+} {
+  const start = text.lastIndexOf(WORKSPACE_ATTACHMENT_START);
+  if (start === -1 || !text.endsWith(WORKSPACE_ATTACHMENT_END))
+    return { text, attachments: [] };
+  const payload = text.slice(
+    start + WORKSPACE_ATTACHMENT_START.length,
+    -WORKSPACE_ATTACHMENT_END.length,
+  );
+  try {
+    const value = JSON.parse(payload) as {
+      version?: number;
+      attachments?: Array<Partial<PromptImageReference>>;
+    };
+    if (value.version !== 3 || !Array.isArray(value.attachments))
+      return { text, attachments: [] };
+    const attachments = value.attachments.flatMap((item) => {
+      if (
+        typeof item.id !== "string" ||
+        typeof item.path !== "string" ||
+        typeof item.name !== "string" ||
+        typeof item.mediaType !== "string" ||
+        typeof item.size !== "number"
+      )
+        return [];
+      return [{
+        id: item.id,
+        name: item.name,
+        mediaType: item.mediaType,
+        size: item.size,
+        path: item.path,
+        ...(typeof item.previewPath === "string" ? { previewPath: item.previewPath } : {}),
+      }];
+    });
+    return { text: text.slice(0, start), attachments };
+  } catch {
+    return { text, attachments: [] };
+  }
 }
 
 export function formatPromptWorkspaceAttachmentsForModel(text: string): string {
-  const start = text.lastIndexOf(WORKSPACE_ATTACHMENT_START);
-  if (start === -1 || !text.endsWith(WORKSPACE_ATTACHMENT_END)) return text;
-  const payload = text.slice(start + WORKSPACE_ATTACHMENT_START.length, -WORKSPACE_ATTACHMENT_END.length);
-  try {
-    const value = JSON.parse(payload) as { attachments?: Array<{ path?: string; name?: string; mediaType?: string; size?: number }> };
-    const entries = (value.attachments ?? []).filter((item) => item.path && item.name);
-    const formatted = entries.map((item) => ["<wordless_workspace_attachment>", `path=${JSON.stringify(item.path)}`, `name=${JSON.stringify(item.name)}`, `media_type=${JSON.stringify(item.mediaType ?? "application/octet-stream")}`, `size=${item.size ?? 0}`, "Inspect this user-attached file with the available workspace tools when needed.", "</wordless_workspace_attachment>"].join("\n")).join("\n");
-    return `${text.slice(0, start)}${formatted}`;
-  } catch {
-    return text;
-  }
+  const parsed = parsePromptAttachmentReferences(text);
+  if (parsed.attachments.length === 0) return text;
+  const formatted = parsed.attachments.map((item) => ["<wordless_workspace_attachment>", `path=${JSON.stringify(item.path)}`, `name=${JSON.stringify(item.name)}`, `media_type=${JSON.stringify(item.mediaType)}`, `size=${item.size}`, "Inspect this user-attached file with the available workspace tools when needed.", "</wordless_workspace_attachment>"].join("\n")).join("\n");
+  return `${parsed.text}${formatted}`;
 }
 
 export function selectedSkillIdsFromPromptParts(
@@ -512,11 +560,12 @@ export function splitPromptAttachments(text: string): {
       value === null ||
       !("version" in value) ||
       !("attachments" in value) ||
-      (value.version !== 1 && value.version !== 2) ||
+      (value.version !== 1 && value.version !== 2 && value.version !== 3) ||
       !Array.isArray(value.attachments)
     ) {
       return { text, attachments: [] };
     }
+    const currentVersion = value.version === 3;
     const attachments = value.attachments.flatMap(
       (attachment, index): MessageAttachmentBlock[] => {
         if (
@@ -534,9 +583,12 @@ export function splitPromptAttachments(text: string): {
         return [
           {
             type: "attachment",
-            id: `${attachment.path}:${index}`,
+            id: typeof attachment.id === "string" ? attachment.id : `${attachment.path}:${index}`,
             name: attachment.name,
             mediaType: attachment.mediaType,
+            ...(currentVersion && typeof attachment.path === "string" ? { path: attachment.path } : {}),
+            ...(currentVersion && typeof attachment.previewPath === "string" ? { previewPath: attachment.previewPath } : {}),
+            ...(currentVersion && typeof attachment.size === "number" ? { size: attachment.size } : {}),
           },
         ];
       },
@@ -747,6 +799,8 @@ export interface AgentDriverSessionContext {
     connectorIds: string[];
   }>;
   toolApprovalMode?: ToolApprovalMode;
+  /** Resolve a staged image attachment immediately before a provider request. */
+  resolvePromptImage?: ResolvePromptImage;
 }
 
 export interface AgentDriverSession {

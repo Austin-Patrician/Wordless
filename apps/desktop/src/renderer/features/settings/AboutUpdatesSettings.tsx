@@ -6,7 +6,7 @@ import remarkGfm from "remark-gfm";
 import { useDesktopUpdate } from "../../platform/desktop-update";
 import { usePreferences } from "../../shared/preferences";
 import { useRuntime } from "../../shared/runtime";
-import wordlessIcon from "../../../icons/common-icons/wordless.png";
+import wordlessIcon from "../../../icons/common-icons/wordless.jpeg";
 import githubIcon from "../../../icons/common-icons/github.svg";
 
 const WECHAT_GROUP_QR_URL = "https://qr.wordless.20250230.xyz/wechat-group.png";

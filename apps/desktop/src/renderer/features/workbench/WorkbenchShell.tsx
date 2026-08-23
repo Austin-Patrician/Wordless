@@ -20,7 +20,7 @@ import { MediaCanvas } from "../media/MediaCanvas";
 import { MediaLibrary } from "../media/MediaLibrary";
 import { AutomationView } from "../automation/AutomationView";
 import { AppBackgroundLayer } from "../appearance/AppBackgroundLayer";
-import wordlessIcon from "../../../icons/common-icons/wordless.png";
+import wordlessIcon from "../../../icons/common-icons/wordless.jpeg";
 import { DesktopChrome } from "./DesktopChrome";
 import { ExpertsView } from "../experts/ExpertsView";
 import { TasksView } from "../tasks/TasksView";

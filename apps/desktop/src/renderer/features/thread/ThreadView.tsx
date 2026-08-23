@@ -100,7 +100,7 @@ import {
 import { getThreadSessionStore } from "./thread-session-store-registry";
 import type { ExpertMemberSessionStore } from "./expert-member-session-store";
 import { ThreadViewportStore } from "./thread-viewport-store";
-import wordlessIcon from "../../../icons/common-icons/wordless.png";
+import wordlessIcon from "../../../icons/common-icons/wordless.jpeg";
 import thinkingIcon from "../../../icons/common-icons/深度思考.svg";
 import { skillIconText } from "../../shared/skill-icon";
 import { FileTypeIcon } from "../../shared/FileTypeIcon";
@@ -2261,6 +2261,7 @@ function MessageBody({
   runPresentation,
   showFooter,
   workbenchId,
+  sessionId,
 }: {
   assistantIdentity?: Pick<ExpertCollaborationLeader, "name" | "portrait">;
   messages: ConversationMessage[];
@@ -2296,6 +2297,7 @@ function MessageBody({
   runPresentation: AssistantRunPresentation | null;
   showFooter: boolean;
   workbenchId: WorkbenchId;
+  sessionId: string;
 }) {
   const { t } = usePreferences();
   const message = messages[0];
@@ -2396,18 +2398,26 @@ function MessageBody({
           {attachments.length > 0 ? (
             <div className="mt-1 flex w-fit max-w-full flex-wrap justify-end gap-1.5">
               {attachments.map((attachment) => (
-                <span
-                  className="inline-flex max-w-full items-center gap-1 rounded-[5px] bg-[#f0f0ed] px-2 py-1 font-mono text-[11px] text-[#6d6d67] dark:bg-muted"
-                  key={attachment.id}
-                  title={attachment.name}
-                >
-                  <FileTypeIcon
-                    className="h-3 w-3 shrink-0 [&_svg]:h-3 [&_svg]:w-3"
-                    kind="file"
-                    name={attachment.name}
-                  />
-                  <span className="min-w-0 truncate">{attachment.name}</span>
-                </span>
+                attachment.mediaType.startsWith("image/") && attachment.previewPath ? (
+                  <div className="w-[220px] overflow-hidden rounded-[8px] border border-[#deded9] bg-[#f0f0ed] dark:border-border dark:bg-muted" key={attachment.id} title={attachment.name}>
+                    <img
+                      alt={attachment.name}
+                      className="block max-h-[180px] w-full object-contain"
+                      decoding="async"
+                      loading="lazy"
+                      src={`wordless-attachment://preview/${encodeURIComponent(sessionId)}/${encodeURIComponent(attachment.previewPath)}`}
+                    />
+                    <div className="flex items-center gap-1 px-2 py-1 font-mono text-[11px] text-[#6d6d67] dark:text-muted-foreground">
+                      <FileTypeIcon className="h-3 w-3 shrink-0 [&_svg]:h-3 [&_svg]:w-3" kind="file" name={attachment.name} />
+                      <span className="min-w-0 truncate">{attachment.name}</span>
+                    </div>
+                  </div>
+                ) : (
+                  <span className="inline-flex max-w-full items-center gap-1 rounded-[5px] bg-[#f0f0ed] px-2 py-1 font-mono text-[11px] text-[#6d6d67] dark:bg-muted" key={attachment.id} title={attachment.name}>
+                    <FileTypeIcon className="h-3 w-3 shrink-0 [&_svg]:h-3 [&_svg]:w-3" kind="file" name={attachment.name} />
+                    <span className="min-w-0 truncate">{attachment.name}</span>
+                  </span>
+                )
               ))}
             </div>
           ) : null}
@@ -2757,6 +2767,7 @@ function ThreadStoreRow({
           runPresentation={row.presentation}
           showFooter={!isRunning && isLastMessage}
           workbenchId={workbenchId}
+          sessionId={context.store.sessionId}
         />
       )}
     </ThreadContentFrame>

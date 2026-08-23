@@ -1513,6 +1513,7 @@ export interface MessageAttachmentBlock {
   name: string;
   mediaType: string;
   path?: string;
+  previewPath?: string;
   size?: number;
 }
 

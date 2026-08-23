@@ -3,12 +3,13 @@ import { copyFile } from "node:fs/promises";
 import { builtinModules } from "node:module";
 import { fileURLToPath } from "node:url";
 import { build } from "vite";
+import { generateAppIcon } from "./generate-app-icon.mjs";
 import { readWindowsIcon } from "./windows-icon.mjs";
 
 const scriptDirectory = dirname(fileURLToPath(import.meta.url));
 const appRoot = resolve(scriptDirectory, "..");
 const outputDirectory = resolve(appRoot, "dist/electron");
-const applicationIcon = resolve(appRoot, "src/icons/common-icons/wordless.png");
+const applicationIcon = resolve(appRoot, "src/icons/common-icons/wordless.jpeg");
 const windowsApplicationIcon = resolve(appRoot, "build/icon.ico");
 const nodeBuiltins = new Set([...builtinModules, ...builtinModules.map((id) => `node:${id}`)]);
 
@@ -17,7 +18,7 @@ function isNodeBuiltin(id) {
 }
 
 function isNativeRuntimeDependency(id) {
-  return id === "undici" || id === "@ff-labs/fff-node" || id.startsWith("@ff-labs/fff-node/") || id === "ffi-rs" || id.startsWith("ffi-rs/") || id.startsWith("@ff-labs/fff-bin-") || id.startsWith("@yuuang/ffi-rs-");
+  return id === "undici" || id === "sharp" || id.startsWith("sharp/") || id === "@img" || id.startsWith("@img/") || id === "@ff-labs/fff-node" || id.startsWith("@ff-labs/fff-node/") || id === "ffi-rs" || id.startsWith("ffi-rs/") || id.startsWith("@ff-labs/fff-bin-") || id.startsWith("@yuuang/ffi-rs-");
 }
 
 async function buildEntry(entry, name, emptyOutDir) {
@@ -47,6 +48,7 @@ async function buildEntry(entry, name, emptyOutDir) {
 
 await buildEntry(resolve(appRoot, "src/main/index.ts"), "main", true);
 await buildEntry(resolve(appRoot, "src/preload/index.ts"), "preload", false);
+await generateAppIcon();
 await readWindowsIcon(windowsApplicationIcon);
-await copyFile(applicationIcon, resolve(outputDirectory, "wordless.png"));
+await copyFile(applicationIcon, resolve(outputDirectory, "wordless.jpeg"));
 await copyFile(windowsApplicationIcon, resolve(outputDirectory, "wordless.ico"));

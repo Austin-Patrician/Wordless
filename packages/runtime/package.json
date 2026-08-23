@@ -27,7 +27,8 @@
     "@wordless/persistence": "0.0.0",
     "@wordless/platform-node": "0.0.0",
     "@wordless/workspace-search": "0.0.0",
-    "diff": "8.0.4"
+    "diff": "8.0.4",
+    "sharp": "0.35.3"
   },
   "devDependencies": {
     "@types/diff": "7.0.2",

@@ -33,6 +33,10 @@ test("enabled model calculation enables additions and drops removed definitions"
   assert.deepEqual(desiredEnabledModelIds(["kept", "removed"], ["kept", "added"], ["added"]), ["kept", "added"]);
 });
 
+test("returns no model ids for an incomplete JSON draft", () => {
+  assert.deepEqual(providerDraftModelIds('{"models": [{"id": "unfinished"}'), []);
+});
+
 test("writes the matched built-in definition with the remote identity", () => {
   const result = applyProviderModelDraftChange("{}", [{
     id: "gateway/claude-sonnet-4-6",

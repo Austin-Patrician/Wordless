@@ -16,6 +16,7 @@ import type {
   AgentDriverEvent,
   AgentDriverSession,
   AgentDriverSessionContext,
+  ResolvePromptImage,
   AgentProfileDefinition,
   AgentRuntimeSkill,
   ConnectorToolPolicy,
@@ -83,6 +84,7 @@ export interface SessionSubagentRunnerOptions {
   resolveCapabilities(reference: ModelReference): ModelCapabilities;
   onFilesChanged(changes: SubagentFileChange[]): Promise<void>;
   toolApprovalMode: ToolApprovalMode;
+  resolvePromptImage?: ResolvePromptImage;
   onExpertMemberEvent?: (event: ExpertMemberStreamEvent) => void;
   expertTeamDelegates?: {
     id: string;
@@ -738,6 +740,7 @@ export class SessionSubagentRunner
         ? member.executionProfile !== "research"
         : role !== "researcher" && role !== "research-reviewer",
       toolApprovalMode: this.options.toolApprovalMode,
+      resolvePromptImage: this.options.resolvePromptImage,
     };
     const session = await this.options.driver.createSession(childContext);
     const entry: SubagentTaskEntry = {

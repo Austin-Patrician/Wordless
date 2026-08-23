@@ -19,6 +19,7 @@ import {
   join,
   relative,
   resolve,
+  sep as pathSep,
 } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createTwoFilesPatch } from "diff";
@@ -45,6 +46,8 @@ import {
   projectUserMessageContent,
   formatPromptWithSkillReferences,
   formatPromptWithWorkspaceAttachments,
+  type PromptImageReference,
+  type ResolvePromptImage,
   selectedSkillIdsFromPromptParts,
   type AgentDriverEvent,
   type AgentDriverRegistry,
@@ -70,6 +73,7 @@ import {
   clampThinkingLevel,
   getSupportedThinkingLevels,
 } from "@wordless/ai";
+import sharp from "sharp";
 import {
   calculateCurrentTurnUsage,
   conversationUsageFromUnknown,
@@ -495,6 +499,11 @@ export interface RuntimeOptions {
   extensions: AgentExtensionManager;
   workspaceSearch: WorkspaceSearchService;
 }
+
+const MAX_INLINE_IMAGE_BYTES = Math.floor(4.5 * 1024 * 1024);
+const MAX_INLINE_IMAGE_DIMENSION = 2_000;
+
+type CachedPromptImage = { key: string; image: ImageContent; bytes: number };
 
 export const BUILTIN_ENTRIES: WorkbenchEntryDefinition[] = [
   {
@@ -1446,6 +1455,8 @@ export class WordlessRuntime {
   private readonly runs = new Map<string, ActiveRun>();
   private readonly approvalResolutions = new Map<string, Promise<void>>();
   private readonly mediaOperations = new Map<string, AbortController>();
+  private readonly promptImageCache = new Map<string, CachedPromptImage>();
+  private promptImageCacheBytes = 0;
   private readonly runtimeInstanceId = randomUUID();
   private appSequence = 0;
   private preferences: AppPreferences;
@@ -4443,6 +4454,22 @@ export class WordlessRuntime {
     return this.requireSession(sessionId).runtimeRootPath;
   }
 
+  async resolveSessionAttachmentPreview(
+    sessionId: string,
+    previewPath: string,
+  ): Promise<{ path: string; mimeType: string } | undefined> {
+    if (!previewPath.startsWith(".attachments/") || previewPath.includes("..") || isAbsolute(previewPath)) return undefined;
+    const record = this.requireSession(sessionId);
+    const root = this.sessionAttachmentRoot(record);
+    const source = join(root, previewPath);
+    const resolvedRoot = resolve(root);
+    const resolvedSource = resolve(source);
+    if (!resolvedSource.startsWith(`${resolvedRoot}${pathSep}`)) return undefined;
+    const details = await stat(resolvedSource).catch(() => undefined);
+    if (!details?.isFile()) return undefined;
+    return { path: resolvedSource, mimeType: mimeTypeForMediaName(resolvedSource) };
+  }
+
   async resolveOperationApproval(
     sessionId: string,
     approvalId: string,
@@ -5111,6 +5138,7 @@ export class WordlessRuntime {
       onExpertMemberEvent: (event) =>
         this.emitExpertMemberEvent(sessionId, event),
       toolApprovalMode: record.toolApprovalMode,
+      resolvePromptImage: (reference) => this.resolvePromptImage(record, reference),
       expertTeamDelegates:
         expertSnapshot?.kind === "team"
           ? expertSnapshot.teamMembers.map((member) => ({
@@ -5159,6 +5187,7 @@ export class WordlessRuntime {
             }))
           : undefined,
       toolApprovalMode: record.toolApprovalMode,
+      resolvePromptImage: (reference) => this.resolvePromptImage(record, reference),
     });
     const active: ActiveRun = {
       driverSession,
@@ -5643,14 +5672,15 @@ export class WordlessRuntime {
     const attachmentRoot = this.sessionAttachmentRoot(record);
     const directory = join(attachmentRoot, ".attachments");
     await mkdir(directory, { recursive: true });
-    const staged: Array<{ path: string; name: string; mediaType: string; size: number }> = [];
+    const staged: Array<{ id: string; path: string; previewPath: string; name: string; mediaType: string; size: number }> = [];
     const created: string[] = [];
     try {
       for (const attachment of attachments) {
         if (!Number.isInteger(attachment.size) || attachment.size < 0 || attachment.size > 52_428_800)
           throw new Error(`Attachment exceeds the 50 MB limit: ${attachment.name}`);
         const safeName = basename(attachment.name).replace(/[^a-zA-Z0-9._-]/g, "_").slice(0, 160) || "attachment";
-        const relativePath = `.attachments/${randomUUID()}-${safeName}`;
+        const id = randomUUID();
+        const relativePath = `.attachments/${id}-${safeName}`;
         const target = join(attachmentRoot, relativePath);
         if (attachment.source.type === "path") {
           const source = await realpath(attachment.source.path);
@@ -5658,12 +5688,12 @@ export class WordlessRuntime {
           if (!details.isFile()) throw new Error(`Attachment is not a file: ${attachment.name}`);
           if (details.size > 52_428_800) throw new Error(`Attachment exceeds the 50 MB limit: ${attachment.name}`);
           await copyFile(source, target);
-          staged.push({ path: this.sessionAttachmentPathForModel(record, relativePath), name: safeName, mediaType: attachment.mediaType, size: details.size });
+          staged.push({ id, path: this.sessionAttachmentPathForModel(record, relativePath), previewPath: relativePath, name: safeName, mediaType: attachment.mediaType, size: details.size });
         } else {
           const data = Buffer.from(attachment.source.base64, "base64");
           if (data.byteLength > 52_428_800) throw new Error(`Attachment exceeds the 50 MB limit: ${attachment.name}`);
           await writeFile(target, data, { flag: "wx" });
-          staged.push({ path: this.sessionAttachmentPathForModel(record, relativePath), name: safeName, mediaType: attachment.mediaType, size: data.byteLength });
+          staged.push({ id, path: this.sessionAttachmentPathForModel(record, relativePath), previewPath: relativePath, name: safeName, mediaType: attachment.mediaType, size: data.byteLength });
         }
         created.push(target);
       }
@@ -5672,6 +5702,61 @@ export class WordlessRuntime {
       await Promise.all(created.map((file) => rm(file, { force: true })));
       throw error;
     }
+  }
+
+  private async resolvePromptImage(
+    record: SessionRecord,
+    reference: PromptImageReference,
+  ): Promise<ImageContent | undefined> {
+    if (!reference.mediaType.toLowerCase().startsWith("image/")) return undefined;
+    const previewPath = reference.previewPath;
+    if (!previewPath || !previewPath.startsWith(".attachments/") || previewPath.includes("..") || isAbsolute(previewPath)) return undefined;
+    const root = this.sessionAttachmentRoot(record);
+    const source = join(root, previewPath);
+    const details = await stat(source);
+    if (!details.isFile()) return undefined;
+    const key = `${source}:${details.size}:${details.mtimeMs}`;
+    const cached = this.promptImageCache.get(key);
+    if (cached) {
+      this.promptImageCache.delete(key);
+      this.promptImageCache.set(key, cached);
+      return cached.image;
+    }
+    const input = await readFile(source);
+    let pipeline = sharp(input, { failOn: "error" }).rotate().resize({
+      width: MAX_INLINE_IMAGE_DIMENSION,
+      height: MAX_INLINE_IMAGE_DIMENSION,
+      fit: "inside",
+      withoutEnlargement: true,
+    });
+    const sourceMime = reference.mediaType.toLowerCase().split(";", 1)[0];
+    let mimeType = sourceMime === "image/jpeg" ? "image/jpeg" : "image/png";
+    let output = sourceMime === "image/jpeg"
+      ? await pipeline.jpeg({ quality: 80, mozjpeg: true }).toBuffer()
+      : await pipeline.png({ compressionLevel: 9 }).toBuffer();
+    if (output.byteLength > MAX_INLINE_IMAGE_BYTES) {
+      pipeline = sharp(input, { failOn: "error" }).rotate();
+      let width = MAX_INLINE_IMAGE_DIMENSION;
+      let height = MAX_INLINE_IMAGE_DIMENSION;
+      for (let attempt = 0; attempt < 5 && output.byteLength > MAX_INLINE_IMAGE_BYTES; attempt++) {
+        output = await pipeline.clone().resize({ width, height, fit: "inside", withoutEnlargement: true }).jpeg({ quality: Math.max(40, 80 - attempt * 10), mozjpeg: true }).toBuffer();
+        mimeType = "image/jpeg";
+        width = Math.max(1, Math.floor(width * 0.75));
+        height = Math.max(1, Math.floor(height * 0.75));
+      }
+    }
+    if (output.byteLength > MAX_INLINE_IMAGE_BYTES) return undefined;
+    const image: ImageContent = { type: "image", mimeType, data: output.toString("base64") };
+    const entry = { key, image, bytes: output.byteLength } satisfies CachedPromptImage;
+    this.promptImageCache.set(key, entry);
+    this.promptImageCacheBytes += entry.bytes;
+    while (this.promptImageCacheBytes > 128 * 1024 * 1024 && this.promptImageCache.size > 1) {
+      const oldestKey = this.promptImageCache.keys().next().value as string;
+      const oldest = this.promptImageCache.get(oldestKey);
+      if (oldest) this.promptImageCacheBytes -= oldest.bytes;
+      this.promptImageCache.delete(oldestKey);
+    }
+    return image;
   }
 
   private sessionAttachmentRoot(record: SessionRecord): string {

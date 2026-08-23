@@ -39,6 +39,7 @@ import {
   formatPromptArtifactReferencesForModel,
   formatPromptWorkspaceReferencesForModel,
   formatPromptWorkspaceAttachmentsForModel,
+  parsePromptAttachmentReferences,
   stripPromptSkillReferences,
   type PersistedOperationApproval,
   type PersistedSessionFileBaseline,
@@ -80,7 +81,7 @@ type HookableHarness = {
     type: "context",
     handler: (event: {
       messages: AgentMessage[];
-    }) => { messages: AgentMessage[] } | undefined,
+    }) => { messages: AgentMessage[] } | undefined | Promise<{ messages: AgentMessage[] } | undefined>,
   ): () => void;
   on(
     type: "tool_call",
@@ -284,34 +285,83 @@ function asRecord(value: unknown): Record<string, unknown> | undefined {
     : undefined;
 }
 
-function stripSkillReferenceMarkers(messages: AgentMessage[]): AgentMessage[] {
+async function stripSkillReferenceMarkers(
+  messages: AgentMessage[],
+  context: AgentDriverSessionContext,
+): Promise<AgentMessage[]> {
   let changed = false;
-  const sanitized = messages.map((message) => {
+  const sanitized = await Promise.all(messages.map(async (message) => {
+    let messageChanged = false;
     const value = asRecord(message);
     if (!value || value.role !== "user") return message;
     if (typeof value.content === "string") {
-      const content = formatPromptWorkspaceReferencesForModel(
-        formatPromptWorkspaceAttachmentsForModel(formatPromptArtifactReferencesForModel(stripPromptSkillReferences(value.content))),
-      );
+      const content = await hydrateUserMessageContent(value.content, context);
       if (content === value.content) return message;
       changed = true;
       return { ...value, content } as AgentMessage;
     }
     if (!Array.isArray(value.content)) return message;
-    const content = value.content.map((item) => {
+    const content: Array<Record<string, unknown>> = [];
+    for (const item of value.content) {
       const block = asRecord(item);
-      if (!block || block.type !== "text" || typeof block.text !== "string")
-        return item;
-      const text = formatPromptWorkspaceReferencesForModel(
-        formatPromptWorkspaceAttachmentsForModel(formatPromptArtifactReferencesForModel(stripPromptSkillReferences(block.text))),
-      );
-      if (text === block.text) return item;
-      changed = true;
-      return { ...block, text };
-    });
-    return changed ? ({ ...value, content } as AgentMessage) : message;
-  });
+      if (!block || block.type !== "text" || typeof block.text !== "string") {
+        content.push(block ?? item as Record<string, unknown>);
+        continue;
+      }
+      const text = await hydrateUserMessageContent(block.text, context);
+      if (Array.isArray(text)) {
+        messageChanged = true;
+        content.push(...text);
+      } else if (text !== block.text) {
+        messageChanged = true;
+        content.push({ ...block, text });
+      } else {
+        content.push(block);
+      }
+    }
+    if (!messageChanged) return message;
+    changed = true;
+    return { ...value, content } as unknown as AgentMessage;
+  }));
   return changed ? sanitized : messages;
+}
+
+async function hydrateUserMessageContent(
+  text: string,
+  context: AgentDriverSessionContext,
+): Promise<string | Array<Record<string, unknown>>> {
+  const parsed = parsePromptAttachmentReferences(text);
+  const baseText = formatPromptWorkspaceReferencesForModel(
+    formatPromptArtifactReferencesForModel(stripPromptSkillReferences(parsed.text)),
+  );
+  if (parsed.attachments.length === 0)
+    return formatPromptWorkspaceReferencesForModel(
+      formatPromptArtifactReferencesForModel(
+        stripPromptSkillReferences(formatPromptWorkspaceAttachmentsForModel(text)),
+      ),
+    );
+  if (!context.model.input.includes("image") || !context.resolvePromptImage)
+    return formatPromptWorkspaceReferencesForModel(
+      formatPromptArtifactReferencesForModel(
+        stripPromptSkillReferences(formatPromptWorkspaceAttachmentsForModel(text)),
+      ),
+    );
+
+  const content: Array<Record<string, unknown>> = [{ type: "text", text: baseText }];
+  for (const attachment of parsed.attachments) {
+    if (!attachment.mediaType.toLowerCase().startsWith("image/")) {
+      content[0]!.text += `\n<wordless_workspace_attachment>\npath=${JSON.stringify(attachment.path)}\nname=${JSON.stringify(attachment.name)}\nmedia_type=${JSON.stringify(attachment.mediaType)}\nsize=${attachment.size}\n</wordless_workspace_attachment>`;
+      continue;
+    }
+    try {
+      const image = await context.resolvePromptImage(attachment);
+      if (image) content.push(image as unknown as Record<string, unknown>);
+      else content[0]!.text += `\nAttached image unavailable: ${attachment.name}. Use the file path if needed: ${attachment.path}`;
+    } catch {
+      content[0]!.text += `\nAttached image unavailable: ${attachment.name}. Use the file path if needed: ${attachment.path}`;
+    }
+  }
+  return content;
 }
 
 function redactConnectorInput(value: unknown, key?: string): unknown {
@@ -1015,8 +1065,8 @@ class AgentHarnessDriverSession implements AgentDriverSession {
       };
     });
     const hookableHarness = this.harness as unknown as HookableHarness;
-    hookableHarness.on("context", (event) => {
-      const messages = stripSkillReferenceMarkers(event.messages);
+    hookableHarness.on("context", async (event) => {
+      const messages = await stripSkillReferenceMarkers(event.messages, this.context);
       return messages === event.messages ? undefined : { messages };
     });
     if (clarificationMode) {

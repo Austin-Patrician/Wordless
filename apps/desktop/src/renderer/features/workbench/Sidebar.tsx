@@ -6,7 +6,7 @@ import type { SessionRecord } from "@wordless/domain";
 import { usePreferences } from "../../shared/preferences";
 import { useRuntime, useRuntimeClient } from "../../shared/runtime";
 import folderIcon from "../../../icons/common-icons/floder.svg";
-import wordlessIcon from "../../../icons/common-icons/wordless.png";
+import wordlessIcon from "../../../icons/common-icons/wordless.jpeg";
 import { AgentEntryIcon } from "./AgentEntryIcon";
 import { SessionSearchDialog } from "./SessionSearchDialog";
 import { sortWorkspaceGroupsByRecentSession } from "./sidebar-sessions";

@@ -13,6 +13,8 @@ asarUnpack:
   - node_modules/@ff-labs/**/*
   - node_modules/ffi-rs/**/*
   - node_modules/@yuuang/**/*
+  - node_modules/sharp/**/*
+  - node_modules/@img/**/*
 extraResources:
   - from: resources/skills
     to: skills
@@ -27,6 +29,7 @@ extraMetadata:
     '@ff-labs/fff-node': '0.10.1'
     ajv: '^8.20.0'
     ajv-formats: '^3.0.1'
+    sharp: '0.35.3'
 mac:
   category: public.app-category.developer-tools
   minimumSystemVersion: '13.0.0'
@@ -43,9 +46,6 @@ win:
   # The internal release certificate is not installed in end-user trust stores.
   # Keep signing the binaries, but do not emit a publisher check that would block updates.
   verifyUpdateCodeSignature: false
-  # Same PNG as macOS. Do not set this to build/icon.ico: buildResources is already
-  # `build`, so that path is resolved as build/build/icon.ico and electron-builder
-  # falls back to the default Electron icon.
   icon: src/icons/common-icons/wordless.png
   signtoolOptions:
     signingHashAlgorithms:
