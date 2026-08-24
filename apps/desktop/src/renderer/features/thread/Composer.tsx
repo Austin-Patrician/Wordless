@@ -726,7 +726,8 @@ export function Composer({
   const { client } = useRuntime();
   workspaceSearchReferencesRef.current = searchWorkspaceReferences;
   const hasActionMenu = true;
-  const interactionDisabled = disabled || compacting;
+  const interactionDisabled = disabled;
+  const sendBlocked = sendDisabled || compacting;
   const effectiveInteractionMode =
     interactionMode ?? (planMode === "off" ? "default" : "plan");
   const availableSkills = useMemo(
@@ -1098,8 +1099,9 @@ export function Composer({
     if (
       (currentDraft.parts.length === 0 && attachments.length === 0) ||
       interactionDisabled ||
+      compacting ||
       running ||
-      sendDisabled
+      sendBlocked
     )
       return;
     const parts: UserPromptPart[] = artifactSelection
@@ -1503,7 +1505,7 @@ export function Composer({
             }
             ref={inputRef}
             stopEnabled={running}
-            submitDisabled={running}
+             submitDisabled={running || sendBlocked}
           />
           {skillPickerOpen || workspacePickerOpen || taskPickerOpen ? (
             <div
@@ -2278,8 +2280,8 @@ export function Composer({
               disabled={
                 running
                   ? false
-                  : interactionDisabled ||
-                    sendDisabled ||
+                   : interactionDisabled ||
+                     sendBlocked ||
                     draft.parts.length === 0 && attachments.length === 0
               }
               onClick={() => (running ? void onStop?.() : void send())}

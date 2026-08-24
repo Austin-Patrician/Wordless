@@ -291,6 +291,69 @@ function $collectEditorParts(): { parts: UserPromptPart[]; tokenIds: string[] } 
   return { parts: normalizeUserPromptParts(parts), tokenIds };
 }
 
+function $textBeforeSelection(): string {
+  const selection = $getSelection();
+  if (!$isRangeSelection(selection) || !selection.isCollapsed() || selection.anchor.type !== "text") return "";
+  const anchorKey = selection.anchor.key;
+  const anchorOffset = selection.anchor.offset;
+  let reachedAnchor = false;
+  let text = "";
+  const visit = (node: LexicalNode) => {
+    if (reachedAnchor) return;
+    if ($isTextNode(node)) {
+      if (node.getKey() === anchorKey) {
+        text += node.getTextContent().slice(0, anchorOffset);
+        reachedAnchor = true;
+      } else {
+        text += node.getTextContent();
+      }
+      return;
+    }
+    if ($isElementNode(node)) node.getChildren().forEach(visit);
+  };
+  const rootChildren = $getRoot().getChildren();
+  rootChildren.forEach((node, index) => {
+    if (reachedAnchor) return;
+    visit(node);
+    if (!reachedAnchor && index < rootChildren.length - 1) text += "\n";
+  });
+  return reachedAnchor ? text : "";
+}
+
+function $textAfterSelection(): string {
+  const selection = $getSelection();
+  if (!$isRangeSelection(selection) || !selection.isCollapsed() || selection.anchor.type !== "text") return "";
+  const anchorKey = selection.anchor.key;
+  const anchorOffset = selection.anchor.offset;
+  let reachedAnchor = false;
+  let text = "";
+  const visit = (node: LexicalNode) => {
+    if ($isTextNode(node)) {
+      if (node.getKey() === anchorKey) {
+        text += node.getTextContent().slice(anchorOffset);
+        reachedAnchor = true;
+      } else if (reachedAnchor) {
+        text += node.getTextContent();
+      }
+      return;
+    }
+    if ($isElementNode(node)) node.getChildren().forEach(visit);
+  };
+  const rootChildren = $getRoot().getChildren();
+  rootChildren.forEach((node, index) => {
+    visit(node);
+    if (reachedAnchor && index < rootChildren.length - 1) text += "\n";
+  });
+  return reachedAnchor ? text : "";
+}
+
+function $selectAfterInsertedNode(node: LexicalNode): void {
+  const next = node.getNextSibling();
+  if ($isTextNode(next)) next.select(0, 0);
+  else if (next) next.selectStart();
+  else node.selectNext();
+}
+
 function $nodesFromPromptParts(parts: readonly UserPromptPart[]): LexicalNode[] {
   const nodes: LexicalNode[] = [];
   for (const part of parts) {
@@ -382,15 +445,20 @@ function editorValue(editorState: EditorState): InlineSkillComposerValue {
   return editorState.read(() => {
     const { parts, tokenIds } = $collectEditorParts();
     const text = parts.flatMap((part) => part.type === "text" ? [part.text] : []).join("");
+    const textBeforeCursor = $textBeforeSelection();
+    const textAfterCursor = $textAfterSelection();
+    // A mention may continue when the caret is followed by whitespace; immediate
+    // trailing text means the caret is still inside a normal word/token.
+    const mentionCanOpen = textAfterCursor.length === 0 || /^\s/.test(textAfterCursor);
     return {
       parts,
       skillIds: uniqueSkillIdsInDocumentOrder(tokenIds),
       skillTokenCounts: countSkillTokenOccurrences(tokenIds),
-      skillQuery: mentionQueryAtEnd(text, "skill"),
-      taskQuery: mentionQueryAtEnd(text, "task"),
+      skillQuery: mentionCanOpen ? mentionQueryAtEnd(textBeforeCursor, "skill") : null,
+      taskQuery: mentionCanOpen ? mentionQueryAtEnd(textBeforeCursor, "task") : null,
       text,
       workspaceReferenceCount: parts.filter((part) => part.type === "workspace-reference").length,
-      workspaceQuery: mentionQueryAtEnd(text, "workspace"),
+      workspaceQuery: mentionCanOpen ? mentionQueryAtEnd(textBeforeCursor, "workspace") : null,
     };
   });
 }
@@ -549,7 +617,7 @@ export const InlineSkillComposer = forwardRef<InlineSkillComposerHandle, InlineS
         const selection = $getSelection();
         if ($isRangeSelection(selection) && nodes.length > 0) {
           selection.insertNodes(nodes);
-          nodes.at(-1)?.selectNext();
+          $selectAfterInsertedNode(nodes.at(-1)!);
           return;
         }
         if (nodes.length === 0) return;
@@ -587,14 +655,14 @@ export const InlineSkillComposer = forwardRef<InlineSkillComposerHandle, InlineS
         const selection = $getSelection();
         if ($isRangeSelection(selection)) {
           selection.insertNodes([token]);
-          token.selectNext();
+          $selectAfterInsertedNode(token);
           return;
         }
         const root = $getRoot();
         const lastChild = root.getLastChild();
         const parent = lastChild && $isElementNode(lastChild) ? lastChild : root.append($createParagraphNode());
         parent.append(token);
-        token.selectNext();
+        $selectAfterInsertedNode(token);
       });
       editor.focus();
     },
@@ -608,7 +676,7 @@ export const InlineSkillComposer = forwardRef<InlineSkillComposerHandle, InlineS
         if ($isRangeSelection(selection)) {
           const token = $createWorkspaceReferenceNode(reference.path, reference.name, reference.kind);
           selection.insertNodes([token]);
-          token.selectNext();
+          $selectAfterInsertedNode(token);
         }
       });
       editor.focus();
