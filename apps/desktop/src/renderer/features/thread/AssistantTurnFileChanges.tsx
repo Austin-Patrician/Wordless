@@ -59,7 +59,7 @@ export const AssistantTurnFileChanges = memo(function AssistantTurnFileChanges({
   return (
     <section
       aria-label={t("turnFileChanges")}
-      className="mt-2 overflow-hidden rounded-[10px] border border-[#dcdcd7] bg-[#f0f0ed] shadow-[0_1px_0_rgba(255,255,255,0.6)_inset] dark:border-border dark:bg-muted/55 dark:shadow-none"
+      className="mt-2 overflow-hidden rounded-[10px] border border-[#dcdcd7] bg-white/50 shadow-[0_1px_0_rgba(255,255,255,0.45)_inset] dark:border-border dark:bg-card/45 dark:shadow-none"
       data-thread-search-exclude
     >
       <header className="flex h-8 items-center gap-3 border-b border-[#deded9] px-2.5 text-[11px] text-[#777770] dark:border-border dark:text-muted-foreground">

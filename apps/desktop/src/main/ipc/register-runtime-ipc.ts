@@ -190,7 +190,9 @@ function isAppearancePreferences(
   return (
     background.source.kind === "custom" &&
     typeof background.source.assetId === "string" &&
-    /^[a-f0-9]{64}\.(?:jpg|png|webp)$/.test(background.source.assetId)
+    /^[a-f0-9]{64}\.(?:jpg|png|webp|gif)$/.test(background.source.assetId) &&
+    (background.source.posterAssetId === undefined || (typeof background.source.posterAssetId === "string" && /^[a-f0-9]{64}-poster\.png$/.test(background.source.posterAssetId))) &&
+    (background.source.animated === undefined || typeof background.source.animated === "boolean")
   );
 }
 

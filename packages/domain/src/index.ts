@@ -1006,7 +1006,7 @@ export type BuiltinBackgroundId = "paper" | "micro-dots" | "fine-grid";
 export type BackgroundSource =
   | { kind: "none" }
   | { kind: "builtin"; id: BuiltinBackgroundId }
-  | { kind: "custom"; assetId: string };
+  | { kind: "custom"; assetId: string; animated?: boolean; posterAssetId?: string };
 
 export type BackgroundFit = "cover" | "contain" | "tile";
 
@@ -1022,7 +1022,9 @@ export interface AppearancePreferences {
 
 export interface AppearanceBackgroundAsset {
   assetId: string;
-  mimeType: "image/jpeg" | "image/png" | "image/webp";
+  posterAssetId?: string;
+  animated?: boolean;
+  mimeType: "image/jpeg" | "image/png" | "image/webp" | "image/gif";
   width: number;
   height: number;
 }

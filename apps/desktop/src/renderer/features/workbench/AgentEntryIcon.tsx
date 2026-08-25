@@ -18,5 +18,6 @@ const icons: Record<string, string> = {
 };
 
 export function AgentEntryIcon({ className, iconKey }: { className?: string; iconKey?: string }) {
-  return <img alt="" className={cn("h-3.5 w-3.5 shrink-0 object-contain", className)} draggable={false} src={icons[iconKey ?? "sparkles"] ?? everydayOfficeIcon} />;
+  const needsDarkContrast = iconKey === undefined || iconKey === "sparkles" || iconKey === "code";
+  return <img alt="" className={cn("h-3.5 w-3.5 shrink-0 object-contain", needsDarkContrast && "dark:invert", className)} draggable={false} src={icons[iconKey ?? "sparkles"] ?? everydayOfficeIcon} />;
 }

@@ -26,14 +26,9 @@ import { ExpertPortrait } from "../experts/ExpertPortrait";
 import type { WorkbenchContextPanelProps } from "../workbench/context-panel-types";
 import { DocumentPreview } from "./DocumentPreview";
 import everydayOfficeIcon from "../../../icons/common-icons/日常办公.svg";
+import emptyArtifactsIcon from "../../../icons/common-icons/数据空空如也.svg";
 
 const EMPTY_SNAPSHOT: SessionArtifactsSnapshot = { revision: "", artifacts: [] };
-
-function formatSize(bytes: number): string {
-  if (bytes < 1_024) return `${bytes} B`;
-  if (bytes < 1_048_576) return `${Math.max(1, Math.round(bytes / 1_024))} KB`;
-  return `${(bytes / 1_048_576).toFixed(bytes < 10_485_760 ? 1 : 0)} MB`;
-}
 
 function producerLabel(
   artifact: SessionGeneratedArtifact,
@@ -42,6 +37,10 @@ function producerLabel(
   if (artifact.producer.kind !== "primary" || artifact.producer.name === "General Work")
     return artifact.producer.name;
   return `${artifact.producer.name} · ${locale === "zh-CN" ? "团队负责人" : "Team Lead"}`;
+}
+
+function shouldShowProducer(artifact: SessionGeneratedArtifact): boolean {
+  return artifact.producer.kind !== "primary" || Boolean(artifact.producer.id);
 }
 
 export function GeneralWorkArtifactsPanel({ sessionId }: WorkbenchContextPanelProps) {
@@ -141,7 +140,30 @@ export function GeneralWorkArtifactsPanel({ sessionId }: WorkbenchContextPanelPr
   };
 
   const renderArtifact = (artifact: SessionGeneratedArtifact) => (
-    <div className="group relative flex min-h-12 items-center gap-2 rounded-[6px] px-2 py-1.5 hover:bg-[#eeeeea] dark:hover:bg-muted" key={artifact.id}><button className="flex min-w-0 flex-1 items-center gap-2 text-left" onClick={() => setSelected(artifact)} type="button"><FileTypeIcon className="h-5 w-5 [&_svg]:h-5 [&_svg]:w-5" kind="file" name={artifact.name} /><span className="min-w-0 flex-1"><span className="block truncate text-[11px] font-semibold text-[#3f403b] dark:text-foreground">{artifact.name}</span><span className="mt-0.5 flex min-w-0 items-center gap-1.5 text-[9px] text-[#898a83]">{artifact.producer.portrait ? <ExpertPortrait className="h-3.5 w-3.5" name={artifact.producer.name} portrait={artifact.producer.portrait} /> : artifact.producer.kind === "primary" ? <img alt="" className="h-3.5 w-3.5 shrink-0 object-contain" draggable={false} src={everydayOfficeIcon} /> : <span className="grid h-3.5 w-3.5 shrink-0 place-items-center rounded-full bg-[#e5ead9] text-[#657647]"><Sparkles className="h-2.5 w-2.5" /></span>}<span className="truncate">{producerLabel(artifact, locale)}</span><span aria-hidden>·</span><span className="shrink-0 font-mono">{formatSize(artifact.size)}</span></span></span></button><DropdownMenu><DropdownMenuTrigger asChild><button aria-label={`${artifact.name} actions`} className="grid h-6 w-6 shrink-0 place-items-center rounded-[5px] text-[#85867f] opacity-0 hover:bg-white hover:text-[#40413c] group-hover:opacity-100 focus:opacity-100 dark:hover:bg-card" type="button"><MoreHorizontal className="h-3.5 w-3.5" /></button></DropdownMenuTrigger><DropdownMenuContent align="end" className="w-40"><DropdownMenuItem onSelect={() => void action(artifact, "open")}><ExternalLink className="h-3.5 w-3.5" />{t("openFile")}</DropdownMenuItem><DropdownMenuItem onSelect={() => void action(artifact, "reveal")}><FolderOpen className="h-3.5 w-3.5" />{t("openFileLocation")}</DropdownMenuItem><DropdownMenuItem onSelect={() => void action(artifact, "save")}><Save className="h-3.5 w-3.5" />{t("saveAs")}</DropdownMenuItem></DropdownMenuContent></DropdownMenu></div>
+    <div className="group relative flex min-h-12 items-center gap-2 rounded-[6px] px-2 py-1.5 hover:bg-[#eeeeea] dark:hover:bg-muted" key={artifact.id}>
+      <button className="flex min-w-0 flex-1 items-center gap-2 text-left" onClick={() => setSelected(artifact)} type="button">
+        <FileTypeIcon className="h-5 w-5 [&_svg]:h-5 [&_svg]:w-5" kind="file" name={artifact.name} />
+        <span className="min-w-0 flex-1">
+          <span className="block truncate text-[11px] font-semibold text-[#3f403b] dark:text-foreground">{artifact.name}</span>
+          {shouldShowProducer(artifact) ? (
+            <span className="mt-0.5 flex min-w-0 items-center gap-1.5 text-[9px] text-[#898a83]">
+              {artifact.producer.portrait ? (
+                <ExpertPortrait className="h-3.5 w-3.5" name={artifact.producer.name} portrait={artifact.producer.portrait} />
+              ) : artifact.producer.kind === "primary" ? (
+                <img alt="" className="h-3.5 w-3.5 shrink-0 object-contain dark:invert" draggable={false} src={everydayOfficeIcon} />
+              ) : (
+                <span className="grid h-3.5 w-3.5 shrink-0 place-items-center rounded-full bg-[#e5ead9] text-[#657647]"><Sparkles className="h-2.5 w-2.5" /></span>
+              )}
+              <span className="truncate">{producerLabel(artifact, locale)}</span>
+            </span>
+          ) : null}
+        </span>
+      </button>
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild><button aria-label={`${artifact.name} actions`} className="grid h-6 w-6 shrink-0 place-items-center rounded-[5px] text-[#85867f] opacity-0 hover:bg-white hover:text-[#40413c] group-hover:opacity-100 focus:opacity-100 dark:hover:bg-card" type="button"><MoreHorizontal className="h-3.5 w-3.5" /></button></DropdownMenuTrigger>
+        <DropdownMenuContent align="end" className="w-40"><DropdownMenuItem onSelect={() => void action(artifact, "open")}><ExternalLink className="h-3.5 w-3.5" />{t("openFile")}</DropdownMenuItem><DropdownMenuItem onSelect={() => void action(artifact, "reveal")}><FolderOpen className="h-3.5 w-3.5" />{t("openFileLocation")}</DropdownMenuItem><DropdownMenuItem onSelect={() => void action(artifact, "save")}><Save className="h-3.5 w-3.5" />{t("saveAs")}</DropdownMenuItem></DropdownMenuContent>
+      </DropdownMenu>
+    </div>
   );
 
   if (selected) {
@@ -192,7 +214,7 @@ export function GeneralWorkArtifactsPanel({ sessionId }: WorkbenchContextPanelPr
 
   return (
     <div className="min-h-0 flex-1 p-3">
-      {loading ? <div className="grid h-24 place-items-center"><LoaderCircle className="h-4 w-4 animate-spin text-[#718052]" /></div> : snapshot.artifacts.length === 0 ? <div className="grid min-h-[220px] place-items-center px-5 text-center"><div><span className="mx-auto grid h-9 w-9 place-items-center rounded-full bg-[#edf0e5] text-[#6b7b49] dark:bg-[#29301f]"><Sparkles className="h-4 w-4" /></span><p className="mt-3 text-[11px] text-muted-foreground">{t("noArtifacts")}</p></div></div> : <div className="space-y-2">{groups.map(([group, artifacts]) => <section key={group}><h3 className="mb-0.5 flex items-center gap-1.5 px-1 font-mono text-[10px] font-bold uppercase tracking-wide text-[#4f504a] dark:text-[#c9cbc2]">{groupLabel(group, artifacts[0]!)}<span className="shrink-0 font-semibold text-[#9a9a92]">({artifacts.length})</span></h3><div className="space-y-0.5">{artifacts.map(renderArtifact)}</div></section>)}</div>}
+      {loading ? <div className="grid h-24 place-items-center"><LoaderCircle className="h-4 w-4 animate-spin text-[#718052]" /></div> : snapshot.artifacts.length === 0 ? <div className="grid h-full min-h-[280px] place-items-center px-5 text-center"><div><img alt="" className="mx-auto h-36 w-36 object-contain opacity-65 mix-blend-multiply dark:invert dark:opacity-70 dark:mix-blend-screen" draggable={false} src={emptyArtifactsIcon} /><p className="mt-2 text-[11px] font-medium text-muted-foreground">{t("artifactsEmpty")}</p></div></div> : <div className="space-y-2">{groups.map(([group, artifacts]) => <section key={group}><h3 className="mb-0.5 flex items-center gap-1.5 px-1 font-mono text-[10px] font-bold uppercase tracking-wide text-[#4f504a] dark:text-[#c9cbc2]">{groupLabel(group, artifacts[0]!)}<span className="shrink-0 font-semibold text-[#9a9a92]">({artifacts.length})</span></h3><div className="space-y-0.5">{artifacts.map(renderArtifact)}</div></section>)}</div>}
       {error ? <p className="mt-3 px-2 text-[10px] leading-4 text-destructive">{error}</p> : null}
     </div>
   );

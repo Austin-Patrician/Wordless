@@ -199,3 +199,11 @@
   height: auto;
   max-height: 36rem;
 }
+
+/* Code surfaces inherit the conversation background; syntax colors provide the separation. */
+.message-code-block,
+.message-code-block > header,
+.message-code-block .message-code-scroll,
+.message-code-block .hljs {
+  background: transparent !important;
+}

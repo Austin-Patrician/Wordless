@@ -464,17 +464,19 @@ body {
 }
 
 :root[data-appearance-background="active"] {
-  --wordless-shell-titlebar: rgb(246 246 245 / 0.9);
-  --wordless-shell-sidebar: rgb(241 241 238 / 0.86);
-  --wordless-shell-workspace: rgb(251 251 250 / 0.88);
-  --wordless-shell-context: rgb(251 251 250 / 0.9);
+  --wordless-background-scrim: rgb(248 248 246 / 0.12);
+  --wordless-shell-titlebar: rgb(246 246 245 / 0.84);
+  --wordless-shell-sidebar: rgb(241 241 238 / 0.78);
+  --wordless-shell-workspace: rgb(251 251 250 / 0.76);
+  --wordless-shell-context: rgb(251 251 250 / 0.8);
 }
 
 :root[data-theme="dark"][data-appearance-background="active"] {
-  --wordless-shell-titlebar: rgb(32 34 25 / 0.9);
-  --wordless-shell-sidebar: rgb(32 34 25 / 0.87);
-  --wordless-shell-workspace: rgb(21 22 16 / 0.9);
-  --wordless-shell-context: rgb(28 29 24 / 0.92);
+  --wordless-background-scrim: rgb(20 21 17 / 0.2);
+  --wordless-shell-titlebar: rgb(32 34 25 / 0.84);
+  --wordless-shell-sidebar: rgb(32 34 25 / 0.78);
+  --wordless-shell-workspace: rgb(21 22 16 / 0.76);
+  --wordless-shell-context: rgb(28 29 24 / 0.8);
 }
 
 .app-background-image {
@@ -484,6 +486,39 @@ body {
 
 .app-background-scrim {
   background: var(--wordless-background-scrim);
+}
+
+.thread-jump-progress {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  height: 1rem;
+}
+
+.thread-jump-progress > span {
+  width: 3px;
+  height: 3px;
+  border-radius: 999px;
+  background: currentColor;
+  animation: thread-jump-dot 900ms ease-in-out infinite;
+}
+
+.thread-jump-progress > span:nth-child(2) {
+  animation-delay: 140ms;
+}
+
+.thread-jump-progress > span:nth-child(3) {
+  animation-delay: 280ms;
+}
+
+@keyframes thread-jump-dot {
+  0%, 60%, 100% { transform: translateY(0); }
+  30% { transform: translateY(-4px); }
+}
+
+[data-reduce-motion="true"] .thread-jump-progress > span {
+  animation: none;
 }
 
 @keyframes wordless-assistant-status-shimmer {

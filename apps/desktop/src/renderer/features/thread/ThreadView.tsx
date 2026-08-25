@@ -182,10 +182,12 @@ function ThreadVirtuosoFooter({
 }
 
 function ThreadJumpToLatest({
+  responding = false,
   store,
   label,
   onJump,
 }: {
+  responding?: boolean;
   store: ThreadViewportStore;
   label: string;
   onJump: () => void;
@@ -203,7 +205,7 @@ function ThreadJumpToLatest({
       onClick={onJump}
       type="button"
     >
-      <ArrowDown className="h-4 w-4" />
+      {responding ? <span aria-hidden className="thread-jump-progress"><span /><span /><span /></span> : <ArrowDown className="h-4 w-4" />}
     </button>
   );
 }
@@ -2805,6 +2807,7 @@ type ThreadTimelineViewportProps = {
   jumpLabel: string;
   navigationLabel: string;
   reduceMotion: boolean;
+  responding?: boolean;
   store: ThreadSessionStore;
   summaries: ThreadHistorySnapshot["turnSummaries"];
   viewportStore: ThreadViewportStore;
@@ -2817,6 +2820,7 @@ const ThreadTimelineViewport = memo(forwardRef<ThreadTimelineViewportHandle, Thr
     jumpLabel,
     navigationLabel,
     reduceMotion,
+    responding,
     store,
     summaries,
     viewportStore,
@@ -2969,7 +2973,7 @@ const ThreadTimelineViewport = memo(forwardRef<ThreadTimelineViewportHandle, Thr
           store={viewportStore}
           summaries={summaries}
         />
-        <ThreadJumpToLatest label={jumpLabel} onJump={() => jumpToLatest()} store={viewportStore} />
+        <ThreadJumpToLatest label={jumpLabel} onJump={() => jumpToLatest()} responding={responding} store={viewportStore} />
       </>
     );
   },
@@ -3516,6 +3520,7 @@ export function ThreadView({
             jumpLabel={t("threadJumpToLatest")}
             navigationLabel={t("conversationNavigation")}
             reduceMotion={reduceMotion}
+            responding={threadMetadata.isRunning}
             ref={timelineViewportRef}
             store={threadStore}
             summaries={history.turnSummaries}
@@ -3523,7 +3528,7 @@ export function ThreadView({
           />
         )}
       </div>
-      <div className="bg-[var(--wordless-shell-workspace)] pb-3 pt-5">
+      <div className="bg-transparent pb-3 pt-5">
         <ThreadContentFrame densityRail={showDensityRail}>
           {selectedExpert &&
           selectedExpert.kind === "team" &&

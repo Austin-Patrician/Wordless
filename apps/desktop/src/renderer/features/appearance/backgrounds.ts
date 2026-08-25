@@ -16,6 +16,16 @@ export function backgroundAssetUrl(assetId: string): string {
   return `wordless-appearance://background/${encodeURIComponent(assetId)}`;
 }
 
+export function backgroundIsAnimated(source: BackgroundSource): boolean {
+  return source.kind === "custom" && source.animated === true;
+}
+
+export function backgroundRenderSource(source: BackgroundSource, reduceMotion: boolean): BackgroundSource {
+  if (source.kind !== "custom" || !source.animated || !reduceMotion || !source.posterAssetId)
+    return source;
+  return { kind: "custom", assetId: source.posterAssetId };
+}
+
 function customBackgroundStyle(assetId: string, fit: BackgroundFit, position: { x: number; y: number }): CSSProperties {
   return {
     backgroundImage: `url("${backgroundAssetUrl(assetId)}")`,

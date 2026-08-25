@@ -217,7 +217,7 @@ export function WelcomeView({ initialExpertPrompt, initialExpertSelection, onOpe
                 onClick={() => changeMode(option.id)}
                 type="button"
               >
-                <img alt="" className="h-3.5 w-3.5 shrink-0 object-contain" draggable={false} src={option.icon} />
+                <img alt="" className={cn("h-3.5 w-3.5 shrink-0 object-contain", (option.id === "everyday" || option.id === "code") && "dark:invert")} draggable={false} src={option.icon} />
                 <span className="truncate">{option.label}</span>
               </button>
             ))}

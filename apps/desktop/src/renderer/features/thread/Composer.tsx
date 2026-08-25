@@ -1753,7 +1753,7 @@ export function Composer({
                 >
                   <img
                     alt=""
-                    className="h-4 w-4 shrink-0 object-contain"
+                    className="h-4 w-4 shrink-0 object-contain dark:invert"
                     draggable={false}
                     src={toolApprovalIcon}
                   />

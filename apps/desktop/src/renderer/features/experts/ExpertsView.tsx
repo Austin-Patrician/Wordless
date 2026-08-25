@@ -164,7 +164,7 @@ export function ExpertsView({
   const summon = (selection: ExpertSelection, initialPrompt?: string) =>
     onSummon({ selection, initialPrompt });
   return (
-    <section className="flex min-h-0 flex-1 flex-col overflow-hidden bg-[#fbfbfa] dark:bg-background">
+    <section className="flex min-h-0 flex-1 flex-col overflow-hidden bg-[var(--wordless-shell-workspace)] dark:bg-[var(--wordless-shell-workspace)]">
       <header className="flex h-[62px] shrink-0 items-center px-5 sm:px-8">
         <div className="mx-auto flex w-full max-w-[1280px] items-center justify-between gap-3">
           <nav
@@ -193,7 +193,7 @@ export function ExpertsView({
             </button>
           </nav>
           <div className="flex items-center gap-2">
-            <label className="flex h-8 w-[220px] items-center gap-1.5 rounded-[7px] border border-[#deded8] bg-[#f4f4f2] px-2.5 dark:border-border dark:bg-muted">
+            <label className="flex h-8 w-[220px] items-center gap-1.5 rounded-[7px] border border-[#deded8] bg-white/60 px-2.5 dark:border-border dark:bg-card/60">
               <Search className="h-3.5 w-3.5 text-[#85867e]" />
               <input
                 className="min-w-0 flex-1 bg-transparent text-[11px] outline-none"
@@ -203,7 +203,7 @@ export function ExpertsView({
               />
             </label>
             <button
-              className={`flex h-8 items-center rounded-[7px] border px-3 text-[11px] font-medium ${mine ? "border-[#c7e56d] bg-[#eff9d3] text-[#44551b]" : "border-[#deded8] bg-white text-[#464741] dark:border-border dark:bg-card dark:text-foreground"}`}
+              className={`flex h-8 items-center rounded-[7px] border px-3 text-[11px] font-medium ${mine ? "border-[#c7e56d] bg-[#eff9d3] text-[#44551b]" : "border-[#deded8] bg-white/70 text-[#464741] dark:border-border dark:bg-card/70 dark:text-foreground"}`}
               onClick={() => setMine((value) => !value)}
               type="button"
             >
@@ -211,7 +211,7 @@ export function ExpertsView({
               {t("expertsMine")}
             </button>
             <button
-              className="grid h-8 w-8 place-items-center rounded-[7px] border border-[#deded8] bg-white dark:border-border dark:bg-card"
+              className="grid h-8 w-8 place-items-center rounded-[7px] border border-[#deded8] bg-white/70 dark:border-border dark:bg-card/70"
               onClick={() => setCreating(tab)}
               title={tab === "expert" ? t("expertsEmployees") : t("expertsTeams")}
               type="button"

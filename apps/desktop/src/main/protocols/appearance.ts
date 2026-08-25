@@ -2,11 +2,12 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { protocol } from "electron";
 
-const assetFileName = /^[a-f0-9]{64}\.(jpg|png|webp)$/i;
+const assetFileName = /^[a-f0-9]{64}(?:-poster)?\.(jpg|png|webp|gif)$/i;
 
 function mimeType(fileName: string): string {
   if (fileName.endsWith(".jpg")) return "image/jpeg";
   if (fileName.endsWith(".webp")) return "image/webp";
+  if (fileName.endsWith(".gif")) return "image/gif";
   return "image/png";
 }
 
