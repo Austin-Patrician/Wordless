@@ -396,7 +396,7 @@ async function streamWithDeltas(
 		return;
 	}
 
-	stream.push({ type: "done", reason: message.stopReason, message });
+	stream.push({ type: "done", reason: message.stopReason === "pending" ? "stop" : message.stopReason, message });
 	stream.end(message);
 }
 

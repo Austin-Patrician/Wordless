@@ -23,7 +23,7 @@ import {
 	ToolResultStatus,
 } from "@aws-sdk/client-bedrock-runtime";
 import { NodeHttpHandler } from "@smithy/node-http-handler";
-import type { BuildMiddleware, DocumentType, MetadataBearer } from "@smithy/types";
+import type { BuildMiddleware, DeserializeMiddleware, DocumentType, HttpResponse, MetadataBearer } from "@smithy/types";
 import { HttpProxyAgent } from "http-proxy-agent";
 import { HttpsProxyAgent } from "https-proxy-agent";
 import { calculateCost } from "../models.ts";
@@ -35,6 +35,7 @@ import type {
 	ImageContent,
 	Model,
 	ProviderEnv,
+	ProviderResponse,
 	SimpleStreamOptions,
 	StopReason,
 	StreamFunction,
@@ -47,6 +48,7 @@ import type {
 	ToolCall,
 	ToolResultMessage,
 } from "../types.ts";
+import { appendAssistantMessageDiagnostic } from "../utils/diagnostics.ts";
 import { normalizeProviderError } from "../utils/error-body.ts";
 import { AssistantMessageEventStream } from "../utils/event-stream.ts";
 import { providerHeadersToRecord } from "../utils/headers.ts";
@@ -54,6 +56,7 @@ import { parseStreamingJson } from "../utils/json-parse.ts";
 import { resolveHttpProxyUrlForTarget } from "../utils/node-http-proxy.ts";
 import { getProviderEnvValue } from "../utils/provider-env.ts";
 import { sanitizeSurrogates } from "../utils/sanitize-unicode.ts";
+import { getJsonSchemaToolParameters, resolveJsonSchemaStrictSampling } from "./constrained-sampling.ts";
 import {
 	adjustMaxTokensForThinking,
 	buildBaseOptions,
@@ -98,9 +101,17 @@ export interface BedrockOptions extends StreamOptions {
 	bearerToken?: string;
 }
 
-type Block = (TextContent | ThinkingContent | ToolCall) & { index?: number; partialJson?: string };
+type Block = (TextContent | ThinkingContent | ToolCall) & {
+	index?: number;
+	partialJson?: string;
+	/** Scratch buffer for encrypted reasoning deltas, joined into `thinkingSignature`. */
+	redactedChunks?: Uint8Array[];
+};
 
 const EMPTY_TEXT_PLACEHOLDER = "<empty>";
+
+/** Matches the placeholder the Anthropic API path uses for redacted thinking. */
+const REDACTED_THINKING_PLACEHOLDER = "[Reasoning redacted]";
 
 export const stream: StreamFunction<"bedrock-converse-stream", BedrockOptions> = (
 	model: Model<"bedrock-converse-stream">,
@@ -124,7 +135,7 @@ export const stream: StreamFunction<"bedrock-converse-stream", BedrockOptions> =
 				totalTokens: 0,
 				cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
 			},
-			stopReason: "stop",
+			stopReason: "pending",
 			timestamp: Date.now(),
 		};
 
@@ -214,8 +225,19 @@ export const stream: StreamFunction<"bedrock-converse-stream", BedrockOptions> =
 			config.authSchemePreference = ["httpBearerAuth"];
 		}
 
+		// Kept outside the try so the catch can still correlate a mid-stream failure:
+		// exceptions delivered as stream events carry no HTTP metadata of their own.
+		let responseRequestId: string | undefined;
+
 		try {
+			const supportsStrictMode = model.compat?.supportsStrictMode ?? false;
 			const client = new BedrockRuntimeClient(config);
+			let observedRawResponse = false;
+			if (options.onResponse) {
+				addResponseHeadersMiddleware(client, options.onResponse, model, () => {
+					observedRawResponse = true;
+				});
+			}
 			const customHeaders = providerHeadersToRecord(options.headers);
 			if (customHeaders) {
 				addCustomHeadersMiddleware(client, customHeaders);
@@ -230,7 +252,7 @@ export const stream: StreamFunction<"bedrock-converse-stream", BedrockOptions> =
 					...(inferenceMaxTokens !== undefined && { maxTokens: inferenceMaxTokens }),
 					...(options.temperature !== undefined && { temperature: options.temperature }),
 				},
-				toolConfig: convertToolConfig(context.tools, options.toolChoice),
+				toolConfig: convertToolConfig(context.tools, options.toolChoice, supportsStrictMode),
 				additionalModelRequestFields: buildAdditionalModelRequestFields(model, options),
 				...(options.requestMetadata !== undefined && { requestMetadata: options.requestMetadata }),
 			};
@@ -241,7 +263,8 @@ export const stream: StreamFunction<"bedrock-converse-stream", BedrockOptions> =
 			const command = new ConverseStreamCommand(commandInput);
 
 			const response = await client.send(command, { abortSignal: options.signal });
-			if (response.$metadata.httpStatusCode !== undefined) {
+			responseRequestId = normalizeDiagnosticValue(response.$metadata.requestId);
+			if (!observedRawResponse && response.$metadata.httpStatusCode !== undefined) {
 				const responseHeaders: Record<string, string> = {};
 				if (response.$metadata.requestId) {
 					responseHeaders["x-amzn-requestid"] = response.$metadata.requestId;
@@ -262,6 +285,7 @@ export const stream: StreamFunction<"bedrock-converse-stream", BedrockOptions> =
 				} else if (item.contentBlockStop) {
 					handleContentBlockStop(item.contentBlockStop, blocks, output, stream);
 				} else if (item.messageStop) {
+					output.rawStopReason = item.messageStop.stopReason;
 					const { stopReason, errorMessage } = mapStopReason(item.messageStop.stopReason);
 					output.stopReason = stopReason;
 					if (errorMessage) {
@@ -286,20 +310,26 @@ export const stream: StreamFunction<"bedrock-converse-stream", BedrockOptions> =
 				throw new Error("Request was aborted");
 			}
 
+			if (output.stopReason === "pending") {
+				throw new Error("Bedrock stream ended without a stop reason");
+			}
 			if (output.stopReason === "error" || output.stopReason === "aborted") {
 				throw new Error(output.errorMessage || "An unknown error occurred");
 			}
 
+			// A stream can settle without stopping every block, so finalize here too.
+			for (const block of output.content) finalizeStreamingBlock(block as Block);
 			stream.push({ type: "done", reason: output.stopReason, message: output });
 			stream.end();
 		} catch (error) {
 			for (const block of output.content) {
-				delete (block as Block).index;
-				// partialJson is only a streaming scratch buffer; never persist it.
-				delete (block as Block).partialJson;
+				finalizeStreamingBlock(block as Block);
 			}
 			output.stopReason = options.signal?.aborted ? "aborted" : "error";
 			output.errorMessage = formatBedrockError(error);
+			if (output.stopReason === "error") {
+				appendBedrockFailureDiagnostic(output, error, responseRequestId);
+			}
 			stream.push({ type: "error", reason: output.stopReason, error: output });
 			stream.end();
 		}
@@ -355,6 +385,54 @@ function formatBedrockError(error: unknown): string {
 	return `${core}${dataRetentionHint}`;
 }
 
+type SdkErrorMetadata = { $metadata?: { httpStatusCode?: unknown; requestId?: unknown } };
+
+/** Over-long header values are dropped rather than truncated: a truncated request id is not a request id. */
+const MAX_BEDROCK_DIAGNOSTIC_VALUE_CHARS = 200;
+
+function normalizeDiagnosticValue(value: unknown): string | undefined {
+	if (typeof value !== "string") return undefined;
+	const trimmed = value.trim();
+	if (trimmed.length === 0 || trimmed.length > MAX_BEDROCK_DIAGNOSTIC_VALUE_CHARS) return undefined;
+	return trimmed;
+}
+
+/**
+ * The SDK puts the modeled code on `error.name` for service exceptions and unmodeled stream errors alike, so
+ * do not narrow to `BedrockRuntimeServiceException`. Modeled Bedrock errors all end in `Exception`, unlike
+ * transport names such as `TimeoutError`.
+ */
+function extractBedrockErrorCode(error: unknown): string | undefined {
+	if (!(error instanceof Error) || !error.name.endsWith("Exception")) return undefined;
+	return normalizeDiagnosticValue(error.name);
+}
+
+/**
+ * Structured metadata alongside `errorMessage`, which stays byte-identical because `isRetryableAssistantError`
+ * matches against it. Unknown fields are omitted, never guessed: a modeled mid-stream exception reaches us as
+ * a bare object literal, leaving only `fallbackRequestId`. `details` only, as the throw is not always `Error`.
+ */
+function appendBedrockFailureDiagnostic(
+	output: AssistantMessage,
+	error: unknown,
+	fallbackRequestId: string | undefined,
+): void {
+	const metadata = (error as SdkErrorMetadata)?.$metadata;
+	const details: Record<string, unknown> = {};
+
+	if (typeof metadata?.httpStatusCode === "number") details.status = metadata.httpStatusCode;
+
+	const errorCode = extractBedrockErrorCode(error);
+	if (errorCode !== undefined) details.errorCode = errorCode;
+
+	const requestId = normalizeDiagnosticValue(metadata?.requestId) ?? fallbackRequestId;
+	if (requestId !== undefined) details.requestId = requestId;
+
+	if (Object.keys(details).length === 0) return;
+
+	appendAssistantMessageDiagnostic(output, { type: "bedrock_response_failure", timestamp: Date.now(), details });
+}
+
 /**
  * Header keys that must never be overwritten by caller-supplied headers.
  * `host` and `x-amz-*` participate in the SigV4 canonical request; `authorization`
@@ -391,12 +469,50 @@ function addCustomHeadersMiddleware(client: BedrockRuntimeClient, headers: Recor
 	client.middlewareStack.add(middleware, { step: "build", name: "pi-ai-custom-headers", priority: "low" });
 }
 
+function isSmithyHttpResponse(response: unknown): response is HttpResponse {
+	if (!response || typeof response !== "object") return false;
+	const candidate = response as Partial<HttpResponse>;
+	return typeof candidate.statusCode === "number" && !!candidate.headers && typeof candidate.headers === "object";
+}
+
+function toProviderResponse(response: unknown): ProviderResponse | undefined {
+	if (!isSmithyHttpResponse(response)) return undefined;
+	return { status: response.statusCode, headers: { ...response.headers } };
+}
+
+/**
+ * Bedrock's modeled `$metadata` only preserves selected HTTP metadata (for example
+ * requestId), so custom gateway headers are otherwise lost before callers see
+ * `onResponse`. Capture the raw Smithy HTTP response at the deserialize step,
+ * after the SDK receives the response but before the event stream is consumed.
+ */
+function addResponseHeadersMiddleware(
+	client: BedrockRuntimeClient,
+	onResponse: NonNullable<BedrockOptions["onResponse"]>,
+	model: Model<"bedrock-converse-stream">,
+	onObserved: () => void,
+): void {
+	const middleware: DeserializeMiddleware<object, MetadataBearer> = (next) => async (args) => {
+		const result = await next(args);
+		const providerResponse = toProviderResponse(result.response);
+		if (providerResponse) {
+			onObserved();
+			await onResponse(providerResponse, model);
+		}
+		return result;
+	};
+	client.middlewareStack.add(middleware, { step: "deserialize", name: "pi-ai-response-headers" });
+}
+
 export const streamSimple: StreamFunction<"bedrock-converse-stream", SimpleStreamOptions> = (
 	model: Model<"bedrock-converse-stream">,
 	context: Context,
 	options?: SimpleStreamOptions,
 ): AssistantMessageEventStream => {
-	const base = buildBaseOptions(model, context, options, undefined);
+	const base = {
+		...buildBaseOptions(model, context, options, undefined),
+		toolChoice: options?.toolChoice,
+	} satisfies BedrockOptions;
 	if (!options?.reasoning) {
 		return stream(model, context, { ...base, reasoning: undefined } satisfies BedrockOptions);
 	}
@@ -512,12 +628,54 @@ function handleContentBlockDelta(
 					partial: output,
 				});
 			}
-			if (delta.reasoningContent.signature) {
+			// `thinkingSignature` holds either an Anthropic signature or an opaque redacted
+			// payload, never both: mixing them would corrupt whichever arrived first.
+			if (delta.reasoningContent.signature && !thinkingBlock.redacted) {
 				thinkingBlock.thinkingSignature =
 					(thinkingBlock.thinkingSignature || "") + delta.reasoningContent.signature;
 			}
+			if (delta.reasoningContent.redactedContent?.length) {
+				// Encrypted reasoning from non-Anthropic models on Bedrock (e.g. OpenAI GPT-5.6).
+				// The payload is opaque, so keep it verbatim in `thinkingSignature` the way the
+				// Anthropic path stores redacted thinking, and replay it on the next turn.
+				if (!thinkingBlock.redacted) {
+					thinkingBlock.redacted = true;
+					thinkingBlock.thinkingSignature = "";
+					thinkingBlock.thinking += REDACTED_THINKING_PLACEHOLDER;
+					stream.push({
+						type: "thinking_delta",
+						contentIndex: thinkingIndex,
+						delta: REDACTED_THINKING_PLACEHOLDER,
+						partial: output,
+					});
+				}
+				thinkingBlock.redactedChunks ??= [];
+				thinkingBlock.redactedChunks.push(delta.reasoningContent.redactedContent);
+			}
 		}
 	}
+}
+
+/**
+ * Encodes buffered encrypted reasoning into `thinkingSignature` and drops the scratch
+ * buffer, which must never reach a persisted message: `Uint8Array` serializes to an
+ * index-keyed object roughly ten times the size of the base64 payload.
+ */
+function flushRedactedContent(block: Block): void {
+	if (block.type !== "thinking" || !block.redactedChunks) return;
+	block.thinkingSignature = bytesToBase64(block.redactedChunks);
+	delete block.redactedChunks;
+}
+
+/**
+ * Strips every streaming scratch field. Runs from the terminal paths as well as
+ * `contentBlockStop`, because a stream can settle without stopping each block.
+ */
+function finalizeStreamingBlock(block: Block): void {
+	delete block.index;
+	// partialJson is only a streaming scratch buffer; never persist it.
+	delete block.partialJson;
+	flushRedactedContent(block);
 }
 
 function handleMetadata(
@@ -551,6 +709,7 @@ function handleContentBlockStop(
 			stream.push({ type: "text_end", contentIndex: index, content: block.text, partial: output });
 			break;
 		case "thinking":
+			flushRedactedContent(block);
 			stream.push({ type: "thinking_end", contentIndex: index, content: block.thinking, partial: output });
 			break;
 		case "toolCall":
@@ -583,6 +742,7 @@ function supportsAdaptiveThinking(modelId: string, modelName?: string): boolean 
 			s.includes("opus-4-6") ||
 			s.includes("opus-4-7") ||
 			s.includes("opus-4-8") ||
+			s.includes("opus-5") ||
 			s.includes("sonnet-4-6") ||
 			s.includes("sonnet-5") ||
 			s.includes("fable-5"),
@@ -592,7 +752,12 @@ function supportsAdaptiveThinking(modelId: string, modelName?: string): boolean 
 function supportsNativeXhighEffort(model: Model<"bedrock-converse-stream">): boolean {
 	const candidates = getModelMatchCandidates(model.id, model.name);
 	return candidates.some(
-		(s) => s.includes("opus-4-7") || s.includes("opus-4-8") || s.includes("sonnet-5") || s.includes("fable-5"),
+		(s) =>
+			s.includes("opus-4-7") ||
+			s.includes("opus-4-8") ||
+			s.includes("opus-5") ||
+			s.includes("sonnet-5") ||
+			s.includes("fable-5"),
 	);
 }
 
@@ -671,8 +836,8 @@ function supportsPromptCaching(model: Model<"bedrock-converse-stream">, env?: Pr
 		if (getProviderEnvValue("AWS_BEDROCK_FORCE_CACHE", env) === "1") return true;
 		return false;
 	}
-	// Claude 5 models (fable-5, sonnet-5)
-	if (candidates.some((s) => s.includes("fable-5") || s.includes("sonnet-5"))) return true;
+	// Claude 5 models (fable-5, opus-5, sonnet-5)
+	if (candidates.some((s) => s.includes("fable-5") || s.includes("opus-5") || s.includes("sonnet-5"))) return true;
 	// Claude 4.x models (opus-4, sonnet-4, haiku-4)
 	if (candidates.some((s) => s.includes("-4-"))) return true;
 	// Claude 3.7 Sonnet
@@ -726,6 +891,20 @@ function createNonBlankTextBlock(text: string): ContentBlock.TextMember | undefi
 
 function createRequiredTextBlock(text: string): ContentBlock.TextMember {
 	return createNonBlankTextBlock(text) ?? { text: EMPTY_TEXT_PLACEHOLDER };
+}
+
+function sanitizeBedrockDocument(value: DocumentType): DocumentType {
+	if (Array.isArray(value)) {
+		return value.map(sanitizeBedrockDocument);
+	}
+	if (value !== null && typeof value === "object") {
+		return Object.fromEntries(
+			Object.entries(value)
+				.filter(([key]) => key.length > 0)
+				.map(([key, nestedValue]) => [key, sanitizeBedrockDocument(nestedValue)]),
+		);
+	}
+	return value;
 }
 
 function convertToolResultContent(content: (TextContent | ImageContent)[]): ToolResultContentBlock[] {
@@ -800,10 +979,19 @@ function convertMessages(
 						}
 						case "toolCall":
 							contentBlocks.push({
-								toolUse: { toolUseId: c.id, name: c.name, input: c.arguments },
+								toolUse: { toolUseId: c.id, name: c.name, input: sanitizeBedrockDocument(c.arguments) },
 							});
 							break;
 						case "thinking": {
+							// Encrypted reasoning is opaque: replay the stored payload as the
+							// `redactedContent` member instead of lowering it to reasoning text.
+							if (c.redacted) {
+								const redactedContent = decodeRedactedContent(c.thinkingSignature);
+								if (redactedContent?.length) {
+									contentBlocks.push({ reasoningContent: { redactedContent } });
+								}
+								continue;
+							}
 							// Skip empty thinking blocks
 							const thinking = sanitizeSurrogates(c.thinking);
 							if (thinking.trim().length === 0) continue;
@@ -910,16 +1098,22 @@ function convertMessages(
 function convertToolConfig(
 	tools: Tool[] | undefined,
 	toolChoice: BedrockOptions["toolChoice"],
+	supportsStrictMode: boolean,
 ): ToolConfiguration | undefined {
-	if (!tools?.length || toolChoice === "none") return undefined;
+	if (!tools?.length) return undefined;
+	if (toolChoice === "none") return undefined;
 
-	const bedrockTools: BedrockTool[] = tools.map((tool) => ({
-		toolSpec: {
-			name: tool.name,
-			description: tool.description,
-			inputSchema: { json: tool.parameters as unknown as DocumentType },
-		},
-	}));
+	const bedrockTools: BedrockTool[] = tools.map((tool) => {
+		const strict = resolveJsonSchemaStrictSampling(tool, supportsStrictMode);
+		return {
+			toolSpec: {
+				name: tool.name,
+				description: tool.description,
+				inputSchema: { json: getJsonSchemaToolParameters(tool, strict) as unknown as DocumentType },
+				...(strict === true ? { strict: true } : {}),
+			},
+		};
+	});
 
 	let bedrockToolChoice: ToolChoice | undefined;
 	switch (toolChoice) {
@@ -949,7 +1143,9 @@ function mapStopReason(reason: string | undefined): { stopReason: StopReason; er
 		case BedrockStopReason.TOOL_USE:
 			return { stopReason: "toolUse" };
 		default:
-			return reason ? { stopReason: "error", errorMessage: reason } : { stopReason: "error" };
+			return reason
+				? { stopReason: "error", errorMessage: `Provider stopped with: ${reason}` }
+				: { stopReason: "error" };
 	}
 }
 
@@ -1083,11 +1279,43 @@ function createImageBlock(mimeType: string, data: string) {
 			throw new Error(`Unknown image type: ${mimeType}`);
 	}
 
+	return { source: { bytes: base64ToBytes(data) }, format };
+}
+
+function base64ToBytes(data: string): Uint8Array {
 	const binaryString = atob(data);
 	const bytes = new Uint8Array(binaryString.length);
 	for (let i = 0; i < binaryString.length; i++) {
 		bytes[i] = binaryString.charCodeAt(i);
 	}
+	return bytes;
+}
 
-	return { source: { bytes }, format };
+/**
+ * Decodes a stored redacted payload. The AWS SDK hands the blob over as bytes, but a
+ * persisted session carries it as base64. A hand-edited or externally produced session
+ * can hold a signature that is not base64; drop that block instead of failing the
+ * whole request.
+ */
+function decodeRedactedContent(signature: string | undefined): Uint8Array | undefined {
+	if (!signature) return undefined;
+	try {
+		return base64ToBytes(signature);
+	} catch {
+		return undefined;
+	}
+}
+
+function bytesToBase64(chunks: Uint8Array[]): string {
+	// Encrypted reasoning runs to tens of KB, so build the binary string in slices
+	// rather than one concatenation per byte. The window stays under the engine's
+	// argument-count limit for spread calls.
+	const WINDOW = 0x8000;
+	let binary = "";
+	for (const chunk of chunks) {
+		for (let i = 0; i < chunk.length; i += WINDOW) {
+			binary += String.fromCharCode(...chunk.subarray(i, i + WINDOW));
+		}
+	}
+	return btoa(binary);
 }

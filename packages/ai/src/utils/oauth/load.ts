@@ -6,16 +6,11 @@ import type { OAuthAuth } from "../../auth/types.ts";
  * `node:crypto` PKCE). The `.ts`/`.js` rewrite keeps the trick working from
  * both source and built output.
  */
-const importOAuthModule = (specifier: string): Promise<unknown> => {
-	const runtimeSpecifier = import.meta.url.endsWith(".js") ? specifier.replace(/\.ts$/, ".js") : specifier;
-	return import(runtimeSpecifier);
-};
-
 export const loadAnthropicOAuth = async (): Promise<OAuthAuth> =>
-	((await importOAuthModule("./anthropic.ts")) as { anthropicOAuth: OAuthAuth }).anthropicOAuth;
+	(await import("./anthropic.ts")).anthropicOAuth;
 
 export const loadOpenAICodexOAuth = async (): Promise<OAuthAuth> =>
-	((await importOAuthModule("./openai-codex.ts")) as { openaiCodexOAuth: OAuthAuth }).openaiCodexOAuth;
+	(await import("./openai-codex.ts")).openaiCodexOAuth;
 
 export const loadGitHubCopilotOAuth = async (): Promise<OAuthAuth> =>
-	((await importOAuthModule("./github-copilot.ts")) as { githubCopilotOAuth: OAuthAuth }).githubCopilotOAuth;
+	(await import("./github-copilot.ts")).githubCopilotOAuth;

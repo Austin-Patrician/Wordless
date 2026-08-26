@@ -207,3 +207,8 @@
 .message-code-block .hljs {
   background: transparent !important;
 }
+
+/* Blockquotes inherit the conversation background too; the left border keeps the visual cue. */
+.message-markdown blockquote {
+  background: transparent !important;
+}

@@ -3,8 +3,20 @@
  */
 
 import { type Content, FinishReason, FunctionCallingConfigMode, type Part } from "@google/genai";
-import type { Context, ImageContent, Model, StopReason, TextContent, Tool } from "../types.ts";
+import type {
+	Context,
+	ImageContent,
+	Model,
+	ModelThinkingLevel,
+	StopReason,
+	StreamOptions,
+	TextContent,
+	ThinkingLevel,
+	Tool,
+} from "../types.ts";
+import { retryProviderRequest } from "../utils/provider-retry.ts";
 import { sanitizeSurrogates } from "../utils/sanitize-unicode.ts";
+import { getJsonSchemaToolParameters, resolveJsonSchemaStrictSampling } from "./constrained-sampling.ts";
 import { transformMessages } from "./transform-messages.ts";
 
 type GoogleApiType = "google-generative-ai" | "google-vertex";
@@ -13,7 +25,30 @@ type GoogleApiType = "google-generative-ai" | "google-vertex";
  * Thinking level for Gemini 3 models.
  * Mirrors Google's ThinkingLevel enum values.
  */
-export type GoogleThinkingLevel = "THINKING_LEVEL_UNSPECIFIED" | "MINIMAL" | "LOW" | "MEDIUM" | "HIGH";
+export type GoogleApiThinkingLevel = "THINKING_LEVEL_UNSPECIFIED" | "MINIMAL" | "LOW" | "MEDIUM" | "HIGH";
+export type ResolvedGoogleThinkingLevel = Exclude<ThinkingLevel, "xhigh" | "max">;
+
+/** Resolve a supported pi level or model-specific Google mapping to a standard Google level. */
+export function resolveGoogleThinkingLevel<T extends GoogleApiType>(
+	model: Model<T>,
+	level: ModelThinkingLevel,
+): ResolvedGoogleThinkingLevel {
+	if (level === "off") return "high";
+
+	const mapped = model.thinkingLevelMap?.[level];
+	const resolvedLevel = typeof mapped === "string" ? mapped.toLowerCase() : level;
+	switch (resolvedLevel) {
+		case "minimal":
+		case "low":
+		case "medium":
+		case "high":
+			return resolvedLevel;
+		default:
+			throw new Error(
+				`Unsupported Google thinking level mapping for ${model.provider}/${model.id}: ${level} -> ${String(mapped)}`,
+			);
+	}
+}
 
 /**
  * Determines whether a streamed Gemini `Part` should be treated as "thinking".
@@ -136,6 +171,10 @@ export function convertMessages<T extends GoogleApiType>(model: Model<T>, contex
 			for (const block of msg.content) {
 				if (block.type === "text") {
 					const thoughtSignature = resolveThoughtSignature(isSameProviderAndModel, block.textSignature);
+					// Skip empty text blocks — unless they carry a thought signature. Gemini can attach
+					// the signature to a part whose visible text is empty and requires it echoed back;
+					// dropping it breaks the reasoning chain and the model intermittently ends mid-task
+					// turns with a thought-only STOP (empty completion, no tool call).
 					if ((!block.text || block.text.trim() === "") && !thoughtSignature) continue;
 					parts.push({
 						text: sanitizeSurrogates(block.text),
@@ -146,6 +185,8 @@ export function convertMessages<T extends GoogleApiType>(model: Model<T>, contex
 					// Otherwise convert to plain text (no tags to avoid model mimicking them)
 					if (isSameProviderAndModel) {
 						const thoughtSignature = resolveThoughtSignature(isSameProviderAndModel, block.thinkingSignature);
+						// Same rule as text blocks: an empty thinking block is dropped only when it
+						// carries no signature (mirrors the anthropic converter's handling).
 						if ((!block.thinking || block.thinking.trim() === "") && !thoughtSignature) continue;
 						parts.push({
 							thought: true,
@@ -153,6 +194,7 @@ export function convertMessages<T extends GoogleApiType>(model: Model<T>, contex
 							...(thoughtSignature && { thoughtSignature }),
 						});
 					} else {
+						// Cross-provider/model: the signature is unusable, empty blocks stay dropped.
 						if (!block.thinking || block.thinking.trim() === "") continue;
 						parts.push({
 							text: sanitizeSurrogates(block.thinking),
@@ -276,24 +318,33 @@ function sanitizeForOpenApi(schema: unknown): unknown {
 export function convertTools(
 	tools: Tool[],
 	useParameters = false,
+	supportsStrictMode = true,
 ): { functionDeclarations: Record<string, unknown>[] }[] | undefined {
 	if (tools.length === 0) return undefined;
 	return [
 		{
-			functionDeclarations: tools.map((tool) => ({
-				name: tool.name,
-				description: tool.description,
-				...(useParameters
-					? { parameters: sanitizeForOpenApi(tool.parameters as unknown) }
-					: { parametersJsonSchema: tool.parameters }),
-			})),
+			functionDeclarations: tools.map((tool) => {
+				const strict = resolveJsonSchemaStrictSampling(tool, supportsStrictMode);
+				const parameters = getJsonSchemaToolParameters(tool, strict);
+				return {
+					name: tool.name,
+					description: tool.description,
+					...(useParameters
+						? { parameters: sanitizeForOpenApi(parameters as unknown) }
+						: { parametersJsonSchema: parameters }),
+				};
+			}),
 		},
 	];
 }
 
-/**
- * Map tool choice string to Gemini FunctionCallingConfigMode.
- */
+/** Gemini 3+ enforces required function parameters in validated tool-calling modes. */
+export function supportsGoogleStrictToolSampling(modelId: string): boolean {
+	const majorVersion = getGeminiMajorVersion(modelId);
+	return majorVersion !== undefined && majorVersion >= 3;
+}
+
+/** Map tool choice string to Gemini FunctionCallingConfigMode. */
 export function mapToolChoice(choice: string): FunctionCallingConfigMode {
 	switch (choice) {
 		case "auto":
@@ -305,6 +356,21 @@ export function mapToolChoice(choice: string): FunctionCallingConfigMode {
 		default:
 			return FunctionCallingConfigMode.AUTO;
 	}
+}
+
+export function resolveGoogleFunctionCallingMode(
+	tools: Tool[],
+	toolChoice: string | undefined,
+	supportsStrictMode: boolean,
+): FunctionCallingConfigMode | undefined {
+	const useStrictMode = tools.some((tool) => resolveJsonSchemaStrictSampling(tool, supportsStrictMode) === true);
+	if (toolChoice === "none" || toolChoice === "any") {
+		return mapToolChoice(toolChoice);
+	}
+	if (useStrictMode) {
+		return FunctionCallingConfigMode.VALIDATED;
+	}
+	return toolChoice ? mapToolChoice(toolChoice) : undefined;
 }
 
 /**
@@ -351,4 +417,36 @@ export function mapStopReasonString(reason: string): StopReason {
 		default:
 			return "error";
 	}
+}
+
+/**
+ * Run a Google GenAI SDK request with the shared provider retry policy
+ * (408/409/429/5xx with backoff, honoring retry-after), mirroring how the
+ * Anthropic and OpenAI adapters wrap their initial request in
+ * retryProviderRequest. The SDK's ApiError has a `status` property but no
+ * `headers` property, and retryProviderRequest only retries errors that carry
+ * both, so normalize the error by adding the missing `headers` before
+ * rethrowing.
+ */
+export function retryGoogleRequest<T>(
+	request: () => Promise<T>,
+	options?: Pick<StreamOptions, "maxRetries" | "maxRetryDelayMs" | "signal">,
+): Promise<T> {
+	return retryProviderRequest(
+		async () => {
+			try {
+				return await request();
+			} catch (error) {
+				if (error instanceof Error && "status" in error && !("headers" in error)) {
+					(error as { headers?: Headers }).headers = undefined;
+				}
+				throw error;
+			}
+		},
+		{
+			maxRetries: options?.maxRetries,
+			maxRetryDelayMs: options?.maxRetryDelayMs,
+			signal: options?.signal,
+		},
+	);
 }

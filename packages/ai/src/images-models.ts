@@ -170,7 +170,7 @@ class ImagesModelsImpl implements MutableImagesModels {
 	async getAuth(model: ImagesModel<ImagesApi>): Promise<AuthResult | undefined> {
 		const provider = this.providers.get(model.provider);
 		if (!provider) return undefined;
-		return resolveProviderAuth(provider, model, this.credentials, this.authContext);
+		return resolveProviderAuth(provider, this.credentials, this.authContext, undefined, model);
 	}
 
 	async generateImages(
@@ -184,10 +184,10 @@ class ImagesModelsImpl implements MutableImagesModels {
 				throw new ModelsError("provider", `Unknown provider: ${model.provider}`);
 			}
 
-			const resolution = await resolveProviderAuth(provider, model, this.credentials, this.authContext, {
+			const resolution = await resolveProviderAuth(provider, this.credentials, this.authContext, {
 				apiKey: options?.apiKey,
 				env: options?.env,
-			});
+			}, model);
 			const auth = resolution?.auth;
 			if (!auth) {
 				return provider.generateImages(model, context, options);

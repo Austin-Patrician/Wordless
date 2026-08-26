@@ -328,7 +328,7 @@ export const MessageMarkdown = memo(function MessageMarkdown({ streaming = false
       if (!safeUrl) return <span className="text-muted-foreground">{children}</span>;
       return <a className="font-medium text-[#587846] underline decoration-[#a8bb91] underline-offset-2 hover:text-[#3f6230] dark:text-[#c3df8a] dark:decoration-[#667b46] dark:hover:text-[#d8efa8]" href={safeUrl} onClick={(event) => { event.preventDefault(); void client.openExternalUrl(safeUrl); }} rel="noreferrer">{children}</a>;
     },
-    blockquote: ({ children }) => <blockquote className="my-4 border-l-2 border-[#b9c7a8] bg-[#f7f8f3] py-1 pl-3.5 pr-2 text-[#62685b] dark:border-[#647253] dark:bg-[#20231c] dark:text-[#c6cdbb]">{children}</blockquote>,
+    blockquote: ({ children }) => <blockquote className="my-4 border-l-2 border-[#b9c7a8] bg-transparent py-1 pl-3.5 pr-2 text-[#62685b] dark:border-[#647253] dark:text-[#c6cdbb]">{children}</blockquote>,
     code: ({ children, className }) => <code className={cn("rounded-[4px] bg-[#eeeeea] px-1 py-0.5 font-mono text-[12px] text-[#43433f] dark:bg-[#2c2e29] dark:text-[#d9ddd3]", className)}>{children}</code>,
     h1: ({ children }) => <h1 className="mb-2 mt-6 text-[18px] font-bold leading-7 text-[#30302d] first:mt-0 dark:text-foreground">{children}</h1>,
     h2: ({ children }) => <h2 className="mb-2 mt-6 text-[16px] font-bold leading-6 text-[#343431] first:mt-0 dark:text-foreground">{children}</h2>,

@@ -28,8 +28,8 @@ export function envApiKeyAuth(name: string, envVars: readonly string[]): ApiKeyA
  * Wraps a dynamically imported `OAuthAuth` so provider definitions can
  * advertise OAuth without importing the implementation. The flow loads on
  * first `login`/`refresh`/`toAuth` call; callers keep Node-only flow code out
- * of bundles by loading through a bundler-opaque dynamic import (variable
- * specifier, see the bedrock lazy wrapper).
+ * of bundles by loading through literal dynamic imports that bundlers split
+ * into separate chunks.
  */
 export function lazyOAuth(input: { name: string; load: () => Promise<OAuthAuth> }): OAuthAuth {
 	let promise: Promise<OAuthAuth> | undefined;

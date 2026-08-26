@@ -50,9 +50,12 @@
 	],
 	"scripts": {
 		"clean": "shx rm -rf dist",
-		"generate-models": "node scripts/generate-models.ts",
+		"generate-models": "node scripts/generate-models.ts --strict",
+		"hydrate-model-data": "node scripts/generate-models.ts --strict --data-only",
+		"generate-model-catalog": "node scripts/generate-models.ts --strict --json-only --json-output ../../.artifacts/model-catalog",
 		"generate-image-models": "node scripts/generate-image-models.ts",
-		"build": "npm run generate-models && npm run generate-image-models && tsgo -p tsconfig.build.json",
+		"check:model-data": "node scripts/check-model-data.ts",
+		"build": "npm run generate-models && npm run generate-image-models && npm run check:model-data && tsgo -p tsconfig.build.json && shx rm -rf dist/providers/data && shx cp -r src/providers/data dist/providers/data",
 		"test": "vitest --run",
 		"prepublishOnly": "npm run clean && npm run build"
 	},
@@ -67,7 +70,8 @@
 		"https-proxy-agent": "7.0.6",
 		"openai": "6.26.0",
 		"partial-json": "0.1.7",
-		"typebox": "1.1.38"
+		"typebox": "1.1.38",
+		"undici": "7.28.0"
 	},
 	"keywords": [
 		"ai",

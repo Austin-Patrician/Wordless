@@ -64,7 +64,8 @@ export function cloudflareWorkersAIAuth(): ApiKeyAuth {
 			const accountId = await callbacks.prompt({ type: "text", message: "Enter Cloudflare account ID" });
 			return { type: "api_key", key, env: { CLOUDFLARE_ACCOUNT_ID: accountId } };
 		},
-		resolve: async ({ model, ctx, credential }) => {
+	resolve: async ({ model, ctx, credential }) => {
+		if (!model) return undefined;
 			const resolved = await resolveCloudflareEnv("workers-ai", model, ctx, credential);
 			if (!resolved) return undefined;
 			return {
@@ -89,7 +90,8 @@ export function cloudflareAIGatewayAuth(): ApiKeyAuth {
 				env: { CLOUDFLARE_ACCOUNT_ID: accountId, CLOUDFLARE_GATEWAY_ID: gatewayId },
 			};
 		},
-		resolve: async ({ model, ctx, credential }) => {
+	resolve: async ({ model, ctx, credential }) => {
+		if (!model) return undefined;
 			const resolved = await resolveCloudflareEnv("ai-gateway", model, ctx, credential);
 			if (!resolved) return undefined;
 			return {

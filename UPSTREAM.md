@@ -5,11 +5,14 @@
 | Field | Value |
 |---|---|
 | Repository | `https://github.com/earendil-works/pi.git` |
-| Source commit | `0e6909f050eeb15e8f6c05185511f3788357ddb3` |
-| Source package version | `0.80.6` |
+| Source commit | `c5de2cc67f04d2e700617f9452a22a4242aaa1a4` |
+| Source package version | `0.84.3` |
 | Wordless fork version | `0.80.6-wordless.0` |
 | Imported packages | `packages/ai`, `packages/agent` |
 | License | MIT |
+
+The current update synchronizes Pi's model-generation infrastructure. The
+Wordless runtime package remains on its forked `0.80.6-wordless.0` API surface.
 
 ## Import Policy
 

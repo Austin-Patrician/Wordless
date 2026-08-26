@@ -8,7 +8,7 @@ import { cloudflareAIGatewayAuth } from "./cloudflare-auth.ts";
 export function cloudflareAIGatewayProvider(): Provider<
 	"anthropic-messages" | "openai-completions" | "openai-responses"
 > {
-	return createProvider({
+	return createProvider<"anthropic-messages" | "openai-completions" | "openai-responses">({
 		id: "cloudflare-ai-gateway",
 		name: "Cloudflare AI Gateway",
 		auth: { apiKey: cloudflareAIGatewayAuth() },
