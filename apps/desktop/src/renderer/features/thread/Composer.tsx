@@ -1160,7 +1160,7 @@ export function Composer({
     return skill ? [skill] : [];
   });
   const selectedSkillTokens = Math.ceil(
-    selectedSkills.reduce((total, skill) => total + skill.contentBytes, 0) / 4,
+    selectedSkills.reduce((total, skill) => total + skill.contentTokens, 0),
   );
   const skillWarning =
     skillContextWindow !== undefined &&
@@ -2276,7 +2276,15 @@ export function Composer({
             </Button>
             <Button
               aria-label={running ? "Stop agent" : t("send")}
-              className="rounded-full disabled:bg-[#b5b5b1]"
+              className={cn(
+                "rounded-full disabled:bg-[#b5b5b1]",
+                running &&
+                  (effectiveInteractionMode === "plan"
+                    ? "bg-[#d97a2b] text-white hover:bg-[#c76a1f] dark:bg-[#d97a2b] dark:hover:bg-[#e08a40]"
+                    : effectiveInteractionMode === "clarify"
+                      ? "bg-[#2f7bd0] text-white hover:bg-[#276bb8] dark:bg-[#2f7bd0] dark:hover:bg-[#3d89dd]"
+                      : "bg-[#d8443c] text-white hover:bg-[#c23934] dark:bg-[#e0524a] dark:hover:bg-[#ea6258]"),
+              )}
               disabled={
                 running
                   ? false

@@ -2086,23 +2086,29 @@ function ScheduleEditor({
                 className={`${control} w-24`}
                 max={31}
                 min={1}
-                onChange={(event) =>
-                  setSchedule({
-                    ...schedule,
-                    dayOfMonth: Number(event.target.value),
-                  })
-                }
+                onChange={(event) => {
+                  const val = parseInt(event.target.value, 10);
+                  if (Number.isFinite(val) && val >= 1 && val <= 31) {
+                    setSchedule({
+                      ...schedule,
+                      dayOfMonth: val,
+                    });
+                  }
+                }}
                 type="number"
                 value={schedule.dayOfMonth ?? 1}
               />
             ) : null}
             <input
               className={`${control} w-auto`}
-              onChange={(event) =>
-                setSchedule({ ...schedule, time: event.target.value })
-              }
+              onChange={(event) => {
+                const nextTime = event.target.value;
+                if (nextTime) {
+                  setSchedule({ ...schedule, time: nextTime });
+                }
+              }}
               type="time"
-              value={schedule.time}
+              value={schedule.time || "09:00"}
             />
           </>
         ) : schedule.kind === "interval" ? (
@@ -2110,11 +2116,14 @@ function ScheduleEditor({
             <input
               className={`${control} w-24`}
               min={1}
-              onChange={(event) =>
-                setSchedule({ ...schedule, every: Number(event.target.value) })
-              }
+              onChange={(event) => {
+                const val = parseInt(event.target.value, 10);
+                if (Number.isFinite(val) && val >= 1) {
+                  setSchedule({ ...schedule, every: val });
+                }
+              }}
               type="number"
-              value={schedule.every}
+              value={schedule.every || 1}
             />
             <Select
               onValueChange={(value) =>
@@ -2153,12 +2162,17 @@ function ScheduleEditor({
         ) : (
           <input
             className={`${control} w-auto`}
-            onChange={(event) =>
-              setSchedule({
-                kind: "once",
-                at: new Date(event.target.value).getTime(),
-              })
-            }
+            onChange={(event) => {
+              const val = event.target.value;
+              if (!val) return;
+              const parsed = new Date(val).getTime();
+              if (Number.isFinite(parsed)) {
+                setSchedule({
+                  kind: "once",
+                  at: parsed,
+                });
+              }
+            }}
             type="datetime-local"
             value={onceValue}
           />

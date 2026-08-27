@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { fauxAssistantMessage } from "../src/providers/faux.ts";
-import { isRetryableAssistantError } from "../src/utils/retry.ts";
+import { isRetryableAssistantError, retryAssistantCall } from "../src/utils/retry.ts";
 
 const openAIExplicitRetryMessage =
 	"An error occurred while processing your request. You can retry your request, or contact us through our help center at help.openai.com if the error persists. Please include the request ID req_******** in your message.";
@@ -11,6 +11,26 @@ const bunFetchSocketClosedMessage =
 	"The socket connection was closed unexpectedly. For more information, pass `verbose: true` in the second argument to fetch()";
 
 describe("provider retry classification", () => {
+	it("runs the bounded assistant retry loop until a transient failure recovers", async () => {
+		let calls = 0;
+		const scheduled: number[] = [];
+		const result = await retryAssistantCall(
+			async () => {
+				calls += 1;
+				return calls < 3
+					? fauxAssistantMessage("", { stopReason: "error", errorMessage: "Connection error." })
+					: fauxAssistantMessage("recovered");
+			},
+			{ enabled: true, maxRetries: 5, baseDelayMs: 0 },
+			undefined,
+			{ onRetryScheduled: (attempt) => scheduled.push(attempt) },
+		);
+
+		expect(calls).toBe(3);
+		expect(scheduled).toEqual([1, 2]);
+		expect(result.stopReason).toBe("stop");
+	});
+
 	it("matches explicit provider retry guidance", () => {
 		expect(
 			isRetryableAssistantError(

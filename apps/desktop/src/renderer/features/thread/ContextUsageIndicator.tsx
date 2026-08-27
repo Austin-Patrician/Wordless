@@ -3,6 +3,7 @@ import { X } from "lucide-react";
 import { useState } from "react";
 import type { SessionContextUsage, SessionContextUsageCategories } from "@wordless/domain";
 import { usePreferences } from "../../shared/preferences";
+import { estimateBpeTokens } from "@wordless/ai";
 
 type ContextUsageIndicatorProps = {
   contextUsage?: SessionContextUsage;
@@ -18,7 +19,7 @@ type ContextCategory = {
 };
 
 function estimateDraftTokens(text: string): number {
-  return Math.ceil(new TextEncoder().encode(text).length / 4);
+  return estimateBpeTokens(text);
 }
 
 function formatTokens(tokens: number): string {

@@ -206,6 +206,35 @@ test("publishes one final assistant row snapshot for each terminal runtime event
   store.dispose();
 });
 
+test("projects reconnecting onto the event turn after removing a failed assistant message", async () => {
+  const { emit, store } = harness({ getSessionView: async () => view(false) });
+  await store.start();
+
+  emit(envelope(1, {
+    type: "message.started",
+    message: { ...message("failed-assistant", "assistant", ""), status: "streaming" },
+  }));
+  emit(envelope(2, {
+    type: "model.retry.scheduled",
+    retry: {
+      attempt: 2,
+      maxRetries: 5,
+      scheduledAt: 2_000,
+      retryAt: 12_000,
+      delayMs: 10_000,
+      errorMessage: "Connection error.",
+      failedMessageId: "failed-assistant",
+    },
+  }));
+
+  const row = store.getRowSnapshot("assistant:turn:user");
+  assert.deepEqual(row.messages.map((candidate) => candidate.id), ["assistant"]);
+  assert.equal(row.presentation?.assistantMessageId, "assistant");
+  assert.equal(row.presentation?.activity.type, "reconnecting");
+  assert.equal(store.getMetadataSnapshot().modelRetry?.attempt, 2);
+  store.dispose();
+});
+
 test("advances the main cursor across interleaved expert member events", async () => {
   const { emit, frames, store } = harness();
   await store.start();
@@ -598,6 +627,24 @@ test("patches turn summary tokens on completion without duplicating the turn", a
 
   assert.equal(store.getHistorySnapshot().turnSummaries.length, 1);
   assert.ok((store.getHistorySnapshot().turnSummaries[0]?.tokens ?? 0) >= 4_000);
+  store.dispose();
+});
+
+test("updates context usage from a live runtime event", async () => {
+  const { emit, store } = harness();
+  await store.start();
+  emit(envelope(1, {
+    type: "context.usage.updated",
+    contextUsage: {
+      categories: { systemPrompt: 100, toolsAndSubagents: 200, conversation: 300, connectors: 0, skills: 0 },
+      contextWindow: 10_000,
+      source: "provider",
+      usedTokens: 600,
+    },
+  }));
+
+  assert.equal(store.getMetadataSnapshot().contextUsage?.usedTokens, 600);
+  assert.equal(store.getMetadataSnapshot().contextUsage?.source, "provider");
   store.dispose();
 });
 

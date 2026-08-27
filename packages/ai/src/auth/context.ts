@@ -8,8 +8,10 @@ interface NodeOsModule {
 	homedir(): string;
 }
 
-// Variable specifier so browser bundlers do not try to resolve node builtins.
-const importNodeModule = (specifier: string): Promise<unknown> => import(specifier);
+// Keep Node-only modules out of browser bundle analysis. In the renderer the
+// import rejects and fileExists() safely returns false.
+const importNodeModule = (specifier: string): Promise<unknown> =>
+	import(/* @vite-ignore */ specifier);
 
 function getProcessEnv(): Record<string, string | undefined> | undefined {
 	const proc = (globalThis as { process?: { env?: Record<string, string | undefined> } }).process;

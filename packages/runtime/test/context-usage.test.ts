@@ -31,7 +31,7 @@ describe("estimateSessionContextUsage", () => {
       skills: [{ name: "release", description: "Prepare releases safely." }],
     });
 
-    expect(usage.source).toBe("estimate");
+    expect(usage.source).toBe("tokenizer");
     expect(usage.contextWindow).toBe(128_000);
     expect(usage.categories.systemPrompt).toBeGreaterThan(0);
     expect(usage.categories.toolsAndSubagents).toBeGreaterThan(0);
@@ -75,5 +75,19 @@ describe("estimateSessionContextUsage", () => {
     });
 
     expect(before.categories.conversation).toBe(after.categories.conversation);
+  });
+
+  it("uses the post-compaction estimate when no current provider usage exists", () => {
+    const usage = estimateSessionContextUsage({
+      connectors: [],
+      contextWindow: 128_000,
+      entries: [{ type: "compaction", summary: "short summary" }, { type: "message", content: "recent" }],
+      extensions: { descriptors: [], configurations: {} },
+      profile,
+      skills: [],
+    });
+
+    expect(usage.source).toBe("tokenizer");
+    expect(usage.usedTokens).toBeLessThan(10_000);
   });
 });

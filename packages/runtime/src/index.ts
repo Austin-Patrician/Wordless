@@ -41,6 +41,7 @@ import type {
 import {
   OPERATION_APPROVAL_JOURNAL_TYPE,
   CONTEXT_COMPACTION_JOURNAL_TYPE,
+  MODEL_RETRY_JOURNAL_TYPE,
   SESSION_FILE_BASELINE_JOURNAL_TYPE,
   USER_REQUEST_JOURNAL_TYPE,
   projectUserMessageContent,
@@ -54,6 +55,7 @@ import {
   type AgentDriverSession,
   type PersistedOperationApproval,
   type PersistedContextCompaction,
+  type PersistedModelRetry,
   type PersistedSessionFileBaseline,
   type PersistedUserRequest,
   type OperationApprovalRequest,
@@ -110,6 +112,7 @@ import type {
   SecurityPolicySnapshot,
   SessionDraft,
   SessionRecord,
+  ModelRetryState,
   ThinkingLevel,
   ToolApprovalMode,
   ToolSecurityRuleMatch,
@@ -1424,10 +1427,12 @@ type ActiveRun = {
   isCompacting: boolean;
   compactionTrigger?: ContextCompactionRecord["trigger"];
   sequence: number;
+  contextUsageRevision: number;
   runId: string;
   userMessageId?: string;
   taskId?: string;
   runError?: string;
+  modelRetry?: ModelRetryState;
   unsubscribe: () => void;
 };
 
@@ -2132,6 +2137,7 @@ export class WordlessRuntime {
     const record = await this.ensureSessionModelForOpen(sessionId);
     const session = await openWordlessSession(record.journalPath);
     const entries = await session.getEntries();
+    const activeContext = await session.buildContext();
     const messages: ConversationMessage[] = [];
     const tools = new Map<
       string,
@@ -2151,6 +2157,7 @@ export class WordlessRuntime {
       tokensBefore: number;
     }> = [];
     const extensions: AgentExtensionSessionState[] = [];
+    const recoveredRetryEntryIds = new Set<string>();
     for (const entry of entries) {
       const customEntry = entry as unknown as {
         type: string;
@@ -2231,6 +2238,15 @@ export class WordlessRuntime {
         const compaction = persistedContextCompaction(customEntry.data);
         if (compaction)
           compactionMetadata.set(compaction.compactionId, compaction);
+        continue;
+      }
+      if (
+        customEntry.type === "custom" &&
+        customEntry.customType === MODEL_RETRY_JOURNAL_TYPE
+      ) {
+        const data = asRecord(customEntry.data);
+        if (typeof data?.failedMessageEntryId === "string")
+          recoveredRetryEntryIds.add(data.failedMessageEntryId);
         continue;
       }
       if (entry.type === "compaction") {
@@ -2327,10 +2343,17 @@ export class WordlessRuntime {
         .map((metadata) => metadata.recoveredFailureEntryId)
         .filter((entryId): entryId is string => typeof entryId === "string"),
     );
-    const latestInputTokens = [...messages]
-      .reverse()
-      .find((message) => (message.usage?.inputTokens ?? 0) > 0)
-      ?.usage?.inputTokens;
+    for (const entryId of recoveredRetryEntryIds)
+      recoveredFailureEntryIds.add(entryId);
+    let latestInputTokens: number | undefined;
+    for (let index = activeContext.messages.length - 1; index >= 0; index -= 1) {
+      const message = activeContext.messages[index] as { role?: string; usage?: { input?: number; cacheRead?: number; cacheWrite?: number } };
+      if (message.role !== "assistant") continue;
+      const usage = message.usage;
+      if (!usage) continue;
+      const total = (usage.input ?? 0) + (usage.cacheRead ?? 0) + (usage.cacheWrite ?? 0);
+      if (total > 0) { latestInputTokens = total; break; }
+    }
     let contextUsage: SessionSnapshot["contextUsage"];
     try {
       const model = this.requireRuntimeModel(record.model);
@@ -2341,10 +2364,10 @@ export class WordlessRuntime {
             record.connectorIds.includes(connector.id),
           ),
         contextWindow: model.contextWindow || 128_000,
-        entries,
+        entries: activeContext.messages,
         extensions: this.extensions.snapshot(),
         latestInputTokens,
-        profile: this.requireProfile(record),
+        profile: this.contextUsageProfile(record),
         skills: this.skillRegistry.getSessionSkills(record.workspaceId),
       });
     } catch {
@@ -2364,6 +2387,7 @@ export class WordlessRuntime {
       turnUsage: calculateCurrentTurnUsage(visibleMessages),
       contextCompactions,
       isRunning: active?.kind === "prompt",
+      modelRetry: active?.modelRetry,
       isCompacting: active?.isCompacting ?? false,
       compactionTrigger: active?.compactionTrigger,
       toolApprovalMode: record.toolApprovalMode,
@@ -2382,6 +2406,7 @@ export class WordlessRuntime {
       history: createSessionHistoryPage(cached.projection, cached.revision),
       turnSummaries: cached.projection.turnSummaries,
       isRunning: active?.kind === "prompt",
+      modelRetry: active?.modelRetry,
       isCompacting: active?.isCompacting ?? false,
       compactionTrigger: active?.compactionTrigger,
       toolApprovalMode: record.toolApprovalMode,
@@ -3298,6 +3323,7 @@ export class WordlessRuntime {
       createdAt: now,
       updatedAt: now,
       ...(expert ? { expertSelection: draft.expertSelection } : {}),
+      ...(draft.source ? { source: draft.source } : {}),
     };
     const metadata: WordlessSessionMetadata = {
       id,
@@ -5197,6 +5223,7 @@ export class WordlessRuntime {
       isCompacting: kind === "compaction",
       compactionTrigger: kind === "compaction" ? "manual" : undefined,
       sequence: 0,
+      contextUsageRevision: 0,
       runId: randomUUID(),
       ...(userMessageId ? { userMessageId } : {}),
       ...(taskId ? { taskId } : {}),
@@ -5300,11 +5327,23 @@ export class WordlessRuntime {
     if (event.type === "message.completed")
       if (event.message.status === "error")
         active.runError = event.message.errorMessage ?? "Model response failed";
+    if (event.type === "model.retry.scheduled") {
+      active.modelRetry = event.retry;
+      this.emit(sessionId, active, event);
+    }
+    if (event.type === "model.retry.started") {
+      active.modelRetry = undefined;
+      this.emit(sessionId, active, event);
+    }
     if (event.type === "message.completed")
       this.emit(sessionId, active, {
         type: "message.completed",
         message: event.message,
       });
+    if (event.type === "message.completed") {
+      this.historyCache.delete(sessionId);
+      void this.refreshContextUsage(sessionId, active);
+    }
     if (event.type === "tool.started") {
       const configuredTimeout = event.input.timeout;
       active.tools.set(event.callId, {
@@ -5403,7 +5442,9 @@ export class WordlessRuntime {
     if (event.type === "context.compaction.completed") {
       active.isCompacting = false;
       active.compactionTrigger = undefined;
+      this.historyCache.delete(sessionId);
       this.emit(sessionId, active, event);
+      void this.refreshContextUsage(sessionId, active);
     }
     if (event.type === "context.compaction.failed") {
       active.isCompacting = false;
@@ -5411,6 +5452,17 @@ export class WordlessRuntime {
       this.emit(sessionId, active, event);
     }
     if (event.type === "extension.event") this.emit(sessionId, active, event);
+  }
+
+  private async refreshContextUsage(sessionId: string, active: ActiveRun): Promise<void> {
+    const revision = ++active.contextUsageRevision;
+    try {
+      const snapshot = await this.getSessionSnapshot(sessionId);
+      if (revision !== active.contextUsageRevision || !snapshot.contextUsage) return;
+      this.emit(sessionId, active, { type: "context.usage.updated", contextUsage: snapshot.contextUsage });
+    } catch {
+      // Snapshot refresh is best effort; the next session view will recover it.
+    }
   }
 
   private isAutomaticContextCompactionEnabled(): boolean {
@@ -5441,6 +5493,23 @@ export class WordlessRuntime {
     const profile = this.profiles.get(session.profile);
     if (!profile) throw new Error("The session profile is unavailable");
     return profile;
+  }
+
+  /** Profile prompt projection used for context accounting. Keep it aligned with createActiveRun(). */
+  private contextUsageProfile(record: SessionRecord): ProfileDefinition {
+    const base = this.requireProfile(record);
+    const expert = this.sessionExpertSnapshot(record);
+    const identity = expert
+      ? {
+          ...base,
+          systemPrompt: `${base.systemPrompt}\n\n${activeExpertSystemPrompt(expert)}`,
+        }
+      : base;
+    if (record.workbenchId !== "conversation") return identity;
+    return {
+      ...identity,
+      systemPrompt: `${identity.systemPrompt}\n\n[SESSION ARTIFACTS]\nThe session root is the shared namespace for this conversation. Put final user deliverables in artifacts/primary/ so they appear in the user's Artifacts panel. Put team handoff files, briefs, source notes, and evidence packets in artifacts/shared/. Keep member-specific work in artifacts/<member-id>/. Temporary files must remain inside the session root and must never use the OS temp directory. Always report paths relative to the session root, using the full artifacts/... path for any file another agent must read.`,
+    };
   }
 
   private resolveSessionModel(

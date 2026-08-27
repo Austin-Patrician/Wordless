@@ -9,5 +9,5 @@
 		"rootDir": "./src"
 	},
 	"include": ["src/**/*.ts"],
-	"exclude": ["node_modules", "dist", "**/*.d.ts", "src/**/*.d.ts"]
+	"exclude": ["node_modules", "dist", "**/*.d.ts", "src/**/*.d.ts", "src/harness/events.ts", "src/harness/reducer.ts", "src/harness/result.ts", "src/harness/telemetry.ts", "src/stream-fn.ts", "src/search/**", "src/harness/tools/**", "src/harness/session/context.ts", "src/harness/session/index.ts", "src/harness/session/jsonl.ts", "src/harness/session/memory.ts", "src/harness/session/state.ts", "src/harness/session/types.ts", "src/harness/session/jsonl/**", "src/harness/session/testing/**"]
 }

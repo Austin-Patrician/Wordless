@@ -20,6 +20,7 @@ import type {
   MediaProjectSummary,
   MessageToolSource,
   ModelReference,
+  ModelRetryState,
   ProviderConnectionRecord,
   SessionDraft,
   SessionContextUsage,
@@ -1265,6 +1266,7 @@ export interface SessionSnapshot {
   turnUsage?: SessionTurnUsage;
   contextCompactions: ContextCompactionRecord[];
   isRunning: boolean;
+  modelRetry?: ModelRetryState;
   isCompacting: boolean;
   compactionTrigger?: ContextCompactionRecord["trigger"];
   compactionError?: string;
@@ -1398,6 +1400,7 @@ export interface SessionViewSnapshot {
   history: SessionHistoryPage;
   isCompacting: boolean;
   isRunning: boolean;
+  modelRetry?: ModelRetryState;
   session: SessionRecord;
   turnSummaries: SessionTurnSummary[];
   turnUsage?: SessionTurnUsage;
@@ -1791,10 +1794,17 @@ export type RuntimeEvent =
       trigger: ContextCompactionRecord["trigger"];
       message: string;
     }
+  | { type: "context.usage.updated"; contextUsage: SessionContextUsage }
   | { type: "message.started"; message: ConversationMessage }
   | { type: "message.text.delta"; messageId: string; delta: string }
   | { type: "message.reasoning.delta"; messageId: string; delta: string }
   | { type: "message.completed"; message: ConversationMessage }
+  | { type: "model.retry.scheduled"; retry: ModelRetryState }
+  | {
+      type: "model.retry.started";
+      attempt: number;
+      maxRetries: number;
+    }
   | {
       type: "expert-member.message.started";
       memberId: string;

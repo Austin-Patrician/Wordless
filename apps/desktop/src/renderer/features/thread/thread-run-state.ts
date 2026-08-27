@@ -1,5 +1,5 @@
 import type { ConversationMessage, RuntimeEventEnvelope } from "@wordless/protocol";
-import type { MessageToolBlock } from "@wordless/domain";
+import type { MessageToolBlock, ModelRetryState } from "@wordless/domain";
 
 export const MODEL_RESPONSE_WAIT_DELAY_MS = 1_000;
 export const COMMAND_PREPARATION_DELAY_MS = 600;
@@ -16,6 +16,7 @@ export type AssistantToolActivity =
   | "tool";
 
 export type AssistantRunActivity =
+  | { type: "reconnecting"; retry: ModelRetryState }
   | { type: "thinking"; since: number }
   | { type: "waiting"; since: number }
   | { type: "generating"; since: number }
@@ -93,6 +94,7 @@ export function advanceAssistantRunPresentation(current: AssistantRunPresentatio
 }
 
 export function assistantRunActivityAt(activity: AssistantRunActivity, now: number): AssistantRunActivity {
+  if (activity.type === "reconnecting") return activity;
   if (activity.type === "thinking" && now - activity.since >= MODEL_RESPONSE_WAIT_DELAY_MS) return { type: "waiting", since: activity.since };
   if (activity.type === "tool" && activity.tool === "command" && activity.phase === "preparing" && now - activity.since >= COMMAND_PREPARATION_DELAY_MS) {
     return { ...activity, phase: "running" };
@@ -101,6 +103,7 @@ export function assistantRunActivityAt(activity: AssistantRunActivity, now: numb
 }
 
 export function nextAssistantRunActivityUpdateAt(activity: AssistantRunActivity): number | undefined {
+  if (activity.type === "reconnecting") return Date.now() + 1_000;
   if (activity.type === "thinking") return activity.since + MODEL_RESPONSE_WAIT_DELAY_MS;
   if (activity.type === "tool" && activity.tool === "command" && activity.phase === "preparing") return activity.since + COMMAND_PREPARATION_DELAY_MS;
   return undefined;
@@ -160,6 +163,26 @@ export function assistantRunPresentationFromMessages(messages: ConversationMessa
 export function hasAssistantRunActivity(messages: ConversationMessage[], assistantMessageId: string | null): boolean {
   if (assistantMessageId === null) return false;
   return messages.find((message) => message.id === assistantMessageId)?.blocks.length !== 0;
+}
+
+export function shouldShowAssistantRunStatus(
+  messages: readonly ConversationMessage[],
+  presentation: AssistantRunPresentation | null,
+): boolean {
+  if (!presentation) return false;
+  if (presentation.activity.type === "reconnecting") return true;
+  return presentation.assistantMessageId !== null &&
+    messages.some((message) => message.id === presentation.assistantMessageId);
+}
+
+export function shouldShowAssistantResponseError(
+  messages: readonly ConversationMessage[],
+  messageId: string,
+): boolean {
+  const finalMessage = messages.at(-1);
+  return finalMessage?.id === messageId &&
+    finalMessage.status === "error" &&
+    Boolean(finalMessage.errorMessage);
 }
 
 export function mergeCompletedAssistantMessage(previous: ConversationMessage, completed: ConversationMessage): ConversationMessage {

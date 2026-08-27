@@ -74,6 +74,7 @@ type SessionRowProps = {
 function SessionRow({ active, editingTitle, entryIconKey, onDelete, onEditCancel, onEditSave, onEditTitleChange, onOpen, onOpenFolder, onRename, onSetPinned, running, session, timeLabel, t }: SessionRowProps) {
   const editing = editingTitle !== null;
   const renameInputRef = useRef<HTMLInputElement>(null);
+  const isAutomation = session.source === "automation";
   const rowClassName = editing
     ? "bg-white shadow-[0_1px_2px_rgba(0,0,0,0.04)] dark:bg-[#2a2c22]"
     : active
@@ -98,7 +99,11 @@ function SessionRow({ active, editingTitle, entryIconKey, onDelete, onEditCancel
   return (
     <div className={`group relative flex min-w-0 items-center rounded-[8px] ${rowClassName}`}>
       <div className={`flex h-8 min-w-0 flex-1 items-center gap-2 px-3 text-left text-[12px] ${running && !editing ? "pr-10" : ""} ${contentClassName}`}>
-        <AgentEntryIcon className={active ? "opacity-100" : "opacity-70 transition-opacity group-hover:opacity-100"} iconKey={entryIconKey} />
+        {isAutomation ? (
+          <CalendarClock className={`h-3.5 w-3.5 shrink-0 ${active ? "opacity-100" : "opacity-70 transition-opacity group-hover:opacity-100"}`} />
+        ) : (
+          <AgentEntryIcon className={active ? "opacity-100" : "opacity-70 transition-opacity group-hover:opacity-100"} iconKey={entryIconKey} />
+        )}
         {editing ? <input className="h-5 min-w-0 flex-1 rounded-[3px] border border-[#6f6f6a] bg-white px-1 text-[12px] text-[#242421] outline-none dark:bg-card dark:text-foreground" maxLength={120} onBlur={onEditCancel} onChange={(event) => onEditTitleChange(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); onEditSave(); } if (event.key === "Escape") { event.preventDefault(); onEditCancel(); } }} ref={renameInputRef} value={editingTitle} /> : <button className="min-w-0 flex-1 truncate text-left outline-none focus-visible:ring-2 focus-visible:ring-ring" onClick={() => onOpen(session)} type="button">{session.title}</button>}
         {session.pinnedAt !== null && !editing ? <Pin aria-label={t("pinSession")} className="h-2.5 w-2.5 shrink-0 text-[#738847] dark:text-[#bad47a]" /> : null}
         {!running || editing ? <span className={`shrink-0 pr-1 font-mono text-[10px] ${timeClassName} ${editing ? "opacity-100" : "group-hover:opacity-0"}`}>{timeLabel}</span> : null}

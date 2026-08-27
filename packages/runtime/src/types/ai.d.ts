@@ -24,6 +24,7 @@ export interface Model<TApi extends Api = Api> {
 
 export function getSupportedThinkingLevels(model: Model): ModelThinkingLevel[];
 export function clampThinkingLevel(model: Model, level: ModelThinkingLevel): ModelThinkingLevel;
+export function estimateBpeTokens(text: string): number;
 
 export interface AssistantMessage {
   role: "assistant";
@@ -41,6 +42,27 @@ export interface AssistantMessage {
     totalTokens: number;
   };
 }
+
+export interface RetryPolicy {
+  enabled: boolean;
+  maxRetries: number;
+  baseDelayMs: number;
+  maxDelayMs?: number;
+}
+
+export interface RetryCallbacks {
+  onRetryScheduled?: (attempt: number, maxAttempts: number, delayMs: number, errorMessage: string) => void | Promise<void>;
+  onRetryAttemptStart?: () => void | Promise<void>;
+  onRetryFinished?: (success: boolean, attempt: number, finalError?: string) => void | Promise<void>;
+}
+
+export function retryAssistantCall(
+  produce: () => Promise<AssistantMessage>,
+  policy: RetryPolicy | undefined,
+  signal: AbortSignal | undefined,
+  callbacks?: RetryCallbacks,
+): Promise<AssistantMessage>;
+export function isRetryableAssistantError(message: AssistantMessage): boolean;
 
 export interface TextContent {
   type: "text";

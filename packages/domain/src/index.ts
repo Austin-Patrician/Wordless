@@ -241,6 +241,8 @@ export interface SkillSummary {
   shadowedBy?: string;
   diagnostic?: string;
   contentBytes: number;
+  /** BPE token count of the complete skill file, calculated by the runtime. */
+  contentTokens: number;
   marketplace?: SkillMarketplaceOrigin;
 }
 
@@ -392,6 +394,7 @@ export interface SessionRecord {
   createdAt: number;
   updatedAt: number;
   expertSelection?: ExpertSelection;
+  source?: string | null;
 }
 
 export type ExpertSelection = {
@@ -1070,6 +1073,7 @@ export interface SessionDraft {
   toolApprovalMode?: ToolApprovalMode;
   presentation?: PresentationLaunchOptions;
   expertSelection?: ExpertSelection;
+  source?: string;
 }
 
 export type AutomationSchedule =
@@ -1632,7 +1636,7 @@ export interface SessionContextUsageCategories {
 export interface SessionContextUsage {
   contextWindow: number;
   usedTokens: number;
-  source: "provider" | "estimate";
+  source: "provider" | "tokenizer" | "estimate";
   categories: SessionContextUsageCategories;
 }
 
@@ -1657,6 +1661,16 @@ export interface ConversationMessage {
   timestamp: number;
   usage?: ConversationUsage;
   errorMessage?: string;
+}
+
+export interface ModelRetryState {
+  attempt: number;
+  maxRetries: number;
+  scheduledAt: number;
+  retryAt: number;
+  delayMs: number;
+  errorMessage: string;
+  failedMessageId: string;
 }
 
 export function conversationUsageFromUnknown(

@@ -19,7 +19,6 @@ import {
 
 const MAX_CONCURRENT_RUNS = 3;
 const MAX_TIMER_DELAY = 2_147_000_000;
-const AUTOMATION_SESSION_TITLE_PREFIX = "自动化 - ";
 const AUTOMATION_ENTRY_ID = "general-work";
 const DEFAULT_AUTOMATION_TOOL_APPROVAL_MODE: ToolApprovalMode = "bypass";
 const TOOL_APPROVAL_MODES = new Set<ToolApprovalMode>([
@@ -29,7 +28,7 @@ const TOOL_APPROVAL_MODES = new Set<ToolApprovalMode>([
 ]);
 
 function automationSessionTitle(name: string): string {
-  return `${AUTOMATION_SESSION_TITLE_PREFIX}${name}`.slice(0, 120);
+  return name.trim().slice(0, 120);
 }
 
 type AutomationServiceOptions = {
@@ -481,6 +480,7 @@ export class AutomationService {
         mode: entry.mode,
         entryId: entry.id,
         title: automationSessionTitle(run.automationName),
+        source: "automation",
         workspaceId: run.configuration.workspaceId,
         accessLevel: run.configuration.accessLevel,
         model: run.configuration.model,

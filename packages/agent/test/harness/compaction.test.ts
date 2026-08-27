@@ -147,8 +147,8 @@ describe("harness compaction", () => {
 		nextId = 0;
 	});
 
-	it("calculates total context tokens from usage", () => {
-		expect(calculateContextTokens(createMockUsage(1000, 500, 200, 100))).toBe(1800);
+	it("calculates prompt context tokens from usage", () => {
+		expect(calculateContextTokens(createMockUsage(1000, 500, 200, 100))).toBe(1300);
 		expect(calculateContextTokens(createMockUsage(0, 0, 0, 0))).toBe(0);
 	});
 
@@ -310,7 +310,7 @@ describe("harness compaction", () => {
 		).toBe(usage);
 		expect(estimateContextTokens([createUserMessage("no usage")]).lastUsageIndex).toBeNull();
 		expect(estimateContextTokens([assistant, createUserMessage("tail")])).toMatchObject({
-			usageTokens: 20,
+			usageTokens: 15,
 			lastUsageIndex: 0,
 		});
 		const estimate = estimateContextTokens([
@@ -319,10 +319,10 @@ describe("harness compaction", () => {
 			createUserMessage("continue"),
 			createAssistantMessage("Partial thinking", createMockUsage(0, 0)),
 		]);
-		expect(estimate.usageTokens).toBe(20);
+		expect(estimate.usageTokens).toBe(15);
 		expect(estimate.lastUsageIndex).toBe(1);
 		expect(estimate.trailingTokens).toBeGreaterThan(0);
-		expect(estimate.tokens).toBe(20 + estimate.trailingTokens);
+		expect(estimate.tokens).toBe(15 + estimate.trailingTokens);
 	});
 
 	it("builds session context with a compaction entry", () => {

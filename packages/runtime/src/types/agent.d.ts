@@ -41,6 +41,20 @@ export interface Skill {
   disableModelInvocation: boolean;
 }
 
+export interface ContextUsageEstimate {
+  tokens: number;
+  usageTokens: number;
+  trailingTokens: number;
+  lastUsageIndex: number | null;
+}
+
+export function estimateContextTokens(
+  messages: unknown[] | AgentMessage[],
+  expectedModel?: { provider: string; modelId: string },
+): ContextUsageEstimate;
+
+export function estimateTextTokens(text: string): number;
+
 export function formatSkillsForSystemPrompt(skills: Skill[], options?: { loadingInstruction?: string }): string;
 
 export interface ExecutionEnv {
@@ -95,6 +109,7 @@ export class Session<TMetadata extends SessionMetadata = SessionMetadata> {
   constructor(storage: SessionStorage<TMetadata>);
   getLeafId(): Promise<string | null>;
   getEntries(): Promise<SessionTreeEntry[]>;
+  buildContext(): Promise<{ messages: unknown[] }>;
   getBranch(): Promise<SessionTreeEntry[]>;
   moveTo(entryId: string | null): Promise<string | undefined>;
   appendModelChange(provider: string, modelId: string): Promise<string>;
@@ -107,7 +122,7 @@ export class SessionError extends Error {
 }
 
 export class AgentHarness<TSkill extends Skill = Skill> {
-  constructor(options: { env: ExecutionEnv; session: Session; models: Models; model: Model; systemPrompt: string; tools: readonly AgentTool[]; activeToolNames?: readonly string[]; thinkingLevel: ThinkingLevel; resources?: { skills?: TSkill[] } });
+  constructor(options: { env: ExecutionEnv; session: Session; models: Models; model: Model; systemPrompt: string; tools: readonly AgentTool[]; activeToolNames?: readonly string[]; thinkingLevel: ThinkingLevel; resources?: { skills?: TSkill[] }; streamOptions?: { maxRetries?: number; maxRetryDelayMs?: number; timeoutMs?: number } });
   prompt(text: string, options?: { messageId?: string; timestamp?: number }): Promise<AssistantMessage>;
   continue(): Promise<AssistantMessage>;
   prepareContextOverflowRecovery(): Promise<{ failedMessageEntryId: string }>;

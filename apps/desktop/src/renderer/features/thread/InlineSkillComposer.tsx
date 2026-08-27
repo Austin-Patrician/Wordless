@@ -23,6 +23,7 @@ import {
   KEY_DELETE_COMMAND,
   KEY_ENTER_COMMAND,
   KEY_ESCAPE_COMMAND,
+  PASTE_COMMAND,
   SELECTION_CHANGE_COMMAND,
   type EditorState,
   type LexicalEditor,
@@ -50,6 +51,7 @@ export type InlineWorkspaceReferenceToken = {
   name: string;
   kind: "file" | "directory";
 };
+
 
 export type InlineSkillComposerValue = {
   parts: UserPromptPart[];
@@ -104,6 +106,8 @@ type SerializedWorkspaceReferenceNode = Spread<
   { path: string; name: string; kind: "file" | "directory" },
   SerializedLexicalNode
 >;
+
+type SerializedPastedContentNode = Spread<{ text: string; chars: number }, SerializedLexicalNode>;
 
 class SkillTokenNode extends DecoratorNode<JSX.Element> {
   __skillId: string;
@@ -219,6 +223,28 @@ function $isWorkspaceReferenceNode(node: LexicalNode | null | undefined): node i
   return node instanceof WorkspaceReferenceNode;
 }
 
+class PastedContentNode extends DecoratorNode<JSX.Element> {
+  __text: string;
+  __chars: number;
+  static getType(): string { return "wordless-pasted-content"; }
+  static clone(node: PastedContentNode): PastedContentNode { return new PastedContentNode(node.__text, node.__chars, node.__key); }
+  static importJSON(node: SerializedPastedContentNode): PastedContentNode { return $createPastedContentNode(node.text, node.chars); }
+  constructor(text: string, chars = Array.from(text).length, key?: NodeKey) { super(key); this.__text = text; this.__chars = chars; }
+  createDOM(): HTMLElement { return document.createElement("span"); }
+  decorate(): JSX.Element { return <PastedContentToken chars={this.__chars} nodeKey={this.__key} text={this.__text} />; }
+  exportJSON(): SerializedPastedContentNode { return { ...super.exportJSON(), text: this.__text, chars: this.__chars, type: "wordless-pasted-content", version: 1 }; }
+  getText(): string { return this.getLatest().__text; }
+  getChars(): number { return this.getLatest().__chars; }
+  getTextContent(): string { return ""; }
+  isInline(): true { return true; }
+  isIsolated(): true { return true; }
+  isKeyboardSelectable(): true { return true; }
+  updateDOM(): false { return false; }
+}
+
+function $createPastedContentNode(text: string, chars = Array.from(text).length): PastedContentNode { return $applyNodeReplacement(new PastedContentNode(text, chars)); }
+function $isPastedContentNode(node: LexicalNode | null | undefined): node is PastedContentNode { return node instanceof PastedContentNode; }
+
 function $removeTokenAndSelect(node: LexicalNode): void {
   const parent = node.getParent();
   if (!parent || !$isElementNode(parent)) {
@@ -275,6 +301,10 @@ function $collectEditorParts(): { parts: UserPromptPart[]; tokenIds: string[] } 
     }
     if ($isWorkspaceReferenceNode(node)) {
       parts.push({ type: "workspace-reference", path: node.getPath(), name: node.getName(), kind: node.getKind() });
+      return;
+    }
+    if ($isPastedContentNode(node)) {
+      parts.push({ type: "text", text: node.getText() });
       return;
     }
     if ($isElementNode(node)) {
@@ -441,6 +471,16 @@ function WorkspaceReferenceToken({ nodeKey, name, path, kind }: { nodeKey: NodeK
   );
 }
 
+function PastedContentToken({ chars, nodeKey, text }: { chars: number; nodeKey: NodeKey; text: string }) {
+  const [editor] = useLexicalComposerContext();
+  return <span className="inline-flex h-7 select-none items-center pl-1 pr-1.5 align-bottom" contentEditable={false} title={text}>
+    <span className="inline-flex h-6 max-w-[240px] items-center gap-1 rounded-[5px] border border-[#d5c9b8] bg-[#f7f1e8] px-1.5 font-sans text-[12px] font-medium leading-4 text-[#66523a] dark:border-[#665b4d] dark:bg-[#373127] dark:text-[#ead9bd]">
+      <span className="min-w-0 truncate">Pasted Content · {chars} chars</span>
+      <button aria-label={`Remove pasted content (${chars} chars)`} className="grid h-4 w-4 shrink-0 place-items-center rounded-[4px] text-current/70 hover:bg-black/5" onClick={() => removeToken(editor, nodeKey)} onMouseDown={(event) => event.preventDefault()} type="button"><X className="h-3 w-3" /></button>
+    </span>
+  </span>;
+}
+
 function editorValue(editorState: EditorState): InlineSkillComposerValue {
   return editorState.read(() => {
     const { parts, tokenIds } = $collectEditorParts();
@@ -551,9 +591,29 @@ function SelectionMemoryPlugin({ selectionRef }: { selectionRef: MutableRefObjec
   return null;
 }
 
+function PastePlugin({ disabled, readOnly }: { disabled: boolean; readOnly: boolean }) {
+  const [editor] = useLexicalComposerContext();
+  useEffect(() => editor.registerCommand(PASTE_COMMAND, (event) => {
+    if (disabled || readOnly) return false;
+    const clipboardEvent = event as ClipboardEvent;
+    const text = clipboardEvent.clipboardData?.getData("text/plain") ?? "";
+    if (Array.from(text).length <= 200) return false;
+    event.preventDefault();
+    editor.update(() => {
+      const selection = $getSelection();
+      const node = $createPastedContentNode(text);
+      if ($isRangeSelection(selection)) selection.insertNodes([node]);
+      else $getRoot().append($createParagraphNode().append(node));
+      node.selectNext();
+    });
+    return true;
+  }, COMMAND_PRIORITY_HIGH), [disabled, editor, readOnly]);
+  return null;
+}
+
 const initialConfig = {
   namespace: "wordless-inline-skill-composer",
-  nodes: [SkillTokenNode, WorkspaceReferenceNode],
+  nodes: [SkillTokenNode, WorkspaceReferenceNode, PastedContentNode],
   onError(error: Error): void {
     throw error;
   },
@@ -731,6 +791,7 @@ export const InlineSkillComposer = forwardRef<InlineSkillComposerHandle, InlineS
       <EditorEditablePlugin editable={!disabled && !readOnly} />
       <EditorCommandsPlugin onStop={onStop} onSubmit={onSubmit} readOnly={readOnly} selectionRef={selectionRef} stopEnabled={stopEnabled} submitDisabled={submitDisabled} />
       <SelectionMemoryPlugin selectionRef={selectionRef} />
+      <PastePlugin disabled={disabled} readOnly={readOnly} />
       <OnChangePlugin
         ignoreSelectionChange
         onChange={(nextEditorState) => {

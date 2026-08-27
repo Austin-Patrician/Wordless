@@ -16,6 +16,7 @@ export {
 	compact,
 	DEFAULT_COMPACTION_SETTINGS,
 	estimateContextTokens,
+	estimateTextTokens,
 	estimateTokens,
 	findCutPoint,
 	findTurnStartIndex,

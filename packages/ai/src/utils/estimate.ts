@@ -1,4 +1,5 @@
 import type { AssistantMessage, Context, ImageContent, Message, TextContent, Tool, Usage } from "../types.ts";
+import { estimateBpeTokens } from "./tokenizer.ts";
 
 export interface ContextUsageEstimate {
 	/** Estimated total context tokens. */
@@ -11,12 +12,17 @@ export interface ContextUsageEstimate {
 	lastUsageIndex: number | null;
 }
 
-const CHARS_PER_TOKEN = 4;
-const ESTIMATED_IMAGE_CHARS = 4800;
+const ESTIMATED_IMAGE_TOKENS = 1200;
 
-export function calculateContextTokens(usage: Usage): number {
-	return usage.totalTokens || usage.input + usage.output + usage.cacheRead + usage.cacheWrite;
+/** Prompt tokens reported by a provider. Output never belongs to the prompt baseline. */
+export function calculatePromptTokens(usage: Usage): number {
+	const componentTotal = usage.input + usage.cacheRead + usage.cacheWrite;
+	if (Number.isFinite(componentTotal) && componentTotal > 0) return Math.max(0, Math.floor(componentTotal));
+	return Math.max(0, Math.floor((usage.totalTokens || 0) - (usage.output || 0)));
 }
+
+/** @deprecated Use calculatePromptTokens. */
+export const calculateContextTokens = calculatePromptTokens;
 
 function safeJsonStringify(value: unknown): string {
 	try {
@@ -26,38 +32,35 @@ function safeJsonStringify(value: unknown): string {
 	}
 }
 
-function estimateTextAndImageContentChars(content: string | Array<TextContent | ImageContent>): number {
-	if (typeof content === "string") return content.length;
-
-	let chars = 0;
-	for (const block of content) chars += block.type === "text" ? block.text.length : ESTIMATED_IMAGE_CHARS;
-	return chars;
-}
-
 export function estimateTextTokens(text: string): number {
-	return Math.ceil(text.length / CHARS_PER_TOKEN);
+	return estimateBpeTokens(text);
 }
 
 export function estimateTextAndImageContentTokens(content: string | Array<TextContent | ImageContent>): number {
-	return Math.ceil(estimateTextAndImageContentChars(content) / CHARS_PER_TOKEN);
+	if (typeof content === "string") return estimateTextTokens(content);
+	let tokens = 0;
+	for (const block of content) tokens += block.type === "text" ? estimateTextTokens(block.text) : ESTIMATED_IMAGE_TOKENS;
+	return tokens;
 }
 
 export function estimateMessageTokens(message: Message): number {
-	let chars = 0;
+	const framingTokens = 4;
+	if (message.role === "user") return framingTokens + estimateTextAndImageContentTokens(message.content);
+	if (message.role === "toolResult") {
+		return framingTokens + estimateTextTokens(message.toolName) + estimateTextAndImageContentTokens(message.content);
+	}
 
-	if (message.role === "user") return estimateTextAndImageContentTokens(message.content);
-	if (message.role === "toolResult") return estimateTextAndImageContentTokens(message.content);
-
+	let tokens = framingTokens;
 	for (const block of message.content) {
 		if (block.type === "text") {
-			chars += block.text.length;
+			tokens += estimateTextTokens(block.text);
 		} else if (block.type === "thinking") {
-			chars += block.thinking.length;
+			tokens += estimateTextTokens(block.thinking);
 		} else {
-			chars += block.name.length + safeJsonStringify(block.arguments).length;
+			tokens += estimateTextTokens(block.name) + estimateTextTokens(safeJsonStringify(block.arguments));
 		}
 	}
-	return Math.ceil(chars / CHARS_PER_TOKEN);
+	return tokens;
 }
 
 function getLastAssistantUsageInfo(messages: readonly Message[]): { usage: Usage; index: number } | undefined {
@@ -75,7 +78,7 @@ function getLastAssistantUsageInfo(messages: readonly Message[]): { usage: Usage
 				usageAppliesToPrefix &&
 				assistant.stopReason !== "aborted" &&
 				assistant.stopReason !== "error" &&
-				calculateContextTokens(assistant.usage) > 0
+				calculatePromptTokens(assistant.usage) > 0
 			) {
 				usageInfo = { usage: assistant.usage, index: i };
 			}
@@ -89,9 +92,11 @@ function getLastAssistantUsageInfo(messages: readonly Message[]): { usage: Usage
 function estimateMessages(messages: readonly Message[]): ContextUsageEstimate {
 	const usageInfo = getLastAssistantUsageInfo(messages);
 	if (usageInfo) {
-		const usageTokens = calculateContextTokens(usageInfo.usage);
+		const usageTokens = calculatePromptTokens(usageInfo.usage);
 		let trailingTokens = 0;
-		for (let i = usageInfo.index + 1; i < messages.length; i++) {
+		// Provider usage describes the prompt before this assistant response. The
+		// response itself is part of the next request and must be counted as delta.
+		for (let i = usageInfo.index; i < messages.length; i++) {
 			trailingTokens += estimateMessageTokens(messages[i]);
 		}
 		return { tokens: usageTokens + trailingTokens, usageTokens, trailingTokens, lastUsageIndex: usageInfo.index };
@@ -118,7 +123,7 @@ export function estimateContextTokens(context: Context | readonly Message[]): Co
 	if (estimate.lastUsageIndex !== null) {
 		const addedNames = new Set(
 			context.messages
-				.slice(estimate.lastUsageIndex + 1)
+				.slice(estimate.lastUsageIndex)
 				.filter((message) => message.role === "toolResult")
 				.flatMap((message) => message.addedToolNames ?? []),
 		);

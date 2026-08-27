@@ -4,6 +4,7 @@ import type { Context, Model } from "../src/types.ts";
 
 const mockState = vi.hoisted(() => ({
 	requestOptions: [] as unknown[],
+	failuresRemaining: 0,
 }));
 
 vi.mock("openai", () => {
@@ -30,10 +31,17 @@ vi.mock("openai", () => {
 							response: { status: number; headers: Headers };
 						}>;
 					};
-					promise.withResponse = async () => ({
-						data: stream,
-						response: { status: 200, headers: new Headers() },
-					});
+					promise.withResponse = async () => {
+						if (mockState.failuresRemaining > 0) {
+							mockState.failuresRemaining -= 1;
+							const error = Object.assign(new Error("524 status code (no body)"), {
+								status: 524,
+								headers: new Headers({ "retry-after-ms": "1" }),
+							});
+							throw error;
+						}
+						return { data: stream, response: { status: 200, headers: new Headers() } };
+					};
 					return promise;
 				},
 			},
@@ -72,6 +80,7 @@ async function consume(options?: { maxRetries?: number }) {
 describe("openai-completions provider retries", () => {
 	beforeEach(() => {
 		mockState.requestOptions = [];
+		mockState.failuresRemaining = 0;
 	});
 
 	it("disables SDK retries by default", async () => {
@@ -79,8 +88,13 @@ describe("openai-completions provider retries", () => {
 		expect(mockState.requestOptions).toEqual([expect.objectContaining({ maxRetries: 0 })]);
 	});
 
-	it("honors explicit provider retry settings", async () => {
+	it("retries through the abortable Wordless wrapper while keeping SDK retries disabled", async () => {
+		mockState.failuresRemaining = 1;
 		await consume({ maxRetries: 2 });
-		expect(mockState.requestOptions).toEqual([expect.objectContaining({ maxRetries: 2 })]);
+		expect(mockState.requestOptions).toHaveLength(2);
+		expect(mockState.requestOptions).toEqual([
+			expect.objectContaining({ maxRetries: 0 }),
+			expect.objectContaining({ maxRetries: 0 }),
+		]);
 	});
 });

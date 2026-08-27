@@ -50,6 +50,7 @@ describe("SkillRegistry", () => {
       const managedSkill = first.skills.find((skill) => skill.source === "wordless" && skill.name === "shared");
       const piSkill = first.skills.find((skill) => skill.source === "pi" && skill.name === "shared");
       expect(managedSkill?.state).toBe("active");
+      expect(managedSkill?.contentTokens).toBeGreaterThan(0);
       expect(piSkill?.state).toBe("shadowed");
       expect(first.skills.some((skill) => skill.state === "invalid" && skill.source === "claude")).toBe(true);
       expect(registry.getSessionSkills("workspace-1").find((skill) => skill.name === "shared")?.description).toBe("Workspace variant");
@@ -78,6 +79,7 @@ describe("SkillRegistry", () => {
     try {
       const skill = registry.snapshot().skills.find((candidate) => candidate.name === "data-analysis");
       expect(skill).toMatchObject({ source: "built-in", state: "active", enabled: true });
+      expect(skill?.contentTokens).toBeGreaterThan(0);
       expect(registry.getSessionSkills(null).map((candidate) => candidate.name)).toContain("data-analysis");
       expect(registry.getRequiredBuiltInSkill("data-analysis")?.description).toBe("Built-in analysis");
 

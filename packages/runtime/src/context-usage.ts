@@ -1,5 +1,5 @@
-import { Buffer } from "node:buffer";
 import type { AgentExtensionSnapshot } from "@wordless/agent-extension-sdk";
+import { estimateBpeTokens } from "@wordless/ai";
 import type { ConnectorSummary, SessionContextUsage, SessionContextUsageCategories } from "@wordless/domain";
 import type { ProfileDefinition } from "@wordless/profile-sdk";
 
@@ -16,7 +16,8 @@ type ContextUsageEstimateInput = {
 function estimateTokens(value: unknown): number {
   try {
     const serialized = JSON.stringify(value);
-    return serialized ? Math.max(0, Math.ceil(Buffer.byteLength(serialized, "utf8") / 4)) : 0;
+    if (!serialized) return 0;
+    return estimateBpeTokens(serialized);
   } catch {
     return 0;
   }
@@ -72,7 +73,7 @@ export function estimateSessionContextUsage(input: ContextUsageEstimateInput): S
   return {
     categories: providerTokens ? scaledCategories(categories, usedTokens) : categories,
     contextWindow: input.contextWindow,
-    source: providerTokens ? "provider" : "estimate",
+    source: providerTokens ? "provider" : "tokenizer",
     usedTokens,
   };
 }

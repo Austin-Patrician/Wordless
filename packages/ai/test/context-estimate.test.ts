@@ -51,13 +51,11 @@ describe("context token estimation", () => {
 			],
 		};
 
-		expect(estimateContextTokens(context)).toEqual({
-			tokens: 1_005,
-			usageTokens: 0,
-			trailingTokens: 1_005,
-			lastUsageIndex: null,
-		});
-		expect(buildBaseOptions(model, context).maxTokens).toBe(4_899);
+		const estimate = estimateContextTokens(context);
+		expect(estimate.lastUsageIndex).toBeNull();
+		expect(estimate.tokens).toBe(estimate.trailingTokens);
+		expect(estimate.tokens).toBeGreaterThan(0);
+		expect(buildBaseOptions(model, context).maxTokens).toBe(model.contextWindow - estimate.tokens - 4096);
 	});
 
 	it("uses assistant usage again after a response to the inserted context", () => {
@@ -71,11 +69,10 @@ describe("context token estimation", () => {
 			],
 		};
 
-		expect(estimateContextTokens(context)).toEqual({
-			tokens: 2_001,
-			usageTokens: 2_000,
-			trailingTokens: 1,
-			lastUsageIndex: 3,
-		});
+		const estimate = estimateContextTokens(context);
+		expect(estimate.usageTokens).toBe(2_000);
+		expect(estimate.lastUsageIndex).toBe(3);
+		expect(estimate.trailingTokens).toBeGreaterThan(0);
+		expect(estimate.tokens).toBe(estimate.usageTokens + estimate.trailingTokens);
 	});
 });

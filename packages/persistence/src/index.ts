@@ -172,8 +172,8 @@ export class WordlessDatabase {
   upsertSession(session: SessionRecord): void {
     this.database
       .prepare(
-        `INSERT INTO sessions(id, title, workspace_id, runtime_root_path, mode, entry_id, profile_id, profile_version, driver_id, journal_format, workbench_id, access_level, model_connection_id, model_id, journal_path, connector_ids, interaction_mode, tool_approval_mode, thinking_level, pinned_at, expert_selection, created_at, updated_at)
-         VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `INSERT INTO sessions(id, title, workspace_id, runtime_root_path, mode, entry_id, profile_id, profile_version, driver_id, journal_format, workbench_id, access_level, model_connection_id, model_id, journal_path, connector_ids, interaction_mode, tool_approval_mode, thinking_level, pinned_at, expert_selection, source, created_at, updated_at)
+         VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(id) DO UPDATE SET
            title = excluded.title,
            workspace_id = excluded.workspace_id,
@@ -195,6 +195,7 @@ export class WordlessDatabase {
            thinking_level = excluded.thinking_level,
            pinned_at = excluded.pinned_at,
            expert_selection = excluded.expert_selection,
+           source = excluded.source,
            updated_at = excluded.updated_at`,
       )
       .run(
@@ -219,6 +220,7 @@ export class WordlessDatabase {
         session.thinkingLevel,
         session.pinnedAt,
         session.expertSelection ? JSON.stringify(session.expertSelection) : null,
+        session.source ?? null,
         session.createdAt,
         session.updatedAt,
       );
@@ -674,6 +676,7 @@ export class WordlessDatabase {
       id TEXT PRIMARY KEY, status TEXT NOT NULL, position INTEGER NOT NULL DEFAULT 0, due_at INTEGER,
       session_id TEXT, document TEXT NOT NULL, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL
     ); CREATE INDEX tasks_order ON tasks(status, position, updated_at DESC); CREATE INDEX tasks_session ON tasks(session_id);`);
+    if (this.claimMigration(17)) this.database.exec("ALTER TABLE sessions ADD COLUMN source TEXT;");
   }
 
   private readWorkspace(row: SqlRow): WorkspaceRecord {
@@ -729,6 +732,7 @@ export class WordlessDatabase {
             : undefined;
         } catch { return undefined; }
       })(),
+      source: row.source === null || row.source === undefined ? undefined : asString(row.source),
       createdAt: asNumber(row.created_at),
       updatedAt: asNumber(row.updated_at),
     };

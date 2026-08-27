@@ -26,6 +26,7 @@ import type {
   MessageToolSource,
   ModelCapabilities,
   ModelReference,
+  ModelRetryState,
   ModelRequirements,
   ProfileReference,
   SecurityPolicySnapshot,
@@ -108,6 +109,7 @@ export const SESSION_FILE_BASELINE_JOURNAL_TYPE =
   "wordless.session-file-baseline";
 export const USER_REQUEST_JOURNAL_TYPE = "wordless.user-request";
 export const CONTEXT_COMPACTION_JOURNAL_TYPE = "wordless.context-compaction";
+export const MODEL_RETRY_JOURNAL_TYPE = "wordless.model-retry";
 
 export interface PersistedOperationApproval {
   callId: string;
@@ -132,6 +134,11 @@ export interface PersistedContextCompaction {
   tokensAfter: number;
   model: ModelReference;
   recoveredFailureEntryId?: string;
+}
+
+export interface PersistedModelRetry extends ModelRetryState {
+  failedMessageEntryId: string;
+  model: ModelReference;
 }
 
 const WORKSPACE_ATTACHMENT_START = "\n<wordless-workspace-attachments>\n";
@@ -750,6 +757,12 @@ export type AgentDriverEventBase =
       resolution: UserRequestResolution;
     }
   | { type: "model.changed"; model: ModelReference }
+  | { type: "model.retry.scheduled"; retry: ModelRetryState }
+  | {
+      type: "model.retry.started";
+      attempt: number;
+      maxRetries: number;
+    }
   | { type: "context.compaction.started"; trigger: ContextCompactionTrigger }
   | {
       type: "context.compaction.completed";

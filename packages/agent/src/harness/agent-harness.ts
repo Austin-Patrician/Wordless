@@ -703,7 +703,7 @@ export class AgentHarness<
 	 * Detach the latest failed assistant response from the active session branch.
 	 * The journal entry remains available for audit history, but is excluded from retry context.
 	 */
-	async prepareContextOverflowRecovery(): Promise<{ failedMessageEntryId: string }> {
+	async prepareFailedResponseRecovery(): Promise<{ failedMessageEntryId: string }> {
 		if (this.phase !== "idle") throw new AgentHarnessError("busy", "Context overflow recovery requires an idle harness");
 		try {
 			const branch = await this.session.getBranch();
@@ -711,7 +711,7 @@ export class AgentHarness<
 			if (
 				entry?.type !== "message" ||
 				entry.message.role !== "assistant" ||
-				(entry.message.stopReason !== "error" && entry.message.stopReason !== "length")
+				(entry.message.stopReason !== "error" && entry.message.stopReason !== "length" && entry.message.stopReason !== "stop")
 			) {
 				throw new AgentHarnessError("invalid_state", "The active session does not end with a recoverable assistant response");
 			}
@@ -720,6 +720,10 @@ export class AgentHarness<
 		} catch (error) {
 			throw normalizeHarnessError(error, "session");
 		}
+	}
+
+	async prepareContextOverflowRecovery(): Promise<{ failedMessageEntryId: string }> {
+		return await this.prepareFailedResponseRecovery();
 	}
 
 	async skill(name: string, additionalInstructions?: string): Promise<AssistantMessage> {
@@ -794,7 +798,10 @@ export class AgentHarness<
 			const model = this.model;
 			if (!model) throw new AgentHarnessError("invalid_state", "No model set for compaction");
 			const branchEntries = await this.session.getBranch();
-			const preparationResult = prepareCompaction(branchEntries, DEFAULT_COMPACTION_SETTINGS);
+			const preparationResult = prepareCompaction(branchEntries, DEFAULT_COMPACTION_SETTINGS, {
+				provider: model.provider,
+				modelId: model.id,
+			});
 			if (!preparationResult.ok) throw preparationResult.error;
 			const preparation = preparationResult.value;
 			if (!preparation) throw new AgentHarnessError("compaction", "Nothing to compact");

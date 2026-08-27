@@ -1,4 +1,13 @@
-import type { AssistantMessage, ImageContent, Model, Models, TextContent, Usage } from "@wordless/ai";
+import {
+	calculatePromptTokens,
+	estimateBpeTokens,
+	type AssistantMessage,
+	type ImageContent,
+	type Model,
+	type Models,
+	type TextContent,
+	type Usage,
+} from "@wordless/ai";
 import type { AgentMessage, ThinkingLevel } from "../../types.ts";
 import {
 	convertToLlm,
@@ -114,9 +123,9 @@ export const DEFAULT_COMPACTION_SETTINGS: CompactionSettings = {
 	keepRecentTokens: 20000,
 };
 
-/** Calculate total context tokens from provider usage. */
+/** Calculate prompt tokens from provider usage. Output tokens are not part of the prompt baseline. */
 export function calculateContextTokens(usage: Usage): number {
-	return usage.totalTokens || usage.input + usage.output + usage.cacheRead + usage.cacheWrite;
+	return calculatePromptTokens(usage);
 }
 function getAssistantUsage(msg: AgentMessage): Usage | undefined {
 	if (msg.role === "assistant" && "usage" in msg) {
@@ -157,17 +166,30 @@ export interface ContextUsageEstimate {
 	lastUsageIndex: number | null;
 }
 
-function getLastAssistantUsageInfo(messages: AgentMessage[]): { usage: Usage; index: number } | undefined {
+function getLastAssistantUsageInfo(
+	messages: AgentMessage[],
+	expectedModel?: { provider: string; modelId: string },
+): { usage: Usage; index: number } | undefined {
 	for (let i = messages.length - 1; i >= 0; i--) {
-		const usage = getAssistantUsage(messages[i]);
-		if (usage) return { usage, index: i };
+		const message = messages[i]!;
+		const usage = getAssistantUsage(message);
+		if (
+			usage &&
+			(!expectedModel ||
+				(message.role === "assistant" &&
+					message.provider === expectedModel.provider &&
+					message.model === expectedModel.modelId))
+		) return { usage, index: i };
 	}
 	return undefined;
 }
 
 /** Estimate context tokens for messages using provider usage when available. */
-export function estimateContextTokens(messages: AgentMessage[]): ContextUsageEstimate {
-	const usageInfo = getLastAssistantUsageInfo(messages);
+export function estimateContextTokens(
+	messages: AgentMessage[],
+	expectedModel?: { provider: string; modelId: string },
+): ContextUsageEstimate {
+	const usageInfo = getLastAssistantUsageInfo(messages, expectedModel);
 
 	if (!usageInfo) {
 		let estimated = 0;
@@ -184,7 +206,9 @@ export function estimateContextTokens(messages: AgentMessage[]): ContextUsageEst
 
 	const usageTokens = calculateContextTokens(usageInfo.usage);
 	let trailingTokens = 0;
-	for (let i = usageInfo.index + 1; i < messages.length; i++) {
+	// The provider usage describes the request before this assistant response.
+	// Include that response itself in the next request's incremental estimate.
+	for (let i = usageInfo.index; i < messages.length; i++) {
 		trailingTokens += estimateTokens(messages[i]);
 	}
 
@@ -202,61 +226,60 @@ export function shouldCompact(contextTokens: number, contextWindow: number, sett
 	return contextTokens > contextWindow - settings.reserveTokens;
 }
 
-const ESTIMATED_IMAGE_CHARS = 4800;
+const ESTIMATED_IMAGE_TOKENS = 1200;
 
-function estimateTextAndImageContentChars(content: string | Array<{ type: string; text?: string }>): number {
-	if (typeof content === "string") {
-		return content.length;
-	}
+/** Conservative fallback for providers without a local tokenizer. */
+export function estimateTextTokens(text: string): number {
+	return estimateBpeTokens(text);
+}
 
-	let chars = 0;
+function estimateTextAndImageContentTokens(content: string | Array<{ type: string; text?: string }>): number {
+	if (typeof content === "string") return estimateTextTokens(content);
+	let tokens = 0;
 	for (const block of content) {
 		if (block.type === "text" && block.text) {
-			chars += block.text.length;
+			tokens += estimateTextTokens(block.text);
 		} else if (block.type === "image") {
-			chars += ESTIMATED_IMAGE_CHARS;
+			tokens += ESTIMATED_IMAGE_TOKENS;
 		}
 	}
-	return chars;
+	return tokens;
 }
 
 /** Estimate token count for one message using a conservative character heuristic. */
 export function estimateTokens(message: AgentMessage): number {
-	let chars = 0;
+	const framingTokens = 4;
 
 	switch (message.role) {
 		case "user": {
-			chars = estimateTextAndImageContentChars(
+			return framingTokens + estimateTextAndImageContentTokens(
 				(message as { content: string | Array<{ type: string; text?: string }> }).content,
 			);
-			return Math.ceil(chars / 4);
 		}
 		case "assistant": {
 			const assistant = message as AssistantMessage;
+			let tokens = framingTokens;
 			for (const block of assistant.content) {
 				if (block.type === "text") {
-					chars += block.text.length;
+					tokens += estimateTextTokens(block.text);
 				} else if (block.type === "thinking") {
-					chars += block.thinking.length;
+					tokens += estimateTextTokens(block.thinking);
 				} else if (block.type === "toolCall") {
-					chars += block.name.length + safeJsonStringify(block.arguments).length;
+					tokens += estimateTextTokens(block.name) + estimateTextTokens(safeJsonStringify(block.arguments));
 				}
 			}
-			return Math.ceil(chars / 4);
+			return tokens;
 		}
 		case "custom":
 		case "toolResult": {
-			chars = estimateTextAndImageContentChars(message.content);
-			return Math.ceil(chars / 4);
+			return framingTokens + estimateTextAndImageContentTokens(message.content);
 		}
 		case "bashExecution": {
-			chars = message.command.length + message.output.length;
-			return Math.ceil(chars / 4);
+			return framingTokens + estimateTextTokens(message.command) + estimateTextTokens(message.output);
 		}
 		case "branchSummary":
 		case "compactionSummary": {
-			chars = message.summary.length;
-			return Math.ceil(chars / 4);
+			return framingTokens + estimateTextTokens(message.summary);
 		}
 	}
 
@@ -475,7 +498,18 @@ export async function generateSummary(
 	if (customInstructions) {
 		basePrompt = `${basePrompt}\n\nAdditional focus: ${customInstructions}`;
 	}
-	const llmMessages = convertToLlm(currentMessages);
+	// Keep summarization requests bounded even when one historical turn is huge.
+	const maxInputTokens = Math.max(1024, Math.floor((model.contextWindow || 128000) * 0.6));
+	const boundedMessages: AgentMessage[] = [];
+	let boundedTokens = 0;
+	for (let i = currentMessages.length - 1; i >= 0; i--) {
+		const candidate = currentMessages[i]!;
+		const candidateTokens = estimateTokens(candidate);
+		if (boundedMessages.length > 0 && boundedTokens + candidateTokens > maxInputTokens) break;
+		boundedMessages.unshift(candidate);
+		boundedTokens += candidateTokens;
+	}
+	const llmMessages = convertToLlm(boundedMessages);
 	const conversationText = serializeConversation(llmMessages);
 	let promptText = `<conversation>\n${conversationText}\n</conversation>\n\n`;
 	if (previousSummary) {
@@ -545,6 +579,7 @@ export interface CompactionPreparation {
 export function prepareCompaction(
 	pathEntries: SessionTreeEntry[],
 	settings: CompactionSettings,
+	expectedModel?: { provider: string; modelId: string },
 ): Result<CompactionPreparation | undefined, CompactionError> {
 	if (pathEntries.length === 0 || pathEntries[pathEntries.length - 1].type === "compaction") {
 		return ok(undefined);
@@ -568,7 +603,7 @@ export function prepareCompaction(
 	}
 	const boundaryEnd = pathEntries.length;
 
-	const tokensBefore = estimateContextTokens(buildSessionContext(pathEntries).messages).tokens;
+	const tokensBefore = estimateContextTokens(buildSessionContext(pathEntries).messages, expectedModel).tokens;
 
 	const cutPoint = findCutPoint(pathEntries, boundaryStart, boundaryEnd, settings.keepRecentTokens);
 	const firstKeptEntry = pathEntries[cutPoint.firstKeptEntryIndex];
@@ -714,7 +749,17 @@ async function generateTurnPrefixSummary(
 		Math.floor(0.5 * reserveTokens),
 		model.maxTokens > 0 ? model.maxTokens : Number.POSITIVE_INFINITY,
 	);
-	const llmMessages = convertToLlm(messages);
+	const maxInputTokens = Math.max(1024, Math.floor((model.contextWindow || 128000) * 0.5));
+	const bounded: AgentMessage[] = [];
+	let boundedTokens = 0;
+	for (let i = messages.length - 1; i >= 0; i--) {
+		const candidate = messages[i]!;
+		const candidateTokens = estimateTokens(candidate);
+		if (bounded.length > 0 && boundedTokens + candidateTokens > maxInputTokens) break;
+		bounded.unshift(candidate);
+		boundedTokens += candidateTokens;
+	}
+	const llmMessages = convertToLlm(bounded);
 	const conversationText = serializeConversation(llmMessages);
 	const promptText = `<conversation>\n${conversationText}\n</conversation>\n\n${TURN_PREFIX_SUMMARIZATION_PROMPT}`;
 	const summarizationMessages = [

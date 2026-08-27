@@ -1,6 +1,8 @@
 import { randomUUID } from "node:crypto";
 import {
   AgentHarness,
+  estimateContextTokens,
+  estimateTextTokens,
   formatSkillsForSystemPrompt,
   type AgentHarnessEvent,
   type AgentMessage,
@@ -10,7 +12,13 @@ import {
   type ThinkingLevel,
   type Skill,
 } from "@wordless/agent";
-import { isContextOverflow, type AssistantMessage } from "@wordless/ai";
+import {
+  isContextOverflow,
+  isRetryableAssistantError,
+  retryAssistantCall,
+  type RetryPolicy,
+  type AssistantMessage,
+} from "@wordless/ai";
 import { Type, type Static } from "typebox";
 import type {
   AgentDriver,
@@ -33,6 +41,7 @@ import type {
 import {
   OPERATION_APPROVAL_JOURNAL_TYPE,
   CONTEXT_COMPACTION_JOURNAL_TYPE,
+  MODEL_RETRY_JOURNAL_TYPE,
   SESSION_FILE_BASELINE_JOURNAL_TYPE,
   USER_REQUEST_JOURNAL_TYPE,
   projectUserMessageContent,
@@ -44,6 +53,7 @@ import {
   type PersistedOperationApproval,
   type PersistedSessionFileBaseline,
   type PersistedContextCompaction,
+  type PersistedModelRetry,
 } from "@wordless/agent-driver-sdk";
 import { conversationUsageFromUnknown } from "@wordless/domain";
 import type {
@@ -54,6 +64,7 @@ import type {
   ConversationUsage,
   MessageBlock,
   MessageUserRequest,
+  ModelRetryState,
   UserRequest,
   UserRequestAnswer,
   UserRequestField,
@@ -275,8 +286,15 @@ type ClarificationBriefToolDetails = {
   clarificationBrief: ClarificationBrief;
 };
 
-type SuppressedOverflowMessage = {
+type SuppressedResponseMessage = {
   message: ConversationMessage;
+};
+
+const MODEL_RETRY_POLICY: RetryPolicy = {
+  enabled: true,
+  maxRetries: 5,
+  baseDelayMs: 5_000,
+  maxDelayMs: 60_000,
 };
 
 function asRecord(value: unknown): Record<string, unknown> | undefined {
@@ -736,23 +754,6 @@ function contentToText(value: unknown): string {
     .join("\n");
 }
 
-function estimateJournalTokens(entries: readonly unknown[]): number {
-  try {
-    let lastCompaction = -1;
-    for (let index = entries.length - 1; index >= 0; index -= 1) {
-      if (asRecord(entries[index])?.type === "compaction") {
-        lastCompaction = index;
-        break;
-      }
-    }
-    const contextEntries =
-      lastCompaction === -1 ? entries : entries.slice(lastCompaction);
-    return Math.ceil(JSON.stringify(contextEntries).length / 4);
-  } catch {
-    return 0;
-  }
-}
-
 function toConversationUsage(value: unknown): ConversationUsage | undefined {
   const usage = asRecord(value);
   const cost = asRecord(usage?.cost);
@@ -941,10 +942,14 @@ class AgentHarnessDriverSession implements AgentDriverSession {
   >();
   private readonly persistedFileBaselinePaths: Set<string>;
   private readonly toolMessageIds = new Map<string, string>();
+  private readonly staticContextTokens: number;
   private activeAssistantMessageId: string | undefined;
   private activeUserSubmission: UserMessageSubmission | undefined;
   private overflowRecoveryAttempted = false;
-  private suppressedOverflowMessage: SuppressedOverflowMessage | undefined;
+  private suppressedOverflowMessage: SuppressedResponseMessage | undefined;
+  private suppressedRetryMessage: SuppressedResponseMessage | undefined;
+  private modelRetryAttempt = 0;
+  private modelRetryAbortController: AbortController | undefined;
   private currentPrompt: string | undefined;
   private selectedSkillsForRun: readonly AgentRuntimeSkill[] = [];
   private disposed = false;
@@ -1040,6 +1045,10 @@ class AgentHarnessDriverSession implements AgentDriverSession {
             ...context.connectorTools.map((tool) => tool.name),
           ];
     const toolContract = `Only call tools exposed for this session: ${activeToolNames.join(", ") || "none"}. Never invent or call tools outside this list.`;
+    this.staticContextTokens =
+      estimateTextTokens(baseSystemPrompt) +
+      estimateTextTokens(toolContract) +
+      estimateTextTokens(JSON.stringify(tools.filter((tool) => activeToolNames.includes(tool.name))));
     this.harness = new AgentHarness<Skill>({
       env: context.env,
       session: context.session,
@@ -1050,6 +1059,12 @@ class AgentHarnessDriverSession implements AgentDriverSession {
       activeToolNames,
       thinkingLevel: context.record.thinkingLevel,
       resources: { skills: context.skills },
+      streamOptions: {
+        // The SDK remains at maxRetries: 0; Wordless' abortable provider wrapper
+        // gets one pre-stream retry before the observable turn-level retry loop.
+        maxRetries: 1,
+        maxRetryDelayMs: 60_000,
+      },
     });
     this.harness.on("before_agent_start", (event) => {
       const selectedSkillsPrompt = formatSelectedSkillsForSystemPrompt(
@@ -1371,21 +1386,17 @@ class AgentHarnessDriverSession implements AgentDriverSession {
         this.currentPrompt = command.text;
         this.overflowRecoveryAttempted = false;
         this.suppressedOverflowMessage = undefined;
+        this.suppressedRetryMessage = undefined;
+        this.modelRetryAttempt = 0;
+      this.modelRetryAbortController = new AbortController();
         this.selectedSkillsForRun = command.selectedSkills ?? [];
         try {
           this.activeUserSubmission = command.submission;
-          const response = await this.harness.prompt(
-            command.text,
-            command.submission
-              ? {
-                  messageId: command.submission.messageId,
-                  timestamp: command.submission.submittedAt,
-                }
-              : undefined,
-          );
-          await this.recoverContextOverflow(response);
+          await this.executePromptWithRecovery(command);
           return;
         } finally {
+          this.modelRetryAbortController = undefined;
+          this.suppressedRetryMessage = undefined;
           this.activeUserSubmission = undefined;
           this.selectedSkillsForRun = [];
         }
@@ -1399,6 +1410,7 @@ class AgentHarnessDriverSession implements AgentDriverSession {
         await this.harness.followUp(command.text);
         return;
       case "cancel":
+        this.modelRetryAbortController?.abort();
         this.resolvePendingApprovals(false, "Operation cancelled");
         this.resolvePendingUserRequests(
           "The request was cancelled because the agent stopped",
@@ -1504,6 +1516,7 @@ class AgentHarnessDriverSession implements AgentDriverSession {
   dispose(): void {
     if (this.disposed) return;
     this.disposed = true;
+    this.modelRetryAbortController?.abort();
     for (const toolCallId of this.elevatedToolCallIds)
       this.accessController?.revokeOutsideWorkspaceAccess(toolCallId);
     this.elevatedToolCallIds.clear();
@@ -1527,10 +1540,18 @@ class AgentHarnessDriverSession implements AgentDriverSession {
   }
 
   private async shouldAutomaticallyCompact(): Promise<boolean> {
-    const entries = await this.context.session.getEntries();
-    const tokens = estimateJournalTokens(entries);
+    const context = await this.context.session.buildContext();
+    const tokens = estimateContextTokens(context.messages, {
+      provider: this.context.model.provider,
+      modelId: this.context.model.id,
+    }).tokens + this.staticContextTokens;
     const contextWindow = this.context.model.contextWindow || 128_000;
-    const reserveTokens = Math.min(16_384, Math.floor(contextWindow * 0.2));
+    const outputReserve = Math.min(
+      this.context.model.maxTokens || 16_384,
+      Math.max(16_384, Math.floor(contextWindow * 0.15)),
+    );
+    const safetyMargin = Math.max(8_192, Math.floor(contextWindow * 0.05));
+    const reserveTokens = outputReserve + safetyMargin;
     return tokens > contextWindow - reserveTokens;
   }
 
@@ -1542,13 +1563,103 @@ class AgentHarnessDriverSession implements AgentDriverSession {
     );
   }
 
+  private async executePromptWithRecovery(
+    command: Extract<AgentDriverCommand, { type: "prompt" }>,
+  ): Promise<void> {
+    let nextCall = 0;
+    let preparedFailure: { entryId: string; messageId: string } | undefined;
+    const produce = async (): Promise<AssistantMessage> => {
+      let response: AssistantMessage;
+      if (nextCall++ === 0) {
+        response = await this.harness.prompt(command.text, command.submission ? {
+          messageId: command.submission.messageId,
+          timestamp: command.submission.submittedAt,
+        } : undefined);
+      } else {
+        response = await this.harness.continue();
+      }
+      response = await this.recoverContextOverflow(response);
+      if (
+        response.stopReason === "error" &&
+        isRetryableAssistantError(response) &&
+        nextCall <= MODEL_RETRY_POLICY.maxRetries
+      ) {
+        try {
+          const recovered = await this.harness.prepareContextOverflowRecovery();
+          preparedFailure = {
+            entryId: recovered.failedMessageEntryId,
+            messageId: this.suppressedRetryMessage?.message.id ?? recovered.failedMessageEntryId,
+          };
+        } catch {
+          this.completeSuppressedRetryMessage();
+          response = {
+            ...response,
+            errorMessage: "Model retry recovery could not prepare the session",
+          };
+        }
+      }
+      return response;
+    };
+    const signal = this.modelRetryAbortController?.signal;
+    if (!signal) throw new Error("Model retry controller is unavailable");
+    const response = await retryAssistantCall(produce, MODEL_RETRY_POLICY, signal, {
+      onRetryScheduled: async (attempt, maxRetries, delayMs, errorMessage) => {
+        this.modelRetryAttempt = attempt;
+        const failed = preparedFailure;
+        if (!failed) return;
+        const scheduledAt = Date.now();
+        const retry: ModelRetryState = {
+          attempt, maxRetries, scheduledAt, retryAt: scheduledAt + delayMs,
+          delayMs, errorMessage, failedMessageId: failed.messageId,
+        };
+        const persisted: PersistedModelRetry = {
+          ...retry, failedMessageEntryId: failed.entryId, model: this.context.record.model,
+        };
+        await (this.context.session as unknown as CustomEntrySession)
+          .appendCustomEntry(MODEL_RETRY_JOURNAL_TYPE, persisted);
+        this.suppressedRetryMessage = undefined;
+        this.emit({ type: "model.retry.scheduled", retry });
+        preparedFailure = undefined;
+      },
+      onRetryAttemptStart: async () => {
+        this.emit({ type: "model.retry.started", attempt: this.modelRetryAttempt, maxRetries: MODEL_RETRY_POLICY.maxRetries });
+      },
+    });
+    this.completeSuppressedRetryMessage();
+    void response;
+  }
+
   private async recoverContextOverflow(
     response: AssistantMessage,
-  ): Promise<void> {
-    if (!this.isCurrentModelOverflow(response)) return;
+  ): Promise<AssistantMessage> {
+    if (!this.isCurrentModelOverflow(response)) return response;
     if (response.stopReason === "stop") {
-      await this.compactForOverflow();
-      return;
+      if (this.overflowRecoveryAttempted) {
+        this.emit({
+          type: "context.compaction.failed",
+          trigger: "overflow",
+          message:
+            "Context overflow recovery failed after one compact-and-retry attempt. Reduce the task scope or switch to a larger-context model.",
+        });
+        return response;
+      }
+      this.overflowRecoveryAttempted = true;
+      let recoveredFailureEntryId: string;
+      try {
+        ({ failedMessageEntryId: recoveredFailureEntryId } =
+          await this.harness.prepareContextOverflowRecovery());
+      } catch (cause) {
+        this.emit({
+          type: "context.compaction.failed",
+          trigger: "overflow",
+          message: `Context overflow recovery could not prepare the session: ${cause instanceof Error ? cause.message : String(cause)}`,
+        });
+        return response;
+      }
+      const compacted = await this.compactForOverflow(recoveredFailureEntryId);
+      if (!compacted) return response;
+      const retryResponse = await this.harness.continue();
+      return await this.recoverContextOverflow(retryResponse);
     }
     if (this.overflowRecoveryAttempted) {
       this.emit({
@@ -1557,7 +1668,7 @@ class AgentHarnessDriverSession implements AgentDriverSession {
         message:
           "Context overflow recovery failed after one compact-and-retry attempt. Reduce the task scope or switch to a larger-context model.",
       });
-      return;
+      return response;
     }
 
     this.overflowRecoveryAttempted = true;
@@ -1572,7 +1683,7 @@ class AgentHarnessDriverSession implements AgentDriverSession {
         trigger: "overflow",
         message: `Context overflow recovery could not prepare the session: ${cause instanceof Error ? cause.message : String(cause)}`,
       });
-      return;
+      return response;
     }
 
     const recoveredFailureMessageId =
@@ -1583,12 +1694,12 @@ class AgentHarnessDriverSession implements AgentDriverSession {
     );
     if (!compacted) {
       this.completeSuppressedOverflowMessage();
-      return;
+      return response;
     }
 
     this.suppressedOverflowMessage = undefined;
     const retryResponse = await this.harness.continue();
-    await this.recoverContextOverflow(retryResponse);
+    return await this.recoverContextOverflow(retryResponse);
   }
 
   private async compactForOverflow(
@@ -1627,6 +1738,15 @@ class AgentHarnessDriverSession implements AgentDriverSession {
     this.suppressedOverflowMessage = undefined;
   }
 
+  private completeSuppressedRetryMessage(): void {
+    if (!this.suppressedRetryMessage) return;
+    this.emit({
+      type: "message.completed",
+      message: this.suppressedRetryMessage.message,
+    });
+    this.suppressedRetryMessage = undefined;
+  }
+
   private async persistCompaction(
     trigger: ContextCompactionRecord["trigger"],
     recoveredFailureEntryId?: string,
@@ -1642,7 +1762,11 @@ class AgentHarnessDriverSession implements AgentDriverSession {
     ) {
       throw new Error("Compaction completed without a session entry");
     }
-    const tokensAfter = estimateJournalTokens(entries);
+    const context = await this.context.session.buildContext();
+    const tokensAfter = estimateContextTokens(context.messages, {
+      provider: this.context.model.provider,
+      modelId: this.context.model.id,
+    }).tokens;
     const persisted: PersistedContextCompaction = {
       compactionId: record.id,
       trigger,
@@ -1946,8 +2070,15 @@ class AgentHarnessDriverSession implements AgentDriverSession {
         event.message.stopReason !== "stop" &&
         !this.overflowRecoveryAttempted &&
         this.isCurrentModelOverflow(event.message);
+      const suppressForRetry =
+        isAssistantMessage(event.message) &&
+        event.message.stopReason === "error" &&
+        this.modelRetryAttempt < MODEL_RETRY_POLICY.maxRetries &&
+        isRetryableAssistantError(event.message);
       if (completed && suppressForRecovery)
         this.suppressedOverflowMessage = { message: completed };
+      else if (completed && suppressForRetry)
+        this.suppressedRetryMessage = { message: completed };
       else if (completed)
         this.emit({ type: "message.completed", message: completed });
       if (event.message.role === "assistant") {

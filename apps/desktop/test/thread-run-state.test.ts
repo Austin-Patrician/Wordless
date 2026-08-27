@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { ConversationMessage, RuntimeEventEnvelope } from "@wordless/protocol";
-import { advanceAssistantRunPresentation, assistantRunActivityAt, assistantRunPresentationFromMessages, assistantToolActivity, createAssistantRunPresentation, isExpertMemberMessageEvent, isNewerRunEvent, mergeCompletedAssistantMessage, MODEL_RESPONSE_WAIT_DELAY_MS, runEventCursor, shouldRefreshSnapshotAfterEvent } from "../src/renderer/features/thread/thread-run-state.ts";
+import { advanceAssistantRunPresentation, assistantRunActivityAt, assistantRunPresentationFromMessages, assistantToolActivity, createAssistantRunPresentation, isExpertMemberMessageEvent, isNewerRunEvent, mergeCompletedAssistantMessage, MODEL_RESPONSE_WAIT_DELAY_MS, runEventCursor, shouldRefreshSnapshotAfterEvent, shouldShowAssistantResponseError, shouldShowAssistantRunStatus } from "../src/renderer/features/thread/thread-run-state.ts";
 
 function event(sequence: number, runId: string, payload: RuntimeEventEnvelope["event"]): RuntimeEventEnvelope {
   return { event: payload, eventId: `event-${sequence}`, protocolVersion: 10, runId, runtimeInstanceId: "test", sequence, sessionId: "session-1", timestamp: 1_700_000_000_000 };
@@ -24,6 +24,52 @@ test("binds a local run presentation to the real assistant message", () => {
   const bound = advanceAssistantRunPresentation(running, event(2, "run-1", { type: "message.started", message: assistant("assistant-1", []) }));
 
   assert.deepEqual(bound, { assistantMessageId: "assistant-1", activity: { type: "thinking", since: 1_700_000_000_000 }, runId: "run-1", startedAt: 1_000, userMessageId: "user-1" });
+});
+
+test("shows reconnecting as turn-level activity after the failed message is removed", () => {
+  const stableMessage = assistant("assistant-1", [{ type: "text", text: "Completed tool call" }]);
+  const reconnecting = {
+    ...createAssistantRunPresentation("user-1", 1_000),
+    assistantMessageId: "removed-failed-assistant",
+    activity: {
+      type: "reconnecting" as const,
+      retry: {
+        attempt: 2,
+        maxRetries: 5,
+        scheduledAt: 2_000,
+        retryAt: 12_000,
+        delayMs: 10_000,
+        errorMessage: "Connection error.",
+        failedMessageId: "removed-failed-assistant",
+      },
+    },
+  };
+
+  assert.equal(shouldShowAssistantRunStatus([stableMessage], reconnecting), true);
+  assert.equal(shouldShowAssistantRunStatus([stableMessage], {
+    ...reconnecting,
+    activity: { type: "thinking", since: 2_000 },
+  }), false);
+});
+
+test("shows only the terminal assistant error after retries are exhausted", () => {
+  const retryError = {
+    ...assistant("retry-error", []),
+    status: "error" as const,
+    errorMessage: "Server requested 120s retry delay (max: 60s). 524 status code (no body)",
+  };
+  const finalError = {
+    ...assistant("final-error", []),
+    status: "error" as const,
+    errorMessage: "524 status code (no body)",
+  };
+
+  assert.equal(shouldShowAssistantResponseError([retryError, finalError], retryError.id), false);
+  assert.equal(shouldShowAssistantResponseError([retryError, finalError], finalError.id), true);
+  assert.equal(shouldShowAssistantResponseError([
+    retryError,
+    { ...assistant("success", [{ type: "text", text: "Recovered" }]), status: "complete" },
+  ], retryError.id), false);
 });
 
 test("tracks response, tool, and user-interaction activity for the current assistant", () => {

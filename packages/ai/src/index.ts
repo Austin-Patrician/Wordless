@@ -36,6 +36,13 @@ export * from "./models-store.ts";
 export * from "./providers/faux.ts";
 export * from "./session-resources.ts";
 export * from "./types.ts";
+export { countBpeTokens, estimateBpeTokens, GENERIC_BPE_SAFETY_FACTOR } from "./utils/tokenizer.ts";
+export {
+	calculatePromptTokens,
+	estimateContextTokens,
+	estimateMessageTokens,
+	estimateTextTokens,
+} from "./utils/estimate.ts";
 export * from "./utils/diagnostics.ts";
 export * from "./utils/event-stream.ts";
 export * from "./utils/json-parse.ts";

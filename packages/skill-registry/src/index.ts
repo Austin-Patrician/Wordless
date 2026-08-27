@@ -4,6 +4,7 @@ import { cp, mkdir, mkdtemp, readFile, readdir, realpath, rm, stat, writeFile } 
 import { basename, dirname, join, relative, resolve, sep } from "node:path";
 import { tmpdir } from "node:os";
 import extract from "extract-zip";
+import { estimateTextTokens } from "@wordless/agent";
 import { parse } from "yaml";
 import type { SkillCatalogSnapshot, SkillDiagnostic, SkillMarketplaceOrigin, SkillSource, SkillSummary, WorkspaceRecord } from "@wordless/domain";
 
@@ -269,7 +270,7 @@ export class SkillRegistry {
         if ("error" in parsed) {
           candidates.push({
             resolved: { id, name: basename(dirname(canonicalPath)), description: "", content: "", filePath: canonicalPath, baseDir: dirname(canonicalPath), source: source.source, workspaceId, disableModelInvocation: false },
-            summary: { id, name: basename(dirname(canonicalPath)), description: "", source: source.source, workspaceId, filePath: canonicalPath, enabled: false, state: "invalid", diagnostic: parsed.error, contentBytes: Buffer.byteLength(content), ...(marketplace ? { marketplace } : {}) },
+          summary: { id, name: basename(dirname(canonicalPath)), description: "", source: source.source, workspaceId, filePath: canonicalPath, enabled: false, state: "invalid", diagnostic: parsed.error, contentBytes: Buffer.byteLength(content), contentTokens: estimateTextTokens(content), ...(marketplace ? { marketplace } : {}) },
           });
           continue;
         }
@@ -286,7 +287,7 @@ export class SkillRegistry {
         };
         candidates.push({
           resolved,
-          summary: { id, name: parsed.name, description: parsed.description, source: source.source, workspaceId, filePath: canonicalPath, enabled: !this.config.disabledSkillIds.includes(id), state: "active", contentBytes: Buffer.byteLength(content), ...(marketplace ? { marketplace } : {}) },
+          summary: { id, name: parsed.name, description: parsed.description, source: source.source, workspaceId, filePath: canonicalPath, enabled: !this.config.disabledSkillIds.includes(id), state: "active", contentBytes: Buffer.byteLength(content), contentTokens: estimateTextTokens(content), ...(marketplace ? { marketplace } : {}) },
         });
       }
     }

@@ -80,6 +80,8 @@ import {
   assistantRunActivityAt,
   assistantToolActivity,
   nextAssistantRunActivityUpdateAt,
+  shouldShowAssistantResponseError,
+  shouldShowAssistantRunStatus,
   type AssistantRunActivity,
   type AssistantRunPresentation,
 } from "./thread-run-state";
@@ -1755,9 +1757,9 @@ function AssistantMessageBlocks({
   return <>{rendered}</>;
 }
 
-function AssistantResponseError({ message }: { message: ConversationMessage }) {
+function AssistantResponseError({ message, visible = true }: { message: ConversationMessage; visible?: boolean }) {
   const { t } = usePreferences();
-  if (message.status !== "error" || !message.errorMessage) return null;
+  if (!visible || message.status !== "error" || !message.errorMessage) return null;
   return (
     <div
       className="mt-4 flex items-start gap-2.5 border-y border-[#ead5cf] bg-[#fdf8f6] px-3 py-2.5 text-[#8d5448] dark:border-[#5c3d36] dark:bg-[#2b201d] dark:text-[#efb0a3]"
@@ -1891,6 +1893,10 @@ function AssistantRunStatus({
 
   useEffect(() => {
     setNow(Date.now());
+    if (activity.type === "reconnecting") {
+      const interval = window.setInterval(() => setNow(Date.now()), 250);
+      return () => window.clearInterval(interval);
+    }
     const updateAt = nextAssistantRunActivityUpdateAt(activity);
     if (updateAt === undefined) return;
     const timeout = window.setTimeout(
@@ -1905,7 +1911,9 @@ function AssistantRunStatus({
     current.type === "awaiting-approval" ||
     current.type === "awaiting-user-input";
   const label =
-    current.type === "thinking" ? (
+    current.type === "reconnecting" ? (
+      <ReconnectingStatus retry={current.retry} now={now} />
+    ) : current.type === "thinking" ? (
       t("assistantThinking")
     ) : current.type === "waiting" ? (
       <>
@@ -1965,6 +1973,18 @@ function AssistantRunStatus({
       </p>
     </div>
   );
+}
+
+function ReconnectingStatus({ retry, now }: { retry: { retryAt: number; attempt: number; maxRetries: number }; now: number }) {
+  const { locale } = usePreferences();
+  const seconds = Math.ceil((retry.retryAt - now) / 1000);
+  if (seconds <= 0)
+    return locale.startsWith("zh")
+      ? <>正在重新连接 · {retry.attempt}/{retry.maxRetries}</>
+      : <>Reconnecting · {retry.attempt}/{retry.maxRetries}</>;
+  return locale.startsWith("zh")
+    ? <>正在重新连接，{seconds} 秒后重试 · {retry.attempt}/{retry.maxRetries}</>
+    : <>Reconnecting in {seconds}s · {retry.attempt}/{retry.maxRetries}</>;
 }
 
 function PlanResultActions({
@@ -2088,11 +2108,7 @@ function AssistantMessageBody({
   const isStreaming = messages.some(
     (candidate) => candidate.status === "streaming",
   );
-  const presentedAssistantMessageId =
-    runPresentation?.assistantMessageId ?? null;
-  const showRunStatus =
-    presentedAssistantMessageId !== null &&
-    messages.some((candidate) => candidate.id === presentedAssistantMessageId);
+  const showRunStatus = shouldShowAssistantRunStatus(messages, runPresentation);
   if (!message)
     return (
       <article>
@@ -2134,7 +2150,10 @@ function AssistantMessageBody({
               onResolveUserRequest={onResolveUserRequest}
               workbenchId={workbenchId}
             />
-            <AssistantResponseError message={candidate} />
+            <AssistantResponseError
+              message={candidate}
+              visible={shouldShowAssistantResponseError(messages, candidate.id)}
+            />
           </section>
         ))}
         {showRunStatus && runPresentation ? (

@@ -77,6 +77,24 @@ async function createDriverSession(responses: ReturnType<typeof fauxAssistantMes
 }
 
 describe("context overflow recovery", () => {
+
+  it("retries a transient model failure through the shared assistant retry loop", { timeout: 20_000 }, async () => {
+    const { driverSession, events, faux, session } = await createDriverSession([
+      fauxAssistantMessage("", { stopReason: "error", errorMessage: "Connection error." }),
+      fauxAssistantMessage("recovered response"),
+    ]);
+    driverSession.subscribe((event) => events.push(event));
+
+    await driverSession.execute({ type: "prompt", text: "continue" });
+
+    expect(faux.state.callCount).toBe(2);
+    expect(events.filter((event) => event.type === "model.retry.scheduled")).toHaveLength(1);
+    expect(events.filter((event) => event.type === "model.retry.started")).toHaveLength(1);
+    expect(events.filter((event) => event.type === "message.completed" && event.message.status === "error")).toHaveLength(0);
+    expect(events.some((event) => event.type === "message.completed" && event.message.blocks.some((block) => block.type === "text" && block.text === "recovered response"))).toBe(true);
+    expect((await session.buildContext()).messages.some((message) => message.role === "assistant" && message.stopReason === "error")).toBe(false);
+  });
+
   it("compacts once, removes the failed response from active context, and continues", async () => {
     const { driverSession, events, faux, session } = await createDriverSession([
       fauxAssistantMessage("prior response"),

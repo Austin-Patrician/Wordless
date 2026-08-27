@@ -9,6 +9,7 @@ import type {
 import type {
   ContextCompactionRecord,
   MessageToolBlock,
+  ModelRetryState,
   ToolApprovalMode,
 } from "@wordless/domain";
 import { calculateCurrentTurnUsage } from "@wordless/domain";
@@ -69,6 +70,7 @@ export type ThreadMetadataSnapshot = {
   extensions: SessionSnapshot["extensions"];
   isCompacting: boolean;
   isRunning: boolean;
+  modelRetry?: ModelRetryState;
   loading: boolean;
   needsRehydrate: boolean;
   session: SessionSnapshot["session"] | null;
@@ -525,6 +527,8 @@ export class ThreadSessionStore {
       if (presentation.userMessageId) {
         const turnId = `turn:${presentation.userMessageId}`;
         this.activeTurnId = turnId;
+        if (view.modelRetry)
+          presentation.activity = { type: "reconnecting", retry: view.modelRetry };
         this.updateAssistantRow(turnId, presentation);
       }
     }
@@ -548,6 +552,7 @@ export class ThreadSessionStore {
       extensions: view.extensions,
       isCompacting: view.isCompacting,
       isRunning: view.isRunning,
+      modelRetry: view.modelRetry,
       loading: false,
       session: view.session,
       toolApprovalMode: view.toolApprovalMode,
@@ -699,6 +704,10 @@ export class ThreadSessionStore {
       this.upsertTurnSummary(turnId);
       return;
     }
+    if (event.type === "context.usage.updated") {
+      this.patchMetadata({ contextUsage: event.contextUsage });
+      return;
+    }
     if (event.type === "tool.started") {
       const tool: MessageToolBlock = {
         type: "tool",
@@ -804,6 +813,44 @@ export class ThreadSessionStore {
     }
     if (event.type === "run.started") {
       this.patchMetadata({ isRunning: true, compactionError: undefined, compactionTrigger: undefined });
+      return;
+    }
+    if (event.type === "model.retry.scheduled") {
+      const turnId = envelope.turnId ?? this.activeTurnId;
+      const failedId = event.retry.failedMessageId;
+      const turn = turnId ? this.turns.get(turnId) : undefined;
+      if (turn && turn.assistantIds.includes(failedId)) {
+        turn.assistantIds = turn.assistantIds.filter((id) => id !== failedId);
+        this.messagesById.delete(failedId);
+        this.messageToTurn.delete(failedId);
+        this.messagesSnapshotDirty = true;
+      }
+      const row = turnId ? this.rows.get(this.assistantKey(turnId)) : undefined;
+      const presentation = row?.presentation ?? (turn?.userId
+        ? createAssistantRunPresentation(turn.userId, turn.timestamp)
+        : null);
+      if (turnId && turn && presentation) {
+        this.activeTurnId = turnId;
+        this.updateAssistantRow(turnId, {
+          ...presentation,
+          activity: { type: "reconnecting", retry: event.retry },
+          assistantMessageId: turn.assistantIds.at(-1) ?? null,
+        });
+      } else if (turnId && turn) {
+        this.updateAssistantRow(turnId);
+      }
+      this.patchMetadata({ modelRetry: event.retry, isRunning: true });
+      return;
+    }
+    if (event.type === "model.retry.started") {
+      const turnId = envelope.turnId ?? this.activeTurnId;
+      const row = turnId ? this.rows.get(this.assistantKey(turnId)) : undefined;
+      if (turnId && row?.presentation && row.presentation.activity.type === "reconnecting")
+        this.updateAssistantRow(turnId, {
+          ...row.presentation,
+          activity: { type: "thinking", since: Date.now() },
+        });
+      this.patchMetadata({ modelRetry: undefined, isRunning: true });
       return;
     }
     if (event.type === "run.failed" || event.type === "run.cancelled") {
