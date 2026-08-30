@@ -75,11 +75,24 @@ import {
   clampThinkingLevel,
   getSupportedThinkingLevels,
 } from "@wordless/ai";
-import sharp from "sharp";
 import {
   calculateCurrentTurnUsage,
   conversationUsageFromUnknown,
 } from "@wordless/domain";
+
+type SharpFactory = typeof import("sharp").default;
+let sharpFactoryPromise: Promise<SharpFactory> | undefined;
+
+async function getSharp(): Promise<SharpFactory> {
+  sharpFactoryPromise ??= import("sharp").then((module) => module.default);
+  try {
+    return await sharpFactoryPromise;
+  } catch (error) {
+    // A failed native-module load should not poison later image operations.
+    sharpFactoryPromise = undefined;
+    throw error;
+  }
+}
 import type {
   AgentInteractionModeId,
   AppPreferences,
@@ -5792,6 +5805,7 @@ export class WordlessRuntime {
       return cached.image;
     }
     const input = await readFile(source);
+    const sharp = await getSharp();
     let pipeline = sharp(input, { failOn: "error" }).rotate().resize({
       width: MAX_INLINE_IMAGE_DIMENSION,
       height: MAX_INLINE_IMAGE_DIMENSION,

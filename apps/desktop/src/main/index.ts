@@ -1,5 +1,5 @@
 import path from "node:path";
-import { app, BrowserWindow, dialog, Menu, nativeTheme, session, shell, Tray } from "electron";
+import { app, BrowserWindow, dialog, Menu, nativeImage, nativeTheme, session, shell, Tray } from "electron";
 import type { AppPreferences } from "@wordless/domain";
 import { createDesktopRuntime } from "./bootstrap/create-runtime";
 import { prepareUserDataPath } from "./bootstrap/user-data";
@@ -52,8 +52,17 @@ const hasSingleInstance = app.requestSingleInstanceLock();
 function showWindow(): void {
   if (!mainWindow || mainWindow.isDestroyed()) return;
   if (mainWindow.isMinimized()) mainWindow.restore();
-  mainWindow.show();
+  if (!mainWindow.isVisible()) mainWindow.show();
   mainWindow.focus();
+}
+
+function createTrayIcon(): Electron.NativeImage {
+  const iconPath = path.join(__dirname, process.platform === "win32" ? "wordless.ico" : "wordless.png");
+  if (process.platform !== "darwin") return nativeImage.createFromPath(iconPath);
+  // Keep the 1024px source out of AppKit's status-item cache. A status item
+  // only needs a small bitmap, especially on Retina where Electron supplies
+  // the backing scale factor itself.
+  return nativeImage.createFromPath(iconPath).resize({ width: 32, height: 32, quality: "best" });
 }
 
 function updateTrayMenu(preferences: AppPreferences): void {
@@ -183,16 +192,23 @@ app.whenReady().then(async () => {
   mainWindow = createMainWindow(path.join(__dirname, "preload.cjs"), runtime.getSnapshot().preferences);
   mainWindow.on("close", (event) => { if (!quitting) { event.preventDefault(); mainWindow?.hide(); } });
   mainWindow.on("focus", () => notifications.clearBadge());
-  tray = new Tray(path.join(__dirname, process.platform === "win32" ? "wordless.ico" : "wordless.jpeg"));
-  tray.setToolTip("Wordless");
-  tray.on("click", showWindow);
-  updateTrayMenu(runtime.getSnapshot().preferences);
+  // macOS AppKit synchronously redraws NSStatusItem replicants when the app
+  // becomes active or display metrics change. That redraw runs on the main
+  // thread and is the source of the focus-return hitch, so the Dock remains
+  // the macOS entry point and the tray is kept for Windows/Linux only.
+  if (process.platform !== "darwin") {
+    tray = new Tray(createTrayIcon());
+    tray.setToolTip("Wordless");
+    tray.on("click", showWindow);
+    updateTrayMenu(runtime.getSnapshot().preferences);
+  }
   setTimeout(() => void updateService.check(), 12_000);
   if (userData.notice) await dialog.showMessageBox({ type: "warning", message: userData.notice });
 
   app.on("activate", () => {
     if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.show();
+      if (mainWindow.isMinimized()) mainWindow.restore();
+      if (!mainWindow.isVisible()) mainWindow.show();
       mainWindow.focus();
     } else if (runtime) {
       mainWindow = createMainWindow(path.join(__dirname, "preload.cjs"), runtime.getSnapshot().preferences);

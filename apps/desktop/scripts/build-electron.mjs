@@ -9,7 +9,7 @@ import { readWindowsIcon } from "./windows-icon.mjs";
 const scriptDirectory = dirname(fileURLToPath(import.meta.url));
 const appRoot = resolve(scriptDirectory, "..");
 const outputDirectory = resolve(appRoot, "dist/electron");
-const applicationIcon = resolve(appRoot, "src/icons/common-icons/wordless.jpeg");
+const applicationIcon = resolve(appRoot, "src/icons/common-icons/wordless.png");
 const windowsApplicationIcon = resolve(appRoot, "build/icon.ico");
 const nodeBuiltins = new Set([...builtinModules, ...builtinModules.map((id) => `node:${id}`)]);
 
@@ -50,5 +50,5 @@ await buildEntry(resolve(appRoot, "src/main/index.ts"), "main", true);
 await buildEntry(resolve(appRoot, "src/preload/index.ts"), "preload", false);
 await generateAppIcon();
 await readWindowsIcon(windowsApplicationIcon);
-await copyFile(applicationIcon, resolve(outputDirectory, "wordless.jpeg"));
+await copyFile(applicationIcon, resolve(outputDirectory, "wordless.png"));
 await copyFile(windowsApplicationIcon, resolve(outputDirectory, "wordless.ico"));

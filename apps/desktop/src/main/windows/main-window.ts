@@ -18,8 +18,15 @@ export function updateTitleBarOverlays(preferences: AppPreferences): void {
 
 export function createMainWindow(preloadPath: string, preferences: AppPreferences): BrowserWindow {
   const host = createDesktopHostInfo();
-  const iconName = process.platform === "win32" ? "wordless.ico" : "wordless.jpeg";
-  const mainWindow = new BrowserWindow({ ...mainWindowOptions(preloadPath, preferences, isDark(preferences), host), icon: path.join(__dirname, iconName) });
+  const options = mainWindowOptions(preloadPath, preferences, isDark(preferences), host);
+  // The 4096px JPEG brand asset is intended for renderer content. Passing it
+  // as a macOS window icon makes AppKit allocate several 128MB CGImage buffers.
+  // The packaged app already has its bundle icon, so only Windows needs this
+  // runtime option.
+  const mainWindow = new BrowserWindow({
+    ...options,
+    ...(process.platform === "win32" ? { icon: path.join(__dirname, "wordless.ico") } : {}),
+  });
   if (host.menuPresentation === "in-window") mainWindow.setMenuBarVisibility(false);
 
   if (process.env.WORDLESS_RENDERER_URL) {

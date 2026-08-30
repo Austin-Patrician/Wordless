@@ -282,7 +282,7 @@ export function registerRuntimeIpc(
       defaultId: 1,
       cancelId: 1,
       noLink: true,
-      icon: path.join(__dirname, process.platform === "win32" ? "wordless.ico" : "wordless.jpeg"),
+      ...(process.platform === "win32" ? { icon: path.join(__dirname, "wordless.ico") } : {}),
     });
     if (result.response === 0) clipboard.writeText(userCode);
   };

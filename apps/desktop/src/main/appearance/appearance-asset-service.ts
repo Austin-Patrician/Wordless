@@ -2,8 +2,20 @@ import { createHash } from "node:crypto";
 import { mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { nativeImage } from "electron";
-import sharp from "sharp";
 import type { AppearanceBackgroundAsset } from "@wordless/domain";
+
+type SharpFactory = typeof import("sharp").default;
+let sharpFactoryPromise: Promise<SharpFactory> | undefined;
+
+async function getSharp(): Promise<SharpFactory> {
+  sharpFactoryPromise ??= import("sharp").then((module) => module.default);
+  try {
+    return await sharpFactoryPromise;
+  } catch (error) {
+    sharpFactoryPromise = undefined;
+    throw error;
+  }
+}
 
 const MAX_FILE_BYTES = 20 * 1024 * 1024;
 const MAX_DIMENSION = 4_096;
@@ -43,6 +55,7 @@ function normalizedImageData(data: Buffer, format: { extension: "jpg" | "png" | 
 }
 
 async function importAnimatedGif(data: Buffer): Promise<{ width: number; height: number; poster: Buffer; frames: number; durationMs: number }> {
+  const sharp = await getSharp();
   const image = sharp(data, { animated: true, limitInputPixels: MAX_ANIMATED_TOTAL_PIXELS });
   const metadata = await image.metadata();
   const width = metadata.width ?? 0;
