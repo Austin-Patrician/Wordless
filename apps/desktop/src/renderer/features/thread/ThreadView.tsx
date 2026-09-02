@@ -1159,7 +1159,7 @@ function ExpertCollaborationBar({
     null,
   );
   const [collapsed, setCollapsed] = useState(false);
-  const visibleMembers = collapsed ? members.slice(0, 3) : members;
+  const visibleMembers = members;
   const toggleLabel = collapsed
     ? t("threadExpandEmployeeMembers")
     : t("threadCollapseEmployeeMembers");
@@ -1196,7 +1196,7 @@ function ExpertCollaborationBar({
         <div
           className={`flex min-w-0 flex-1 items-center gap-1.5 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden ${
             collapsed
-              ? "overflow-hidden"
+              ? "overflow-x-auto"
               : "cursor-grab overflow-x-auto active:cursor-grabbing"
           }`}
           onPointerDown={(event) => {

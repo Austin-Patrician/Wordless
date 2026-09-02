@@ -542,59 +542,6 @@ body {
   animation: wordless-assistant-status-shimmer 2.4s ease-in-out infinite;
 }
 
-@keyframes wordless-media-edge-flow {
-  to {
-    stroke-dashoffset: -1;
-  }
-}
-
-@keyframes wordless-media-edge-sheen {
-  0%, 100% {
-    opacity: 0.28;
-    filter: drop-shadow(0 0 1px rgba(206, 239, 119, 0.22));
-  }
-
-  44% {
-    opacity: 1;
-    filter: drop-shadow(0 0 3px rgba(206, 239, 119, 0.92));
-  }
-}
-
-.wordless-media-edge-glow-tail,
-.wordless-media-edge-glow-flow,
-.wordless-media-edge-glow-sheen {
-  stroke-linecap: round;
-  pointer-events: none;
-}
-
-.wordless-media-edge-glow-tail {
-  stroke: #a8c95d;
-  stroke-dasharray: 0.42 0.58;
-  stroke-dashoffset: 0.14;
-  stroke-width: 5;
-  opacity: 0.2;
-  filter: drop-shadow(0 0 3px rgba(146, 184, 70, 0.42));
-  animation: wordless-media-edge-flow 1.35s linear infinite;
-}
-
-.wordless-media-edge-glow-flow {
-  stroke: #b9d76c;
-  stroke-dasharray: 0.3 0.7;
-  stroke-dashoffset: 0.04;
-  stroke-width: 2.6;
-  opacity: 0.76;
-  filter: drop-shadow(0 0 2px rgba(151, 189, 72, 0.68));
-  animation: wordless-media-edge-flow 1.35s linear infinite;
-}
-
-.wordless-media-edge-glow-sheen {
-  stroke: #f3ffd0;
-  stroke-dasharray: 0.085 0.915;
-  stroke-dashoffset: 0.29;
-  stroke-width: 1.2;
-  animation: wordless-media-edge-flow 1.35s linear infinite, wordless-media-edge-sheen 1.35s ease-in-out infinite;
-}
-
 .wordless-sidebar-session-scroll {
   scrollbar-color: rgba(104, 104, 96, 0.13) transparent;
   scrollbar-width: thin;
@@ -621,20 +568,6 @@ body {
   background-image: linear-gradient(100deg, #8b8b84 24%, #8b8b84 42%, #b5cf76 48%, #fbffe2 53%, #b5cf76 58%, #8b8b84 64%, #8b8b84 82%);
 }
 
-[data-theme="dark"] .wordless-media-edge-glow-tail {
-  stroke: #b6e673;
-  filter: drop-shadow(0 0 3px rgba(188, 239, 94, 0.56));
-}
-
-[data-theme="dark"] .wordless-media-edge-glow-flow {
-  stroke: #cdf18a;
-  filter: drop-shadow(0 0 2px rgba(204, 242, 87, 0.8));
-}
-
-[data-theme="dark"] .wordless-media-edge-glow-sheen {
-  stroke: #fbffe6;
-}
-
 [data-theme="dark"] .wordless-sidebar-session-scroll {
   scrollbar-color: rgba(210, 216, 193, 0.12) transparent;
 }
@@ -659,13 +592,6 @@ body {
 [data-reduce-motion="true"] .assistant-run-status-shimmer {
   animation: none;
   background-position: 50% 0;
-}
-
-[data-reduce-motion="true"] .wordless-media-edge-glow-tail,
-[data-reduce-motion="true"] .wordless-media-edge-glow-flow,
-[data-reduce-motion="true"] .wordless-media-edge-glow-sheen {
-  animation: none;
-  stroke-dashoffset: 0.42;
 }
 
 [data-reduce-motion="true"] .app-background-image {
