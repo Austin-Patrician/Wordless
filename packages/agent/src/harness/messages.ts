@@ -1,5 +1,6 @@
 import type { ImageContent, Message, TextContent } from "@wordless/ai";
 import type { AgentMessage } from "../types.ts";
+import { DEFAULT_MAX_BYTES, DEFAULT_MAX_LINES, truncateTail } from "./utils/truncate.ts";
 
 export const COMPACTION_SUMMARY_PREFIX = `The conversation history before this point was compacted into the following summary:
 
@@ -76,6 +77,23 @@ export function bashExecutionToText(msg: BashExecutionMessage): string {
 		text += `\n\n[Output truncated. Full output: ${msg.fullOutputPath}]`;
 	}
 	return text;
+}
+
+/** Bound historical tool output before it enters a model context. */
+function boundToolResultForContext(message: AgentMessage): AgentMessage {
+	if (message.role !== "toolResult") return message;
+	let changed = false;
+	const content = message.content.map((block) => {
+		if (block.type !== "text") return block;
+		const truncation = truncateTail(block.text, { maxBytes: DEFAULT_MAX_BYTES, maxLines: DEFAULT_MAX_LINES });
+		if (!truncation.truncated) return block;
+		changed = true;
+		return {
+			...block,
+			text: `${truncation.content}\n\n[Historical tool output truncated for context: ${truncation.outputLines} of ${truncation.totalLines} lines shown (${DEFAULT_MAX_BYTES / 1024}KB limit).]`,
+		};
+	});
+	return changed ? { ...message, content } : message;
 }
 
 export function createBranchSummaryMessage(summary: string, fromId: string, timestamp: string): BranchSummaryMessage {
@@ -155,7 +173,7 @@ export function convertToLlm(messages: AgentMessage[]): Message[] {
 				case "user":
 				case "assistant":
 				case "toolResult":
-					return m;
+					return boundToolResultForContext(m) as Message;
 				default:
 					return undefined;
 			}

@@ -805,6 +805,14 @@ export class ThreadSessionStore {
       if (active) active.assistantOrder = Math.max(active.assistantOrder, event.compaction.timestamp + 0.1);
       this.patchMetadata({ isCompacting: false, compactionError: undefined, compactionTrigger: undefined });
       this.rebuildTimeline();
+      void this.client
+        .getSessionView(this.sessionId)
+        .then((view) => {
+          if (view.contextUsage) {
+            this.patchMetadata({ contextUsage: view.contextUsage });
+          }
+        })
+        .catch(() => {});
       return;
     }
     if (event.type === "context.compaction.failed") {

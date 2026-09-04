@@ -25,6 +25,7 @@ import {
 	formatFileOperations,
 	serializeConversation,
 } from "./utils.ts";
+import { DEFAULT_MAX_BYTES, DEFAULT_MAX_LINES, truncateTail } from "../utils/truncate.ts";
 
 /** File-operation details stored on generated compaction entries. */
 export interface CompactionDetails {
@@ -170,11 +171,17 @@ function getLastAssistantUsageInfo(
 	messages: AgentMessage[],
 	expectedModel?: { provider: string; modelId: string },
 ): { usage: Usage; index: number } | undefined {
+	const latestCompactionTimestamp = messages.reduce(
+		(latest, message) => message.role === "compactionSummary" ? Math.max(latest, message.timestamp) : latest,
+		Number.NEGATIVE_INFINITY,
+	);
 	for (let i = messages.length - 1; i >= 0; i--) {
 		const message = messages[i]!;
+		if (message.role === "compactionSummary") continue;
 		const usage = getAssistantUsage(message);
 		if (
 			usage &&
+			message.timestamp > latestCompactionTimestamp &&
 			(!expectedModel ||
 				(message.role === "assistant" &&
 					message.provider === expectedModel.provider &&
@@ -272,6 +279,18 @@ export function estimateTokens(message: AgentMessage): number {
 		}
 		case "custom":
 		case "toolResult": {
+			if (message.role === "toolResult") {
+				let tokens = framingTokens;
+				for (const block of message.content) {
+					if (block.type === "text") {
+						const bounded = truncateTail(block.text, { maxBytes: DEFAULT_MAX_BYTES, maxLines: DEFAULT_MAX_LINES });
+						tokens += estimateTextTokens(bounded.truncated ? `${bounded.content}\n\n[Historical tool output truncated for context]` : bounded.content);
+					} else if (block.type === "image") {
+						tokens += ESTIMATED_IMAGE_TOKENS;
+					}
+				}
+				return tokens;
+			}
 			return framingTokens + estimateTextAndImageContentTokens(message.content);
 		}
 		case "bashExecution": {
@@ -369,8 +388,11 @@ export function findCutPoint(
 
 	for (let i = endIndex - 1; i >= startIndex; i--) {
 		const entry = entries[i];
-		if (entry.type !== "message") continue;
-		const messageTokens = estimateTokens(entry.message as AgentMessage);
+		const message = entry.type === "message" ? (entry.message as AgentMessage) : undefined;
+		if (!message) continue;
+		// Tool results cannot be retained as the first entry, but their full
+		// bounded size must contribute to the recent-context budget.
+		const messageTokens = estimateTokens(message);
 		accumulatedTokens += messageTokens;
 		if (accumulatedTokens >= keepRecentTokens) {
 			for (let c = 0; c < cutPoints.length; c++) {

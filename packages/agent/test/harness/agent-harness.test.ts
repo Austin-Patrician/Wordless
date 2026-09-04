@@ -180,6 +180,39 @@ describe("AgentHarness", () => {
 		expect(persistedText).toEqual(["hello", "hook"]);
 	});
 
+	it("merges before_agent_start prompt changes in registration order", async () => {
+		const registration = newFaux();
+		let observedPrompt = "";
+		let observedMessages: string[] = [];
+		registration.setResponses([
+			(context) => {
+				observedPrompt = context.systemPrompt ?? "";
+				observedMessages = textFromUserMessages(context.messages);
+				return fauxAssistantMessage("ok");
+			},
+		]);
+		const harness = new AgentHarness({
+			models,
+			env: new NodeExecutionEnv({ cwd: process.cwd() }),
+			session: new Session(new InMemorySessionStorage()),
+			model: registration.getModel(),
+			systemPrompt: "base",
+		});
+		harness.on("before_agent_start", (event) => ({
+			systemPrompt: `${event.systemPrompt} -> first`,
+			messages: [{ role: "user", content: [{ type: "text", text: "first" }], timestamp: Date.now() }],
+		}));
+		harness.on("before_agent_start", (event) => ({
+			systemPrompt: `${event.systemPrompt} -> second`,
+			messages: [{ role: "user", content: [{ type: "text", text: "second" }], timestamp: Date.now() }],
+		}));
+
+		await harness.prompt("hello");
+
+		expect(observedPrompt).toBe("base -> first -> second");
+		expect(observedMessages).toEqual(["hello", "first", "second"]);
+	});
+
 	it("abort clears steer and follow-up queues but preserves next-turn messages", async () => {
 		const registration = newFaux();
 		let releaseFirstResponse: (() => void) | undefined;
@@ -350,7 +383,8 @@ describe("AgentHarness", () => {
 			resources: {
 				skills: [{ name: "prompt", description: "prompt", content: "first prompt", filePath: "/skills/prompt" }],
 			},
-			systemPrompt: ({ resources }) => resources.skills?.[0]?.content ?? "missing prompt",
+			systemPrompt: ({ resources, activeTools }) =>
+				`${resources.skills?.[0]?.content ?? "missing prompt"} [${activeTools.map((tool) => tool.name).join(",")}]`,
 			tools: [calculateTool],
 		});
 		harness.subscribe((event) => {
@@ -369,8 +403,8 @@ describe("AgentHarness", () => {
 		await harness.prompt("hello");
 
 		expect(captured).toEqual([
-			{ modelId: "first", reasoning: undefined, systemPrompt: "first prompt", tools: ["calculate"] },
-			{ modelId: "second", reasoning: "high", systemPrompt: "second prompt", tools: ["get_current_time"] },
+			{ modelId: "first", reasoning: undefined, systemPrompt: "first prompt [calculate]", tools: ["calculate"] },
+			{ modelId: "second", reasoning: "high", systemPrompt: "second prompt [get_current_time]", tools: ["get_current_time"] },
 		]);
 	});
 

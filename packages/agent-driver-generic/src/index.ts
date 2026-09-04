@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import {
   AgentHarness,
+  type AgentContext,
   estimateContextTokens,
   estimateTextTokens,
   formatSkillsForSystemPrompt,
@@ -289,6 +290,27 @@ type ClarificationBriefToolDetails = {
 type SuppressedResponseMessage = {
   message: ConversationMessage;
 };
+
+function buildToolSystemPrompt(activeTools: readonly AgentTool[]): string {
+  const names = activeTools.map((tool) => tool.name);
+  const snippets = activeTools.flatMap((tool) => {
+    const snippet = tool.promptSnippet?.replace(/[\r\n]+/g, " ").replace(/\s+/g, " ").trim();
+    return snippet ? [`${tool.name}: ${snippet}`] : [];
+  });
+  const guidelines = activeTools.flatMap((tool) =>
+    (tool.promptGuidelines ?? []).map((guideline) => `${tool.name}: ${guideline}`),
+  );
+  const sections = [
+    `Only call tools exposed for this session: ${names.join(", ") || "none"}. Never invent or call tools outside this list.`,
+    snippets.length > 0 ? `Tool guidance:\n${snippets.join("\n")}` : "",
+    guidelines.length > 0 ? `Tool guidelines:\n${guidelines.join("\n")}` : "",
+  ].filter(Boolean);
+  return sections.join("\n\n");
+}
+
+function estimateToolPromptTokens(activeTools: readonly AgentTool[]): number {
+  return estimateTextTokens(JSON.stringify(activeTools)) + estimateTextTokens(buildToolSystemPrompt(activeTools));
+}
 
 const MODEL_RETRY_POLICY: RetryPolicy = {
   enabled: true,
@@ -1044,17 +1066,14 @@ class AgentHarnessDriverSession implements AgentDriverSession {
             ...context.profile.activeToolNames,
             ...context.connectorTools.map((tool) => tool.name),
           ];
-    const toolContract = `Only call tools exposed for this session: ${activeToolNames.join(", ") || "none"}. Never invent or call tools outside this list.`;
-    this.staticContextTokens =
-      estimateTextTokens(baseSystemPrompt) +
-      estimateTextTokens(toolContract) +
-      estimateTextTokens(JSON.stringify(tools.filter((tool) => activeToolNames.includes(tool.name))));
+    this.staticContextTokens = estimateTextTokens(baseSystemPrompt);
     this.harness = new AgentHarness<Skill>({
       env: context.env,
       session: context.session,
       models: context.models,
       model: context.model,
-      systemPrompt: baseSystemPrompt,
+      systemPrompt: ({ activeTools }) =>
+        `${baseSystemPrompt}\n\n${buildToolSystemPrompt(activeTools)}`,
       tools,
       activeToolNames,
       thinkingLevel: context.record.thinkingLevel,
@@ -1065,6 +1084,9 @@ class AgentHarnessDriverSession implements AgentDriverSession {
         maxRetries: 1,
         maxRetryDelayMs: 60_000,
       },
+      beforeNextTurn: context.automaticCompaction
+        ? async (agentContext) => await this.prepareNextTurnContext(agentContext)
+        : undefined,
     });
     this.harness.on("before_agent_start", (event) => {
       const selectedSkillsPrompt = formatSelectedSkillsForSystemPrompt(
@@ -1075,8 +1097,8 @@ class AgentHarnessDriverSession implements AgentDriverSession {
         : event.systemPrompt;
       return {
         systemPrompt: clarificationMode
-          ? `${prompt}\n\n${CLARIFICATION_MODE_PROMPT}\n\n${toolContract}`
-          : `${prompt}\n\n${toolContract}`,
+          ? `${prompt}\n\n${CLARIFICATION_MODE_PROMPT}`
+          : prompt,
       };
     });
     const hookableHarness = this.harness as unknown as HookableHarness;
@@ -1541,10 +1563,14 @@ class AgentHarnessDriverSession implements AgentDriverSession {
 
   private async shouldAutomaticallyCompact(): Promise<boolean> {
     const context = await this.context.session.buildContext();
-    const tokens = estimateContextTokens(context.messages, {
-      provider: this.context.model.provider,
-      modelId: this.context.model.id,
-    }).tokens + this.staticContextTokens;
+    return this.shouldCompactContext({
+      messages: context.messages,
+      tools: (this.harness as unknown as ToolManagingHarness).getActiveTools(),
+    });
+  }
+
+  private shouldCompactContext(context: Pick<AgentContext, "messages" | "tools"> & Partial<Pick<AgentContext, "systemPrompt">>): boolean {
+    const tokens = this.estimateContextWithTools(context);
     const contextWindow = this.context.model.contextWindow || 128_000;
     const outputReserve = Math.min(
       this.context.model.maxTokens || 16_384,
@@ -1553,6 +1579,43 @@ class AgentHarnessDriverSession implements AgentDriverSession {
     const safetyMargin = Math.max(8_192, Math.floor(contextWindow * 0.05));
     const reserveTokens = outputReserve + safetyMargin;
     return tokens > contextWindow - reserveTokens;
+  }
+
+  private async prepareNextTurnContext(context: AgentContext): Promise<AgentContext | undefined> {
+    if (!this.shouldCompactContext(context)) return undefined;
+    const tokensBefore = this.estimateContextWithTools(context);
+    this.emit({ type: "context.compaction.started", trigger: "automatic" });
+    try {
+      await this.harness.compactForNextTurn();
+      const rebuilt = await this.context.session.buildContext();
+      const nextContext: AgentContext = {
+        ...context,
+        messages: rebuilt.messages,
+      };
+      const tokensAfter = this.estimateContextWithTools(nextContext);
+      if (tokensAfter >= tokensBefore || this.shouldCompactContext(nextContext)) {
+        throw new Error(
+          `Automatic compaction did not reduce the active context (before: ${tokensBefore}, after: ${tokensAfter})`,
+        );
+      }
+      const compaction = await this.persistCompaction("automatic");
+      this.emit({ type: "context.compaction.completed", compaction });
+      return nextContext;
+    } catch (cause) {
+      const message = cause instanceof Error ? cause.message : String(cause);
+      this.emit({ type: "context.compaction.failed", trigger: "automatic", message });
+      throw cause;
+    }
+  }
+
+  private estimateContextWithTools(context: Pick<AgentContext, "messages" | "tools"> & Partial<Pick<AgentContext, "systemPrompt">>): number {
+    const systemTokens = context.systemPrompt
+      ? estimateTextTokens(context.systemPrompt)
+      : this.staticContextTokens + estimateToolPromptTokens(context.tools ?? []);
+    return estimateContextTokens(context.messages, {
+      provider: this.context.model.provider,
+      modelId: this.context.model.id,
+    }).tokens + systemTokens;
   }
 
   private isCurrentModelOverflow(message: AssistantMessage): boolean {
@@ -1767,6 +1830,11 @@ class AgentHarnessDriverSession implements AgentDriverSession {
       provider: this.context.model.provider,
       modelId: this.context.model.id,
     }).tokens;
+    if (tokensAfter >= record.tokensBefore) {
+      throw new Error(
+        `Compaction did not reduce the active context (before: ${record.tokensBefore}, after: ${tokensAfter})`,
+      );
+    }
     const persisted: PersistedContextCompaction = {
       compactionId: record.id,
       trigger,
@@ -2125,7 +2193,7 @@ export function createAgentHarnessDriver(
       await session.initialize(
         context.executionKind === "subagent"
           ? undefined
-          : options.createExtensionHost,
+          : context.createExtensionHost ?? options.createExtensionHost,
       );
       return session;
     },

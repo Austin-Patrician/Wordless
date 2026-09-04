@@ -446,6 +446,21 @@ describe("harness compaction", () => {
 		expect(result).toContain("[... 3000 more characters truncated]");
 	});
 
+	it("bounds oversized historical tool results during token estimation", () => {
+		const oversized: AgentMessage = {
+			role: "toolResult",
+			toolCallId: "tc-large",
+			toolName: "bash",
+			content: [{ type: "text", text: "x".repeat(7_000_000) }],
+			isError: false,
+			timestamp: Date.now(),
+		};
+		const estimate = estimateTokens(oversized);
+		// A bounded result must remain small enough for compaction accounting;
+		// the raw seven-million-character payload must never be counted.
+		expect(estimate).toBeLessThan(100_000);
+	});
+
 	it("passes reasoning through generateSummary only for reasoning models with thinking enabled", async () => {
 		const messages: AgentMessage[] = [createUserMessage("Summarize this.")];
 		const seenOptions: Array<Record<string, unknown> | undefined> = [];

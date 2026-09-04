@@ -14,6 +14,12 @@ export type AgentToolSource = {
 
 export type AgentMessage = { role: "user" | "assistant"; content: unknown; timestamp?: number; stopReason?: string; errorMessage?: string };
 
+export interface AgentContext {
+  systemPrompt: string;
+  messages: AgentMessage[];
+  tools?: AgentTool[];
+}
+
 export interface AgentToolResult<TDetails = unknown> {
   content: Array<{ type: "text"; text: string } | { type: "image"; data: string }>;
   details: TDetails;
@@ -28,6 +34,8 @@ export interface AgentTool<TParameters extends TSchema = TSchema, TDetails = unk
   label: string;
   description: string;
   parameters: TParameters;
+  promptSnippet?: string;
+  promptGuidelines?: readonly string[];
   source?: AgentToolSource;
   executionMode?: "parallel" | "sequential";
   execute(toolCallId: string, params: Static<TParameters>, signal?: AbortSignal, onUpdate?: AgentToolUpdateCallback<TDetails>): Promise<AgentToolResult<TDetails>>;
@@ -54,6 +62,11 @@ export function estimateContextTokens(
 ): ContextUsageEstimate;
 
 export function estimateTextTokens(text: string): number;
+export const DEFAULT_MAX_BYTES: number;
+export const DEFAULT_MAX_LINES: number;
+export function truncateHead(text: string, options?: { maxBytes?: number; maxLines?: number }): { content: string; truncated: boolean; totalBytes: number; totalLines: number; outputBytes: number; outputLines: number };
+export function truncateTail(text: string, options?: { maxBytes?: number; maxLines?: number }): { content: string; truncated: boolean; totalBytes: number; totalLines: number; outputBytes: number; outputLines: number };
+export function executeShellWithCapture(env: ExecutionEnv, command: string, options?: { abortSignal?: AbortSignal; timeout?: number; onChunk?: (chunk: string) => void }): Promise<{ ok: true; value: { output: string; exitCode: number; truncated?: boolean; fullOutputPath?: string } } | { ok: false; error: Error }>;
 
 export function formatSkillsForSystemPrompt(skills: Skill[], options?: { loadingInstruction?: string }): string;
 
@@ -109,7 +122,7 @@ export class Session<TMetadata extends SessionMetadata = SessionMetadata> {
   constructor(storage: SessionStorage<TMetadata>);
   getLeafId(): Promise<string | null>;
   getEntries(): Promise<SessionTreeEntry[]>;
-  buildContext(): Promise<{ messages: unknown[] }>;
+  buildContext(): Promise<{ messages: AgentMessage[] }>;
   getBranch(): Promise<SessionTreeEntry[]>;
   moveTo(entryId: string | null): Promise<string | undefined>;
   appendModelChange(provider: string, modelId: string): Promise<string>;
@@ -122,7 +135,28 @@ export class SessionError extends Error {
 }
 
 export class AgentHarness<TSkill extends Skill = Skill> {
-  constructor(options: { env: ExecutionEnv; session: Session; models: Models; model: Model; systemPrompt: string; tools: readonly AgentTool[]; activeToolNames?: readonly string[]; thinkingLevel: ThinkingLevel; resources?: { skills?: TSkill[] }; streamOptions?: { maxRetries?: number; maxRetryDelayMs?: number; timeoutMs?: number } });
+  constructor(options: {
+    env: ExecutionEnv;
+    session: Session;
+    models: Models;
+    model: Model;
+    systemPrompt:
+      | string
+      | ((context: {
+          env: ExecutionEnv;
+          session: Session;
+          model: Model;
+          thinkingLevel: ThinkingLevel;
+          activeTools: AgentTool[];
+          resources: { skills?: TSkill[] };
+        }) => string | Promise<string>);
+    tools?: readonly AgentTool[];
+    activeToolNames?: readonly string[];
+    thinkingLevel: ThinkingLevel;
+    resources?: { skills?: TSkill[] };
+    streamOptions?: { maxRetries?: number; maxRetryDelayMs?: number; timeoutMs?: number };
+    beforeNextTurn?: (context: AgentContext) => Promise<AgentContext | undefined> | AgentContext | undefined;
+  });
   prompt(text: string, options?: { messageId?: string; timestamp?: number }): Promise<AssistantMessage>;
   continue(): Promise<AssistantMessage>;
   prepareContextOverflowRecovery(): Promise<{ failedMessageEntryId: string }>;
@@ -131,9 +165,15 @@ export class AgentHarness<TSkill extends Skill = Skill> {
   setModel(model: Model): Promise<void>;
   setThinkingLevel(level: ThinkingLevel): Promise<void>;
   compact(instructions?: string): Promise<unknown>;
+  compactForNextTurn(instructions?: string): Promise<unknown>;
   abort(): Promise<unknown>;
   subscribe(listener: (event: AgentHarnessEvent) => void): () => void;
-  on(type: "before_agent_start", handler: (event: { type: "before_agent_start"; systemPrompt: string }) => { systemPrompt?: string } | undefined): () => void;
+  on(
+    type: "before_agent_start",
+    handler: (event: { type: "before_agent_start"; systemPrompt: string }) =>
+      | { systemPrompt?: string; messages?: AgentMessage[] }
+      | undefined,
+  ): () => void;
   on(
     type: "session_before_compact",
     handler: (event: { type: "session_before_compact"; customInstructions?: string }) => { customInstructions?: string } | undefined,

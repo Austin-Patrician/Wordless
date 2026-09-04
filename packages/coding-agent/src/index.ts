@@ -1,4 +1,13 @@
-import type { AgentTool, AgentToolResult, ExecutionEnv } from "@wordless/agent";
+import {
+  DEFAULT_MAX_BYTES,
+  DEFAULT_MAX_LINES,
+  executeShellWithCapture,
+  truncateHead,
+  truncateTail,
+  type AgentTool,
+  type AgentToolResult,
+  type ExecutionEnv,
+} from "@wordless/agent";
 import type { WorkspaceSearchProvider } from "@wordless/workspace-search";
 import { Type, type TSchema } from "typebox";
 
@@ -12,7 +21,9 @@ function textResult(text: string, details: ToolDetails = {}): AgentToolResult<To
 }
 
 function defineTool<TParameters extends TSchema>(tool: AgentTool<TParameters, ToolDetails>): AgentTool<TParameters, ToolDetails> {
-  return tool;
+  // Keep the model-facing tool contract concise while retaining the full description for schema/UI consumers.
+  const promptSnippet = tool.promptSnippet ?? tool.description.split(/(?<=[.!?])\s+/u, 1)[0]?.slice(0, 240);
+  return promptSnippet ? { ...tool, promptSnippet } : tool;
 }
 
 function requireSuccess<T>(result: { ok: true; value: T } | { ok: false; error: Error }): T {
@@ -60,6 +71,19 @@ function countOccurrences(value: string, search: string): number {
   return count;
 }
 
+function boundedTextResult(text: string, details: ToolDetails = {}, direction: "head" | "tail" = "head"): AgentToolResult<ToolDetails> {
+  const truncation = direction === "tail"
+    ? truncateTail(text, { maxBytes: DEFAULT_MAX_BYTES, maxLines: DEFAULT_MAX_LINES })
+    : truncateHead(text, { maxBytes: DEFAULT_MAX_BYTES, maxLines: DEFAULT_MAX_LINES });
+  const output = truncation.truncated
+    ? `${truncation.content}\n\n[Output truncated: ${truncation.outputLines} of ${truncation.totalLines} lines shown (${DEFAULT_MAX_BYTES / 1024}KB limit). Re-run with a narrower query or pagination.]`
+    : truncation.content;
+  return textResult(output, {
+    ...details,
+    ...(truncation.truncated ? { truncated: true, truncation: { maxBytes: DEFAULT_MAX_BYTES, maxLines: DEFAULT_MAX_LINES, totalBytes: truncation.totalBytes, totalLines: truncation.totalLines, outputBytes: truncation.outputBytes, outputLines: truncation.outputLines } } : {}),
+  });
+}
+
 export function createHeadlessCodingTools(env: ExecutionEnv, search?: WorkspaceSearchProvider) {
   const read = defineTool({
     name: "read",
@@ -69,7 +93,7 @@ export function createHeadlessCodingTools(env: ExecutionEnv, search?: WorkspaceS
     async execute(_id, input, signal) {
       const lines = requireSuccess(await env.readTextLines(input.path, { maxLines: input.limit === undefined ? undefined : input.offset === undefined ? input.limit : input.offset + input.limit, abortSignal: signal }));
       const selected = input.offset === undefined ? lines : lines.slice(input.offset, input.limit === undefined ? undefined : input.offset + input.limit);
-      return textResult(selected.join("\n"), { path: input.path, lineCount: selected.length });
+      return boundedTextResult(selected.join("\n"), { path: input.path, lineCount: selected.length });
     },
   });
   const write = defineTool({
@@ -124,35 +148,23 @@ export function createHeadlessCodingTools(env: ExecutionEnv, search?: WorkspaceS
     async execute(_id, input, signal, onUpdate) {
       const timeoutSeconds = input.timeout ?? DEFAULT_BASH_TIMEOUT_SECONDS;
       const startedAt = Date.now();
-      let stdout = "";
-      let stderr = "";
-      const result = await env.exec(input.command, {
+      const result = await executeShellWithCapture(env, input.command, {
         abortSignal: signal,
         timeout: timeoutSeconds,
-        onStdout: (chunk) => {
-          stdout += chunk;
-          onUpdate?.(textResult(chunk, { command: input.command, timeoutSeconds }));
-        },
-        onStderr: (chunk) => {
-          stderr += chunk;
-          onUpdate?.(textResult(chunk, { command: input.command, timeoutSeconds }));
-        },
+        onChunk: (chunk) => onUpdate?.(textResult(chunk, { command: input.command, timeoutSeconds })),
       });
       if (!result.ok) {
         if (!("code" in result.error) || result.error.code !== "timeout") throw result.error;
-        const partialOutput = [stdout, stderr].filter(Boolean).join(stdout && stderr ? "\n" : "");
-        const truncatedOutput = partialOutput.length > 8_000 ? `...${partialOutput.slice(-8_000)}` : partialOutput;
         throw new Error(
-          `Command timed out after ${timeoutSeconds} seconds.${truncatedOutput ? `\n\nPartial output:\n${truncatedOutput}` : ""}\n\nThis timeout is retryable. Narrow the command scope first, or call bash again with a larger explicit timeout (maximum ${MAX_BASH_TIMEOUT_SECONDS} seconds).`,
+          `Command timed out after ${timeoutSeconds} seconds.\n\nThis timeout is retryable. Narrow the command scope first, or call bash again with a larger explicit timeout (maximum ${MAX_BASH_TIMEOUT_SECONDS} seconds).`,
         );
       }
-      const output = [result.value.stdout, result.value.stderr].filter(Boolean).join(result.value.stdout && result.value.stderr ? "\n" : "");
+      const output = result.value.output;
       return textResult(output || `Command finished with exit code ${result.value.exitCode}`, {
         command: input.command,
         elapsedMs: Date.now() - startedAt,
         exitCode: result.value.exitCode,
-        stdout: result.value.stdout,
-        stderr: result.value.stderr,
+        ...(result.value.truncated ? { truncated: true, fullOutputPath: result.value.fullOutputPath } : {}),
         timeoutSeconds,
       });
     },
@@ -165,7 +177,7 @@ export function createHeadlessCodingTools(env: ExecutionEnv, search?: WorkspaceS
     async execute(_id, _input, signal) {
       const result = requireSuccess(await env.exec("git status --short && git diff --no-ext-diff", { abortSignal: signal, timeout: 30 }));
       const output = [result.stdout, result.stderr].filter(Boolean).join(result.stdout && result.stderr ? "\n" : "");
-      return textResult(output || "No working tree changes", { command: "git status --short && git diff --no-ext-diff", exitCode: result.exitCode });
+      return boundedTextResult(output || "No working tree changes", { command: "git status --short && git diff --no-ext-diff", exitCode: result.exitCode }, "tail");
     },
   });
   const ls = defineTool({
@@ -177,7 +189,7 @@ export function createHeadlessCodingTools(env: ExecutionEnv, search?: WorkspaceS
       const path = relativePath(input.path);
       const entries = requireSuccess(await env.listDir(path, signal));
       const output = entries.map((entry) => `${entry.kind === "directory" ? "d" : "f"} ${entry.name}`).join("\n");
-      return textResult(output, { path, entries: entries.map((entry) => ({ name: entry.name, kind: entry.kind, path: entry.path })) });
+      return boundedTextResult(output, { path, entries: entries.map((entry) => ({ name: entry.name, kind: entry.kind, path: entry.path })) });
     },
   });
   const find = defineTool({
@@ -196,7 +208,7 @@ export function createHeadlessCodingTools(env: ExecutionEnv, search?: WorkspaceS
       if (input.path) requireSuccess(await env.listDir(input.path));
       const page = await search.find(input);
       const files = page.items.map((item) => item.path);
-      return textResult(files.join("\n"), { path: relativePath(input.path), count: files.length, total: page.total, files, nextCursor: page.nextCursor });
+      return boundedTextResult(files.join("\n"), { path: relativePath(input.path), count: files.length, total: page.total, nextCursor: page.nextCursor });
     },
   });
   const grep = defineTool({
@@ -223,7 +235,7 @@ export function createHeadlessCodingTools(env: ExecutionEnv, search?: WorkspaceS
         const after = item.contextAfter.map((line, index) => `${item.path}:${item.line + index + 1}+ ${line}`);
         return [...before, match, ...after].join("\n");
       });
-      return textResult(matches.join("\n--\n"), { path: relativePath(input.path), count: page.items.length, total: page.total, pattern: input.pattern, matches: page.items, nextCursor: page.nextCursor });
+      return boundedTextResult(matches.join("\n--\n"), { path: relativePath(input.path), count: page.items.length, total: page.total, pattern: input.pattern, nextCursor: page.nextCursor });
     },
   });
   return [read, bash, edit, write, grep, find, ls, workspaceChanges];

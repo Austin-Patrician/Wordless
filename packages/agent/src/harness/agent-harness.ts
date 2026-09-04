@@ -25,6 +25,7 @@ import type {
 	AgentHarnessResources,
 	AgentHarnessStreamOptions,
 	AgentHarnessStreamOptionsPatch,
+	BeforeAgentStartResult,
 	ExecutionEnv,
 	NavigateTreeResult,
 	PendingSessionWrite,
@@ -180,6 +181,7 @@ export class AgentHarness<
 	private followUpQueue: UserMessage[] = [];
 	private followUpQueueMode: QueueMode;
 	private nextTurnQueue: AgentMessage[] = [];
+	private readonly beforeNextTurn?: AgentHarnessOptions<TSkill, TPromptTemplate, TTool>["beforeNextTurn"];
 	private handlers = new Map<string, Set<AgentHarnessHandler>>();
 
 	constructor(options: AgentHarnessOptions<TSkill, TPromptTemplate, TTool>) {
@@ -205,6 +207,7 @@ export class AgentHarness<
 		this.validateToolNames(this.activeToolNames);
 		this.steeringQueueMode = options.steeringMode ?? "one-at-a-time";
 		this.followUpQueueMode = options.followUpMode ?? "one-at-a-time";
+		this.beforeNextTurn = options.beforeNextTurn;
 	}
 
 	private getHandlers(type: string): Set<AgentHarnessHandler> | undefined {
@@ -248,6 +251,29 @@ export class AgentHarness<
 			}
 		}
 		return lastResult;
+	}
+
+	private async emitBeforeAgentStart(
+		event: Extract<AgentHarnessOwnEvent, { type: "before_agent_start" }>,
+	): Promise<BeforeAgentStartResult | undefined> {
+		const handlers = this.getHandlers("before_agent_start");
+		if (!handlers || handlers.size === 0) return undefined;
+		let currentSystemPrompt = event.systemPrompt;
+		const messages: AgentMessage[] = [];
+		for (const handler of handlers) {
+			try {
+				const result = await handler({ ...event, systemPrompt: currentSystemPrompt });
+				if (result?.messages) messages.push(...result.messages);
+				if (result?.systemPrompt !== undefined) currentSystemPrompt = result.systemPrompt;
+			} catch (error) {
+				throw normalizeHookError(error);
+			}
+		}
+		if (messages.length === 0 && currentSystemPrompt === event.systemPrompt) return undefined;
+		return {
+			...(messages.length > 0 ? { messages } : {}),
+			...(currentSystemPrompt !== event.systemPrompt ? { systemPrompt: currentSystemPrompt } : {}),
+		};
 	}
 
 	private async emitBeforeProviderRequest(
@@ -434,12 +460,13 @@ export class AgentHarness<
 					? { content: patch.content, details: patch.details, isError: patch.isError, terminate: patch.terminate }
 					: undefined;
 			},
-			prepareNextTurn: async () => {
+			prepareNextTurn: async (turn) => {
+				const preparedContext = await this.beforeNextTurn?.(turn.context);
 				await this.flushPendingSessionWrites();
 				const nextTurnState = await this.createTurnState();
 				setTurnState(nextTurnState);
 				return {
-					context: this.createContext(nextTurnState),
+					context: preparedContext ?? this.createContext(nextTurnState),
 					model: nextTurnState.model,
 					thinkingLevel: nextTurnState.thinkingLevel,
 				};
@@ -551,7 +578,7 @@ export class AgentHarness<
 			}
 			messages = [...queuedMessages, messages[0]!];
 		}
-		const beforeResult = await this.emitHook({
+		const beforeResult = await this.emitBeforeAgentStart({
 			type: "before_agent_start",
 			prompt: text,
 			images: options?.images,
@@ -839,6 +866,18 @@ export class AgentHarness<
 		} finally {
 			this.compactionAbortController = undefined;
 			this.phase = "idle";
+		}
+	}
+
+	/** Run compaction between tool turns without terminating the active agent loop. */
+	async compactForNextTurn(customInstructions?: string): Promise<{ summary: string; firstKeptEntryId: string; tokensBefore: number; details?: unknown }> {
+		if (this.phase !== "turn") throw new AgentHarnessError("busy", "Next-turn compaction requires an active turn");
+		const previousPhase = this.phase;
+		this.phase = "idle";
+		try {
+			return await this.compact(customInstructions);
+		} finally {
+			this.phase = previousPhase;
 		}
 	}
 

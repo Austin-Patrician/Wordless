@@ -10,6 +10,7 @@ import type { WorkspaceSearchProvider } from "@wordless/workspace-search";
 import type {
   AgentExtensionEvent,
   AgentExtensionInteraction,
+  AgentExtensionHostFactory,
   SubagentRunner,
   SubagentRoleDefinition,
 } from "@wordless/agent-extension-sdk";
@@ -814,6 +815,9 @@ export interface AgentDriverSessionContext {
   toolApprovalMode?: ToolApprovalMode;
   /** Resolve a staged image attachment immediately before a provider request. */
   resolvePromptImage?: ResolvePromptImage;
+  createExtensionHost?: AgentExtensionHostFactory;
+  /** Enable threshold-based compaction before subsequent assistant turns. */
+  automaticCompaction?: boolean;
 }
 
 export interface AgentDriverSession {

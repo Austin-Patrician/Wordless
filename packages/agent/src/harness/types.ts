@@ -1,5 +1,5 @@
 import type { ImageContent, Model, Models, SimpleStreamOptions, TextContent, Transport } from "@wordless/ai";
-import type { AgentEvent, AgentMessage, AgentTool, QueueMode, ThinkingLevel } from "../index.ts";
+import type { AgentContext, AgentEvent, AgentMessage, AgentTool, QueueMode, ThinkingLevel } from "../index.ts";
 import type { Session } from "./session/session.ts";
 
 /** Result of a fallible operation. Expected failures are returned as `ok: false` instead of thrown. */
@@ -834,6 +834,8 @@ export interface AgentHarnessOptions<
 	activeToolNames?: string[];
 	steeringMode?: QueueMode;
 	followUpMode?: QueueMode;
+	/** Called after a tool turn and before the next assistant request. */
+	beforeNextTurn?: (context: AgentContext) => Promise<AgentContext | undefined> | AgentContext | undefined;
 }
 
 export type { AgentHarness } from "./agent-harness.ts";

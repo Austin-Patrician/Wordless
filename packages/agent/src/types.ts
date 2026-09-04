@@ -398,6 +398,10 @@ export type AgentToolUpdateCallback<T = any> = (partialResult: AgentToolResult<T
 export interface AgentTool<TParameters extends TSchema = TSchema, TDetails = any> extends Tool<TParameters> {
 	/** Human-readable label for UI display. */
 	label: string;
+	/** Optional concise guidance included in the generated system prompt. */
+	promptSnippet?: string;
+	/** Optional usage guidelines included when this tool is active. */
+	promptGuidelines?: readonly string[];
 	/** Immutable origin metadata available even when execution never returns a result. */
 	source?: AgentToolSource;
 	/**

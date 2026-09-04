@@ -97,6 +97,7 @@ export interface SessionSubagentRunnerOptions {
     model?: ModelReference;
     thinkingLevel?: ThinkingLevel;
   }[];
+  automaticCompaction?: boolean;
 }
 
 export interface SubagentFileChange {
@@ -735,6 +736,7 @@ export class SessionSubagentRunner
       ...(artifactRoot ? { workspaceWriteRoot: artifactRoot } : {}),
       resolveModel: this.options.resolveModel,
       executionKind: "subagent",
+      automaticCompaction: this.options.automaticCompaction,
       resourceOwnerSessionId: this.options.parent.id,
       allowUserRequests: member
         ? member.executionProfile !== "research"

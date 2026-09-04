@@ -45,6 +45,7 @@ import researchSnapshotIcon from "../../../icons/common-icons/research_snapshot.
 import researchSubmitDimensionIcon from "../../../icons/common-icons/research_submit_dimension.svg";
 import researchValidateIcon from "../../../icons/common-icons/research_validate.svg";
 import planIcon from "../../../icons/common-icons/plan.svg";
+import updatePlanIcon from "../../../icons/common-icons/update-plan.svg";
 import writeIcon from "../../../icons/common-icons/Write.svg";
 import terminalBashIcon from "../../../icons/common-icons/terminal-bash.svg";
 import { ConnectorIcon } from "../../shared/ConnectorIcon";
@@ -106,6 +107,7 @@ const standardToolIconSources: Record<string, StandardToolIconSource> = {
   },
   research_validate: { path: researchValidateIcon },
   request_user_input: { path: modelRequestIcon },
+  update_plan: { path: updatePlanIcon, invertOnDark: true },
   workspace_changes: { path: listIcon, invertOnDark: true },
   write: { path: writeIcon, invertOnDark: true },
 };

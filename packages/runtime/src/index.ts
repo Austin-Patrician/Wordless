@@ -25,6 +25,7 @@ import { fileURLToPath } from "node:url";
 import { createTwoFilesPatch } from "diff";
 import {
   AGENT_EXTENSION_STATE_JOURNAL_TYPE,
+  createAgentExtensionHostFactory,
   type AgentExtensionManager,
 } from "@wordless/agent-extension-runtime";
 import {
@@ -2358,10 +2359,26 @@ export class WordlessRuntime {
     );
     for (const entryId of recoveredRetryEntryIds)
       recoveredFailureEntryIds.add(entryId);
+    let latestCompactionTimestamp = 0;
+    for (const compaction of compactions) {
+      if (compaction.timestamp > latestCompactionTimestamp) {
+        latestCompactionTimestamp = compaction.timestamp;
+      }
+    }
     let latestInputTokens: number | undefined;
     for (let index = activeContext.messages.length - 1; index >= 0; index -= 1) {
-      const message = activeContext.messages[index] as { role?: string; usage?: { input?: number; cacheRead?: number; cacheWrite?: number } };
+      const message = activeContext.messages[index] as {
+        role?: string;
+        timestamp?: number;
+        usage?: { input?: number; cacheRead?: number; cacheWrite?: number };
+      };
       if (message.role !== "assistant") continue;
+      if (
+        typeof message.timestamp === "number" &&
+        message.timestamp <= latestCompactionTimestamp
+      ) {
+        break;
+      }
       const usage = message.usage;
       if (!usage) continue;
       const total = (usage.input ?? 0) + (usage.cacheRead ?? 0) + (usage.cacheWrite ?? 0);
@@ -3405,6 +3422,7 @@ export class WordlessRuntime {
       submission?.messageId,
       options?.connectorIds,
       options?.taskId,
+      automaticCompaction,
     );
     void this.executeActiveRun(
       sessionId,
@@ -5054,6 +5072,7 @@ export class WordlessRuntime {
         type: "compact",
         trigger: "manual",
       });
+      await this.refreshContextUsage(sessionId, active);
     } finally {
       this.closeActiveRun(sessionId, active);
     }
@@ -5065,6 +5084,7 @@ export class WordlessRuntime {
     userMessageId?: string,
     connectorIdsOverride?: string[],
     taskId?: string,
+    automaticCompaction = false,
   ): Promise<ActiveRun> {
     const record = await this.ensureSessionModelForOpen(sessionId);
     if (this.runs.has(sessionId))
@@ -5177,6 +5197,7 @@ export class WordlessRuntime {
       onExpertMemberEvent: (event) =>
         this.emitExpertMemberEvent(sessionId, event),
       toolApprovalMode: record.toolApprovalMode,
+      automaticCompaction,
       resolvePromptImage: (reference) => this.resolvePromptImage(record, reference),
       expertTeamDelegates:
         expertSnapshot?.kind === "team"
@@ -5226,7 +5247,9 @@ export class WordlessRuntime {
             }))
           : undefined,
       toolApprovalMode: record.toolApprovalMode,
+      automaticCompaction,
       resolvePromptImage: (reference) => this.resolvePromptImage(record, reference),
+      createExtensionHost: createAgentExtensionHostFactory(this.extensions),
     });
     const active: ActiveRun = {
       driverSession,

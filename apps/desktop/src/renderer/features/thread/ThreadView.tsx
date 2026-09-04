@@ -4,6 +4,7 @@ import {
   ArrowDown,
   ArrowLeft,
   Check,
+  Circle,
   ChevronDown,
   ChevronUp,
   CircleAlert,
@@ -12,6 +13,7 @@ import {
   LoaderCircle,
   PanelRightClose,
   PanelRightOpen,
+  ListChecks,
   RotateCcw,
   UsersRound,
 } from "lucide-react";
@@ -144,8 +146,6 @@ type ThreadVirtuosoContext = {
   densityRail: boolean;
   isCompacting: boolean;
   onRetryCompaction: () => void;
-  planMode: "off" | "planning" | "executing";
-  planState?: Record<string, unknown>;
 };
 
 function ThreadVirtuosoHeader({
@@ -153,13 +153,7 @@ function ThreadVirtuosoHeader({
 }: {
   context: ThreadVirtuosoContext;
 }) {
-  return context.planMode !== "off" ? (
-    <ThreadContentFrame className="pb-7 pt-6" densityRail={context.densityRail}>
-      <PlanModePanel mode={context.planMode} state={context.planState} />
-    </ThreadContentFrame>
-  ) : (
-    <div className="h-6" />
-  );
+  return <div className="h-6" />;
 }
 
 function ThreadVirtuosoFooter({
@@ -1342,6 +1336,120 @@ function planModeFromExtensions(
     : "off";
 }
 
+function planStateFromExtensions(
+  extensions: SessionSnapshot["extensions"],
+): { mode: "planning" | "executing"; steps: Array<{ id: string; title: string; detail: string; status: string }>; activeStepId?: string } | null {
+  const state = asObject(extensions.find((item) => item.extensionId === "wordless.plan-mode")?.state);
+  if (!state || (state.mode !== "planning" && state.mode !== "executing") || !Array.isArray(state.plan)) return null;
+  const steps = state.plan.flatMap((item) => {
+    const value = asObject(item);
+    return value && typeof value.id === "string" && typeof value.title === "string" && typeof value.detail === "string" && typeof value.status === "string"
+      ? [{ id: value.id, title: value.title, detail: value.detail, status: value.status }]
+      : [];
+  });
+  if (!steps.length) return null;
+  return { mode: state.mode, steps, ...(typeof state.activeStepId === "string" ? { activeStepId: state.activeStepId } : {}) };
+}
+
+function PlanProgressBar({ plan }: { plan: NonNullable<ReturnType<typeof planStateFromExtensions>> }) {
+  const { t } = usePreferences();
+  const dockRef = useRef<HTMLDivElement>(null);
+  const [expanded, setExpanded] = useState(false);
+  const completed = plan.steps.filter((step) => step.status === "completed").length;
+  const active = plan.steps.find((step) => step.status === "in-progress")
+    ?? plan.steps.find(
+      (step) =>
+        step.id === plan.activeStepId && step.status !== "completed",
+    )
+    ?? plan.steps.find((step) => step.status === "blocked" || step.status === "failed")
+    ?? plan.steps.find((step) => step.status === "pending");
+  const allCompleted = completed === plan.steps.length;
+  const statusLabel = allCompleted
+    ? t("planStatusComplete")
+    : active?.status === "failed"
+      ? t("planStatusFailed")
+      : active?.status === "blocked"
+        ? t("planStatusBlocked")
+        : plan.mode === "executing"
+          ? t("planStatusInProgress")
+          : t("planStatusProposed");
+  const detailsId = `plan-steps-${plan.steps.map((step) => step.id).join("-")}`;
+  useEffect(() => {
+    if (!expanded) return undefined;
+    const onPointerDown = (event: PointerEvent) => {
+      if (!dockRef.current?.contains(event.target as Node)) setExpanded(false);
+    };
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setExpanded(false);
+    };
+    document.addEventListener("pointerdown", onPointerDown);
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("pointerdown", onPointerDown);
+      document.removeEventListener("keydown", onKeyDown);
+    };
+  }, [expanded]);
+  return (
+    <div className="pointer-events-none absolute inset-x-0 bottom-full z-30 mb-1 flex justify-center" aria-label={t("planProgress")} role="region">
+      <div ref={dockRef} className="pointer-events-auto relative w-[min(520px,calc(100%-24px))] max-w-full text-foreground">
+        <div className={`overflow-hidden ${expanded ? "rounded-lg border border-black/10 bg-white/90 shadow-[0_8px_20px_rgba(0,0,0,0.10)] backdrop-blur-md dark:border-white/10 dark:bg-card/90 dark:shadow-[0_8px_20px_rgba(0,0,0,0.34)]" : "bg-transparent"}`}>
+          <button
+            aria-controls={detailsId}
+            aria-expanded={expanded}
+            aria-label={expanded ? t("planCollapseSteps") : t("planExpandSteps")}
+            className={`flex min-h-8 w-full min-w-0 items-center gap-2 px-1 py-0.5 text-left transition-colors duration-150 hover:bg-[#f5f5f2] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring dark:hover:bg-muted ${expanded ? "px-3" : ""}`}
+            onClick={() => setExpanded((value) => !value)}
+            type="button"
+          >
+            <ListChecks aria-hidden className="h-4 w-4 shrink-0 text-muted-foreground" />
+            <span className="shrink-0 text-[11px] font-semibold">{t("planProgress")}</span>
+            <span className={`shrink-0 font-mono text-[10px] font-semibold tabular-nums ${allCompleted ? "text-emerald-700 dark:text-emerald-400" : "text-[#718649] dark:text-[#b9d77e]"}`}>{completed}/{plan.steps.length}</span>
+            <span className="hidden shrink-0 text-[10px] text-muted-foreground sm:inline">{statusLabel}</span>
+            <span className="min-w-0 flex-1 truncate text-[11px] text-muted-foreground">{active?.title ?? (allCompleted ? t("planAllStepsComplete") : t("planAwaitingExecution"))}</span>
+            <ChevronDown aria-hidden className={`h-3.5 w-3.5 shrink-0 text-muted-foreground transition-transform duration-150 motion-reduce:transition-none ${expanded ? "rotate-180" : ""}`} />
+          </button>
+          {expanded ? (
+        <ol id={detailsId} className="max-h-64 space-y-1 overflow-y-auto border-t border-border/40 px-3 pb-2 pt-2 motion-safe:animate-in motion-safe:fade-in motion-safe:slide-in-from-bottom-1 motion-safe:duration-150">
+          {plan.steps.map((step, index) => {
+            const isActive = step.id === active?.id;
+            const StepIcon = step.status === "completed"
+              ? Check
+              : step.status === "in-progress"
+                ? LoaderCircle
+                : step.status === "blocked" || step.status === "failed"
+                  ? CircleAlert
+                  : Circle;
+            // const statusText = step.status === "in-progress"
+            //   ? t("planStatusInProgress")
+            //   : step.status === "completed"
+            //     ? t("planStatusComplete")
+            //     : step.status === "blocked"
+            //       ? t("planStatusBlocked")
+            //       : step.status === "failed"
+            //         ? t("planStatusFailed")
+            //         : t("planStatusPending");
+            return (
+              <li className={`flex min-w-0 gap-2 border-l-2 px-2 py-1.5 text-[11px] ${isActive ? "border-foreground/60" : "border-transparent"}`} key={step.id}>
+                <StepIcon aria-hidden className={`mt-0.5 h-3.5 w-3.5 shrink-0 ${step.status === "completed" ? "text-emerald-700 dark:text-emerald-400" : step.status === "blocked" || step.status === "failed" ? "text-destructive" : step.status === "in-progress" ? "animate-spin motion-reduce:animate-none text-foreground" : "text-muted-foreground"}`} />
+                <div className="min-w-0 flex-1">
+                  <div className="flex min-w-0 items-baseline gap-2">
+                    <span className={`min-w-0 truncate font-medium ${step.status === "completed" ? "text-muted-foreground line-through" : "text-foreground"}`}>{step.title}</span>
+                    {/* <span className="shrink-0 text-[10px] text-muted-foreground">{statusText}</span> */}
+                  </div>
+                  <p className="mt-0.5 text-[10px] leading-4 text-muted-foreground">{step.detail}</p>
+                </div>
+                {/* <span aria-hidden className="shrink-0 font-mono text-[10px] tabular-nums text-muted-foreground">{String(index + 1).padStart(2, "0")}</span> */}
+              </li>
+            );
+          })}
+        </ol>
+          ) : null}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function ThinkingBlock({ streaming = false, text }: { streaming?: boolean; text: string }) {
   const { t } = usePreferences();
   const [expanded, setExpanded] = useState(false);
@@ -1379,90 +1487,6 @@ function ThinkingBlock({ streaming = false, text }: { streaming?: boolean; text:
           </div>
         ) : null}
       </div>
-    </section>
-  );
-}
-
-function PlanModePanel({
-  mode,
-  state,
-}: {
-  mode: "planning" | "executing";
-  state?: Record<string, unknown>;
-}) {
-  const { t } = usePreferences();
-  const plan = Array.isArray(state?.plan)
-    ? state.plan.flatMap((item) => {
-        const value = asObject(item);
-        if (
-          typeof value?.id !== "string" ||
-          typeof value.title !== "string" ||
-          typeof value.detail !== "string"
-        )
-          return [];
-        return [
-          {
-            id: value.id,
-            title: value.title,
-            detail: value.detail,
-            status:
-              value.status === "completed" || value.status === "in-progress"
-                ? value.status
-                : "pending",
-          },
-        ];
-      })
-    : [];
-  return (
-    <section className="mt-4 border-l-2 border-[#ccf257] pl-3.5 dark:border-[#819d4d]">
-      <div className="flex items-center gap-2">
-        <p className="text-[12px] font-semibold text-[#454540] dark:text-foreground">
-          {mode === "planning" ? t("executePlan") : t("executingPlan")}
-        </p>
-        <span className="font-mono text-[10px] text-[#8d8d86] dark:text-muted-foreground">
-          {plan.length} {t("steps")}
-        </span>
-      </div>
-      <p className="mt-1 text-[12px] leading-5 text-[#777770] dark:text-muted-foreground">
-        {t("planDescription")}
-      </p>
-      {plan.length > 0 ? (
-        <ol className="mt-3 space-y-2.5">
-          {plan.map((item, index) => {
-            const done = item.status === "completed";
-            const active = item.status === "in-progress";
-            const stepIndex = String(index + 1).padStart(2, "0");
-            return (
-              <li className="flex gap-3" key={item.id}>
-                <span
-                  className={`mt-0.5 font-mono text-[10px] ${done ? "text-[#759344]" : active ? "text-[#3d3d38] dark:text-foreground" : "text-[#ababa3]"}`}
-                >
-                  {done ? "✓" : stepIndex}
-                </span>
-                <div>
-                  <p
-                    className={`text-[12px] font-medium ${item.status === "pending" ? "text-[#777770] dark:text-muted-foreground" : "text-[#3c3c37] dark:text-foreground"}`}
-                  >
-                    {item.title}
-                    {active ? (
-                      <span className="ml-2 font-mono text-[9px] text-[#759344]">
-                        {t("inProgress")}
-                      </span>
-                    ) : null}
-                  </p>
-                  <p className="mt-0.5 text-[11px] text-[#8c8c85] dark:text-muted-foreground">
-                    {item.detail}
-                  </p>
-                </div>
-              </li>
-            );
-          })}
-        </ol>
-      ) : (
-        <p className="mt-3 text-[12px] text-[#8c8c85] dark:text-muted-foreground">
-          {t("planWillAppear")}
-        </p>
-      )}
     </section>
   );
 }
@@ -2051,6 +2075,7 @@ function AssistantMessageBody({
   onResolveUserRequest,
   onResolvePlanResult,
   canPlan,
+  hasStructuredPlan,
   planMode,
   runPresentation,
   showFooter,
@@ -2084,6 +2109,7 @@ function AssistantMessageBody({
   ) => void;
   onResolvePlanResult: (action: "implement" | "stay") => Promise<void>;
   canPlan: boolean;
+  hasStructuredPlan: boolean;
   planMode: "off" | "planning" | "executing";
   runPresentation: AssistantRunPresentation | null;
   showFooter: boolean;
@@ -2162,7 +2188,8 @@ function AssistantMessageBody({
         {showFooter &&
         !isStreaming &&
         !hasPendingInteraction &&
-        planMode === "planning" ? (
+        planMode === "planning" &&
+        hasStructuredPlan ? (
           <PlanResultActions onResolve={onResolvePlanResult} />
         ) : null}
         {showFooter && !isStreaming && !hasPendingInteraction ? (
@@ -2276,6 +2303,7 @@ function MessageBody({
   onResolveUserRequest,
   onResolvePlanResult,
   canPlan,
+  hasStructuredPlan,
   isFirstMessage,
   pendingAssistant = false,
   planMode,
@@ -2312,6 +2340,7 @@ function MessageBody({
   ) => void;
   onResolvePlanResult: (action: "implement" | "stay") => Promise<void>;
   canPlan: boolean;
+  hasStructuredPlan: boolean;
   isFirstMessage: boolean;
   pendingAssistant?: boolean;
   planMode: "off" | "planning" | "executing";
@@ -2327,6 +2356,7 @@ function MessageBody({
       <AssistantMessageBody
         assistantIdentity={assistantIdentity}
         canPlan={canPlan}
+        hasStructuredPlan={hasStructuredPlan}
         messages={messages}
         onEnableAutoApprove={onEnableAutoApprove}
         onHandoffClarification={onHandoffClarification}
@@ -2469,6 +2499,7 @@ function MessageBody({
     <AssistantMessageBody
       assistantIdentity={assistantIdentity}
       canPlan={canPlan}
+      hasStructuredPlan={hasStructuredPlan}
       messages={messages}
       onEnableAutoApprove={onEnableAutoApprove}
       onHandoffClarification={onHandoffClarification}
@@ -2518,6 +2549,7 @@ type ThreadRowActions = {
 type ThreadRowEnvironmentSnapshot = {
   canPlan: boolean;
   densityRail: boolean;
+  hasStructuredPlan: boolean;
   planMode: "off" | "planning" | "executing";
 };
 
@@ -2564,6 +2596,7 @@ class ThreadRowEnvironment {
     if (
       this.rowSnapshot.canPlan !== row.canPlan ||
       this.rowSnapshot.densityRail !== row.densityRail ||
+      this.rowSnapshot.hasStructuredPlan !== row.hasStructuredPlan ||
       this.rowSnapshot.planMode !== row.planMode
     ) {
       this.rowSnapshot = row;
@@ -2768,6 +2801,7 @@ function ThreadStoreRow({
         <MessageBody
           assistantIdentity={assistantIdentity}
           canPlan={environment.canPlan}
+          hasStructuredPlan={environment.hasStructuredPlan}
           isFirstMessage={isFirstMessage}
           messages={[...row.messages]}
           onEnableAutoApprove={
@@ -3094,6 +3128,7 @@ export function ThreadView({
   const history = useSyncExternalStore(threadStore.subscribeHistory, threadStore.getHistorySnapshot, threadStore.getHistorySnapshot);
   const session = threadMetadata.session;
   const [modelOpen, setModelOpen] = useState(false);
+  const [hideCompletedPlan, setHideCompletedPlan] = useState(false);
   const [selectedExpertMemberId, setSelectedExpertMemberId] = useState<string | null>(null);
   const timelineViewportRef = useRef<ThreadTimelineViewportHandle>(null);
   const viewportStore = useMemo(() => new ThreadViewportStore(), [sessionId]);
@@ -3171,12 +3206,23 @@ export function ThreadView({
   const selectedExpertMember = expertCollaborationMembers.find(
     (member) => member.memberId === selectedExpertMemberId,
   );
+  const planState = useMemo(
+    () => planStateFromExtensions(threadMetadata.extensions),
+    [threadMetadata.extensions],
+  );
+  const planCompleted = Boolean(
+    planState && planState.steps.every((step) => step.status === "completed"),
+  );
+  useEffect(() => {
+    if (!planCompleted) setHideCompletedPlan(false);
+  }, [planCompleted]);
   const send = async (parts: UserPromptPart[], attachments?: File[]) => {
     const submission = createUserMessageSubmission();
     const pendingTurn = createPendingThreadTurn(parts, submission, attachments);
     threadStore.addPendingTurn(pendingTurn);
     try {
       await client.promptSession(sessionId, parts, submission, attachments);
+      if (planCompleted) setHideCompletedPlan(true);
     } catch (cause) {
       threadStore.removePendingTurn(submission.messageId);
       throw cause;
@@ -3360,9 +3406,13 @@ export function ThreadView({
     const currentState = threadMetadata.extensions.find(
       (item) => item.extensionId === "wordless.plan-mode",
     )?.state;
+    const existingPlan = Array.isArray(currentState?.plan) ? currentState.plan : [];
     const nextState = {
       mode: nextMode,
-      plan: Array.isArray(currentState?.plan) ? currentState.plan : [],
+      plan: nextMode === "planning" && planMode === "off" ? [] : existingPlan,
+      ...(typeof currentState?.activeStepId === "string" && !(nextMode === "planning" && planMode === "off")
+        ? { activeStepId: currentState.activeStepId }
+        : {}),
     };
     if (threadMetadata.isRunning)
       await client.interactWithSessionExtension(
@@ -3388,6 +3438,9 @@ export function ThreadView({
     const currentState = threadMetadata.extensions.find(
       (item) => item.extensionId === "wordless.plan-mode",
     )?.state;
+    const existingPlan = Array.isArray(currentState?.plan) ? currentState.plan : [];
+    if (!existingPlan.length)
+      throw new Error("A structured plan is required before implementation can begin");
     const updatedSession = await client.setSessionInteractionMode(
       sessionId,
       "default",
@@ -3395,7 +3448,10 @@ export function ThreadView({
     threadStore.patchSession(updatedSession);
     await client.setSessionExtensionState(sessionId, "wordless.plan-mode", {
       mode: "executing",
-      plan: Array.isArray(currentState?.plan) ? currentState.plan : [],
+      plan: existingPlan,
+      ...(typeof currentState?.activeStepId === "string"
+        ? { activeStepId: currentState.activeStepId }
+        : {}),
     });
     threadStore.mergeSessionView(await client.getSessionView(sessionId));
     await send([
@@ -3410,6 +3466,8 @@ export function ThreadView({
     threadStore.markCompactionStarted("manual");
     try {
       await client.compactSession(sessionId);
+      const view = await client.getSessionView(sessionId);
+      threadStore.mergeSessionView(view);
     } catch (cause) {
       threadStore.markCompactionFailed("manual", compactionFailureMessage(cause));
     }
@@ -3444,13 +3502,6 @@ export function ThreadView({
       densityRail: showDensityRail,
       isCompacting: threadMetadata.isCompacting,
       onRetryCompaction: compactContext,
-      planMode:
-        planExtensionEnabled && planMode !== "off" ? planMode : "off",
-      planState: asObject(
-        threadMetadata.extensions.find(
-          (item) => item.extensionId === "wordless.plan-mode",
-        )?.state,
-      ),
     }),
     [
       compactContext,
@@ -3459,13 +3510,12 @@ export function ThreadView({
       showDensityRail,
       threadMetadata.compactionError,
       threadMetadata.compactionTrigger,
-      threadMetadata.extensions,
       threadMetadata.isCompacting,
     ],
   );
   const threadRowEnvironment = useMemo(
     () => new ThreadRowEnvironment(
-      { canPlan, densityRail: showDensityRail, planMode },
+      { canPlan, densityRail: showDensityRail, hasStructuredPlan: Boolean(planState), planMode },
       threadVirtuosoContext,
     ),
     [threadStore],
@@ -3483,10 +3533,10 @@ export function ThreadView({
   });
   useLayoutEffect(() => {
     threadRowEnvironment.update(
-      { canPlan, densityRail: showDensityRail, planMode },
+      { canPlan, densityRail: showDensityRail, hasStructuredPlan: Boolean(planState), planMode },
       threadVirtuosoContext,
     );
-  }, [canPlan, planMode, showDensityRail, threadRowEnvironment, threadVirtuosoContext]);
+  }, [canPlan, planMode, planState, showDensityRail, threadRowEnvironment, threadVirtuosoContext]);
   const threadStoreVirtuosoContext = useMemo<ThreadStoreVirtuosoContext>(
     () => ({
       environment: threadRowEnvironment,
@@ -3549,6 +3599,7 @@ export function ThreadView({
       </div>
       <div className="bg-transparent pb-3 pt-5">
         <ThreadContentFrame densityRail={showDensityRail}>
+          <div className="relative">
           {selectedExpert &&
           selectedExpert.kind === "team" &&
           threadMetadata.expertCollaboration ? (
@@ -3572,6 +3623,7 @@ export function ThreadView({
               inert={selectedExpertMember ? true : undefined}
             >
               <div className="relative">
+                {!hideCompletedPlan && planState ? <PlanProgressBar plan={planState} /> : null}
                 <Composer
                   key={sessionId}
                   accessLevel={session.accessLevel}
@@ -3694,6 +3746,7 @@ export function ThreadView({
                 </span>
               </button>
             ) : null}
+          </div>
           </div>
         </ThreadContentFrame>
       </div>
