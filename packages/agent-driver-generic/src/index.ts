@@ -174,7 +174,12 @@ const UserRequestFieldSchema = Type.Union([
     required: Type.Optional(Type.Boolean()),
     options: Type.Array(UserRequestOptionSchema, { minItems: 1, maxItems: 32 }),
     defaultValue: Type.Optional(Type.String({ maxLength: 4_000 })),
-    allowCustom: Type.Optional(Type.Boolean()),
+    allowCustom: Type.Optional(
+      Type.Boolean({
+        description:
+          "Compatibility field only; select questions always allow an Other answer.",
+      }),
+    ),
   }),
   Type.Object({
     id: Type.String({ minLength: 1, maxLength: 128 }),
@@ -186,7 +191,12 @@ const UserRequestFieldSchema = Type.Union([
     defaultValue: Type.Optional(
       Type.Array(Type.String({ maxLength: 4_000 }), { maxItems: 32 }),
     ),
-    allowCustom: Type.Optional(Type.Boolean()),
+    allowCustom: Type.Optional(
+      Type.Boolean({
+        description:
+          "Compatibility field only; multi-select questions always allow one Other answer.",
+      }),
+    ),
   }),
   Type.Object({
     id: Type.String({ minLength: 1, maxLength: 128 }),
@@ -213,6 +223,8 @@ const UserRequestParamsSchema = Type.Object({
   description: Type.Optional(Type.String({ maxLength: 2_000 })),
   fields: Type.Array(UserRequestFieldSchema, { minItems: 1, maxItems: 8 }),
 });
+
+const MAX_USER_CUSTOM_RESPONSE_LENGTH = 4_000;
 
 const LoadSkillParamsSchema = Type.Object({
   name: Type.String({ minLength: 1, maxLength: 128 }),
@@ -496,6 +508,18 @@ function userRequestContent(resolution: UserRequestResolution): string {
   return `The user submitted the following response: ${JSON.stringify(resolution.answers ?? {})}`;
 }
 
+/** Choice questions always include an escape hatch for requirements outside the presets. */
+function normalizeUserRequestParams(params: UserRequestParams): UserRequestParams {
+  return {
+    ...params,
+    fields: params.fields.map((field) =>
+      field.type === "select" || field.type === "multi-select"
+        ? { ...field, allowCustom: true }
+        : field,
+    ),
+  };
+}
+
 function validateUserRequestResolution(
   request: UserRequest,
   resolution: UserRequestResolution,
@@ -530,19 +554,25 @@ function validateUserRequestResolution(
       const value = typeof answer === "string" ? answer : field.defaultValue;
       if (field.required && !value?.trim())
         throw new Error("A required response is missing");
+      if (value !== undefined && value.length > MAX_USER_CUSTOM_RESPONSE_LENGTH)
+        throw new Error("The response is too long");
       if (value !== undefined) answers[field.id] = value;
       continue;
     }
-    const allowed = new Set(field.options.map((option) => option.value));
     if (field.type === "select") {
       if (answer !== undefined && typeof answer !== "string")
         throw new Error("The selected response is invalid");
-      const value = typeof answer === "string" ? answer : field.defaultValue;
-      if (field.required && !value)
+      const rawValue = typeof answer === "string" ? answer : field.defaultValue;
+      const optionValues = new Set(field.options.map((option) => option.value));
+      const value =
+        rawValue === undefined || optionValues.has(rawValue)
+          ? rawValue
+          : rawValue.trim();
+      if (field.required && !value?.trim())
         throw new Error("A required response is missing");
-      if (value !== undefined && !allowed.has(value) && !field.allowCustom)
-        throw new Error("The selected response is not available");
-      if (value !== undefined) answers[field.id] = value;
+      if (value !== undefined && value.length > MAX_USER_CUSTOM_RESPONSE_LENGTH)
+        throw new Error("The custom response is too long");
+      if (value) answers[field.id] = value;
       continue;
     }
     if (
@@ -552,13 +582,29 @@ function validateUserRequestResolution(
     ) {
       throw new Error("The multi-select response is invalid");
     }
-    const values = Array.isArray(answer)
+    if (
+      Array.isArray(answer) &&
+      answer.length > field.options.length + 1
+    ) {
+      throw new Error("The multi-select response has too many values");
+    }
+    const rawValues = Array.isArray(answer)
       ? [...new Set(answer)]
       : (field.defaultValue ?? []);
+    const optionValues = new Set(field.options.map((option) => option.value));
+    const values = [
+      ...new Set(
+        rawValues
+          .map((value) => (optionValues.has(value) ? value : value.trim()))
+          .filter((value) => value.length > 0),
+      ),
+    ];
+    if (values.filter((value) => !optionValues.has(value)).length > 1)
+      throw new Error("Only one custom multi-select response is allowed");
     if (field.required && values.length === 0)
       throw new Error("A required response is missing");
-    if (values.some((value) => !allowed.has(value) && !field.allowCustom))
-      throw new Error("The selected response is not available");
+    if (values.some((value) => value.length > MAX_USER_CUSTOM_RESPONSE_LENGTH))
+      throw new Error("The custom response is too long");
     answers[field.id] = values;
   }
   return { requestId: request.requestId, status: "submitted", answers };
@@ -575,10 +621,14 @@ function createUserRequestTool(
     name: "request_user_input",
     label: "Request user input",
     description:
-      "Ask the user for missing requirements or a decision. Group related questions in one request. Do not use this tool to approve file changes or command execution.",
+      "Ask the user for missing requirements or a decision. Group related questions in one request. Choice questions always include an Other option for requirements outside the presets. Do not use this tool to approve file changes or command execution.",
     parameters: UserRequestParamsSchema,
     async execute(toolCallId, params, signal) {
-      const userRequest = await requestUserInput(toolCallId, params, signal);
+      const userRequest = await requestUserInput(
+        toolCallId,
+        normalizeUserRequestParams(params),
+        signal,
+      );
       return {
         content: [
           {
@@ -1284,7 +1334,7 @@ class AgentHarnessDriverSession implements AgentDriverSession {
       contextCompactionInstructions:
         this.context.profile.contextCompactionInstructions,
       subagentRunner: this.context.subagentRunner,
-      registerTools: async (tools) => {
+      registerTools: async (tools, options) => {
         const managedHarness = this.harness as unknown as ToolManagingHarness;
         const existing = managedHarness.getTools();
         const existingNames = new Set(existing.map((tool) => tool.name));
@@ -1298,7 +1348,7 @@ class AgentHarnessDriverSession implements AgentDriverSession {
             ),
           );
         if (additions.length === 0) return;
-        const active = isClarificationMode(this.context)
+        const active = isClarificationMode(this.context) || options?.active === false
           ? managedHarness.getActiveTools().map((tool) => tool.name)
           : [
               ...managedHarness.getActiveTools().map((tool) => tool.name),

@@ -166,6 +166,8 @@ export class AgentHarness<TSkill extends Skill = Skill> {
   setThinkingLevel(level: ThinkingLevel): Promise<void>;
   compact(instructions?: string): Promise<unknown>;
   compactForNextTurn(instructions?: string): Promise<unknown>;
+  getActiveTools(): AgentTool[];
+  setActiveTools(toolNames: string[]): Promise<void>;
   abort(): Promise<unknown>;
   subscribe(listener: (event: AgentHarnessEvent) => void): () => void;
   on(

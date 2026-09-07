@@ -75,7 +75,7 @@ export interface AgentExtensionContext {
     skillIds: string[];
     connectorIds: string[];
   }>;
-  registerTools(tools: AgentTool[]): Promise<void>;
+  registerTools(tools: AgentTool[], options?: { active?: boolean }): Promise<void>;
   getCurrentPrompt(): string | undefined;
   readonly state: JsonObject;
   setState(state: JsonObject): Promise<void>;
@@ -108,7 +108,7 @@ export interface AgentExtensionHostFactory {
     harness: AgentHarness;
     contextCompactionInstructions?: string;
     subagentRunner?: SubagentRunner;
-    registerTools(tools: AgentTool[]): Promise<void>;
+    registerTools(tools: AgentTool[], options?: { active?: boolean }): Promise<void>;
     getCurrentPrompt(): string | undefined;
     expertTeamDelegates?: Array<{
       id: string;

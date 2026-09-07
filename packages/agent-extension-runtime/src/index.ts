@@ -185,7 +185,7 @@ export class AgentExtensionManager implements AgentExtensionHostFactory {
     harness: AgentHarness;
     contextCompactionInstructions?: string;
     subagentRunner?: SubagentRunner;
-    registerTools(tools: AgentTool[]): Promise<void>;
+    registerTools(tools: AgentTool[], options?: { active?: boolean }): Promise<void>;
     getCurrentPrompt(): string | undefined;
     expertTeamDelegates?: Array<{
       id: string;

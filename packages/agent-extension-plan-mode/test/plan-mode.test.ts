@@ -10,6 +10,8 @@ type PlanState = Record<string, unknown>;
 
 function fixture(state: PlanState) {
   const registered: AgentTool[] = [];
+  let activeTools: AgentTool[] = [];
+  const registrationStates: boolean[] = [];
   const persisted: PlanState[] = [];
   let beforeAgentStart:
     | ((event: {
@@ -27,9 +29,17 @@ function fixture(state: PlanState) {
       on(event: string, listener: typeof beforeAgentStart) {
         if (event === "before_agent_start") beforeAgentStart = listener;
       },
+      getActiveTools() {
+        return activeTools;
+      },
+      async setActiveTools(toolNames: string[]) {
+        activeTools = registered.filter((tool) => toolNames.includes(tool.name));
+      },
     },
-    async registerTools(tools: AgentTool[]) {
+    async registerTools(tools: AgentTool[], options?: { active?: boolean }) {
       registered.push(...tools);
+      registrationStates.push(options?.active !== false);
+      if (options?.active !== false) activeTools.push(...tools);
     },
     getCurrentPrompt() {
       return undefined;
@@ -44,6 +54,8 @@ function fixture(state: PlanState) {
     context,
     persisted,
     registered,
+    registrationStates,
+    activeToolNames: () => activeTools.map((tool) => tool.name),
   };
 }
 
@@ -61,6 +73,30 @@ const pendingSteps = [
     status: "pending" as const,
   },
 ];
+
+test("keeps update_plan inactive while the session mode is off", async () => {
+  const { activeToolNames, context, registered, registrationStates } = fixture({
+    mode: "off",
+    plan: [],
+  });
+  await planModeExtension.create(context).activate();
+
+  assert.ok(registered.some((tool) => tool.name === "update_plan"));
+  assert.deepEqual(registrationStates, [false]);
+  assert.doesNotMatch(activeToolNames().join(","), /update_plan/);
+});
+
+test("activates update_plan only while Plan mode is active", async () => {
+  const { activeToolNames, context } = fixture({ mode: "off", plan: [] });
+  const extension = planModeExtension.create(context);
+  await extension.activate();
+
+  await extension.interact?.("set-mode", "planning");
+  assert.ok(activeToolNames().includes("update_plan"));
+
+  await extension.interact?.("set-mode", "off");
+  assert.ok(!activeToolNames().includes("update_plan"));
+});
 
 test("keeps a structured plan optional in planning mode", async () => {
   const { beforeAgentStart, context, registered } = fixture({

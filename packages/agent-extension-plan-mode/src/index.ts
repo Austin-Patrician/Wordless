@@ -224,9 +224,22 @@ export const planModeExtension: AgentExtensionDefinition = {
       },
     };
 
+    const setPlanToolActive = async (active: boolean) => {
+      const activeToolNames = context.harness
+        .getActiveTools()
+        .map((tool) => tool.name)
+        .filter((name) => name !== updatePlanTool.name);
+      if (active) activeToolNames.push(updatePlanTool.name);
+      await context.harness.setActiveTools(activeToolNames);
+    };
+
     return {
       async activate() {
-        await context.registerTools([updatePlanTool]);
+        // Keep the implementation registered so mode changes are cheap, but
+        // only include its schema in model requests while Plan mode is active.
+        await context.registerTools([updatePlanTool], {
+          active: getPlanState().mode !== "off",
+        });
         context.harness.on("before_agent_start", (event) => {
           const state = getPlanState();
           if (state.mode === "off") return undefined;
@@ -257,6 +270,7 @@ export const planModeExtension: AgentExtensionDefinition = {
           const next: PlanModeState = resetPlan
             ? { mode: payload, plan: [] }
             : { ...current, mode: payload };
+          await setPlanToolActive(payload !== "off");
           localState = next;
           await context.setState(next);
           context.emit("plan.updated", next);
