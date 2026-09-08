@@ -100,7 +100,7 @@ export function CodingContextPanel({ fileChangeSelection, onAttachFile, onFileCh
   useEffect(() => {
     if (!fileChangeSelection) return;
     if (fileChangeSelection.path === null) setPreview(null);
-    else setPreview({ kind: "diff", path: fileChangeSelection.path, name: fileChangeSelection.name });
+    else setPreview({ kind: fileChangeSelection.kind ?? "diff", path: fileChangeSelection.path, name: fileChangeSelection.name });
     onFileChangeSelectionConsumed?.();
   }, [fileChangeSelection, onFileChangeSelectionConsumed]);
 

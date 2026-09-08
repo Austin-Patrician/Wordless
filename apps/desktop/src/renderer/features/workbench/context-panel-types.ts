@@ -28,6 +28,7 @@ export type ResearchTaskSelection = {
 export type FileChangeSelection = {
   path: string | null;
   name: string;
+  kind?: "diff" | "file";
 };
 
 export type WorkbenchContextPanelProps = {

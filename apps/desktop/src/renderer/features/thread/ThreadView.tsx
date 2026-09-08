@@ -1452,7 +1452,25 @@ function PlanProgressBar({ plan }: { plan: NonNullable<ReturnType<typeof planSta
 
 function ThinkingBlock({ streaming = false, text }: { streaming?: boolean; text: string }) {
   const { t } = usePreferences();
-  const [expanded, setExpanded] = useState(false);
+  const [expanded, setExpanded] = useState(streaming);
+  const userInteractedRef = useRef(false);
+
+  useEffect(() => {
+    if (streaming) {
+      if (!userInteractedRef.current) {
+        setExpanded(true);
+      }
+    } else {
+      setExpanded(false);
+      userInteractedRef.current = false;
+    }
+  }, [streaming]);
+
+  const handleToggle = () => {
+    userInteractedRef.current = true;
+    setExpanded((value) => !value);
+  };
+
   return (
     <section
       className="mt-4 border-b border-[#e4e4df] pb-3 dark:border-border"
@@ -1463,7 +1481,7 @@ function ThinkingBlock({ streaming = false, text }: { streaming?: boolean; text:
           aria-expanded={expanded}
           aria-label={t("threadDeepThinking")}
           className="group flex min-h-8 w-full cursor-pointer items-center gap-2 text-left select-none outline-none focus-visible:ring-2 focus-visible:ring-ring"
-          onClick={() => setExpanded((value) => !value)}
+          onClick={handleToggle}
           title={t("threadDeepThinking")}
           type="button"
         >
@@ -1619,6 +1637,7 @@ function AssistantMessageBlocks({
   onEnableAutoApprove,
   onHandoffClarification,
   onLoadToolOutput,
+  onOpenFileChange,
   onOpenResearchTask,
   onResolveApproval,
   onResolveClarificationQuestion,
@@ -1634,6 +1653,7 @@ function AssistantMessageBlocks({
     interactionMode: "default" | "clarify" | "plan",
   ) => Promise<void>;
   onLoadToolOutput: (callId: string) => Promise<void>;
+  onOpenFileChange?: (selection: FileChangeSelection) => void;
   onOpenResearchTask?: (selection: ResearchTaskSelection) => void;
   onResolveApproval: (
     approvalId: string,
@@ -1709,6 +1729,7 @@ function AssistantMessageBlocks({
                     onEnableAutoApprove={onEnableAutoApprove}
                     onHandoffClarification={onHandoffClarification}
                     onLoadToolOutput={onLoadToolOutput}
+                    onOpenFileChange={onOpenFileChange}
                     onOpenResearchTask={onOpenResearchTask}
                     onResolveApproval={onResolveApproval}
                     onResolveClarificationQuestion={
@@ -2170,6 +2191,7 @@ function AssistantMessageBody({
               onEnableAutoApprove={onEnableAutoApprove}
               onHandoffClarification={onHandoffClarification}
               onLoadToolOutput={onLoadToolOutput}
+              onOpenFileChange={onOpenFileChange}
               onOpenResearchTask={onOpenResearchTask}
               onResolveApproval={onResolveApproval}
               onResolveClarificationQuestion={onResolveClarificationQuestion}

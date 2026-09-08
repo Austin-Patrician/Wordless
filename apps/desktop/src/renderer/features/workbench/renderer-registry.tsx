@@ -11,6 +11,7 @@ import {
   LoaderCircle,
   Presentation,
   ScanSearch,
+  Search,
   ShieldCheck,
   Table2,
   UsersRound,
@@ -59,7 +60,10 @@ import {
 } from "./ClarificationToolActivity";
 import { ResearchDelegateToolActivity } from "./ResearchDelegateToolActivity";
 import { UserRequestToolActivity } from "./UserRequestToolActivity";
-import type { ResearchTaskSelection } from "./context-panel-types";
+import type {
+  FileChangeSelection,
+  ResearchTaskSelection,
+} from "./context-panel-types";
 import { formatToolInput, summarizeToolInput } from "./tool-input-preview";
 
 type StandardToolIconSource = {
@@ -118,6 +122,7 @@ export type ToolActivityProps = {
   onOpenResearchTask?: (selection: ResearchTaskSelection) => void;
   onEnableAutoApprove?: () => void | Promise<void>;
   onLoadToolOutput?: (callId: string) => Promise<void>;
+  onOpenFileChange?: (selection: FileChangeSelection) => void;
   onResolveApproval?: (
     approvalId: string,
     approved: boolean,
@@ -390,15 +395,9 @@ function GrepToolOutput({
   const details = readRecord(block.details);
   const count = typeof details?.count === "number" ? details.count : undefined;
   const hasMore = textValue(details?.nextCursor) !== undefined;
-  const ignoreCase = block.input?.ignoreCase;
-  const caseLabel =
-    ignoreCase === true
-      ? t("toolCaseInsensitive")
-      : ignoreCase === false
-        ? t("toolCaseSensitive")
-        : t("toolCaseSmart");
-  const limit = typeof block.input?.limit === "number" ? block.input.limit : 20;
-  const canExpand = block.output !== undefined || count !== undefined;
+  const canExpand =
+    Boolean(block.output && block.output.trim().length > 0) ||
+    (count !== undefined && count > 0);
   const load = () => {
     if (!block.outputTruncated || !onLoadToolOutput || loading) return;
     setLoading(true);
@@ -407,12 +406,7 @@ function GrepToolOutput({
       .finally(() => setLoading(false));
   };
   if (!canExpand) return null;
-  const resultLabel =
-    count === undefined
-      ? t("toolSearchResults")
-      : hasMore
-        ? formatMessage(t, "toolSearchMoreAvailable", { count })
-        : formatMessage(t, "toolSearchMatches", { count });
+
   return (
     <details
       className="group mt-2"
@@ -429,32 +423,11 @@ function GrepToolOutput({
           className="h-3.5 w-3.5 text-[#999991] transition-transform duration-150 group-open:rotate-180"
         />
       </summary>
-      {expanded ? <div className="mt-2 border-y border-[#e1e1dc] bg-[#fafaf9] font-mono text-[11px] text-[#4d4d47] dark:border-border dark:bg-muted dark:text-muted-foreground">
-        <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-4 gap-y-1 px-3 py-2.5">
-          <dt className="text-[#96968e]">{t("toolQuery")}</dt>
-          <dd className="min-w-0 break-all text-[#3f3f3a] dark:text-foreground">
-            &quot;{pattern}&quot;
-          </dd>
-          <dt className="text-[#96968e]">{t("toolScope")}</dt>
-          <dd className="min-w-0 break-all">{path}</dd>
-          <dt className="text-[#96968e]">{t("toolCase")}</dt>
-          <dd>{caseLabel}</dd>
-          <dt className="text-[#96968e]">{t("toolLimit")}</dt>
-          <dd>{limit}</dd>
-        </dl>
-        <div className="border-t border-[#e7e7e2] px-3 py-1.5 text-[10px] text-[#888880] dark:border-border">
-          {resultLabel}
-        </div>
-        {block.output ? (
-          <pre className="m-0 max-h-52 overflow-auto border-t border-[#e7e7e2] px-3 py-2 whitespace-pre-wrap text-[11px] leading-5 dark:border-border">
-            {block.output}
-          </pre>
-        ) : count === 0 ? (
-          <p className="border-t border-[#e7e7e2] px-3 py-3 text-[#888880] dark:border-border">
-            {t("toolSearchNoMatches")}
-          </p>
-        ) : null}
-      </div> : null}
+      {expanded && block.output ? (
+        <pre className="m-0 mt-2 max-h-56 overflow-auto border-y border-[#e1e1dc] bg-[#fafaf9] px-3 py-2 font-mono text-[11px] leading-5 text-[#4d4d47] whitespace-pre-wrap dark:border-border dark:bg-muted dark:text-muted-foreground">
+          {block.output}
+        </pre>
+      ) : null}
     </details>
   );
 }
@@ -1046,6 +1019,7 @@ function CodeToolActivity({
   block,
   onEnableAutoApprove,
   onLoadToolOutput,
+  onOpenFileChange,
   onResolveApproval,
 }: ToolActivityProps) {
   const { t } = usePreferences();
@@ -1077,6 +1051,13 @@ function CodeToolActivity({
         block={block}
         onEnableAutoApprove={onEnableAutoApprove}
         onResolveApproval={onResolveApproval}
+      />
+    );
+  if (block.name === "write")
+    return (
+      <WriteToolActivity
+        block={block}
+        onOpenFileChange={onOpenFileChange}
       />
     );
   const grepHasMore =
@@ -1122,6 +1103,20 @@ function CodeToolActivity({
       (command ?? path)
     );
 
+  const changeDetails = readRecord(details?.change);
+  const additions =
+    typeof changeDetails?.additions === "number"
+      ? changeDetails.additions
+      : newText !== undefined
+        ? newText.split("\n").length
+        : undefined;
+  const deletions =
+    typeof changeDetails?.deletions === "number"
+      ? changeDetails.deletions
+      : oldText !== undefined
+        ? oldText.split("\n").length
+        : undefined;
+
   return (
     <section className="py-3">
       <ToolActivityRow
@@ -1132,23 +1127,13 @@ function CodeToolActivity({
         summary={summary}
       />
       {oldText !== undefined && newText !== undefined ? (
-        <details className="group mt-2">
-          <summary className="flex w-fit cursor-pointer list-none items-center gap-1 font-mono text-[11px] font-semibold text-[#b3413a] outline-none focus-visible:ring-2 focus-visible:ring-ring [&::-webkit-details-marker]:hidden">
-            {t("toolViewChange")}
-            <ChevronDown
-              aria-hidden
-              className="h-3.5 w-3.5 text-[#999991] transition-transform duration-150 group-open:rotate-180"
-            />
-          </summary>
-          <div className="mt-2 max-h-80 overflow-auto border-y border-[#e1e1dc] font-mono text-[11px] leading-5 dark:border-border">
-            <pre className="m-0 min-w-max whitespace-pre bg-[#fbefec] px-3 text-[#9a564b] dark:bg-[#3a211d] dark:text-[#ffb4a8]">
-              - {oldText}
-            </pre>
-            <pre className="m-0 min-w-max whitespace-pre bg-[#eff7e7] px-3 text-[#547c36] dark:bg-[#29351d] dark:text-[#d8f28a]">
-              + {newText}
-            </pre>
-          </div>
-        </details>
+        <ChangeDiffSection
+          additions={additions}
+          deletions={deletions}
+          label={t("toolViewChange")}
+          newText={newText}
+          oldText={oldText}
+        />
       ) : null}
       {block.name === "grep" && pattern ? (
         <GrepToolOutput
@@ -1157,9 +1142,190 @@ function CodeToolActivity({
           path={path ?? "."}
           pattern={pattern}
         />
-      ) : hideEmptySuccessfulBashOutput ? null : (
+      ) : hideEmptySuccessfulBashOutput || (oldText !== undefined && newText !== undefined) ? null : (
         <ToolOutput block={block} onLoadToolOutput={onLoadToolOutput} />
       )}
+    </section>
+  );
+}
+
+function ChangeDiffSection({
+  additions,
+  deletions,
+  label,
+  newText,
+  oldText,
+}: {
+  additions: number | undefined;
+  deletions: number | undefined;
+  label: string;
+  newText: string;
+  oldText: string;
+}) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="mt-2">
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+        <button
+          className="flex w-fit cursor-pointer items-center gap-1 outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          onClick={() => setOpen((value) => !value)}
+          type="button"
+        >
+          <span className="font-mono text-[11px] font-semibold text-[#b3413a]">
+            {label}
+          </span>
+          <ChevronDown
+            aria-hidden
+            className={`h-3.5 w-3.5 text-[#999991] transition-transform duration-150${open ? " rotate-180" : ""}`}
+          />
+        </button>
+        {additions !== undefined || deletions !== undefined ? (
+          <span className="flex items-center gap-1.5 font-mono text-[10px] font-semibold tracking-tight">
+            {additions !== undefined && additions > 0 ? (
+              <span className="text-[#547c36] dark:text-[#a3d977]">
+                +{additions}
+              </span>
+            ) : null}
+            {deletions !== undefined && deletions > 0 ? (
+              <span className="text-[#b3413a] dark:text-[#ff9282]">
+                -{deletions}
+              </span>
+            ) : null}
+          </span>
+        ) : null}
+      </div>
+      {open ? (
+        <div className="mt-2 max-h-80 overflow-auto border-y border-[#e1e1dc] font-mono text-[11px] leading-5 dark:border-border">
+          <pre className="m-0 min-w-max whitespace-pre bg-[#fbefec] px-3 text-[#9a564b] dark:bg-[#3a211d] dark:text-[#ffb4a8]">
+            - {oldText}
+          </pre>
+          <pre className="m-0 min-w-max whitespace-pre bg-[#eff7e7] px-3 text-[#547c36] dark:bg-[#29351d] dark:text-[#d8f28a]">
+            + {newText}
+          </pre>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function formatFileBytes(bytes: number): string {
+  if (bytes < 1_024) return `${bytes} B`;
+  if (bytes < 1_024 * 1_024) return `${(bytes / 1_024).toFixed(1)} KB`;
+  return `${(bytes / (1_024 * 1_024)).toFixed(1)} MB`;
+}
+
+function WriteToolActivity({
+  block,
+  onOpenFileChange,
+}: Pick<ToolActivityProps, "block" | "onOpenFileChange">) {
+  const { t } = usePreferences();
+  const [open, setOpen] = useState(false);
+  const details = readRecord(block.details);
+  const change = readRecord(details?.change);
+  const path = textValue(block.input?.path) ?? textValue(details?.path);
+  const kind = change?.kind === "created" ? "created" : "modified";
+  const additions =
+    typeof change?.additions === "number" ? change.additions : undefined;
+  const deletions =
+    typeof change?.deletions === "number" ? change.deletions : undefined;
+  const bytes = typeof details?.bytes === "number" ? details.bytes : undefined;
+  const name = path?.split(/[\\/]/).at(-1) ?? path ?? "";
+  const openExternal = (previewKind: "diff" | "file" = "diff") => {
+    if (path) onOpenFileChange?.({ path, name, kind: previewKind });
+  };
+  const detail = path ? (
+    <div className="flex min-w-0 items-center gap-2">
+      {onOpenFileChange ? (
+        <button
+          className="min-w-0 flex-1 truncate text-left text-[#4f4f49] underline decoration-[#cfd5c5] underline-offset-2 hover:text-[#536b32] dark:text-foreground dark:decoration-[#5b684d] dark:hover:text-[#d7ec9a]"
+          onClick={() => openExternal(kind === "created" ? "file" : "diff")}
+          title={path}
+          type="button"
+        >
+          {path}
+        </button>
+      ) : (
+        <span className="min-w-0 flex-1 truncate text-[#4f4f49] dark:text-foreground" title={path}>
+          {path}
+        </span>
+      )}
+    </div>
+  ) : undefined;
+
+  const content = textValue(block.input?.content);
+  const diff = readRecord(details?.diff);
+  const oldText = textValue(diff?.oldText);
+  const newText = textValue(diff?.newText);
+  const hasDiff = oldText !== undefined && newText !== undefined;
+  const canExpand = Boolean(hasDiff || (content && content.trim().length > 0));
+
+  const actionLabel = kind === "created" ? t("toolPreviewFile") : t("toolViewChange");
+  const labelColorClass =
+    kind === "created"
+      ? "text-[#547c36] dark:text-[#a3d977]"
+      : "text-[#b3413a] dark:text-[#ff9282]";
+
+  return (
+    <section className="py-3">
+      <ToolActivityRow
+        block={block}
+        detail={detail}
+        icon={standardToolIcon("write") ?? <FileOutput className="h-3.5 w-3.5" />}
+        summary={
+          kind === "created" ? t("toolFileCreated") : t("toolFileUpdated")
+        }
+      />
+      {canExpand ? (
+        <div className="mt-2">
+          <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+            <button
+              className="flex w-fit cursor-pointer items-center gap-1 outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              onClick={() => setOpen((value) => !value)}
+              type="button"
+            >
+              <span className={`font-mono text-[11px] font-semibold ${labelColorClass}`}>
+                {actionLabel}
+              </span>
+              <ChevronDown
+                aria-hidden
+                className={`h-3.5 w-3.5 text-[#999991] transition-transform duration-150${open ? " rotate-180" : ""}`}
+              />
+            </button>
+            {additions !== undefined || deletions !== undefined ? (
+              <span className="flex items-center gap-1.5 font-mono text-[10px] font-semibold tracking-tight">
+                {additions !== undefined && additions > 0 ? (
+                  <span className="text-[#547c36] dark:text-[#a3d977]">
+                    +{additions}
+                  </span>
+                ) : null}
+                {kind === "modified" && deletions !== undefined && deletions > 0 ? (
+                  <span className="text-[#b3413a] dark:text-[#ff9282]">
+                    -{deletions}
+                  </span>
+                ) : null}
+              </span>
+            ) : null}
+          </div>
+          {open ? (
+            hasDiff ? (
+              <div className="mt-2 max-h-80 overflow-auto border-y border-[#e1e1dc] font-mono text-[11px] leading-5 dark:border-border">
+                <pre className="m-0 min-w-max whitespace-pre bg-[#fbefec] px-3 text-[#9a564b] dark:bg-[#3a211d] dark:text-[#ffb4a8]">
+                  - {oldText}
+                </pre>
+                <pre className="m-0 min-w-max whitespace-pre bg-[#eff7e7] px-3 text-[#547c36] dark:bg-[#29351d] dark:text-[#d8f28a]">
+                  + {newText}
+                </pre>
+              </div>
+            ) : content ? (
+              <div className="mt-2 max-h-80 overflow-auto border-y border-[#e1e1dc] bg-[#fafaf9] font-mono text-[11px] leading-5 text-[#4d4d47] dark:border-border dark:bg-muted dark:text-muted-foreground">
+                <pre className="m-0 min-w-max p-3 whitespace-pre">
+                  {content}
+                </pre>
+              </div>
+            ) : null
+          ) : null}
+        </div>
+      ) : null}
     </section>
   );
 }
