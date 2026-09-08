@@ -1,3 +1,5 @@
+import type { ConnectorTemplateId } from "@wordless/domain";
+
 export type ConnectorOperation = "authorize" | "enabled" | "remove" | "test" | "trust";
 
 export type ConnectorErrorKind =
@@ -28,4 +30,18 @@ export function connectorErrorKind(detail: string, operation: ConnectorOperation
 
 export function hasActiveConnectorAuthorization(operations: Readonly<Record<string, ConnectorOperation>>): boolean {
   return Object.values(operations).includes("authorize");
+}
+
+export function connectorRequiresAuthorization(templateId: ConnectorTemplateId): boolean {
+  return templateId === "firecrawl" || templateId === "github";
+}
+
+export function shouldAuthorizeConnector(input: {
+  templateId: ConnectorTemplateId;
+  status: "disconnected" | "needs-auth";
+}): boolean {
+  if (connectorRequiresAuthorization(input.templateId)) return true;
+  // A custom connector has no template metadata. Its server-provided
+  // needs-auth status is the only signal that an OAuth flow is appropriate.
+  return input.templateId === null && input.status === "needs-auth";
 }

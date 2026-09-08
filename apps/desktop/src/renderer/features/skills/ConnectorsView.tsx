@@ -36,7 +36,9 @@ import { useRuntime } from "../../shared/runtime";
 import {
   connectorErrorDetail,
   connectorErrorKind,
+  connectorRequiresAuthorization,
   hasActiveConnectorAuthorization,
+  shouldAuthorizeConnector,
   type ConnectorErrorKind,
   type ConnectorOperation,
 } from "./connector-ui-state";
@@ -118,7 +120,7 @@ const templateDefaults: Partial<Record<Exclude<ConnectorTemplateId, null>, Pick<
 };
 
 function requiresTemplateAuthorization(templateId: Exclude<ConnectorTemplateId, null>): boolean {
-  return templateId === "firecrawl" || templateId === "github";
+  return connectorRequiresAuthorization(templateId);
 }
 
 function newDraft(): ConnectorDraft {
@@ -342,6 +344,12 @@ export function ConnectorsView({
               }
             : undefined;
           const cardError = connectorBusy ? undefined : connectorErrors[connector.id] ?? persistedError;
+          const needsConnection = connector.transport === "streamable-http" &&
+            (connector.status === "needs-auth" || connector.status === "disconnected");
+          const requiresAuthorization = needsConnection && shouldAuthorizeConnector({
+            templateId: connector.templateId,
+            status: connector.status as "disconnected" | "needs-auth",
+          });
           return (
             <article
               aria-busy={connectorBusy}
@@ -406,16 +414,16 @@ export function ConnectorsView({
                     >
                       信任
                     </Button>
-                  ) : connector.transport === "streamable-http" &&
-                    (connector.status === "needs-auth" || connector.status === "disconnected") ? (
+                  ) : needsConnection ? (
                     <Tooltip>
                       <TooltipTrigger asChild>
                         <Button
-                          aria-label={operation === "authorize" ? t("connectorWaitingAuthorization") : t("connectorConnect")}
+                          aria-label={requiresAuthorization && operation === "authorize" ? t("connectorWaitingAuthorization") : t("connectorConnect")}
                           className="h-7 w-7"
-                          disabled={connectorBusy || authorizationActive}
+                          disabled={connectorBusy || (requiresAuthorization && authorizationActive)}
                           onClick={() =>
-                            void runConnector(connector.id, "authorize", async () => {
+                            void runConnector(connector.id, requiresAuthorization ? "authorize" : "test", async () => {
+                              if (!requiresAuthorization) return await client?.testConnector(connector.id);
                               const authorized = await client?.authorizeConnector(connector.id);
                               if (authorized?.status === "ready") await client?.testConnector(connector.id);
                             })
@@ -424,10 +432,10 @@ export function ConnectorsView({
                           type="button"
                           variant="outline"
                         >
-                          {operation === "authorize" ? <LoaderCircle className="h-3.5 w-3.5 animate-spin" /> : <img alt="" className="h-4 w-4 object-contain dark:invert" src={connectMcpIcon} />}
+                          {operation === "authorize" || operation === "test" ? <LoaderCircle className="h-3.5 w-3.5 animate-spin" /> : <img alt="" className="h-4 w-4 object-contain dark:invert" src={connectMcpIcon} />}
                         </Button>
                       </TooltipTrigger>
-                      <TooltipContent>{operation === "authorize" ? t("connectorWaitingAuthorization") : t("connectorConnect")}</TooltipContent>
+                      <TooltipContent>{requiresAuthorization && operation === "authorize" ? t("connectorWaitingAuthorization") : t("connectorConnect")}</TooltipContent>
                     </Tooltip>
                   ) : (
                     <Tooltip>

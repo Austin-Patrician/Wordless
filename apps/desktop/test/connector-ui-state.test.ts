@@ -3,7 +3,9 @@ import test from "node:test";
 import {
   connectorErrorDetail,
   connectorErrorKind,
+  connectorRequiresAuthorization,
   hasActiveConnectorAuthorization,
+  shouldAuthorizeConnector,
 } from "../src/renderer/features/skills/connector-ui-state.ts";
 
 test("removes Electron IPC internals from connector errors", () => {
@@ -23,4 +25,14 @@ test("maps connector failures to actionable UI categories", () => {
 test("only connector authorization is globally exclusive", () => {
   assert.equal(hasActiveConnectorAuthorization({ first: "test", second: "enabled" }), false);
   assert.equal(hasActiveConnectorAuthorization({ first: "test", second: "authorize" }), true);
+});
+
+test("only declared OAuth templates enter authorization from a disconnected state", () => {
+  assert.equal(connectorRequiresAuthorization("ai-hot"), false);
+  assert.equal(shouldAuthorizeConnector({ templateId: "ai-hot", status: "disconnected" }), false);
+  assert.equal(shouldAuthorizeConnector({ templateId: "ai-hot", status: "needs-auth" }), false);
+  assert.equal(shouldAuthorizeConnector({ templateId: "github", status: "disconnected" }), true);
+  assert.equal(shouldAuthorizeConnector({ templateId: "firecrawl", status: "needs-auth" }), true);
+  assert.equal(shouldAuthorizeConnector({ templateId: null, status: "disconnected" }), false);
+  assert.equal(shouldAuthorizeConnector({ templateId: null, status: "needs-auth" }), true);
 });
