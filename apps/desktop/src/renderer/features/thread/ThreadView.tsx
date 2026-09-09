@@ -18,6 +18,7 @@ import {
   UsersRound,
 } from "lucide-react";
 import {
+  Fragment,
   forwardRef,
   memo,
   useCallback,
@@ -88,6 +89,16 @@ import {
   type AssistantRunPresentation,
 } from "./thread-run-state";
 import { assistantToolSequenceContinuations } from "./tool-sequence-layout";
+import {
+  buildToolActivityGroups,
+  collapsedToolGroupMessageIndexes,
+  type ToolActivityGroup,
+  type ToolActivityLayout,
+} from "./tool-activity-groups";
+import {
+  ToolActivityGroupHeader,
+  useToolActivityGroupCollapseState,
+} from "./ToolActivityGroup";
 import { TurnTokenUsageRow } from "./TurnTokenUsageRow";
 import { ThreadContentFrame } from "./ThreadContentFrame";
 import { MessageMarkdown } from "./MessageMarkdown";
@@ -1643,6 +1654,9 @@ function AssistantMessageBlocks({
   onResolveClarificationQuestion,
   onResolveUserRequest,
   canPlan,
+  toolGroupExpanded,
+  toolGroupLayout,
+  onToggleToolGroup,
   workbenchId,
 }: {
   clarificationHandoffAvailable: boolean;
@@ -1673,10 +1687,42 @@ function AssistantMessageBlocks({
     },
   ) => void;
   canPlan: boolean;
+  toolGroupExpanded?: (group: ToolActivityGroup) => boolean;
+  toolGroupLayout?: ToolActivityLayout;
+  onToggleToolGroup?: (group: ToolActivityGroup) => void;
   workbenchId: WorkbenchId;
 }) {
   const rendered: ReactNode[] = [];
   let firstToolGroup = true;
+  // Reasoning that only narrates a collapsed tool group is hidden along with it.
+  const messageToolGroups = (() => {
+    if (!toolGroupLayout) return [];
+    const groups: ToolActivityGroup[] = [];
+    let previousWasTool = false;
+    for (const candidateBlock of message.blocks) {
+      if (candidateBlock.type === "tool") {
+        if (!previousWasTool) {
+          const group = toolGroupLayout.runGroupByFirstCallId.get(
+            candidateBlock.callId,
+          );
+          if (group) groups.push(group);
+        }
+        previousWasTool = true;
+      } else {
+        previousWasTool = false;
+      }
+    }
+    return groups;
+  })();
+  const hideInterleavedReasoning =
+    messageToolGroups.length > 0 &&
+    messageToolGroups.every((group) => !(toolGroupExpanded?.(group) ?? true)) &&
+    !message.blocks.some(
+      (candidateBlock) =>
+        (candidateBlock.type === "text" &&
+          candidateBlock.text.trim().length > 0) ||
+        candidateBlock.type === "artifact",
+    );
   for (let index = 0; index < message.blocks.length; index += 1) {
     const block = message.blocks[index]!;
     if (block.type === "tool") {
@@ -1686,6 +1732,16 @@ function AssistantMessageBlocks({
         index += 1;
       }
       index -= 1;
+      const firstCallId = tools[0]?.callId ?? "";
+      const toolGroup = toolGroupLayout?.runGroupByFirstCallId.get(firstCallId);
+      const isToolGroupStart =
+        toolGroup !== undefined && toolGroup.startCallId === firstCallId;
+      const toolGroupIsExpanded = toolGroup
+        ? (toolGroupExpanded?.(toolGroup) ?? true)
+        : true;
+      // Collapsed continuation runs render nothing; the group header renders
+      // at the group start and represents the whole chain.
+      if (toolGroup && !toolGroupIsExpanded && !isToolGroupStart) continue;
       const joinsPreviousToolGroup =
         firstToolGroup && continuesPreviousToolSequence;
       firstToolGroup = false;
@@ -1698,12 +1754,30 @@ function AssistantMessageBlocks({
         }
         if (type !== "text") break;
       }
+      const stackTopMargin = isToolGroupStart
+        ? "mt-1"
+        : joinsPreviousToolGroup
+          ? "mt-0"
+          : "mt-4";
       rendered.push(
-        <div
-          className={`${joinsPreviousToolGroup ? "mt-0" : "mt-4"} divide-y divide-[#e7e7e2] border-[#e7e7e2] dark:divide-border dark:border-border ${dividerAbove ? "border-b" : "border-y"}`}
-          data-thread-search-exclude
-          key={`tools-${tools[0]?.callId}`}
+        <Fragment
+          key={
+            isToolGroupStart ? `tool-group-${toolGroup!.id}` : `tools-${tools[0]?.callId}`
+          }
         >
+          {isToolGroupStart && toolGroup ? (
+            <div className="mt-4">
+              <ToolActivityGroupHeader
+                expanded={toolGroupIsExpanded}
+                group={toolGroup}
+                onToggle={onToggleToolGroup ?? (() => {})}
+              />
+            </div>
+          ) : null}
+          <div
+            className={`${stackTopMargin} divide-y divide-[#e7e7e2] border-[#e7e7e2] dark:divide-border dark:border-border ${dividerAbove ? "border-b" : "border-y"}`}
+            data-thread-search-exclude
+          >
           {(() => {
             const researchGroups = groupResearchDelegationBlocks(
               tools.filter((tool) => tool.name === "research_delegate"),
@@ -1770,7 +1844,8 @@ function AssistantMessageBlocks({
               ];
             });
           })()}
-        </div>,
+          </div>
+        </Fragment>,
       );
       continue;
     }
@@ -1785,7 +1860,7 @@ function AssistantMessageBlocks({
         </div>,
       );
     }
-    if (block.type === "reasoning")
+    if (block.type === "reasoning" && !hideInterleavedReasoning)
       rendered.push(
         <ThinkingBlock key={`reasoning-${index}`} streaming={message.status === "streaming"} text={block.text} />,
       );
@@ -2146,6 +2221,23 @@ function AssistantMessageBody({
     () => assistantToolSequenceContinuations(messages),
     [messages],
   );
+  const toolGroupLayout = useMemo(
+    () => buildToolActivityGroups(messages),
+    [messages],
+  );
+  const {
+    isExpanded: isToolGroupExpanded,
+    toggle: toggleToolGroup,
+  } = useToolActivityGroupCollapseState(toolGroupLayout.groups);
+  const hiddenToolGroupMessageIndexes = useMemo(
+    () =>
+      collapsedToolGroupMessageIndexes(
+        messages,
+        toolGroupLayout,
+        isToolGroupExpanded,
+      ),
+    [messages, toolGroupLayout, isToolGroupExpanded],
+  );
   const hasPendingInteraction = blocks.some(
     (block) =>
       block.type === "tool" &&
@@ -2173,31 +2265,36 @@ function AssistantMessageBody({
       <div className="mt-2 min-w-0">
         {messages.map((candidate, index) => (
           <section
-            className={`min-h-px outline-none focus-visible:ring-2 focus-visible:ring-ring ${index > 0 && !toolSequenceContinuations[index] ? "mt-5" : ""}`}
+            className={`min-h-px outline-none focus-visible:ring-2 focus-visible:ring-ring ${index > 0 && !toolSequenceContinuations[index] && !hiddenToolGroupMessageIndexes.has(index) ? "mt-5" : ""}`}
             data-thread-message-id={candidate.id}
             key={candidate.id}
             tabIndex={-1}
           >
-            <AssistantMessageBlocks
-              canPlan={canPlan}
-              clarificationHandoffAvailable={
-                showFooter &&
-                !isStreaming &&
-                !hasPendingInteraction &&
-                candidate.id === message.id
-              }
-              continuesPreviousToolSequence={toolSequenceContinuations[index]}
-              message={candidate}
-              onEnableAutoApprove={onEnableAutoApprove}
-              onHandoffClarification={onHandoffClarification}
-              onLoadToolOutput={onLoadToolOutput}
-              onOpenFileChange={onOpenFileChange}
-              onOpenResearchTask={onOpenResearchTask}
-              onResolveApproval={onResolveApproval}
-              onResolveClarificationQuestion={onResolveClarificationQuestion}
-              onResolveUserRequest={onResolveUserRequest}
-              workbenchId={workbenchId}
-            />
+            {hiddenToolGroupMessageIndexes.has(index) ? null : (
+              <AssistantMessageBlocks
+                canPlan={canPlan}
+                clarificationHandoffAvailable={
+                  showFooter &&
+                  !isStreaming &&
+                  !hasPendingInteraction &&
+                  candidate.id === message.id
+                }
+                continuesPreviousToolSequence={toolSequenceContinuations[index]}
+                message={candidate}
+                onEnableAutoApprove={onEnableAutoApprove}
+                onHandoffClarification={onHandoffClarification}
+                onLoadToolOutput={onLoadToolOutput}
+                onOpenFileChange={onOpenFileChange}
+                onOpenResearchTask={onOpenResearchTask}
+                onResolveApproval={onResolveApproval}
+                onResolveClarificationQuestion={onResolveClarificationQuestion}
+                onResolveUserRequest={onResolveUserRequest}
+                onToggleToolGroup={toggleToolGroup}
+                toolGroupExpanded={isToolGroupExpanded}
+                toolGroupLayout={toolGroupLayout}
+                workbenchId={workbenchId}
+              />
+            )}
             <AssistantResponseError
               message={candidate}
               visible={shouldShowAssistantResponseError(messages, candidate.id)}

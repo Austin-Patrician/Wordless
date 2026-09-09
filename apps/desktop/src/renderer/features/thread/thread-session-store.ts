@@ -737,6 +737,7 @@ export class ThreadSessionStore {
         userRequest: userRequestFromDetails(event.details, existing?.userRequest),
         state: event.isError ? "error" : "complete",
         startedAt: existing?.startedAt,
+        completedAt: envelope.timestamp,
         timeoutSeconds: existing?.timeoutSeconds,
       };
       this.appendOrReplaceTool(event.messageId, tool);

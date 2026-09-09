@@ -11,6 +11,7 @@
   },
   "scripts": {
     "check": "tsc -p tsconfig.json --noEmit",
+    "test:thread-unit": "vitest run --config vitest.thread-unit.config.ts",
     "dev": "vite --config vite.renderer.config.ts --host 127.0.0.1",
     "electron:install": "node ../../node_modules/electron/install.js",
     "build:electron": "node scripts/build-electron.mjs",

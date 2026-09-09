@@ -1320,6 +1320,8 @@ export interface MessageToolBlock {
     | "complete"
     | "error";
   startedAt?: number;
+  /** Wall-clock end time, set by the live renderer when the tool completes. Not persisted by the journal. */
+  completedAt?: number;
   timeoutSeconds?: number;
   input?: Record<string, unknown>;
   output?: string;
