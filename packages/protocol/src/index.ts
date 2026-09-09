@@ -237,6 +237,7 @@ export const AutomationTaskInputSchema = Type.Object({
   prompt: Type.String({ minLength: 1, maxLength: 100000 }),
   entryId: Type.String({ minLength: 1 }),
   workspaceId: Type.Union([Type.String({ minLength: 1 }), Type.Null()]),
+  sessionId: Type.Union([Type.String({ minLength: 1 }), Type.Null()]),
   accessLevel: SessionAccessLevelSchema,
   toolApprovalMode: ToolApprovalModeSchema,
   model: Type.Union([ModelReferenceSchema, Type.Null()]),

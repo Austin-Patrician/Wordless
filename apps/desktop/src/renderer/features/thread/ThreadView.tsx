@@ -61,7 +61,10 @@ import { usePreferences } from "../../shared/preferences";
 import type { MessageKey } from "../../shared/i18n";
 import { useRuntime, useRuntimeClient } from "../../shared/runtime";
 import { ModelPicker } from "../workbench/ModelPicker";
-import type { FileChangeSelection, ResearchTaskSelection } from "../workbench/context-panel-types";
+import type {
+  FileChangeSelection,
+  ResearchTaskSelection,
+} from "../workbench/context-panel-types";
 import { AssistantTurnFileChanges } from "./AssistantTurnFileChanges";
 import { workbenchRendererRegistry } from "../workbench/renderer-registry";
 import { groupResearchDelegationBlocks } from "../workbench/research-delegation";
@@ -76,9 +79,7 @@ import {
   createUserMessageSubmission,
   type PendingThreadTurn,
 } from "./pending-thread-turn";
-import {
-  dataIndexFromReportedIndex,
-} from "./thread-virtual-list";
+import { dataIndexFromReportedIndex } from "./thread-virtual-list";
 import {
   assistantRunActivityAt,
   assistantToolActivity,
@@ -91,7 +92,6 @@ import {
 import { assistantToolSequenceContinuations } from "./tool-sequence-layout";
 import {
   buildToolActivityGroups,
-  collapsedToolGroupMessageIndexes,
   type ToolActivityGroup,
   type ToolActivityLayout,
 } from "./tool-activity-groups";
@@ -159,19 +159,11 @@ type ThreadVirtuosoContext = {
   onRetryCompaction: () => void;
 };
 
-function ThreadVirtuosoHeader({
-  context,
-}: {
-  context: ThreadVirtuosoContext;
-}) {
+function ThreadVirtuosoHeader({ context }: { context: ThreadVirtuosoContext }) {
   return <div className="h-6" />;
 }
 
-function ThreadVirtuosoFooter({
-  context,
-}: {
-  context: ThreadVirtuosoContext;
-}) {
+function ThreadVirtuosoFooter({ context }: { context: ThreadVirtuosoContext }) {
   return (
     <ThreadContentFrame className="pb-10" densityRail={context.densityRail}>
       {context.isCompacting ? (
@@ -212,7 +204,15 @@ function ThreadJumpToLatest({
       onClick={onJump}
       type="button"
     >
-      {responding ? <span aria-hidden className="thread-jump-progress"><span /><span /><span /></span> : <ArrowDown className="h-4 w-4" />}
+      {responding ? (
+        <span aria-hidden className="thread-jump-progress">
+          <span />
+          <span />
+          <span />
+        </span>
+      ) : (
+        <ArrowDown className="h-4 w-4" />
+      )}
     </button>
   );
 }
@@ -228,7 +228,9 @@ function ThreadDensityRail({
     store.getSnapshot,
     store.getSnapshot,
   );
-  return <ConversationDensityRail {...props} activeTurnId={viewport.activeTurnId} />;
+  return (
+    <ConversationDensityRail {...props} activeTurnId={viewport.activeTurnId} />
+  );
 }
 
 type ExpertTaskView = {
@@ -303,7 +305,8 @@ function overlayExpertTaskRuns(
       let changed = false;
       const tasks = details.tasks.map((value) => {
         const task = asObject(value);
-        const run = task && typeof task.id === "string" ? runs.get(task.id) : undefined;
+        const run =
+          task && typeof task.id === "string" ? runs.get(task.id) : undefined;
         if (!task || !run) return value;
         const currentRevision =
           typeof task.revision === "number" ? task.revision : 0;
@@ -323,143 +326,141 @@ function expertTasksFromTools(
 ): ExpertTaskView[] {
   const tasks = new Map<string, ExpertTaskView>();
   for (const block of blocks) {
+    if (
+      block.type !== "tool" ||
+      block.name !== "delegate_expert" ||
+      typeof block.details !== "object" ||
+      block.details === null ||
+      Array.isArray(block.details)
+    )
+      continue;
+    const values = (block.details as Record<string, unknown>).tasks;
+    if (!Array.isArray(values)) continue;
+    for (const value of values) {
+      if (typeof value !== "object" || value === null || Array.isArray(value))
+        continue;
+      const task = value as Record<string, unknown>;
       if (
-        block.type !== "tool" ||
-        block.name !== "delegate_expert" ||
-        typeof block.details !== "object" ||
-        block.details === null ||
-        Array.isArray(block.details)
+        typeof task.id !== "string" ||
+        typeof task.executionProfile !== "string" ||
+        typeof task.task !== "string" ||
+        typeof task.status !== "string"
       )
         continue;
-      const values = (block.details as Record<string, unknown>).tasks;
-      if (!Array.isArray(values)) continue;
-      for (const value of values) {
-        if (typeof value !== "object" || value === null || Array.isArray(value))
-          continue;
-        const task = value as Record<string, unknown>;
-        if (
-          typeof task.id !== "string" ||
-          typeof task.executionProfile !== "string" ||
-          typeof task.task !== "string" ||
-          typeof task.status !== "string"
-        )
-          continue;
-        const tool =
-          typeof task.tool === "object" &&
-          task.tool !== null &&
-          !Array.isArray(task.tool)
-            ? (task.tool as Record<string, unknown>)
-            : undefined;
-        const portrait =
-          typeof task.memberPortrait === "object" &&
-          task.memberPortrait !== null &&
-          !Array.isArray(task.memberPortrait)
-            ? (task.memberPortrait as Record<string, unknown>)
-            : undefined;
-        const parsedPortrait = parseExpertPortrait(portrait);
-        const events = Array.isArray(task.events)
-          ? task.events.flatMap((candidate): ExpertTaskView["events"] => {
-              if (
-                typeof candidate !== "object" ||
-                candidate === null ||
-                Array.isArray(candidate)
-              )
-                return [];
-              const event = candidate as Record<string, unknown>;
-              if (
-                typeof event.id !== "string" ||
-                typeof event.type !== "string" ||
-                typeof event.at !== "number"
-              )
-                return [];
-              if (
-                (event.type === "delegated" ||
-                  event.type === "output" ||
-                  event.type === "error") &&
-                typeof event.text === "string"
-              )
-                return [
-                  {
-                    id: event.id,
-                    type: event.type,
-                    text: event.text,
-                    at: event.at,
-                  },
-                ];
-              if (
-                event.type === "tool" &&
-                typeof event.name === "string" &&
-                typeof event.state === "string"
-              )
-                return [
-                  {
-                    id: event.id,
-                    type: "tool",
-                    name: event.name,
-                    state: event.state,
-                    ...(typeof event.output === "string"
-                      ? { output: event.output }
-                      : {}),
-                    at: event.at,
-                  },
-                ];
+      const tool =
+        typeof task.tool === "object" &&
+        task.tool !== null &&
+        !Array.isArray(task.tool)
+          ? (task.tool as Record<string, unknown>)
+          : undefined;
+      const portrait =
+        typeof task.memberPortrait === "object" &&
+        task.memberPortrait !== null &&
+        !Array.isArray(task.memberPortrait)
+          ? (task.memberPortrait as Record<string, unknown>)
+          : undefined;
+      const parsedPortrait = parseExpertPortrait(portrait);
+      const events = Array.isArray(task.events)
+        ? task.events.flatMap((candidate): ExpertTaskView["events"] => {
+            if (
+              typeof candidate !== "object" ||
+              candidate === null ||
+              Array.isArray(candidate)
+            )
               return [];
-            })
-          : [];
-        tasks.set(task.id, {
-          id: task.id,
-          ...(typeof task.memberId === "string"
-            ? { memberId: task.memberId }
-            : {}),
-          ...(typeof task.memberName === "string"
-            ? { memberName: task.memberName }
-            : {}),
-          ...(parsedPortrait
-            ? { memberPortrait: parsedPortrait }
-            : {}),
-          executionProfile: task.executionProfile,
-          task: task.task,
-          status: task.status,
-          ...(typeof task.phase === "string" ? { phase: task.phase } : {}),
-          ...(typeof task.revision === "number"
-            ? { revision: task.revision }
-            : {}),
-          ...(typeof task.queuedAt === "number"
-            ? { queuedAt: task.queuedAt }
-            : {}),
-          ...(typeof task.startedAt === "number"
-            ? { startedAt: task.startedAt }
-            : {}),
-          ...(typeof task.updatedAt === "number"
-            ? { updatedAt: task.updatedAt }
-            : {}),
-          ...(typeof task.finishedAt === "number"
-            ? { finishedAt: task.finishedAt }
-            : {}),
-          ...(typeof task.activeToolName === "string"
-            ? { activeToolName: task.activeToolName }
-            : {}),
-          ...(typeof task.blockedByTaskId === "string"
-            ? { blockedByTaskId: task.blockedByTaskId }
-            : {}),
-          ...(typeof task.terminalReason === "string"
-            ? { terminalReason: task.terminalReason }
-            : {}),
-          ...(typeof task.output === "string" ? { output: task.output } : {}),
-          ...(typeof task.error === "string" ? { error: task.error } : {}),
-          ...(tool && typeof tool.name === "string"
-            ? {
-                tool: {
-                  name: tool.name,
-                  ...(typeof tool.output === "string"
-                    ? { output: tool.output }
-                    : {}),
+            const event = candidate as Record<string, unknown>;
+            if (
+              typeof event.id !== "string" ||
+              typeof event.type !== "string" ||
+              typeof event.at !== "number"
+            )
+              return [];
+            if (
+              (event.type === "delegated" ||
+                event.type === "output" ||
+                event.type === "error") &&
+              typeof event.text === "string"
+            )
+              return [
+                {
+                  id: event.id,
+                  type: event.type,
+                  text: event.text,
+                  at: event.at,
                 },
-              }
-            : {}),
-          events,
-        });
-      }
+              ];
+            if (
+              event.type === "tool" &&
+              typeof event.name === "string" &&
+              typeof event.state === "string"
+            )
+              return [
+                {
+                  id: event.id,
+                  type: "tool",
+                  name: event.name,
+                  state: event.state,
+                  ...(typeof event.output === "string"
+                    ? { output: event.output }
+                    : {}),
+                  at: event.at,
+                },
+              ];
+            return [];
+          })
+        : [];
+      tasks.set(task.id, {
+        id: task.id,
+        ...(typeof task.memberId === "string"
+          ? { memberId: task.memberId }
+          : {}),
+        ...(typeof task.memberName === "string"
+          ? { memberName: task.memberName }
+          : {}),
+        ...(parsedPortrait ? { memberPortrait: parsedPortrait } : {}),
+        executionProfile: task.executionProfile,
+        task: task.task,
+        status: task.status,
+        ...(typeof task.phase === "string" ? { phase: task.phase } : {}),
+        ...(typeof task.revision === "number"
+          ? { revision: task.revision }
+          : {}),
+        ...(typeof task.queuedAt === "number"
+          ? { queuedAt: task.queuedAt }
+          : {}),
+        ...(typeof task.startedAt === "number"
+          ? { startedAt: task.startedAt }
+          : {}),
+        ...(typeof task.updatedAt === "number"
+          ? { updatedAt: task.updatedAt }
+          : {}),
+        ...(typeof task.finishedAt === "number"
+          ? { finishedAt: task.finishedAt }
+          : {}),
+        ...(typeof task.activeToolName === "string"
+          ? { activeToolName: task.activeToolName }
+          : {}),
+        ...(typeof task.blockedByTaskId === "string"
+          ? { blockedByTaskId: task.blockedByTaskId }
+          : {}),
+        ...(typeof task.terminalReason === "string"
+          ? { terminalReason: task.terminalReason }
+          : {}),
+        ...(typeof task.output === "string" ? { output: task.output } : {}),
+        ...(typeof task.error === "string" ? { error: task.error } : {}),
+        ...(tool && typeof tool.name === "string"
+          ? {
+              tool: {
+                name: tool.name,
+                ...(typeof tool.output === "string"
+                  ? { output: tool.output }
+                  : {}),
+              },
+            }
+          : {}),
+        events,
+      });
+    }
   }
   return [...tasks.values()];
 }
@@ -604,17 +605,12 @@ function expertActivityLabel(
     return t("threadAwaitingApproval");
   if (member.latestStatus === "awaiting-user-input")
     return t("threadAwaitingInput");
-  if (member.latestStatus === "completed")
-    return t("threadCompleted");
-  if (member.latestStatus === "interrupted")
-    return t("threadInterrupted");
+  if (member.latestStatus === "completed") return t("threadCompleted");
+  if (member.latestStatus === "interrupted") return t("threadInterrupted");
   if (member.latestStatus === "failed") return t("threadFailed");
-  if (member.latestStatus === "cancelled")
-    return t("threadCancelled");
-  if (member.latestStatus === "blocked")
-    return t("threadBlocked");
-  if (member.latestStatus === "skipped")
-    return t("threadSkipped");
+  if (member.latestStatus === "cancelled") return t("threadCancelled");
+  if (member.latestStatus === "blocked") return t("threadBlocked");
+  if (member.latestStatus === "skipped") return t("threadSkipped");
   if (member.phase === "tool" && member.activeToolName)
     return t("threadUsingTool").replace("{tool}", member.activeToolName);
   return t("threadModelThinking");
@@ -672,11 +668,20 @@ function ExpertMemberAssistantBlocks({
     if (block.type === "text")
       return (
         <div className="message-markdown" key={`text-${index}`}>
-          <MessageMarkdown streaming={message.status === "streaming"} text={block.text} />
+          <MessageMarkdown
+            streaming={message.status === "streaming"}
+            text={block.text}
+          />
         </div>
       );
     if (block.type === "reasoning")
-      return <ThinkingBlock key={`reasoning-${index}`} streaming={message.status === "streaming"} text={block.text} />;
+      return (
+        <ThinkingBlock
+          key={`reasoning-${index}`}
+          streaming={message.status === "streaming"}
+          text={block.text}
+        />
+      );
     if (block.type === "tool") {
       const ToolActivity = workbenchRendererRegistry.resolveTool(
         workbenchId,
@@ -725,7 +730,11 @@ type ExpertMemberRowEnvironmentSnapshot = {
 
 type ExpertMemberActionTargets = {
   onEnableAutoApprove?: () => Promise<void>;
-  onResolveApproval: (approvalId: string, approved: boolean, feedback?: string) => void;
+  onResolveApproval: (
+    approvalId: string,
+    approved: boolean,
+    feedback?: string,
+  ) => void;
 };
 
 class ExpertMemberEnvironment {
@@ -736,9 +745,11 @@ class ExpertMemberEnvironment {
   private rowSnapshot: ExpertMemberRowEnvironmentSnapshot;
 
   readonly actions = {
-    enableAutoApprove: () => this.requireActions().onEnableAutoApprove?.() ?? Promise.resolve(),
-    resolveApproval: (...args: Parameters<ExpertMemberActionTargets["onResolveApproval"]>) =>
-      this.requireActions().onResolveApproval(...args),
+    enableAutoApprove: () =>
+      this.requireActions().onEnableAutoApprove?.() ?? Promise.resolve(),
+    resolveApproval: (
+      ...args: Parameters<ExpertMemberActionTargets["onResolveApproval"]>
+    ) => this.requireActions().onResolveApproval(...args),
   };
 
   constructor(
@@ -749,8 +760,10 @@ class ExpertMemberEnvironment {
     this.chromeSnapshot = chromeSnapshot;
   }
 
-  readonly getChromeSnapshot = (): ExpertMemberChromeSnapshot => this.chromeSnapshot;
-  readonly getRowSnapshot = (): ExpertMemberRowEnvironmentSnapshot => this.rowSnapshot;
+  readonly getChromeSnapshot = (): ExpertMemberChromeSnapshot =>
+    this.chromeSnapshot;
+  readonly getRowSnapshot = (): ExpertMemberRowEnvironmentSnapshot =>
+    this.rowSnapshot;
   readonly subscribeChrome = (listener: () => void): (() => void) => {
     this.chromeListeners.add(listener);
     return () => this.chromeListeners.delete(listener);
@@ -791,7 +804,8 @@ class ExpertMemberEnvironment {
   }
 
   private requireActions(): ExpertMemberActionTargets {
-    if (!this.actionTargets) throw new Error("Expert member actions are unavailable");
+    if (!this.actionTargets)
+      throw new Error("Expert member actions are unavailable");
     return this.actionTargets;
   }
 }
@@ -816,25 +830,29 @@ function isScrollbarPointerDown(
   return event.clientX >= element.getBoundingClientRect().right - gutter;
 }
 
-function ExpertMemberScroller({
-  context,
-  onKeyDown,
-  onPointerCancel,
-  onPointerDown,
-  onPointerUp,
-  onTouchCancel,
-  onTouchEnd,
-  onTouchMove,
-  onTouchStart,
-  onWheel,
-  ...props
-}: ComponentProps<"div"> & { context?: ExpertMemberVirtuosoContext }, ref: ForwardedRef<HTMLDivElement>) {
+function ExpertMemberScroller(
+  {
+    context,
+    onKeyDown,
+    onPointerCancel,
+    onPointerDown,
+    onPointerUp,
+    onTouchCancel,
+    onTouchEnd,
+    onTouchMove,
+    onTouchStart,
+    onWheel,
+    ...props
+  }: ComponentProps<"div"> & { context?: ExpertMemberVirtuosoContext },
+  ref: ForwardedRef<HTMLDivElement>,
+) {
   const touchYRef = useRef<number | null>(null);
   return (
     <div
       {...props}
       onKeyDown={(event) => {
-        if (["ArrowUp", "PageUp", "Home"].includes(event.key)) context?.viewportStore.markUserScrollIntent();
+        if (["ArrowUp", "PageUp", "Home"].includes(event.key))
+          context?.viewportStore.markUserScrollIntent();
         onKeyDown?.(event);
       }}
       onPointerDown={(event) => {
@@ -856,7 +874,11 @@ function ExpertMemberScroller({
       }}
       onTouchMove={(event) => {
         const nextY = event.touches[0]?.clientY ?? null;
-        if (nextY !== null && touchYRef.current !== null && nextY > touchYRef.current)
+        if (
+          nextY !== null &&
+          touchYRef.current !== null &&
+          nextY > touchYRef.current
+        )
           context?.viewportStore.markUserScrollIntent();
         touchYRef.current = nextY;
         onTouchMove?.(event);
@@ -882,7 +904,11 @@ function ExpertMemberScroller({
 
 const ExpertMemberVirtuosoScroller = forwardRef(ExpertMemberScroller);
 
-function ExpertMemberVirtuosoHeader({ context }: { context: ExpertMemberVirtuosoContext }) {
+function ExpertMemberVirtuosoHeader({
+  context,
+}: {
+  context: ExpertMemberVirtuosoContext;
+}) {
   const { t } = usePreferences();
   const environment = useSyncExternalStore(
     context.environment.subscribeChrome,
@@ -906,16 +932,30 @@ function ExpertMemberVirtuosoHeader({ context }: { context: ExpertMemberVirtuoso
       {metadata.error ? (
         <div className="my-5 flex items-center justify-between gap-3 rounded-[7px] border border-destructive/25 bg-destructive/5 px-3 py-2 text-[11px] text-destructive">
           <span className="min-w-0 truncate">{metadata.error}</span>
-          <button className="shrink-0 font-semibold" onClick={() => void context.store.rehydrate()} type="button">{t("retry")}</button>
+          <button
+            className="shrink-0 font-semibold"
+            onClick={() => void context.store.rehydrate()}
+            type="button"
+          >
+            {t("retry")}
+          </button>
         </div>
       ) : null}
     </ThreadContentFrame>
   );
 }
 
-function ExpertMemberVirtuosoEmpty({ context }: { context: ExpertMemberVirtuosoContext }) {
+function ExpertMemberVirtuosoEmpty({
+  context,
+}: {
+  context: ExpertMemberVirtuosoContext;
+}) {
   const { t } = usePreferences();
-  const environment = useSyncExternalStore(context.environment.subscribeRow, context.environment.getRowSnapshot, context.environment.getRowSnapshot);
+  const environment = useSyncExternalStore(
+    context.environment.subscribeRow,
+    context.environment.getRowSnapshot,
+    context.environment.getRowSnapshot,
+  );
   const metadata = useSyncExternalStore(
     context.store.subscribeMetadata,
     context.store.getMetadataSnapshot,
@@ -924,12 +964,18 @@ function ExpertMemberVirtuosoEmpty({ context }: { context: ExpertMemberVirtuosoC
   if (metadata.loading || metadata.error) return null;
   return (
     <ThreadContentFrame densityRail={environment.densityRail}>
-      <p className="py-10 text-center text-[12px] text-[#8d8d85]">{t("threadNoSavedEmployeeMessages")}</p>
+      <p className="py-10 text-center text-[12px] text-[#8d8d85]">
+        {t("threadNoSavedEmployeeMessages")}
+      </p>
     </ThreadContentFrame>
   );
 }
 
-function ExpertMemberVirtuosoFooter({ context }: { context: ExpertMemberVirtuosoContext }) {
+function ExpertMemberVirtuosoFooter({
+  context,
+}: {
+  context: ExpertMemberVirtuosoContext;
+}) {
   const environment = useSyncExternalStore(
     context.environment.subscribeChrome,
     context.environment.getChromeSnapshot,
@@ -942,65 +988,119 @@ function ExpertMemberVirtuosoFooter({ context }: { context: ExpertMemberVirtuoso
   );
   const active = expertMemberIsActive(environment.member);
   const now = useExpertActivityClock(active);
-  const elapsed = active ? compactElapsed(environment.member.startedAt, now) : "";
+  const elapsed = active
+    ? compactElapsed(environment.member.startedAt, now)
+    : "";
   if (!active) return <div className="h-8" />;
   return (
-    <ThreadContentFrame className="pb-8 pt-5" densityRail={environment.densityRail}>
-      <AssistantRunStatus activity={metadata.activity} detail={elapsed || undefined} />
+    <ThreadContentFrame
+      className="pb-8 pt-5"
+      densityRail={environment.densityRail}
+    >
+      <AssistantRunStatus
+        activity={metadata.activity}
+        detail={elapsed || undefined}
+      />
     </ThreadContentFrame>
   );
 }
 
-const EXPERT_MEMBER_VIRTUOSO_COMPONENTS: Components<ThreadTimelineDescriptor, ExpertMemberVirtuosoContext> = {
+const EXPERT_MEMBER_VIRTUOSO_COMPONENTS: Components<
+  ThreadTimelineDescriptor,
+  ExpertMemberVirtuosoContext
+> = {
   EmptyPlaceholder: ExpertMemberVirtuosoEmpty,
   Footer: ExpertMemberVirtuosoFooter,
   Header: ExpertMemberVirtuosoHeader,
   Scroller: ExpertMemberVirtuosoScroller,
 };
 
-function ExpertMemberRow({ descriptor, context }: { descriptor: ThreadTimelineDescriptor; context: ExpertMemberVirtuosoContext }) {
+function ExpertMemberRow({
+  descriptor,
+  context,
+}: {
+  descriptor: ThreadTimelineDescriptor;
+  context: ExpertMemberVirtuosoContext;
+}) {
   const environment = useSyncExternalStore(
     context.environment.subscribeRow,
     context.environment.getRowSnapshot,
     context.environment.getRowSnapshot,
   );
   const row = useSyncExternalStore(
-    useCallback((listener) => context.store.subscribeRow(descriptor.key, listener), [context.store, descriptor.key]),
-    useCallback(() => context.store.getRowSnapshot(descriptor.key), [context.store, descriptor.key]),
-    useCallback(() => context.store.getRowSnapshot(descriptor.key), [context.store, descriptor.key]),
+    useCallback(
+      (listener) => context.store.subscribeRow(descriptor.key, listener),
+      [context.store, descriptor.key],
+    ),
+    useCallback(
+      () => context.store.getRowSnapshot(descriptor.key),
+      [context.store, descriptor.key],
+    ),
+    useCallback(
+      () => context.store.getRowSnapshot(descriptor.key),
+      [context.store, descriptor.key],
+    ),
   );
   if (row.key === "missing") return null;
-  const assistantMessages = row.messages.filter((message) => message.role === "assistant");
+  const assistantMessages = row.messages.filter(
+    (message) => message.role === "assistant",
+  );
   return (
     <ThreadContentFrame className="py-3" densityRail={environment.densityRail}>
-      {row.messages.map((message) => message.role === "user" ? (
-        <div className="flex justify-end" key={message.id}>
-          <div className="flex max-w-[88%] flex-col items-end sm:max-w-[560px]">
-            <div className="mb-1.5 flex items-center gap-1.5 pr-0.5">
-              <span className="text-[10px] font-semibold text-[#66675f] dark:text-muted-foreground">{environment.leadExpert.name}</span>
-              <ExpertPortrait className="h-6 w-6 shrink-0" name={environment.leadExpert.name} portrait={environment.leadExpert.portrait} />
-            </div>
-            <div className="w-fit max-w-full break-words rounded-[10px] bg-[#f0f0ed] px-3.5 py-2.5 text-[14px] leading-6 text-[#343431] dark:bg-muted dark:text-foreground">
-              <CollapsibleUserMessage contentKey={message.id}>
-                {message.blocks.map((block, index) => block.type === "text" ? (
-                  <span className="whitespace-pre-wrap break-words" key={`text-${index}`}>{block.text}</span>
-                ) : null)}
-              </CollapsibleUserMessage>
+      {row.messages.map((message) =>
+        message.role === "user" ? (
+          <div className="flex justify-end" key={message.id}>
+            <div className="flex max-w-[88%] flex-col items-end sm:max-w-[560px]">
+              <div className="mb-1.5 flex items-center gap-1.5 pr-0.5">
+                <span className="text-[10px] font-semibold text-[#66675f] dark:text-muted-foreground">
+                  {environment.leadExpert.name}
+                </span>
+                <ExpertPortrait
+                  className="h-6 w-6 shrink-0"
+                  name={environment.leadExpert.name}
+                  portrait={environment.leadExpert.portrait}
+                />
+              </div>
+              <div className="w-fit max-w-full break-words rounded-[10px] bg-[#f0f0ed] px-3.5 py-2.5 text-[14px] leading-6 text-[#343431] dark:bg-muted dark:text-foreground">
+                <CollapsibleUserMessage contentKey={message.id}>
+                  {message.blocks.map((block, index) =>
+                    block.type === "text" ? (
+                      <span
+                        className="whitespace-pre-wrap break-words"
+                        key={`text-${index}`}
+                      >
+                        {block.text}
+                      </span>
+                    ) : null,
+                  )}
+                </CollapsibleUserMessage>
+              </div>
             </div>
           </div>
-        </div>
-      ) : null)}
+        ) : null,
+      )}
       {assistantMessages.length > 0 ? (
         <div>
           <AssistantIdentityHeader identity={environment.member} />
           <div className="mt-2 min-w-0">
             {assistantMessages.map((message, index) => (
-              <section className={index > 0 ? "mt-5" : undefined} key={message.id}>
+              <section
+                className={index > 0 ? "mt-5" : undefined}
+                key={message.id}
+              >
                 <ExpertMemberAssistantBlocks
                   message={message}
-                  onEnableAutoApprove={environment.canEnableAutoApprove ? context.environment.actions.enableAutoApprove : undefined}
-                  onLoadToolOutput={context.store.loadToolOutput.bind(context.store)}
-                  onResolveApproval={context.environment.actions.resolveApproval}
+                  onEnableAutoApprove={
+                    environment.canEnableAutoApprove
+                      ? context.environment.actions.enableAutoApprove
+                      : undefined
+                  }
+                  onLoadToolOutput={context.store.loadToolOutput.bind(
+                    context.store,
+                  )}
+                  onResolveApproval={
+                    context.environment.actions.resolveApproval
+                  }
                   workbenchId={environment.workbenchId}
                 />
               </section>
@@ -1012,11 +1112,18 @@ function ExpertMemberRow({ descriptor, context }: { descriptor: ThreadTimelineDe
   );
 }
 
-function expertMemberItemContent(_index: number, descriptor: ThreadTimelineDescriptor, context: ExpertMemberVirtuosoContext) {
+function expertMemberItemContent(
+  _index: number,
+  descriptor: ThreadTimelineDescriptor,
+  context: ExpertMemberVirtuosoContext,
+) {
   return <ExpertMemberRow context={context} descriptor={descriptor} />;
 }
 
-function expertMemberItemKey(_index: number, descriptor: ThreadTimelineDescriptor) {
+function expertMemberItemKey(
+  _index: number,
+  descriptor: ThreadTimelineDescriptor,
+) {
   return descriptor.key;
 }
 
@@ -1035,7 +1142,11 @@ function ExpertMemberStream({
   leadExpert: Pick<ExpertCollaborationLeader, "name" | "portrait">;
   member: ExpertCollaborationMember;
   onEnableAutoApprove?: () => Promise<void>;
-  onResolveApproval: (approvalId: string, approved: boolean, feedback?: string) => void;
+  onResolveApproval: (
+    approvalId: string,
+    approved: boolean,
+    feedback?: string,
+  ) => void;
   threadStore: ThreadSessionStore;
   workbenchId: WorkbenchId;
 }) {
@@ -1045,20 +1156,29 @@ function ExpertMemberStream({
     [member.memberId, member.startedAt, threadStore],
   );
   const viewportStore = useMemo(() => new ThreadViewportStore(), [store]);
-  const timeline = useSyncExternalStore(store.subscribeTimeline, store.getTimelineSnapshot, store.getTimelineSnapshot);
-  const loading = useSyncExternalStore(store.subscribeLoading, store.getLoadingSnapshot, store.getLoadingSnapshot);
+  const timeline = useSyncExternalStore(
+    store.subscribeTimeline,
+    store.getTimelineSnapshot,
+    store.getTimelineSnapshot,
+  );
+  const loading = useSyncExternalStore(
+    store.subscribeLoading,
+    store.getLoadingSnapshot,
+    store.getLoadingSnapshot,
+  );
   const virtuosoRef = useRef<VirtuosoHandle>(null);
   const environment = useMemo(
-    () => new ExpertMemberEnvironment(
-      {
-        canEnableAutoApprove: Boolean(onEnableAutoApprove),
-        densityRail,
-        leadExpert,
-        member: { name: member.name, portrait: member.portrait },
-        workbenchId,
-      },
-      { densityRail, expertName, member },
-    ),
+    () =>
+      new ExpertMemberEnvironment(
+        {
+          canEnableAutoApprove: Boolean(onEnableAutoApprove),
+          densityRail,
+          leadExpert,
+          member: { name: member.name, portrait: member.portrait },
+          workbenchId,
+        },
+        { densityRail, expertName, member },
+      ),
     [store],
   );
   environment.setActions({ onEnableAutoApprove, onResolveApproval });
@@ -1073,34 +1193,53 @@ function ExpertMemberStream({
       },
       { densityRail, expertName, member },
     );
-  }, [densityRail, environment, expertName, leadExpert, member, onEnableAutoApprove, workbenchId]);
+  }, [
+    densityRail,
+    environment,
+    expertName,
+    leadExpert,
+    member,
+    onEnableAutoApprove,
+    workbenchId,
+  ]);
   useEffect(() => {
     void store.start();
     return () => viewportStore.dispose();
   }, [store, viewportStore]);
-  const context = useMemo<ExpertMemberVirtuosoContext>(() => ({
-    environment,
-    store,
-    viewportStore,
-  }), [environment, store, viewportStore]);
+  const context = useMemo<ExpertMemberVirtuosoContext>(
+    () => ({
+      environment,
+      store,
+      viewportStore,
+    }),
+    [environment, store, viewportStore],
+  );
   const jumpToLatest = useCallback(() => {
     viewportStore.resumeFollowing();
     if (store.getTimelineSnapshot().items.length)
-      virtuosoRef.current?.scrollToIndex({ index: "LAST", align: "end", behavior: "auto" });
+      virtuosoRef.current?.scrollToIndex({
+        index: "LAST",
+        align: "end",
+        behavior: "auto",
+      });
   }, [store, viewportStore]);
-  const atBottomChanged = useCallback((atBottom: boolean) => {
-    viewportStore.setAtBottom(timeline.items.length === 0 ? true : atBottom);
-  }, [timeline.items.length, viewportStore]);
+  const atBottomChanged = useCallback(
+    (atBottom: boolean) => {
+      viewportStore.setAtBottom(timeline.items.length === 0 ? true : atBottom);
+    },
+    [timeline.items.length, viewportStore],
+  );
   const followMode = useSyncExternalStore(
     viewportStore.subscribe,
     useCallback(() => viewportStore.getSnapshot().followMode, [viewportStore]),
     useCallback(() => viewportStore.getSnapshot().followMode, [viewportStore]),
   );
   useEffect(
-    () => store.subscribeTailGrowth(() => {
-      if (viewportStore.shouldFollowTailGrowth())
-        virtuosoRef.current?.autoscrollToBottom();
-    }),
+    () =>
+      store.subscribeTailGrowth(() => {
+        if (viewportStore.shouldFollowTailGrowth())
+          virtuosoRef.current?.autoscrollToBottom();
+      }),
     [store, viewportStore],
   );
   if (loading && timeline.items.length === 0) {
@@ -1136,7 +1275,11 @@ function ExpertMemberStream({
           startReached={() => void store.loadOlder()}
         />
       </div>
-      <ThreadJumpToLatest label={t("threadJumpToLatest")} onJump={jumpToLatest} store={viewportStore} />
+      <ThreadJumpToLatest
+        label={t("threadJumpToLatest")}
+        onJump={jumpToLatest}
+        store={viewportStore}
+      />
     </div>
   );
 }
@@ -1347,33 +1490,67 @@ function planModeFromExtensions(
     : "off";
 }
 
-function planStateFromExtensions(
-  extensions: SessionSnapshot["extensions"],
-): { mode: "planning" | "executing"; steps: Array<{ id: string; title: string; detail: string; status: string }>; activeStepId?: string } | null {
-  const state = asObject(extensions.find((item) => item.extensionId === "wordless.plan-mode")?.state);
-  if (!state || (state.mode !== "planning" && state.mode !== "executing") || !Array.isArray(state.plan)) return null;
+function planStateFromExtensions(extensions: SessionSnapshot["extensions"]): {
+  mode: "planning" | "executing";
+  steps: Array<{ id: string; title: string; detail: string; status: string }>;
+  activeStepId?: string;
+} | null {
+  const state = asObject(
+    extensions.find((item) => item.extensionId === "wordless.plan-mode")?.state,
+  );
+  if (
+    !state ||
+    (state.mode !== "planning" && state.mode !== "executing") ||
+    !Array.isArray(state.plan)
+  )
+    return null;
   const steps = state.plan.flatMap((item) => {
     const value = asObject(item);
-    return value && typeof value.id === "string" && typeof value.title === "string" && typeof value.detail === "string" && typeof value.status === "string"
-      ? [{ id: value.id, title: value.title, detail: value.detail, status: value.status }]
+    return value &&
+      typeof value.id === "string" &&
+      typeof value.title === "string" &&
+      typeof value.detail === "string" &&
+      typeof value.status === "string"
+      ? [
+          {
+            id: value.id,
+            title: value.title,
+            detail: value.detail,
+            status: value.status,
+          },
+        ]
       : [];
   });
   if (!steps.length) return null;
-  return { mode: state.mode, steps, ...(typeof state.activeStepId === "string" ? { activeStepId: state.activeStepId } : {}) };
+  return {
+    mode: state.mode,
+    steps,
+    ...(typeof state.activeStepId === "string"
+      ? { activeStepId: state.activeStepId }
+      : {}),
+  };
 }
 
-function PlanProgressBar({ plan }: { plan: NonNullable<ReturnType<typeof planStateFromExtensions>> }) {
+function PlanProgressBar({
+  plan,
+}: {
+  plan: NonNullable<ReturnType<typeof planStateFromExtensions>>;
+}) {
   const { t } = usePreferences();
   const dockRef = useRef<HTMLDivElement>(null);
   const [expanded, setExpanded] = useState(false);
-  const completed = plan.steps.filter((step) => step.status === "completed").length;
-  const active = plan.steps.find((step) => step.status === "in-progress")
-    ?? plan.steps.find(
-      (step) =>
-        step.id === plan.activeStepId && step.status !== "completed",
-    )
-    ?? plan.steps.find((step) => step.status === "blocked" || step.status === "failed")
-    ?? plan.steps.find((step) => step.status === "pending");
+  const completed = plan.steps.filter(
+    (step) => step.status === "completed",
+  ).length;
+  const active =
+    plan.steps.find((step) => step.status === "in-progress") ??
+    plan.steps.find(
+      (step) => step.id === plan.activeStepId && step.status !== "completed",
+    ) ??
+    plan.steps.find(
+      (step) => step.status === "blocked" || step.status === "failed",
+    ) ??
+    plan.steps.find((step) => step.status === "pending");
   const allCompleted = completed === plan.steps.length;
   const statusLabel = allCompleted
     ? t("planStatusComplete")
@@ -1401,59 +1578,105 @@ function PlanProgressBar({ plan }: { plan: NonNullable<ReturnType<typeof planSta
     };
   }, [expanded]);
   return (
-    <div className="pointer-events-none absolute inset-x-0 bottom-full z-30 mb-1 flex justify-center" aria-label={t("planProgress")} role="region">
-      <div ref={dockRef} className="pointer-events-auto relative w-[min(520px,calc(100%-24px))] max-w-full text-foreground">
-        <div className={`overflow-hidden ${expanded ? "rounded-lg border border-black/10 bg-white/90 shadow-[0_8px_20px_rgba(0,0,0,0.10)] backdrop-blur-md dark:border-white/10 dark:bg-card/90 dark:shadow-[0_8px_20px_rgba(0,0,0,0.34)]" : "bg-transparent"}`}>
+    <div
+      className="pointer-events-none absolute inset-x-0 bottom-full z-30 mb-1 flex justify-center"
+      aria-label={t("planProgress")}
+      role="region"
+    >
+      <div
+        ref={dockRef}
+        className="pointer-events-auto relative w-[min(520px,calc(100%-24px))] max-w-full text-foreground"
+      >
+        <div
+          className={`overflow-hidden ${expanded ? "rounded-lg border border-black/10 bg-white/90 shadow-[0_8px_20px_rgba(0,0,0,0.10)] backdrop-blur-md dark:border-white/10 dark:bg-card/90 dark:shadow-[0_8px_20px_rgba(0,0,0,0.34)]" : "bg-transparent"}`}
+        >
           <button
             aria-controls={detailsId}
             aria-expanded={expanded}
-            aria-label={expanded ? t("planCollapseSteps") : t("planExpandSteps")}
+            aria-label={
+              expanded ? t("planCollapseSteps") : t("planExpandSteps")
+            }
             className={`flex min-h-8 w-full min-w-0 items-center gap-2 px-1 py-0.5 text-left transition-colors duration-150 hover:bg-[#f5f5f2] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring dark:hover:bg-muted ${expanded ? "px-3" : ""}`}
             onClick={() => setExpanded((value) => !value)}
             type="button"
           >
-            <ListChecks aria-hidden className="h-4 w-4 shrink-0 text-muted-foreground" />
-            <span className="shrink-0 text-[11px] font-semibold">{t("planProgress")}</span>
-            <span className={`shrink-0 font-mono text-[10px] font-semibold tabular-nums ${allCompleted ? "text-emerald-700 dark:text-emerald-400" : "text-[#718649] dark:text-[#b9d77e]"}`}>{completed}/{plan.steps.length}</span>
-            <span className="hidden shrink-0 text-[10px] text-muted-foreground sm:inline">{statusLabel}</span>
-            <span className="min-w-0 flex-1 truncate text-[11px] text-muted-foreground">{active?.title ?? (allCompleted ? t("planAllStepsComplete") : t("planAwaitingExecution"))}</span>
-            <ChevronDown aria-hidden className={`h-3.5 w-3.5 shrink-0 text-muted-foreground transition-transform duration-150 motion-reduce:transition-none ${expanded ? "rotate-180" : ""}`} />
+            <ListChecks
+              aria-hidden
+              className="h-4 w-4 shrink-0 text-muted-foreground"
+            />
+            <span className="shrink-0 text-[11px] font-semibold">
+              {t("planProgress")}
+            </span>
+            <span
+              className={`shrink-0 font-mono text-[10px] font-semibold tabular-nums ${allCompleted ? "text-emerald-700 dark:text-emerald-400" : "text-[#718649] dark:text-[#b9d77e]"}`}
+            >
+              {completed}/{plan.steps.length}
+            </span>
+            <span className="hidden shrink-0 text-[10px] text-muted-foreground sm:inline">
+              {statusLabel}
+            </span>
+            <span className="min-w-0 flex-1 truncate text-[11px] text-muted-foreground">
+              {active?.title ??
+                (allCompleted
+                  ? t("planAllStepsComplete")
+                  : t("planAwaitingExecution"))}
+            </span>
+            <ChevronDown
+              aria-hidden
+              className={`h-3.5 w-3.5 shrink-0 text-muted-foreground transition-transform duration-150 motion-reduce:transition-none ${expanded ? "rotate-180" : ""}`}
+            />
           </button>
           {expanded ? (
-        <ol id={detailsId} className="max-h-64 space-y-1 overflow-y-auto border-t border-border/40 px-3 pb-2 pt-2 motion-safe:animate-in motion-safe:fade-in motion-safe:slide-in-from-bottom-1 motion-safe:duration-150">
-          {plan.steps.map((step, index) => {
-            const isActive = step.id === active?.id;
-            const StepIcon = step.status === "completed"
-              ? Check
-              : step.status === "in-progress"
-                ? LoaderCircle
-                : step.status === "blocked" || step.status === "failed"
-                  ? CircleAlert
-                  : Circle;
-            // const statusText = step.status === "in-progress"
-            //   ? t("planStatusInProgress")
-            //   : step.status === "completed"
-            //     ? t("planStatusComplete")
-            //     : step.status === "blocked"
-            //       ? t("planStatusBlocked")
-            //       : step.status === "failed"
-            //         ? t("planStatusFailed")
-            //         : t("planStatusPending");
-            return (
-              <li className={`flex min-w-0 gap-2 border-l-2 px-2 py-1.5 text-[11px] ${isActive ? "border-foreground/60" : "border-transparent"}`} key={step.id}>
-                <StepIcon aria-hidden className={`mt-0.5 h-3.5 w-3.5 shrink-0 ${step.status === "completed" ? "text-emerald-700 dark:text-emerald-400" : step.status === "blocked" || step.status === "failed" ? "text-destructive" : step.status === "in-progress" ? "animate-spin motion-reduce:animate-none text-foreground" : "text-muted-foreground"}`} />
-                <div className="min-w-0 flex-1">
-                  <div className="flex min-w-0 items-baseline gap-2">
-                    <span className={`min-w-0 truncate font-medium ${step.status === "completed" ? "text-muted-foreground line-through" : "text-foreground"}`}>{step.title}</span>
-                    {/* <span className="shrink-0 text-[10px] text-muted-foreground">{statusText}</span> */}
-                  </div>
-                  <p className="mt-0.5 text-[10px] leading-4 text-muted-foreground">{step.detail}</p>
-                </div>
-                {/* <span aria-hidden className="shrink-0 font-mono text-[10px] tabular-nums text-muted-foreground">{String(index + 1).padStart(2, "0")}</span> */}
-              </li>
-            );
-          })}
-        </ol>
+            <ol
+              id={detailsId}
+              className="max-h-64 space-y-1 overflow-y-auto border-t border-border/40 px-3 pb-2 pt-2 motion-safe:animate-in motion-safe:fade-in motion-safe:slide-in-from-bottom-1 motion-safe:duration-150"
+            >
+              {plan.steps.map((step, index) => {
+                const isActive = step.id === active?.id;
+                const StepIcon =
+                  step.status === "completed"
+                    ? Check
+                    : step.status === "in-progress"
+                      ? LoaderCircle
+                      : step.status === "blocked" || step.status === "failed"
+                        ? CircleAlert
+                        : Circle;
+                // const statusText = step.status === "in-progress"
+                //   ? t("planStatusInProgress")
+                //   : step.status === "completed"
+                //     ? t("planStatusComplete")
+                //     : step.status === "blocked"
+                //       ? t("planStatusBlocked")
+                //       : step.status === "failed"
+                //         ? t("planStatusFailed")
+                //         : t("planStatusPending");
+                return (
+                  <li
+                    className={`flex min-w-0 gap-2 border-l-2 px-2 py-1.5 text-[11px] ${isActive ? "border-foreground/60" : "border-transparent"}`}
+                    key={step.id}
+                  >
+                    <StepIcon
+                      aria-hidden
+                      className={`mt-0.5 h-3.5 w-3.5 shrink-0 ${step.status === "completed" ? "text-emerald-700 dark:text-emerald-400" : step.status === "blocked" || step.status === "failed" ? "text-destructive" : step.status === "in-progress" ? "animate-spin motion-reduce:animate-none text-foreground" : "text-muted-foreground"}`}
+                    />
+                    <div className="min-w-0 flex-1">
+                      <div className="flex min-w-0 items-baseline gap-2">
+                        <span
+                          className={`min-w-0 truncate font-medium ${step.status === "completed" ? "text-muted-foreground line-through" : "text-foreground"}`}
+                        >
+                          {step.title}
+                        </span>
+                        {/* <span className="shrink-0 text-[10px] text-muted-foreground">{statusText}</span> */}
+                      </div>
+                      <p className="mt-0.5 text-[10px] leading-4 text-muted-foreground">
+                        {step.detail}
+                      </p>
+                    </div>
+                    {/* <span aria-hidden className="shrink-0 font-mono text-[10px] tabular-nums text-muted-foreground">{String(index + 1).padStart(2, "0")}</span> */}
+                  </li>
+                );
+              })}
+            </ol>
           ) : null}
         </div>
       </div>
@@ -1461,7 +1684,13 @@ function PlanProgressBar({ plan }: { plan: NonNullable<ReturnType<typeof planSta
   );
 }
 
-function ThinkingBlock({ streaming = false, text }: { streaming?: boolean; text: string }) {
+function ThinkingBlock({
+  streaming = false,
+  text,
+}: {
+  streaming?: boolean;
+  text: string;
+}) {
   const { t } = usePreferences();
   const [expanded, setExpanded] = useState(streaming);
   const userInteractedRef = useRef(false);
@@ -1693,36 +1922,92 @@ function AssistantMessageBlocks({
   workbenchId: WorkbenchId;
 }) {
   const rendered: ReactNode[] = [];
-  let firstToolGroup = true;
-  // Reasoning that only narrates a collapsed tool group is hidden along with it.
-  const messageToolGroups = (() => {
-    if (!toolGroupLayout) return [];
-    const groups: ToolActivityGroup[] = [];
-    let previousWasTool = false;
-    for (const candidateBlock of message.blocks) {
-      if (candidateBlock.type === "tool") {
-        if (!previousWasTool) {
-          const group = toolGroupLayout.runGroupByFirstCallId.get(
-            candidateBlock.callId,
-          );
-          if (group) groups.push(group);
-        }
-        previousWasTool = true;
-      } else {
-        previousWasTool = false;
-      }
-    }
-    return groups;
-  })();
-  const hideInterleavedReasoning =
-    messageToolGroups.length > 0 &&
-    messageToolGroups.every((group) => !(toolGroupExpanded?.(group) ?? true)) &&
-    !message.blocks.some(
-      (candidateBlock) =>
-        (candidateBlock.type === "text" &&
-          candidateBlock.text.trim().length > 0) ||
-        candidateBlock.type === "artifact",
+  let firstToolRun = true;
+  const groupForBlock = (index: number) =>
+    toolGroupLayout?.groupsByBlock.get(`${message.id}:${index}`);
+  const ownsGroupHeader = (
+    group: ToolActivityGroup | undefined,
+    index: number,
+  ) => group?.startMessageId === message.id && group.startBlockIndex === index;
+  const renderGroupHeader = (group: ToolActivityGroup, expanded: boolean) => (
+    <div className="mt-4" key={`tool-group-${group.id}`}>
+      <ToolActivityGroupHeader
+        expanded={expanded}
+        group={group}
+        onToggle={onToggleToolGroup ?? (() => {})}
+      />
+    </div>
+  );
+
+  const renderTools = (
+    tools: MessageToolBlock[],
+    ownerGroup?: ToolActivityGroup,
+  ): ReactNode[] => {
+    const researchByAnalysisId = new Map(
+      (ownerGroup?.researchGroups ?? []).map((group) => [
+        group.details.analysisId,
+        group,
+      ]),
     );
+    return tools.flatMap((tool) => {
+      if (tool.name !== "research_delegate") {
+        const ToolActivity = workbenchRendererRegistry.resolveTool(
+          workbenchId,
+          tool.name,
+        );
+        return [
+          <ToolActivity
+            block={tool}
+            canPlan={canPlan}
+            clarificationHandoffAvailable={clarificationHandoffAvailable}
+            key={tool.callId}
+            onEnableAutoApprove={onEnableAutoApprove}
+            onHandoffClarification={onHandoffClarification}
+            onLoadToolOutput={onLoadToolOutput}
+            onOpenFileChange={onOpenFileChange}
+            onOpenResearchTask={onOpenResearchTask}
+            onResolveApproval={onResolveApproval}
+            onResolveClarificationQuestion={onResolveClarificationQuestion}
+            onResolveUserRequest={onResolveUserRequest}
+          />,
+        ];
+      }
+      const analysisId =
+        typeof tool.details === "object" &&
+        tool.details !== null &&
+        !Array.isArray(tool.details) &&
+        typeof (tool.details as Record<string, unknown>).analysisId === "string"
+          ? (tool.details as Record<string, string>).analysisId
+          : undefined;
+      const group = analysisId
+        ? researchByAnalysisId.get(analysisId)
+        : undefined;
+      // The group owns the merged card at the earliest call. This is stable
+      // across message boundaries and React re-renders.
+      if (group && group.block.callId !== tool.callId) return [];
+      const ToolActivity = workbenchRendererRegistry.resolveTool(
+        workbenchId,
+        tool.name,
+      );
+      return [
+        <ToolActivity
+          block={group ? { ...group.block, details: group.details } : tool}
+          canPlan={canPlan}
+          clarificationHandoffAvailable={clarificationHandoffAvailable}
+          key={group ? `research-${group.details.analysisId}` : tool.callId}
+          onEnableAutoApprove={onEnableAutoApprove}
+          onHandoffClarification={onHandoffClarification}
+          onLoadToolOutput={onLoadToolOutput}
+          onOpenResearchTask={onOpenResearchTask}
+          onResolveApproval={onResolveApproval}
+          onResolveClarificationQuestion={onResolveClarificationQuestion}
+          onResolveUserRequest={onResolveUserRequest}
+          researchTaskCallIds={group?.taskCallIds}
+        />,
+      ];
+    });
+  };
+
   for (let index = 0; index < message.blocks.length; index += 1) {
     const block = message.blocks[index]!;
     if (block.type === "tool") {
@@ -1732,21 +2017,23 @@ function AssistantMessageBlocks({
         index += 1;
       }
       index -= 1;
-      const firstCallId = tools[0]?.callId ?? "";
-      const toolGroup = toolGroupLayout?.runGroupByFirstCallId.get(firstCallId);
-      const isToolGroupStart =
-        toolGroup !== undefined && toolGroup.startCallId === firstCallId;
-      const toolGroupIsExpanded = toolGroup
+      const runStartIndex = index - tools.length + 1;
+      const toolGroup = groupForBlock(runStartIndex);
+      const expanded = toolGroup
         ? (toolGroupExpanded?.(toolGroup) ?? true)
         : true;
-      // Collapsed continuation runs render nothing; the group header renders
-      // at the group start and represents the whole chain.
-      if (toolGroup && !toolGroupIsExpanded && !isToolGroupStart) continue;
+      const isGroupHeaderOwner = ownsGroupHeader(toolGroup, runStartIndex);
+      if (toolGroup && !expanded) {
+        if (isGroupHeaderOwner)
+          rendered.push(renderGroupHeader(toolGroup, false));
+        continue;
+      }
       const joinsPreviousToolGroup =
-        firstToolGroup && continuesPreviousToolSequence;
-      firstToolGroup = false;
+        firstToolRun && continuesPreviousToolSequence;
+      firstToolRun = false;
+      const showGroupHeader = isGroupHeaderOwner;
       let dividerAbove = joinsPreviousToolGroup;
-      for (let i = index - tools.length; i >= 0; i -= 1) {
+      for (let i = runStartIndex - 1; i >= 0; i -= 1) {
         const type = message.blocks[i]?.type;
         if (type === "tool" || type === "reasoning") {
           dividerAbove = true;
@@ -1754,96 +2041,16 @@ function AssistantMessageBlocks({
         }
         if (type !== "text") break;
       }
-      const stackTopMargin = isToolGroupStart
-        ? "mt-1"
-        : joinsPreviousToolGroup
-          ? "mt-0"
-          : "mt-4";
       rendered.push(
-        <Fragment
-          key={
-            isToolGroupStart ? `tool-group-${toolGroup!.id}` : `tools-${tools[0]?.callId}`
-          }
-        >
-          {isToolGroupStart && toolGroup ? (
-            <div className="mt-4">
-              <ToolActivityGroupHeader
-                expanded={toolGroupIsExpanded}
-                group={toolGroup}
-                onToggle={onToggleToolGroup ?? (() => {})}
-              />
-            </div>
-          ) : null}
+        <Fragment key={`tools-${message.id}-${runStartIndex}`}>
+          {showGroupHeader && toolGroup
+            ? renderGroupHeader(toolGroup, true)
+            : null}
           <div
-            className={`${stackTopMargin} divide-y divide-[#e7e7e2] border-[#e7e7e2] dark:divide-border dark:border-border ${dividerAbove ? "border-b" : "border-y"}`}
+            className={`${joinsPreviousToolGroup ? "mt-0" : "mt-4"} divide-y divide-[#e7e7e2] border-[#e7e7e2] dark:divide-border dark:border-border ${dividerAbove ? "border-b" : "border-y"}`}
             data-thread-search-exclude
           >
-          {(() => {
-            const researchGroups = groupResearchDelegationBlocks(
-              tools.filter((tool) => tool.name === "research_delegate"),
-            );
-            const groupByAnalysisId = new Map(
-              researchGroups.map((group) => [group.details.analysisId, group]),
-            );
-            const renderedResearch = new Set<string>();
-            return tools.flatMap((tool) => {
-              if (tool.name !== "research_delegate") {
-                const ToolActivity = workbenchRendererRegistry.resolveTool(
-                  workbenchId,
-                  tool.name,
-                );
-                return [
-                  <ToolActivity
-                    block={tool}
-                    canPlan={canPlan}
-                    clarificationHandoffAvailable={
-                      clarificationHandoffAvailable
-                    }
-                    key={tool.callId}
-                    onEnableAutoApprove={onEnableAutoApprove}
-                    onHandoffClarification={onHandoffClarification}
-                    onLoadToolOutput={onLoadToolOutput}
-                    onOpenFileChange={onOpenFileChange}
-                    onOpenResearchTask={onOpenResearchTask}
-                    onResolveApproval={onResolveApproval}
-                    onResolveClarificationQuestion={
-                      onResolveClarificationQuestion
-                    }
-                    onResolveUserRequest={onResolveUserRequest}
-                  />,
-                ];
-              }
-              const group = groupByAnalysisId.get(
-                groupResearchDelegationBlocks([tool])[0]?.details.analysisId ??
-                  "",
-              );
-              if (!group || renderedResearch.has(group.details.analysisId))
-                return [];
-              renderedResearch.add(group.details.analysisId);
-              const ToolActivity = workbenchRendererRegistry.resolveTool(
-                workbenchId,
-                tool.name,
-              );
-              return [
-                <ToolActivity
-                  block={{ ...group.block, details: group.details }}
-                  canPlan={canPlan}
-                  clarificationHandoffAvailable={clarificationHandoffAvailable}
-                  key={`research-${group.details.analysisId}`}
-                  onEnableAutoApprove={onEnableAutoApprove}
-                  onHandoffClarification={onHandoffClarification}
-                  onLoadToolOutput={onLoadToolOutput}
-                  onOpenResearchTask={onOpenResearchTask}
-                  onResolveApproval={onResolveApproval}
-                  onResolveClarificationQuestion={
-                    onResolveClarificationQuestion
-                  }
-                  onResolveUserRequest={onResolveUserRequest}
-                  researchTaskCallIds={group.taskCallIds}
-                />,
-              ];
-            });
-          })()}
+            {renderTools(tools, toolGroup)}
           </div>
         </Fragment>,
       );
@@ -1856,14 +2063,34 @@ function AssistantMessageBlocks({
           className={followsReasoning ? "pt-3" : undefined}
           key={`text-${index}`}
         >
-          <MessageMarkdown streaming={message.status === "streaming"} text={block.text} />
+          <MessageMarkdown
+            streaming={message.status === "streaming"}
+            text={block.text}
+          />
         </div>,
       );
+      continue;
     }
-    if (block.type === "reasoning" && !hideInterleavedReasoning)
+    if (block.type === "reasoning") {
+      // The pre-tool thinking block is the assistant's explanation for the
+      // round and remains useful context when the tool cards are collapsed.
+      // Reasoning after the first tool belongs to the collapsible activity.
+      const reasoningGroup = groupForBlock(index);
+      const expanded = reasoningGroup
+        ? (toolGroupExpanded?.(reasoningGroup) ?? true)
+        : true;
+      if (reasoningGroup && ownsGroupHeader(reasoningGroup, index))
+        rendered.push(renderGroupHeader(reasoningGroup, expanded));
+      if (!expanded) continue;
       rendered.push(
-        <ThinkingBlock key={`reasoning-${index}`} streaming={message.status === "streaming"} text={block.text} />,
+        <ThinkingBlock
+          key={`reasoning-${index}`}
+          streaming={message.status === "streaming"}
+          text={block.text}
+        />,
       );
+      continue;
+    }
     if (block.type === "artifact")
       rendered.push(
         <p
@@ -1877,9 +2104,16 @@ function AssistantMessageBlocks({
   return <>{rendered}</>;
 }
 
-function AssistantResponseError({ message, visible = true }: { message: ConversationMessage; visible?: boolean }) {
+function AssistantResponseError({
+  message,
+  visible = true,
+}: {
+  message: ConversationMessage;
+  visible?: boolean;
+}) {
   const { t } = usePreferences();
-  if (!visible || message.status !== "error" || !message.errorMessage) return null;
+  if (!visible || message.status !== "error" || !message.errorMessage)
+    return null;
   return (
     <div
       className="mt-4 flex items-start gap-2.5 border-y border-[#ead5cf] bg-[#fdf8f6] px-3 py-2.5 text-[#8d5448] dark:border-[#5c3d36] dark:bg-[#2b201d] dark:text-[#efb0a3]"
@@ -2095,16 +2329,34 @@ function AssistantRunStatus({
   );
 }
 
-function ReconnectingStatus({ retry, now }: { retry: { retryAt: number; attempt: number; maxRetries: number }; now: number }) {
+function ReconnectingStatus({
+  retry,
+  now,
+}: {
+  retry: { retryAt: number; attempt: number; maxRetries: number };
+  now: number;
+}) {
   const { locale } = usePreferences();
   const seconds = Math.ceil((retry.retryAt - now) / 1000);
   if (seconds <= 0)
-    return locale.startsWith("zh")
-      ? <>正在重新连接 · {retry.attempt}/{retry.maxRetries}</>
-      : <>Reconnecting · {retry.attempt}/{retry.maxRetries}</>;
-  return locale.startsWith("zh")
-    ? <>正在重新连接，{seconds} 秒后重试 · {retry.attempt}/{retry.maxRetries}</>
-    : <>Reconnecting in {seconds}s · {retry.attempt}/{retry.maxRetries}</>;
+    return locale.startsWith("zh") ? (
+      <>
+        正在重新连接 · {retry.attempt}/{retry.maxRetries}
+      </>
+    ) : (
+      <>
+        Reconnecting · {retry.attempt}/{retry.maxRetries}
+      </>
+    );
+  return locale.startsWith("zh") ? (
+    <>
+      正在重新连接，{seconds} 秒后重试 · {retry.attempt}/{retry.maxRetries}
+    </>
+  ) : (
+    <>
+      Reconnecting in {seconds}s · {retry.attempt}/{retry.maxRetries}
+    </>
+  );
 }
 
 function PlanResultActions({
@@ -2225,19 +2477,8 @@ function AssistantMessageBody({
     () => buildToolActivityGroups(messages),
     [messages],
   );
-  const {
-    isExpanded: isToolGroupExpanded,
-    toggle: toggleToolGroup,
-  } = useToolActivityGroupCollapseState(toolGroupLayout.groups);
-  const hiddenToolGroupMessageIndexes = useMemo(
-    () =>
-      collapsedToolGroupMessageIndexes(
-        messages,
-        toolGroupLayout,
-        isToolGroupExpanded,
-      ),
-    [messages, toolGroupLayout, isToolGroupExpanded],
-  );
+  const { isExpanded: isToolGroupExpanded, toggle: toggleToolGroup } =
+    useToolActivityGroupCollapseState(toolGroupLayout.groups);
   const hasPendingInteraction = blocks.some(
     (block) =>
       block.type === "tool" &&
@@ -2248,6 +2489,20 @@ function AssistantMessageBody({
     (candidate) => candidate.status === "streaming",
   );
   const showRunStatus = shouldShowAssistantRunStatus(messages, runPresentation);
+  const isCollapsedActivityContinuation = (candidate: ConversationMessage) =>
+    candidate.blocks.length > 0 &&
+    candidate.blocks.every((block, blockIndex) => {
+      if (block.type === "text") return block.text.trim().length === 0;
+      const group = toolGroupLayout.groupsByBlock.get(
+        `${candidate.id}:${blockIndex}`,
+      );
+      return Boolean(
+        group &&
+        !isToolGroupExpanded(group) &&
+        (group.startMessageId !== candidate.id ||
+          group.startBlockIndex !== blockIndex),
+      );
+    });
   if (!message)
     return (
       <article>
@@ -2263,14 +2518,19 @@ function AssistantMessageBody({
     <article>
       <AssistantIdentityHeader identity={assistantIdentity} />
       <div className="mt-2 min-w-0">
-        {messages.map((candidate, index) => (
-          <section
-            className={`min-h-px outline-none focus-visible:ring-2 focus-visible:ring-ring ${index > 0 && !toolSequenceContinuations[index] && !hiddenToolGroupMessageIndexes.has(index) ? "mt-5" : ""}`}
-            data-thread-message-id={candidate.id}
-            key={candidate.id}
-            tabIndex={-1}
-          >
-            {hiddenToolGroupMessageIndexes.has(index) ? null : (
+        {messages.map((candidate, index) => {
+          const collapsedActivityContinuation =
+            isCollapsedActivityContinuation(candidate);
+          const continuesActivityBurst = toolGroupLayout.groupsByMessageId
+            .get(candidate.id)
+            ?.some((group) => group.startMessageId !== candidate.id);
+          return (
+            <section
+              className={`${collapsedActivityContinuation ? "" : "min-h-px"} outline-none focus-visible:ring-2 focus-visible:ring-ring ${index > 0 && !toolSequenceContinuations[index] && !continuesActivityBurst && !collapsedActivityContinuation ? "mt-5" : ""}`}
+              data-thread-message-id={candidate.id}
+              key={candidate.id}
+              tabIndex={-1}
+            >
               <AssistantMessageBlocks
                 canPlan={canPlan}
                 clarificationHandoffAvailable={
@@ -2294,13 +2554,16 @@ function AssistantMessageBody({
                 toolGroupLayout={toolGroupLayout}
                 workbenchId={workbenchId}
               />
-            )}
-            <AssistantResponseError
-              message={candidate}
-              visible={shouldShowAssistantResponseError(messages, candidate.id)}
-            />
-          </section>
-        ))}
+              <AssistantResponseError
+                message={candidate}
+                visible={shouldShowAssistantResponseError(
+                  messages,
+                  candidate.id,
+                )}
+              />
+            </section>
+          );
+        })}
         {showRunStatus && runPresentation ? (
           <AssistantRunStatus activity={runPresentation.activity} />
         ) : null}
@@ -2567,9 +2830,14 @@ function MessageBody({
           ) : null}
           {attachments.length > 0 ? (
             <div className="mt-1 flex w-fit max-w-full flex-wrap justify-end gap-1.5">
-              {attachments.map((attachment) => (
-                attachment.mediaType.startsWith("image/") && attachment.previewPath ? (
-                  <div className="w-[220px] overflow-hidden rounded-[8px] border border-[#deded9] bg-[#f0f0ed] dark:border-border dark:bg-muted" key={attachment.id} title={attachment.name}>
+              {attachments.map((attachment) =>
+                attachment.mediaType.startsWith("image/") &&
+                attachment.previewPath ? (
+                  <div
+                    className="w-[220px] overflow-hidden rounded-[8px] border border-[#deded9] bg-[#f0f0ed] dark:border-border dark:bg-muted"
+                    key={attachment.id}
+                    title={attachment.name}
+                  >
                     <img
                       alt={attachment.name}
                       className="block max-h-[180px] w-full object-contain"
@@ -2578,17 +2846,31 @@ function MessageBody({
                       src={`wordless-attachment://preview/${encodeURIComponent(sessionId)}/${encodeURIComponent(attachment.previewPath)}`}
                     />
                     <div className="flex items-center gap-1 px-2 py-1 font-mono text-[11px] text-[#6d6d67] dark:text-muted-foreground">
-                      <FileTypeIcon className="h-3 w-3 shrink-0 [&_svg]:h-3 [&_svg]:w-3" kind="file" name={attachment.name} />
-                      <span className="min-w-0 truncate">{attachment.name}</span>
+                      <FileTypeIcon
+                        className="h-3 w-3 shrink-0 [&_svg]:h-3 [&_svg]:w-3"
+                        kind="file"
+                        name={attachment.name}
+                      />
+                      <span className="min-w-0 truncate">
+                        {attachment.name}
+                      </span>
                     </div>
                   </div>
                 ) : (
-                  <span className="inline-flex max-w-full items-center gap-1 rounded-[5px] bg-[#f0f0ed] px-2 py-1 font-mono text-[11px] text-[#6d6d67] dark:bg-muted" key={attachment.id} title={attachment.name}>
-                    <FileTypeIcon className="h-3 w-3 shrink-0 [&_svg]:h-3 [&_svg]:w-3" kind="file" name={attachment.name} />
+                  <span
+                    className="inline-flex max-w-full items-center gap-1 rounded-[5px] bg-[#f0f0ed] px-2 py-1 font-mono text-[11px] text-[#6d6d67] dark:bg-muted"
+                    key={attachment.id}
+                    title={attachment.name}
+                  >
+                    <FileTypeIcon
+                      className="h-3 w-3 shrink-0 [&_svg]:h-3 [&_svg]:w-3"
+                      kind="file"
+                      name={attachment.name}
+                    />
                     <span className="min-w-0 truncate">{attachment.name}</span>
                   </span>
-                )
-              ))}
+                ),
+              )}
             </div>
           ) : null}
         </div>
@@ -2680,24 +2962,36 @@ class ThreadRowEnvironment {
   private rowSnapshot: ThreadRowEnvironmentSnapshot;
 
   readonly actions: ThreadRowActions = {
-    handoffClarification: (...args) => this.requireActions().handoffClarification(...args),
+    handoffClarification: (...args) =>
+      this.requireActions().handoffClarification(...args),
     loadToolOutput: (...args) => this.requireActions().loadToolOutput(...args),
-    onOpenFileChange: (...args) => this.requireActions().onOpenFileChange?.(...args),
-    onOpenResearchTask: (...args) => this.requireActions().onOpenResearchTask?.(...args),
-    resolveApproval: (...args) => this.requireActions().resolveApproval(...args),
-    resolveClarificationQuestion: (...args) => this.requireActions().resolveClarificationQuestion(...args),
-    resolvePlanResult: (...args) => this.requireActions().resolvePlanResult(...args),
-    resolveUserRequest: (...args) => this.requireActions().resolveUserRequest(...args),
-    setToolApprovalMode: (...args) => this.requireActions().setToolApprovalMode(...args),
+    onOpenFileChange: (...args) =>
+      this.requireActions().onOpenFileChange?.(...args),
+    onOpenResearchTask: (...args) =>
+      this.requireActions().onOpenResearchTask?.(...args),
+    resolveApproval: (...args) =>
+      this.requireActions().resolveApproval(...args),
+    resolveClarificationQuestion: (...args) =>
+      this.requireActions().resolveClarificationQuestion(...args),
+    resolvePlanResult: (...args) =>
+      this.requireActions().resolvePlanResult(...args),
+    resolveUserRequest: (...args) =>
+      this.requireActions().resolveUserRequest(...args),
+    setToolApprovalMode: (...args) =>
+      this.requireActions().setToolApprovalMode(...args),
   };
 
-  constructor(rowSnapshot: ThreadRowEnvironmentSnapshot, chromeSnapshot: ThreadVirtuosoContext) {
+  constructor(
+    rowSnapshot: ThreadRowEnvironmentSnapshot,
+    chromeSnapshot: ThreadVirtuosoContext,
+  ) {
     this.rowSnapshot = rowSnapshot;
     this.chromeSnapshot = chromeSnapshot;
   }
 
   readonly getChromeSnapshot = (): ThreadVirtuosoContext => this.chromeSnapshot;
-  readonly getRowSnapshot = (): ThreadRowEnvironmentSnapshot => this.rowSnapshot;
+  readonly getRowSnapshot = (): ThreadRowEnvironmentSnapshot =>
+    this.rowSnapshot;
   readonly subscribeChrome = (listener: () => void): (() => void) => {
     this.chromeListeners.add(listener);
     return () => this.chromeListeners.delete(listener);
@@ -2711,7 +3005,10 @@ class ThreadRowEnvironment {
     this.actionTargets = actions;
   }
 
-  update(row: ThreadRowEnvironmentSnapshot, chrome: ThreadVirtuosoContext): void {
+  update(
+    row: ThreadRowEnvironmentSnapshot,
+    chrome: ThreadVirtuosoContext,
+  ): void {
     if (
       this.rowSnapshot.canPlan !== row.canPlan ||
       this.rowSnapshot.densityRail !== row.densityRail ||
@@ -2728,7 +3025,8 @@ class ThreadRowEnvironment {
   }
 
   private requireActions(): ThreadRowActions {
-    if (!this.actionTargets) throw new Error("Thread row actions are unavailable");
+    if (!this.actionTargets)
+      throw new Error("Thread row actions are unavailable");
     return this.actionTargets;
   }
 }
@@ -2742,19 +3040,22 @@ type ThreadStoreVirtuosoContext = {
 const ThreadStoreScroller = forwardRef<
   HTMLDivElement,
   ComponentProps<"div"> & { context?: ThreadStoreVirtuosoContext }
->(function ThreadStoreScroller({
-  context,
-  onKeyDown,
-  onPointerCancel,
-  onPointerDown,
-  onPointerUp,
-  onTouchCancel,
-  onTouchEnd,
-  onTouchMove,
-  onTouchStart,
-  onWheel,
-  ...props
-}, ref) {
+>(function ThreadStoreScroller(
+  {
+    context,
+    onKeyDown,
+    onPointerCancel,
+    onPointerDown,
+    onPointerUp,
+    onTouchCancel,
+    onTouchEnd,
+    onTouchMove,
+    onTouchStart,
+    onWheel,
+    ...props
+  },
+  ref,
+) {
   const touchYRef = useRef<number | null>(null);
   return (
     <div
@@ -2783,7 +3084,11 @@ const ThreadStoreScroller = forwardRef<
       }}
       onTouchMove={(event) => {
         const nextY = event.touches[0]?.clientY ?? null;
-        if (nextY !== null && touchYRef.current !== null && nextY > touchYRef.current)
+        if (
+          nextY !== null &&
+          touchYRef.current !== null &&
+          nextY > touchYRef.current
+        )
           context?.viewportStore.markUserScrollIntent();
         touchYRef.current = nextY;
         onTouchMove?.(event);
@@ -2867,9 +3172,12 @@ function ThreadStoreRow({
   const timelineIndex = context.store.getTimelineIndex(descriptor.key);
   const isFirstMessage = timelineIndex === 0;
   const isLastMessage = timelineIndex === timeline.items.length - 1;
-  const followsCompaction = timeline.items[timelineIndex - 1]?.type === "compaction";
+  const followsCompaction =
+    timeline.items[timelineIndex - 1]?.type === "compaction";
   const hasPendingApproval = row.messages.some((message) =>
-    message.blocks.some((block) => block.type === "tool" && block.state === "awaiting-approval"),
+    message.blocks.some(
+      (block) => block.type === "tool" && block.state === "awaiting-approval",
+    ),
   );
   const environment = useSyncExternalStore(
     context.environment.subscribeRow,
@@ -2878,35 +3186,59 @@ function ThreadStoreRow({
   );
   const assistantIdentity = useSyncExternalStore(
     context.store.subscribeMetadata,
-    useCallback(() => context.store.getMetadataSnapshot().expertCollaboration?.leader, [context.store]),
-    useCallback(() => context.store.getMetadataSnapshot().expertCollaboration?.leader, [context.store]),
+    useCallback(
+      () => context.store.getMetadataSnapshot().expertCollaboration?.leader,
+      [context.store],
+    ),
+    useCallback(
+      () => context.store.getMetadataSnapshot().expertCollaboration?.leader,
+      [context.store],
+    ),
   );
   const isRunning = useSyncExternalStore(
     context.store.subscribeMetadata,
     useCallback(
-      () => isLastMessage ? context.store.getMetadataSnapshot().isRunning : false,
+      () =>
+        isLastMessage ? context.store.getMetadataSnapshot().isRunning : false,
       [context.store, isLastMessage],
     ),
     useCallback(
-      () => isLastMessage ? context.store.getMetadataSnapshot().isRunning : false,
+      () =>
+        isLastMessage ? context.store.getMetadataSnapshot().isRunning : false,
       [context.store, isLastMessage],
     ),
   );
   const toolApprovalMode = useSyncExternalStore(
     context.store.subscribeMetadata,
     useCallback(
-      () => hasPendingApproval ? context.store.getMetadataSnapshot().toolApprovalMode : "auto",
+      () =>
+        hasPendingApproval
+          ? context.store.getMetadataSnapshot().toolApprovalMode
+          : "auto",
       [context.store, hasPendingApproval],
     ),
     useCallback(
-      () => hasPendingApproval ? context.store.getMetadataSnapshot().toolApprovalMode : "auto",
+      () =>
+        hasPendingApproval
+          ? context.store.getMetadataSnapshot().toolApprovalMode
+          : "auto",
       [context.store, hasPendingApproval],
     ),
   );
   const workbenchId = useSyncExternalStore(
     context.store.subscribeMetadata,
-    useCallback(() => context.store.getMetadataSnapshot().session?.workbenchId ?? "conversation", [context.store]),
-    useCallback(() => context.store.getMetadataSnapshot().session?.workbenchId ?? "conversation", [context.store]),
+    useCallback(
+      () =>
+        context.store.getMetadataSnapshot().session?.workbenchId ??
+        "conversation",
+      [context.store],
+    ),
+    useCallback(
+      () =>
+        context.store.getMetadataSnapshot().session?.workbenchId ??
+        "conversation",
+      [context.store],
+    ),
   );
   if (row.key === "missing") return null;
   return (
@@ -2928,12 +3260,16 @@ function ThreadStoreRow({
               ? () => context.environment.actions.setToolApprovalMode("auto")
               : undefined
           }
-          onHandoffClarification={context.environment.actions.handoffClarification}
+          onHandoffClarification={
+            context.environment.actions.handoffClarification
+          }
           onLoadToolOutput={context.environment.actions.loadToolOutput}
           onOpenFileChange={context.environment.actions.onOpenFileChange}
           onOpenResearchTask={context.environment.actions.onOpenResearchTask}
           onResolveApproval={context.environment.actions.resolveApproval}
-          onResolveClarificationQuestion={context.environment.actions.resolveClarificationQuestion}
+          onResolveClarificationQuestion={
+            context.environment.actions.resolveClarificationQuestion
+          }
           onResolvePlanResult={context.environment.actions.resolvePlanResult}
           onResolveUserRequest={context.environment.actions.resolveUserRequest}
           pendingAssistant={descriptor.type === "assistant"}
@@ -2953,12 +3289,7 @@ function threadStoreItemContent(
   descriptor: ThreadTimelineDescriptor,
   context: ThreadStoreVirtuosoContext,
 ) {
-  return (
-    <ThreadStoreRow
-      context={context}
-      descriptor={descriptor}
-    />
-  );
+  return <ThreadStoreRow context={context} descriptor={descriptor} />;
 }
 
 function threadStoreItemKey(
@@ -2970,7 +3301,11 @@ function threadStoreItemKey(
 
 type ThreadTimelineViewportHandle = {
   jumpToLatest: (behavior?: "auto" | "smooth") => void;
-  navigateToTurn: (turnId: string, messageId?: string, matchText?: string) => Promise<void>;
+  navigateToTurn: (
+    turnId: string,
+    messageId?: string,
+    matchText?: string,
+  ) => Promise<void>;
 };
 
 type ThreadTimelineViewportProps = {
@@ -2985,198 +3320,313 @@ type ThreadTimelineViewportProps = {
   viewportStore: ThreadViewportStore;
 };
 
-const ThreadTimelineViewport = memo(forwardRef<ThreadTimelineViewportHandle, ThreadTimelineViewportProps>(
-  function ThreadTimelineViewport({
-    context,
-    fallbackExcerpt,
-    jumpLabel,
-    navigationLabel,
-    reduceMotion,
-    responding,
-    store,
-    summaries,
-    viewportStore,
-  }, ref) {
-    const timeline = useSyncExternalStore(store.subscribeTimeline, store.getTimelineSnapshot, store.getTimelineSnapshot);
-    const loading = useSyncExternalStore(store.subscribeLoading, store.getLoadingSnapshot, store.getLoadingSnapshot);
-    const virtuosoRef = useRef<VirtuosoHandle>(null);
-    const timelineRef = useRef(timeline);
-    timelineRef.current = timeline;
-    const [pendingNavigation, setPendingNavigation] = useState<{
-      matchText?: string;
-      messageId?: string;
-      turnId: string;
-    } | null>(null);
-    const navigationSequenceRef = useRef(0);
-    const searchHighlightCleanupRef = useRef<(() => void) | null>(null);
-    const searchHighlightTimerRef = useRef<number | null>(null);
+const ThreadTimelineViewport = memo(
+  forwardRef<ThreadTimelineViewportHandle, ThreadTimelineViewportProps>(
+    function ThreadTimelineViewport(
+      {
+        context,
+        fallbackExcerpt,
+        jumpLabel,
+        navigationLabel,
+        reduceMotion,
+        responding,
+        store,
+        summaries,
+        viewportStore,
+      },
+      ref,
+    ) {
+      const timeline = useSyncExternalStore(
+        store.subscribeTimeline,
+        store.getTimelineSnapshot,
+        store.getTimelineSnapshot,
+      );
+      const loading = useSyncExternalStore(
+        store.subscribeLoading,
+        store.getLoadingSnapshot,
+        store.getLoadingSnapshot,
+      );
+      const virtuosoRef = useRef<VirtuosoHandle>(null);
+      const timelineRef = useRef(timeline);
+      timelineRef.current = timeline;
+      const [pendingNavigation, setPendingNavigation] = useState<{
+        matchText?: string;
+        messageId?: string;
+        turnId: string;
+      } | null>(null);
+      const navigationSequenceRef = useRef(0);
+      const searchHighlightCleanupRef = useRef<(() => void) | null>(null);
+      const searchHighlightTimerRef = useRef<number | null>(null);
 
-    const jumpToLatest = useCallback((behavior: "auto" | "smooth" = "auto") => {
-      viewportStore.resumeFollowing();
-      const current = store.getTimelineSnapshot();
-      if (current.items.length)
-        virtuosoRef.current?.scrollToIndex({ index: "LAST", align: "end", behavior });
-    }, [store, viewportStore]);
+      const jumpToLatest = useCallback(
+        (behavior: "auto" | "smooth" = "auto") => {
+          viewportStore.resumeFollowing();
+          const current = store.getTimelineSnapshot();
+          if (current.items.length)
+            virtuosoRef.current?.scrollToIndex({
+              index: "LAST",
+              align: "end",
+              behavior,
+            });
+        },
+        [store, viewportStore],
+      );
 
-    const navigateToTurn = useCallback(async (turnId: string, messageId?: string, matchText?: string) => {
-      const sequence = ++navigationSequenceRef.current;
-      viewportStore.pauseFollowing();
-      if (searchHighlightTimerRef.current !== null) window.clearTimeout(searchHighlightTimerRef.current);
-      searchHighlightTimerRef.current = null;
-      searchHighlightCleanupRef.current?.();
-      searchHighlightCleanupRef.current = null;
-      setPendingNavigation({ turnId, messageId, matchText });
-      await store.ensureTurnLoaded(turnId);
-      if (sequence === navigationSequenceRef.current)
-        setPendingNavigation({ turnId, messageId, matchText });
-    }, [store, viewportStore]);
-
-    useImperativeHandle(ref, () => ({ jumpToLatest, navigateToTurn }), [jumpToLatest, navigateToTurn]);
-
-    useEffect(() => {
-      if (!pendingNavigation) return;
-      const index = timeline.items.findIndex((item) => item.type !== "compaction" && item.turnId === pendingNavigation.turnId);
-      if (index === -1) return;
-      viewportStore.setActiveTurn(pendingNavigation.turnId);
-      virtuosoRef.current?.scrollToIndex({ index, align: "start", behavior: reduceMotion ? "auto" : "smooth" });
-      if (!pendingNavigation.messageId) {
-        setPendingNavigation(null);
-        return;
-      }
-      const messageId = pendingNavigation.messageId;
-      const matchText = pendingNavigation.matchText;
-      let frame = 0;
-      let attempts = 0;
-      let cancelWaitForScroll = () => {};
-      const focusMessage = () => {
-        const element = document.querySelector<HTMLElement>(`[data-thread-message-id="${CSS.escape(messageId)}"]`);
-        if (!element && attempts++ < 20) {
-          frame = window.requestAnimationFrame(focusMessage);
-          return;
-        }
-        if (!element) {
-          setPendingNavigation((current) => current?.messageId === messageId ? null : current);
-          return;
-        }
-        element.scrollIntoView({ block: "center", behavior: reduceMotion ? "auto" : "smooth" });
-        element.focus({ preventScroll: true });
-        cancelWaitForScroll = waitForScrollSettled(element, reduceMotion, () => {
-          if (searchHighlightTimerRef.current !== null) window.clearTimeout(searchHighlightTimerRef.current);
+      const navigateToTurn = useCallback(
+        async (turnId: string, messageId?: string, matchText?: string) => {
+          const sequence = ++navigationSequenceRef.current;
+          viewportStore.pauseFollowing();
+          if (searchHighlightTimerRef.current !== null)
+            window.clearTimeout(searchHighlightTimerRef.current);
+          searchHighlightTimerRef.current = null;
           searchHighlightCleanupRef.current?.();
-          const cleanup = matchText ? applySearchHighlight(element, matchText) : null;
-          searchHighlightCleanupRef.current = cleanup;
-          if (cleanup)
-            searchHighlightTimerRef.current = window.setTimeout(() => {
-              if (searchHighlightCleanupRef.current !== cleanup) return;
-              cleanup();
-              searchHighlightCleanupRef.current = null;
-              searchHighlightTimerRef.current = null;
-            }, reduceMotion ? 1_400 : 2_800);
-          setPendingNavigation((current) => current?.messageId === messageId ? null : current);
+          searchHighlightCleanupRef.current = null;
+          setPendingNavigation({ turnId, messageId, matchText });
+          await store.ensureTurnLoaded(turnId);
+          if (sequence === navigationSequenceRef.current)
+            setPendingNavigation({ turnId, messageId, matchText });
+        },
+        [store, viewportStore],
+      );
+
+      useImperativeHandle(ref, () => ({ jumpToLatest, navigateToTurn }), [
+        jumpToLatest,
+        navigateToTurn,
+      ]);
+
+      useEffect(() => {
+        if (!pendingNavigation) return;
+        const index = timeline.items.findIndex(
+          (item) =>
+            item.type !== "compaction" &&
+            item.turnId === pendingNavigation.turnId,
+        );
+        if (index === -1) return;
+        viewportStore.setActiveTurn(pendingNavigation.turnId);
+        virtuosoRef.current?.scrollToIndex({
+          index,
+          align: "start",
+          behavior: reduceMotion ? "auto" : "smooth",
         });
-      };
-      frame = window.requestAnimationFrame(focusMessage);
-      return () => {
-        window.cancelAnimationFrame(frame);
-        cancelWaitForScroll();
-      };
-    }, [pendingNavigation, reduceMotion, timeline, viewportStore]);
+        if (!pendingNavigation.messageId) {
+          setPendingNavigation(null);
+          return;
+        }
+        const messageId = pendingNavigation.messageId;
+        const matchText = pendingNavigation.matchText;
+        let frame = 0;
+        let attempts = 0;
+        let cancelWaitForScroll = () => {};
+        const focusMessage = () => {
+          const element = document.querySelector<HTMLElement>(
+            `[data-thread-message-id="${CSS.escape(messageId)}"]`,
+          );
+          if (!element && attempts++ < 20) {
+            frame = window.requestAnimationFrame(focusMessage);
+            return;
+          }
+          if (!element) {
+            setPendingNavigation((current) =>
+              current?.messageId === messageId ? null : current,
+            );
+            return;
+          }
+          element.scrollIntoView({
+            block: "center",
+            behavior: reduceMotion ? "auto" : "smooth",
+          });
+          element.focus({ preventScroll: true });
+          cancelWaitForScroll = waitForScrollSettled(
+            element,
+            reduceMotion,
+            () => {
+              if (searchHighlightTimerRef.current !== null)
+                window.clearTimeout(searchHighlightTimerRef.current);
+              searchHighlightCleanupRef.current?.();
+              const cleanup = matchText
+                ? applySearchHighlight(element, matchText)
+                : null;
+              searchHighlightCleanupRef.current = cleanup;
+              if (cleanup)
+                searchHighlightTimerRef.current = window.setTimeout(
+                  () => {
+                    if (searchHighlightCleanupRef.current !== cleanup) return;
+                    cleanup();
+                    searchHighlightCleanupRef.current = null;
+                    searchHighlightTimerRef.current = null;
+                  },
+                  reduceMotion ? 1_400 : 2_800,
+                );
+              setPendingNavigation((current) =>
+                current?.messageId === messageId ? null : current,
+              );
+            },
+          );
+        };
+        frame = window.requestAnimationFrame(focusMessage);
+        return () => {
+          window.cancelAnimationFrame(frame);
+          cancelWaitForScroll();
+        };
+      }, [pendingNavigation, reduceMotion, timeline, viewportStore]);
 
-    useEffect(() => () => {
-      if (searchHighlightTimerRef.current !== null) window.clearTimeout(searchHighlightTimerRef.current);
-      searchHighlightCleanupRef.current?.();
-    }, []);
+      useEffect(
+        () => () => {
+          if (searchHighlightTimerRef.current !== null)
+            window.clearTimeout(searchHighlightTimerRef.current);
+          searchHighlightCleanupRef.current?.();
+        },
+        [],
+      );
 
-    const atBottomChanged = useCallback((atBottom: boolean) => {
-      viewportStore.setAtBottom(timeline.items.length === 0 ? true : atBottom);
-    }, [timeline.items.length, viewportStore]);
-    const followMode = useSyncExternalStore(
-      viewportStore.subscribe,
-      useCallback(() => viewportStore.getSnapshot().followMode, [viewportStore]),
-      useCallback(() => viewportStore.getSnapshot().followMode, [viewportStore]),
-    );
-    useEffect(
-      () => store.subscribeTailGrowth(() => {
-        if (viewportStore.shouldFollowTailGrowth())
-          virtuosoRef.current?.autoscrollToBottom();
-      }),
-      [store, viewportStore],
-    );
-    const rangeChanged = useCallback((range: ListRange) => {
-      const current = timelineRef.current;
-      const middle = range.startIndex + Math.floor((range.endIndex - range.startIndex) / 2);
-      const item = current.items[dataIndexFromReportedIndex(middle, current.firstItemIndex)];
-      if (item && item.type !== "compaction") viewportStore.setActiveTurn(item.turnId);
-    }, [viewportStore]);
-    const loadOlder = useCallback(() => {
-      viewportStore.pauseFollowing();
-      void store.loadOlder();
-    }, [store, viewportStore]);
-    const loadNewer = useCallback(() => void store.loadNewer(), [store]);
+      const atBottomChanged = useCallback(
+        (atBottom: boolean) => {
+          viewportStore.setAtBottom(
+            timeline.items.length === 0 ? true : atBottom,
+          );
+        },
+        [timeline.items.length, viewportStore],
+      );
+      const followMode = useSyncExternalStore(
+        viewportStore.subscribe,
+        useCallback(
+          () => viewportStore.getSnapshot().followMode,
+          [viewportStore],
+        ),
+        useCallback(
+          () => viewportStore.getSnapshot().followMode,
+          [viewportStore],
+        ),
+      );
+      useEffect(
+        () =>
+          store.subscribeTailGrowth(() => {
+            if (viewportStore.shouldFollowTailGrowth())
+              virtuosoRef.current?.autoscrollToBottom();
+          }),
+        [store, viewportStore],
+      );
+      const rangeChanged = useCallback(
+        (range: ListRange) => {
+          const current = timelineRef.current;
+          const middle =
+            range.startIndex +
+            Math.floor((range.endIndex - range.startIndex) / 2);
+          const item =
+            current.items[
+              dataIndexFromReportedIndex(middle, current.firstItemIndex)
+            ];
+          if (item && item.type !== "compaction")
+            viewportStore.setActiveTurn(item.turnId);
+        },
+        [viewportStore],
+      );
+      const loadOlder = useCallback(() => {
+        viewportStore.pauseFollowing();
+        void store.loadOlder();
+      }, [store, viewportStore]);
+      const loadNewer = useCallback(() => void store.loadNewer(), [store]);
 
-    // The store owns hydration state. Keeping this gate next to Virtuoso is
-    // important when the parent changes sessionId: its metadata snapshot may
-    // still belong to the previous session for one render.
-    if (loading && timeline.items.length === 0) return <div className="h-full" />;
-    return (
-      <>
-        <Virtuoso
-          key={store.sessionId}
-          atBottomStateChange={atBottomChanged}
-          atBottomThreshold={24}
-          className="h-full"
-          components={THREAD_STORE_VIRTUOSO_COMPONENTS}
-          computeItemKey={threadStoreItemKey}
-          context={context}
-          data={timeline.items}
-          endReached={loadNewer}
-          firstItemIndex={timeline.firstItemIndex}
-          followOutput={followMode === "following" ? "auto" : false}
-          initialTopMostItemIndex={THREAD_INITIAL_BOTTOM_LOCATION}
-          itemContent={threadStoreItemContent}
-          rangeChanged={rangeChanged}
-          ref={virtuosoRef}
-          startReached={loadOlder}
-        />
-        <ThreadDensityRail
-          fallbackExcerpt={fallbackExcerpt}
-          navigationLabel={navigationLabel}
-          onNavigate={(turnId) => void navigateToTurn(turnId)}
-          store={viewportStore}
-          summaries={summaries}
-        />
-        <ThreadJumpToLatest label={jumpLabel} onJump={() => jumpToLatest()} responding={responding} store={viewportStore} />
-      </>
-    );
-  },
-));
+      // The store owns hydration state. Keeping this gate next to Virtuoso is
+      // important when the parent changes sessionId: its metadata snapshot may
+      // still belong to the previous session for one render.
+      if (loading && timeline.items.length === 0)
+        return <div className="h-full" />;
+      return (
+        <>
+          <Virtuoso
+            key={store.sessionId}
+            atBottomStateChange={atBottomChanged}
+            atBottomThreshold={24}
+            className="h-full"
+            components={THREAD_STORE_VIRTUOSO_COMPONENTS}
+            computeItemKey={threadStoreItemKey}
+            context={context}
+            data={timeline.items}
+            endReached={loadNewer}
+            firstItemIndex={timeline.firstItemIndex}
+            followOutput={followMode === "following" ? "auto" : false}
+            initialTopMostItemIndex={THREAD_INITIAL_BOTTOM_LOCATION}
+            itemContent={threadStoreItemContent}
+            rangeChanged={rangeChanged}
+            ref={virtuosoRef}
+            startReached={loadOlder}
+          />
+          <ThreadDensityRail
+            fallbackExcerpt={fallbackExcerpt}
+            navigationLabel={navigationLabel}
+            onNavigate={(turnId) => void navigateToTurn(turnId)}
+            store={viewportStore}
+            summaries={summaries}
+          />
+          <ThreadJumpToLatest
+            label={jumpLabel}
+            onJump={() => jumpToLatest()}
+            responding={responding}
+            store={viewportStore}
+          />
+        </>
+      );
+    },
+  ),
+);
 
-function messagesFromHistoryPage(page: SessionHistoryPage): ConversationMessage[] {
-  return page.items.flatMap((item) => item.type === "turn" ? item.turn.messages : []);
+function messagesFromHistoryPage(
+  page: SessionHistoryPage,
+): ConversationMessage[] {
+  return page.items.flatMap((item) =>
+    item.type === "turn" ? item.turn.messages : [],
+  );
 }
 
-function userMessageHistory(messages: readonly ConversationMessage[]): Array<{ id: string; parts: UserPromptPart[] }> {
+function userMessageHistory(
+  messages: readonly ConversationMessage[],
+): Array<{ id: string; parts: UserPromptPart[] }> {
   return messages.flatMap((message) => {
     if (message.role !== "user") return [];
     const parts = message.blocks.flatMap((block): UserPromptPart[] => {
       if (block.type === "text") return [{ type: "text", text: block.text }];
-      if (block.type === "skill-reference") return [{ type: "skill-reference", skillId: block.skillId, name: block.name, source: block.source }];
-      if (block.type === "workspace-reference") return [{ type: "workspace-reference", path: block.path, name: block.name, kind: block.kind }];
+      if (block.type === "skill-reference")
+        return [
+          {
+            type: "skill-reference",
+            skillId: block.skillId,
+            name: block.name,
+            source: block.source,
+          },
+        ];
+      if (block.type === "workspace-reference")
+        return [
+          {
+            type: "workspace-reference",
+            path: block.path,
+            name: block.name,
+            kind: block.kind,
+          },
+        ];
       return [];
     });
     return parts.length ? [{ id: message.id, parts }] : [];
   });
 }
 
-function applySearchHighlight(element: HTMLElement, matchText: string): () => void {
+function applySearchHighlight(
+  element: HTMLElement,
+  matchText: string,
+): () => void {
   const query = matchText.trim();
   if (!query) return () => {};
   const normalizedQuery = query.toLocaleLowerCase();
   const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT, {
     acceptNode(node) {
       const parent = node.parentElement;
-      if (!parent || parent.closest("button, [data-thread-search-highlight]")) return NodeFilter.FILTER_REJECT;
-      return (node.textContent ?? "").toLocaleLowerCase().includes(normalizedQuery) ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_SKIP;
+      if (!parent || parent.closest("button, [data-thread-search-highlight]"))
+        return NodeFilter.FILTER_REJECT;
+      return (node.textContent ?? "")
+        .toLocaleLowerCase()
+        .includes(normalizedQuery)
+        ? NodeFilter.FILTER_ACCEPT
+        : NodeFilter.FILTER_SKIP;
     },
   });
   const match = walker.nextNode();
@@ -3186,19 +3636,26 @@ function applySearchHighlight(element: HTMLElement, matchText: string): () => vo
   if (start === -1) return () => {};
   const mark = document.createElement("mark");
   mark.dataset.threadSearchHighlight = "true";
-  mark.className = "rounded-[2px] bg-[#dfe9b7] px-0.5 text-inherit shadow-[inset_0_-1px_0_rgba(113,136,57,0.5)] dark:bg-[#687b39]";
+  mark.className =
+    "rounded-[2px] bg-[#dfe9b7] px-0.5 text-inherit shadow-[inset_0_-1px_0_rgba(113,136,57,0.5)] dark:bg-[#687b39]";
   mark.textContent = text.slice(start, start + query.length);
   const fragment = document.createDocumentFragment();
   if (start > 0) fragment.append(document.createTextNode(text.slice(0, start)));
   fragment.append(mark);
-  if (start + query.length < text.length) fragment.append(document.createTextNode(text.slice(start + query.length)));
+  if (start + query.length < text.length)
+    fragment.append(document.createTextNode(text.slice(start + query.length)));
   (match as Text).replaceWith(fragment);
   return () => {
-    if (mark.isConnected) mark.replaceWith(document.createTextNode(mark.textContent ?? ""));
+    if (mark.isConnected)
+      mark.replaceWith(document.createTextNode(mark.textContent ?? ""));
   };
 }
 
-function waitForScrollSettled(element: HTMLElement, reduceMotion: boolean, onSettled: () => void): () => void {
+function waitForScrollSettled(
+  element: HTMLElement,
+  reduceMotion: boolean,
+  onSettled: () => void,
+): () => void {
   let frame = 0;
   let cancelled = false;
   let stableFrames = 0;
@@ -3242,17 +3699,34 @@ export function ThreadView({
   const client = useRuntimeClient();
   const { snapshot: appSnapshot } = useRuntime();
   const { reduceMotion, t } = usePreferences();
-  const threadStore = useMemo(() => getThreadSessionStore(client, sessionId, t), [client, sessionId]);
-  const threadMetadata = useSyncExternalStore(threadStore.subscribeMetadata, threadStore.getMetadataSnapshot, threadStore.getMetadataSnapshot);
-  const history = useSyncExternalStore(threadStore.subscribeHistory, threadStore.getHistorySnapshot, threadStore.getHistorySnapshot);
+  const threadStore = useMemo(
+    () => getThreadSessionStore(client, sessionId, t),
+    [client, sessionId],
+  );
+  const threadMetadata = useSyncExternalStore(
+    threadStore.subscribeMetadata,
+    threadStore.getMetadataSnapshot,
+    threadStore.getMetadataSnapshot,
+  );
+  const history = useSyncExternalStore(
+    threadStore.subscribeHistory,
+    threadStore.getHistorySnapshot,
+    threadStore.getHistorySnapshot,
+  );
   const session = threadMetadata.session;
   const [modelOpen, setModelOpen] = useState(false);
   const [hideCompletedPlan, setHideCompletedPlan] = useState(false);
-  const [selectedExpertMemberId, setSelectedExpertMemberId] = useState<string | null>(null);
+  const [selectedExpertMemberId, setSelectedExpertMemberId] = useState<
+    string | null
+  >(null);
   const timelineViewportRef = useRef<ThreadTimelineViewportHandle>(null);
   const viewportStore = useMemo(() => new ThreadViewportStore(), [sessionId]);
   const approvalInFlightRef = useRef(new Set<string>());
-  const updateComposerDraft = useCallback((draft: InlineSkillComposerValue) => onComposerDraftChange(sessionId, draft), [onComposerDraftChange, sessionId]);
+  const updateComposerDraft = useCallback(
+    (draft: InlineSkillComposerValue) =>
+      onComposerDraftChange(sessionId, draft),
+    [onComposerDraftChange, sessionId],
+  );
 
   useLayoutEffect(() => {
     threadStore.setTranslate(t);
@@ -3280,8 +3754,7 @@ export function ThreadView({
     appSnapshot?.extensions.configurations["wordless.plan-mode"]?.enabled ??
     false;
   const interactionMode = session?.interactionMode ?? "default";
-  const canPlan =
-    planExtensionEnabled && session?.driverId === "coding";
+  const canPlan = planExtensionEnabled && session?.driverId === "coding";
   const planMode = planModeFromExtensions(threadMetadata.extensions);
   const modelLabel = useMemo(
     () => currentEnabledModel?.displayName ?? t("modelRequired"),
@@ -3382,9 +3855,8 @@ export function ThreadView({
   ) => {
     // 1. 获取问题文本以便显示
     const candidate = threadStore.getTool(callId);
-    const question = candidate?.name === "ask_clarifying_question"
-      ? candidate
-      : undefined;
+    const question =
+      candidate?.name === "ask_clarifying_question" ? candidate : undefined;
 
     const questionDetails = question ? asObject(question.details) : undefined;
     const clarificationQuestion = asObject(
@@ -3525,11 +3997,14 @@ export function ThreadView({
     const currentState = threadMetadata.extensions.find(
       (item) => item.extensionId === "wordless.plan-mode",
     )?.state;
-    const existingPlan = Array.isArray(currentState?.plan) ? currentState.plan : [];
+    const existingPlan = Array.isArray(currentState?.plan)
+      ? currentState.plan
+      : [];
     const nextState = {
       mode: nextMode,
       plan: nextMode === "planning" && planMode === "off" ? [] : existingPlan,
-      ...(typeof currentState?.activeStepId === "string" && !(nextMode === "planning" && planMode === "off")
+      ...(typeof currentState?.activeStepId === "string" &&
+      !(nextMode === "planning" && planMode === "off")
         ? { activeStepId: currentState.activeStepId }
         : {}),
     };
@@ -3557,9 +4032,13 @@ export function ThreadView({
     const currentState = threadMetadata.extensions.find(
       (item) => item.extensionId === "wordless.plan-mode",
     )?.state;
-    const existingPlan = Array.isArray(currentState?.plan) ? currentState.plan : [];
+    const existingPlan = Array.isArray(currentState?.plan)
+      ? currentState.plan
+      : [];
     if (!existingPlan.length)
-      throw new Error("A structured plan is required before implementation can begin");
+      throw new Error(
+        "A structured plan is required before implementation can begin",
+      );
     const updatedSession = await client.setSessionInteractionMode(
       sessionId,
       "default",
@@ -3588,13 +4067,20 @@ export function ThreadView({
       const view = await client.getSessionView(sessionId);
       threadStore.mergeSessionView(view);
     } catch (cause) {
-      threadStore.markCompactionFailed("manual", compactionFailureMessage(cause));
+      threadStore.markCompactionFailed(
+        "manual",
+        compactionFailureMessage(cause),
+      );
     }
   }, [client, sessionId, threadStore]);
 
   const navigateToTurn = useCallback(
     (turnId: string, messageId?: string, matchText?: string) =>
-      timelineViewportRef.current?.navigateToTurn(turnId, messageId, matchText) ?? Promise.resolve(),
+      timelineViewportRef.current?.navigateToTurn(
+        turnId,
+        messageId,
+        matchText,
+      ) ?? Promise.resolve(),
     [],
   );
 
@@ -3633,10 +4119,16 @@ export function ThreadView({
     ],
   );
   const threadRowEnvironment = useMemo(
-    () => new ThreadRowEnvironment(
-      { canPlan, densityRail: showDensityRail, hasStructuredPlan: Boolean(planState), planMode },
-      threadVirtuosoContext,
-    ),
+    () =>
+      new ThreadRowEnvironment(
+        {
+          canPlan,
+          densityRail: showDensityRail,
+          hasStructuredPlan: Boolean(planState),
+          planMode,
+        },
+        threadVirtuosoContext,
+      ),
     [threadStore],
   );
   threadRowEnvironment.setActions({
@@ -3652,21 +4144,29 @@ export function ThreadView({
   });
   useLayoutEffect(() => {
     threadRowEnvironment.update(
-      { canPlan, densityRail: showDensityRail, hasStructuredPlan: Boolean(planState), planMode },
+      {
+        canPlan,
+        densityRail: showDensityRail,
+        hasStructuredPlan: Boolean(planState),
+        planMode,
+      },
       threadVirtuosoContext,
     );
-  }, [canPlan, planMode, planState, showDensityRail, threadRowEnvironment, threadVirtuosoContext]);
+  }, [
+    canPlan,
+    planMode,
+    planState,
+    showDensityRail,
+    threadRowEnvironment,
+    threadVirtuosoContext,
+  ]);
   const threadStoreVirtuosoContext = useMemo<ThreadStoreVirtuosoContext>(
     () => ({
       environment: threadRowEnvironment,
       store: threadStore,
       viewportStore,
     }),
-    [
-      threadRowEnvironment,
-      threadStore,
-      viewportStore,
-    ],
+    [threadRowEnvironment, threadStore, viewportStore],
   );
   const composerUserMessages = threadStore.getUserMessages();
   const composerUserMessageHistory = useMemo(
@@ -3719,153 +4219,161 @@ export function ThreadView({
       <div className="bg-transparent pb-3 pt-5">
         <ThreadContentFrame densityRail={showDensityRail}>
           <div className="relative">
-          {selectedExpert &&
-          selectedExpert.kind === "team" &&
-          threadMetadata.expertCollaboration ? (
-            <ExpertCollaborationBar
-              lead={threadMetadata.expertCollaboration.leader}
-              members={expertCollaborationMembers}
-              onSelectLead={() => setSelectedExpertMemberId(null)}
-              onSelectMember={setSelectedExpertMemberId}
-              selectedMemberId={selectedExpertMember?.memberId}
-              teamName={threadMetadata.expertCollaboration.teamName}
-            />
-          ) : null}
-          <div className="relative">
-            <div
-              aria-hidden={selectedExpertMember ? true : undefined}
-              className={
-                selectedExpertMember
-                  ? "pointer-events-none select-none"
-                  : undefined
-              }
-              inert={selectedExpertMember ? true : undefined}
-            >
-              <div className="relative">
-                {!hideCompletedPlan && planState ? <PlanProgressBar plan={planState} /> : null}
-                <Composer
-                  key={sessionId}
-                  accessLevel={session.accessLevel}
-                  compact
-                  compacting={threadMetadata.isCompacting}
-                  connectors={availableConnectors}
-                  contextUsage={threadMetadata.contextUsage}
-                  contextCompactionAvailable={threadStore.getMessageCount() > 1}
-                  canPlan={canPlan}
-                  interactionMode={interactionMode}
-                  modelLabel={modelLabel}
-                  modelProviderAvatarId={currentConnection?.avatarId}
-                  modelProviderId={currentModel?.connectionId}
-                  onTogglePlanMode={
-                    planExtensionEnabled
-                      ? () => void togglePlanMode()
-                      : undefined
-                  }
-                  onInteractionModeChange={(nextMode) => {
-                    if (
-                      nextMode === "clarify" &&
-                      currentEnabledModel?.capabilities.supportsToolUse ===
-                        false
-                    ) {
-                      setModelOpen(true);
-                      return;
-                    }
-                    void setInteractionMode(nextMode);
-                  }}
-                  onOpenModelPicker={() => setModelOpen(true)}
-                  onAccessLevelChange={setAccessLevel}
-                  onToolApprovalModeChange={setToolApprovalMode}
-                  toolApprovalMode={threadMetadata.toolApprovalMode}
-                  onCompactContext={compactContext}
-                  onConnectorIdsChange={setConnectors}
-                  experts={
-                    entry.id === "general-work"
-                      ? (appSnapshot.experts ?? [])
-                      : []
-                  }
-                  selectedExpertSelection={session.expertSelection}
-                  onExpertSelectionChange={async (selection) => {
-                    if (entry.id !== "general-work" || threadMetadata.isRunning)
-                      return;
-                    await setExpertSelection(selection);
-                  }}
-                  showExpertPicker={entry.id === "general-work"}
-                  onImportSkill={onOpenSkillImport}
-                  onOpenSkills={onOpenSkills}
-                  onSend={send}
-                  artifactSelection={artifactSelection}
-                  onArtifactSelectionConsumed={onArtifactSelectionConsumed}
-                  pendingWorkspaceReferences={pendingWorkspaceReferences}
-                  onPendingWorkspaceReferencesConsumed={
-                    onPendingWorkspaceReferencesConsumed
-                  }
-                  searchWorkspaceReferences={
-                    session.workspaceId
-                      ? (query) =>
-                          client.searchWorkspace(session.workspaceId!, query)
-                      : (query) => client.searchSessionWorkspace(sessionId, query)
-                  }
-                  workspaceSearchScope={
-                    session.workspaceId
-                      ? `workspace:${session.workspaceId}`
-                      : `session:${sessionId}`
-                  }
-                  onStop={() => client.cancelSession(sessionId)}
-                  planMode={planMode}
-                  running={threadMetadata.isRunning}
-                  sendDisabled={
-                    !canPrompt ||
-                    (interactionMode === "clarify" &&
-                      currentEnabledModel?.capabilities.supportsToolUse ===
-                        false)
-                  }
-                  selectedConnectorIds={session.connectorIds}
-                  skillContextWindow={
-                    currentEnabledModel?.capabilities.contextWindow
-                  }
-                  skills={availableSkills}
-                  showWorkspacePicker={false}
-                  showAccessControl={
-                    session.workbenchId === "code" ||
-                    supportsGeneralWorkAccessSelection(entry.id)
-                  }
-                  userMessageHistory={composerUserMessageHistory}
-                  initialDraft={composerDraft}
-                  onDraftChange={updateComposerDraft}
-                />
-                <ModelPicker
-                  connections={appSnapshot.connections}
-                  disabled={threadMetadata.isRunning}
-                  entry={entry}
-                  models={appSnapshot.models}
-                  onConfigure={onOpenModels}
-                  onOpenChange={setModelOpen}
-                  onSelect={(connectionId, modelId, thinkingLevel) =>
-                    selectModel({ connectionId, modelId }, thinkingLevel)
-                  }
-                  open={modelOpen}
-                  selected={currentModel}
-                  thinkingLevel={session.thinkingLevel}
-                />
-              </div>
-              <TurnTokenUsageRow usage={threadMetadata.turnUsage} />
-              <p className="mt-2 text-center text-[11px] text-[#96968e] dark:text-muted-foreground">
-                {t("aiContentNotice")}
-              </p>
-            </div>
-            {selectedExpertMember ? (
-              <button
-                className="group absolute inset-0 z-20 flex items-center justify-center rounded-[10px] bg-white/85 text-[#55564f] backdrop-blur-[1px] transition-colors hover:bg-[#f7f8f3]/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring dark:bg-[#171914]/85 dark:text-[#d4d8cc] dark:hover:bg-[#20241b]/90"
-                onClick={() => setSelectedExpertMemberId(null)}
-                type="button"
-              >
-                <span className="flex items-center gap-2 text-[12px] font-semibold">
-                  <ArrowLeft className="h-4 w-4 transition-transform group-hover:-translate-x-0.5" />
-                  {t("threadBackToMainConversation")}
-                </span>
-              </button>
+            {selectedExpert &&
+            selectedExpert.kind === "team" &&
+            threadMetadata.expertCollaboration ? (
+              <ExpertCollaborationBar
+                lead={threadMetadata.expertCollaboration.leader}
+                members={expertCollaborationMembers}
+                onSelectLead={() => setSelectedExpertMemberId(null)}
+                onSelectMember={setSelectedExpertMemberId}
+                selectedMemberId={selectedExpertMember?.memberId}
+                teamName={threadMetadata.expertCollaboration.teamName}
+              />
             ) : null}
-          </div>
+            <div className="relative">
+              <div
+                aria-hidden={selectedExpertMember ? true : undefined}
+                className={
+                  selectedExpertMember
+                    ? "pointer-events-none select-none"
+                    : undefined
+                }
+                inert={selectedExpertMember ? true : undefined}
+              >
+                <div className="relative">
+                  {!hideCompletedPlan && planState ? (
+                    <PlanProgressBar plan={planState} />
+                  ) : null}
+                  <Composer
+                    key={sessionId}
+                    accessLevel={session.accessLevel}
+                    compact
+                    compacting={threadMetadata.isCompacting}
+                    connectors={availableConnectors}
+                    contextUsage={threadMetadata.contextUsage}
+                    contextCompactionAvailable={
+                      threadStore.getMessageCount() > 1
+                    }
+                    canPlan={canPlan}
+                    interactionMode={interactionMode}
+                    modelLabel={modelLabel}
+                    modelProviderAvatarId={currentConnection?.avatarId}
+                    modelProviderId={currentModel?.connectionId}
+                    onTogglePlanMode={
+                      planExtensionEnabled
+                        ? () => void togglePlanMode()
+                        : undefined
+                    }
+                    onInteractionModeChange={(nextMode) => {
+                      if (
+                        nextMode === "clarify" &&
+                        currentEnabledModel?.capabilities.supportsToolUse ===
+                          false
+                      ) {
+                        setModelOpen(true);
+                        return;
+                      }
+                      void setInteractionMode(nextMode);
+                    }}
+                    onOpenModelPicker={() => setModelOpen(true)}
+                    onAccessLevelChange={setAccessLevel}
+                    onToolApprovalModeChange={setToolApprovalMode}
+                    toolApprovalMode={threadMetadata.toolApprovalMode}
+                    onCompactContext={compactContext}
+                    onConnectorIdsChange={setConnectors}
+                    experts={
+                      entry.id === "general-work"
+                        ? (appSnapshot.experts ?? [])
+                        : []
+                    }
+                    selectedExpertSelection={session.expertSelection}
+                    onExpertSelectionChange={async (selection) => {
+                      if (
+                        entry.id !== "general-work" ||
+                        threadMetadata.isRunning
+                      )
+                        return;
+                      await setExpertSelection(selection);
+                    }}
+                    showExpertPicker={entry.id === "general-work"}
+                    onImportSkill={onOpenSkillImport}
+                    onOpenSkills={onOpenSkills}
+                    onSend={send}
+                    artifactSelection={artifactSelection}
+                    onArtifactSelectionConsumed={onArtifactSelectionConsumed}
+                    pendingWorkspaceReferences={pendingWorkspaceReferences}
+                    onPendingWorkspaceReferencesConsumed={
+                      onPendingWorkspaceReferencesConsumed
+                    }
+                    searchWorkspaceReferences={
+                      session.workspaceId
+                        ? (query) =>
+                            client.searchWorkspace(session.workspaceId!, query)
+                        : (query) =>
+                            client.searchSessionWorkspace(sessionId, query)
+                    }
+                    workspaceSearchScope={
+                      session.workspaceId
+                        ? `workspace:${session.workspaceId}`
+                        : `session:${sessionId}`
+                    }
+                    onStop={() => client.cancelSession(sessionId)}
+                    planMode={planMode}
+                    running={threadMetadata.isRunning}
+                    sendDisabled={
+                      !canPrompt ||
+                      (interactionMode === "clarify" &&
+                        currentEnabledModel?.capabilities.supportsToolUse ===
+                          false)
+                    }
+                    selectedConnectorIds={session.connectorIds}
+                    skillContextWindow={
+                      currentEnabledModel?.capabilities.contextWindow
+                    }
+                    skills={availableSkills}
+                    showWorkspacePicker={false}
+                    showAccessControl={
+                      session.workbenchId === "code" ||
+                      supportsGeneralWorkAccessSelection(entry.id)
+                    }
+                    userMessageHistory={composerUserMessageHistory}
+                    initialDraft={composerDraft}
+                    onDraftChange={updateComposerDraft}
+                  />
+                  <ModelPicker
+                    connections={appSnapshot.connections}
+                    disabled={threadMetadata.isRunning}
+                    entry={entry}
+                    models={appSnapshot.models}
+                    onConfigure={onOpenModels}
+                    onOpenChange={setModelOpen}
+                    onSelect={(connectionId, modelId, thinkingLevel) =>
+                      selectModel({ connectionId, modelId }, thinkingLevel)
+                    }
+                    open={modelOpen}
+                    selected={currentModel}
+                    thinkingLevel={session.thinkingLevel}
+                  />
+                </div>
+                <TurnTokenUsageRow usage={threadMetadata.turnUsage} />
+                <p className="mt-2 text-center text-[11px] text-[#96968e] dark:text-muted-foreground">
+                  {t("aiContentNotice")}
+                </p>
+              </div>
+              {selectedExpertMember ? (
+                <button
+                  className="group absolute inset-0 z-20 flex items-center justify-center rounded-[10px] bg-white/85 text-[#55564f] backdrop-blur-[1px] transition-colors hover:bg-[#f7f8f3]/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring dark:bg-[#171914]/85 dark:text-[#d4d8cc] dark:hover:bg-[#20241b]/90"
+                  onClick={() => setSelectedExpertMemberId(null)}
+                  type="button"
+                >
+                  <span className="flex items-center gap-2 text-[12px] font-semibold">
+                    <ArrowLeft className="h-4 w-4 transition-transform group-hover:-translate-x-0.5" />
+                    {t("threadBackToMainConversation")}
+                  </span>
+                </button>
+              ) : null}
+            </div>
           </div>
         </ThreadContentFrame>
       </div>

@@ -259,6 +259,7 @@ export class AutomationService {
     return {
       ...input,
       entryId: AUTOMATION_ENTRY_ID,
+      sessionId: typeof input.sessionId === "string" ? input.sessionId : null,
       toolApprovalMode:
         input.toolApprovalMode ?? DEFAULT_AUTOMATION_TOOL_APPROVAL_MODE,
     };
@@ -348,6 +349,7 @@ export class AutomationService {
       prompt: task.prompt,
       entryId: task.entryId,
       workspaceId: task.workspaceId,
+      sessionId: task.sessionId,
       accessLevel: task.accessLevel,
       toolApprovalMode:
         task.toolApprovalMode ?? DEFAULT_AUTOMATION_TOOL_APPROVAL_MODE,
@@ -422,6 +424,13 @@ export class AutomationService {
     )
       return "Selected workspace is unavailable";
     if (
+      configuration.sessionId &&
+      !snapshot.sessions.some(
+        (session) => session.id === configuration.sessionId,
+      )
+    )
+      return "The linked session no longer exists";
+    if (
       configuration.model &&
       !snapshot.modelConfiguration.models.some(
         (model) =>
@@ -471,34 +480,61 @@ export class AutomationService {
       return;
     }
     try {
-      const entry = this.options.runtime
-        .getSnapshot()
-        .entries.find(
-          (candidate) => candidate.id === run.configuration.entryId,
-        )!;
-      const draft: SessionDraft = {
-        mode: entry.mode,
-        entryId: entry.id,
-        title: automationSessionTitle(run.automationName),
-        source: "automation",
-        workspaceId: run.configuration.workspaceId,
-        accessLevel: run.configuration.accessLevel,
-        model: run.configuration.model,
-        thinkingLevel: run.configuration.thinkingLevel,
-        connectorIds: run.configuration.connectorIds,
-        interactionMode: "default",
-        toolApprovalMode:
-          run.configuration.toolApprovalMode ??
-          DEFAULT_AUTOMATION_TOOL_APPROVAL_MODE,
-      };
-      const session = await this.options.runtime.createAndPrompt(
-        draft,
-        run.configuration.prompt,
-        run.configuration.skillIds,
-        { messageId: randomUUID(), submittedAt: Date.now() },
-      );
+      const runtimeSnapshot = this.options.runtime.getSnapshot();
+      const entry = runtimeSnapshot.entries.find(
+        (candidate) => candidate.id === run.configuration.entryId,
+      )!;
+      let sessionId: string;
+      if (run.configuration.sessionId) {
+        sessionId = run.configuration.sessionId;
+        if (
+          !runtimeSnapshot.sessions.some(
+            (candidate) => candidate.id === sessionId,
+          )
+        )
+          throw new Error("The linked session no longer exists");
+        const linkedSnapshot = await this.options.runtime.getSessionSnapshot(
+          sessionId,
+        );
+        if (linkedSnapshot.isRunning || this.active.has(sessionId))
+          throw new Error("The linked session is currently running");
+        await this.syncLinkedSessionConfiguration(
+          sessionId,
+          run.configuration,
+        );
+        await this.options.runtime.promptSession(
+          sessionId,
+          run.configuration.prompt,
+          run.configuration.skillIds,
+          { messageId: randomUUID(), submittedAt: Date.now() },
+          { connectorIds: run.configuration.connectorIds },
+        );
+      } else {
+        const draft: SessionDraft = {
+          mode: entry.mode,
+          entryId: entry.id,
+          title: automationSessionTitle(run.automationName),
+          source: "automation",
+          workspaceId: run.configuration.workspaceId,
+          accessLevel: run.configuration.accessLevel,
+          model: run.configuration.model,
+          thinkingLevel: run.configuration.thinkingLevel,
+          connectorIds: run.configuration.connectorIds,
+          interactionMode: "default",
+          toolApprovalMode:
+            run.configuration.toolApprovalMode ??
+            DEFAULT_AUTOMATION_TOOL_APPROVAL_MODE,
+        };
+        const session = await this.options.runtime.createAndPrompt(
+          draft,
+          run.configuration.prompt,
+          run.configuration.skillIds,
+          { messageId: randomUUID(), submittedAt: Date.now() },
+        );
+        sessionId = session.id;
+      }
       const snapshot = await this.options.runtime.getSessionSnapshot(
-        session.id,
+        sessionId,
       );
       const waiting = snapshot.messages.some((message) =>
         message.blocks.some(
@@ -510,12 +546,12 @@ export class AutomationService {
       );
       const next = {
         ...run,
-        sessionId: session.id,
+        sessionId,
         status: (waiting ? "waiting" : "running") as "waiting" | "running",
         startedAt: Date.now(),
       };
       this.starting.delete(run.id);
-      this.active.set(session.id, run.id);
+      this.active.set(sessionId, run.id);
       this.database.updateAutomationRun(next);
       this.runChanged(run.id);
       if (!snapshot.isRunning) {
@@ -524,7 +560,7 @@ export class AutomationService {
           status: "completed",
           completedAt: Date.now(),
         });
-        this.active.delete(session.id);
+        this.active.delete(sessionId);
         this.runChanged(run.id);
         void this.drain();
       }
@@ -539,6 +575,41 @@ export class AutomationService {
       this.runChanged(run.id);
       void this.drain();
     }
+  }
+
+  /** Mirror executeTask: push the automation's parameters onto the linked
+   * session before prompting, so every run runs with the configured setup. */
+  private async syncLinkedSessionConfiguration(
+    sessionId: string,
+    configuration: AutomationConfiguration,
+  ): Promise<void> {
+    const session = this.options.runtime
+      .getSnapshot()
+      .sessions.find((candidate) => candidate.id === sessionId);
+    if (!session) throw new Error("The linked session no longer exists");
+    const { runtime } = this.options;
+    if (
+      configuration.model &&
+      (configuration.model.connectionId !== session.model.connectionId ||
+        configuration.model.modelId !== session.model.modelId)
+    )
+      await runtime.setSessionModel(
+        sessionId,
+        configuration.model,
+        configuration.thinkingLevel,
+      );
+    else if (configuration.thinkingLevel !== session.thinkingLevel)
+      await runtime.setSessionThinkingLevel(
+        sessionId,
+        configuration.thinkingLevel,
+      );
+    if (configuration.accessLevel !== session.accessLevel)
+      runtime.setSessionAccess(sessionId, configuration.accessLevel);
+    if (configuration.toolApprovalMode !== session.toolApprovalMode)
+      await runtime.setSessionToolApprovalMode(
+        sessionId,
+        configuration.toolApprovalMode,
+      );
   }
 
   private handleRuntimeEvent(envelope: RuntimeEventEnvelope): void {

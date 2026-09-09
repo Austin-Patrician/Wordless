@@ -12,6 +12,7 @@ import {
   Switch,
 } from "@wordless/ui-kit";
 import {
+  AlertCircle,
   Brain,
   Check,
   ChevronDown,
@@ -1036,7 +1037,7 @@ function RunRow({
   );
 }
 
-function AutomationForm({
+export function AutomationForm({
   initial,
   onBack,
   onSaved,
@@ -1068,6 +1069,10 @@ function AutomationForm({
   const [workspaceId, setWorkspaceId] = useState<string | null>(
     initial?.workspaceId ?? null,
   );
+  const [sessionId, setSessionId] = useState<string | null>(
+    initial?.sessionId ?? null,
+  );
+  const [linkedSessionNotice, setLinkedSessionNotice] = useState(false);
   const [model, setModel] = useState<ModelReference | null>(
     initial?.model ?? defaultModel,
   );
@@ -1172,6 +1177,33 @@ function AutomationForm({
     setSchedule(next);
     clearFieldError("schedule");
   };
+  // A linked session picked before it was deleted (or removed while the form
+  // is open) falls back to "create a new session" with a visible notice.
+  useEffect(() => {
+    if (!snapshot || !sessionId) return;
+    if (!snapshot.sessions.some((candidate) => candidate.id === sessionId)) {
+      setSessionId(null);
+      setLinkedSessionNotice(true);
+    }
+  }, [snapshot, sessionId]);
+  const selectSession = (id: string | null) => {
+    setLinkedSessionNotice(false);
+    const session = snapshot?.sessions.find(
+      (candidate) => candidate.id === id,
+    );
+    if (!session) {
+      setSessionId(null);
+      return;
+    }
+    // Follow the linked session's setup; the form values become the
+    // per-run overrides pushed onto the session at execution time.
+    setSessionId(session.id);
+    setWorkspaceId(session.workspaceId);
+    setModel(session.model);
+    setThinkingLevel(session.thinkingLevel);
+    setAccessLevel(session.accessLevel);
+    setToolApprovalMode(session.toolApprovalMode);
+  };
   const insertSkill = (skill: SkillSummary) => {
     promptRef.current?.insertSkill(skill);
     window.setTimeout(() => promptRef.current?.focus(), 0);
@@ -1181,6 +1213,7 @@ function AutomationForm({
     prompt: promptValue.text.trim(),
     entryId: AUTOMATION_ENTRY_ID,
     workspaceId,
+    sessionId,
     accessLevel,
     toolApprovalMode,
     model,
@@ -1192,10 +1225,17 @@ function AutomationForm({
     activeUntil,
     enabled,
   };
+  // The composer is the source of truth for the prompt: reading its live
+  // value at submit time keeps validation in sync with what is on screen
+  // even if the cached promptValue state ever drifts from the editor.
+  const resolvePromptValue = (): InlineSkillComposerValue =>
+    promptRef.current?.getValue() ?? promptValue;
   const validateForm = () => {
+    const prompt = resolvePromptValue();
     const next: AutomationFieldErrors = {};
     if (!name.trim()) next.name = t("automationNameRequired");
-    if (!promptValue.text.trim()) next.prompt = t("automationPromptRequired");
+    if (!prompt.text.trim() && prompt.skillIds.length === 0)
+      next.prompt = t("automationPromptRequired");
     if (!model) next.model = t("automationModelRequired");
     if (
       (schedule.kind === "recurring" &&
@@ -1230,12 +1270,18 @@ function AutomationForm({
   };
   const save = async () => {
     if (!validateForm()) return;
+    const prompt = resolvePromptValue();
     setSaving(true);
     setError(null);
     try {
+      const payload: AutomationTaskInput = {
+        ...input,
+        prompt: prompt.text.trim(),
+        skillIds: prompt.skillIds,
+      };
       initial
-        ? await client.updateAutomation(initial.id, input)
-        : await client.createAutomation(input);
+        ? await client.updateAutomation(initial.id, payload)
+        : await client.createAutomation(payload);
       await onSaved();
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
@@ -1344,6 +1390,67 @@ function AutomationForm({
                   ))}
               </SelectContent>
             </Select>
+          </Field>
+          <Field label={t("automationLinkedSession")}>
+            <Select
+              onValueChange={(value) =>
+                selectSession(value === "none" ? null : value)
+              }
+              value={sessionId ?? "none"}
+            >
+              <SelectTrigger className="min-w-[170px] rounded-lg border-border bg-white px-3 py-2 text-left text-[12px] dark:bg-[#181912]">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent className="max-h-64">
+                <SelectItem
+                  className="min-h-7 px-2.5 py-1.5 text-[11px]"
+                  value="none"
+                >
+                  {t("automationNewSession")}
+                </SelectItem>
+                {(() => {
+                  const sessions = (snapshot?.sessions ?? []).filter(
+                    (session) => session.workbenchId !== "media-canvas",
+                  );
+                  const unscoped = sessions.filter(
+                    (session) => !session.workspaceId,
+                  );
+                  const scoped = sessions.filter(
+                    (session) => session.workspaceId,
+                  );
+                  const option = (session: (typeof sessions)[number]) => {
+                    const workspace = snapshot?.workspaces.find(
+                      (item) => item.id === session.workspaceId,
+                    );
+                    const label =
+                      session.title.length > 30
+                        ? `${session.title.slice(0, 30)}…`
+                        : session.title;
+                    return (
+                      <SelectItem
+                        className="min-h-7 max-w-full truncate px-2.5 py-1.5 text-[11px]"
+                        key={session.id}
+                        title={session.title}
+                        value={session.id}
+                      >
+                        {label}
+                        {workspace ? ` · ${workspace.name}` : ""}
+                      </SelectItem>
+                    );
+                  };
+                  return [...unscoped.map(option), ...scoped.map(option)];
+                })()}
+              </SelectContent>
+            </Select>
+            {linkedSessionNotice ? (
+              <p className="mt-1.5 text-[11px] text-[#a34b42]" role="alert">
+                {t("automationLinkedSessionMissing")}
+              </p>
+            ) : (
+              <p className="mt-1.5 text-[11px] text-muted-foreground">
+                {t("automationLinkedSessionHint")}
+              </p>
+            )}
           </Field>
           <Field
             compound
@@ -1460,7 +1567,11 @@ function AutomationForm({
               </div>
             </div>
             {fieldErrors.model ? (
-              <p className="mt-1 text-[10px] text-destructive" role="alert">
+              <p
+                className="mt-1.5 flex items-center gap-1 text-[12px] font-semibold text-[#c23b32] dark:text-[#f28b82]"
+                role="alert"
+              >
+                <AlertCircle className="h-3.5 w-3.5 shrink-0" />
                 {fieldErrors.model}
               </p>
             ) : null}
@@ -1729,7 +1840,11 @@ function Field({
         </span>
         {children}
         {error ? (
-          <p className="mt-1 text-[10px] text-destructive" role="alert">
+          <p
+            className="mt-1.5 flex items-center gap-1 text-[12px] font-semibold text-[#c23b32] dark:text-[#f28b82]"
+            role="alert"
+          >
+            <AlertCircle className="h-3.5 w-3.5 shrink-0" />
             {error}
           </p>
         ) : null}
@@ -1743,7 +1858,11 @@ function Field({
       </span>
       {children}
       {error ? (
-        <p className="mt-1 text-[10px] text-destructive" role="alert">
+        <p
+          className="mt-1.5 flex items-center gap-1 text-[12px] font-semibold text-[#c23b32] dark:text-[#f28b82]"
+          role="alert"
+        >
+          <AlertCircle className="h-3.5 w-3.5 shrink-0" />
           {error}
         </p>
       ) : null}

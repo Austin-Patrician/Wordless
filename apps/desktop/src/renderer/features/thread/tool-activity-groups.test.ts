@@ -3,13 +3,11 @@ import type { ConversationMessage } from "@wordless/protocol";
 import type { MessageToolBlock } from "@wordless/domain";
 import {
   buildToolActivityGroups,
-  collapsedToolGroupMessageIndexes,
+  countRenderedUnits,
 } from "./tool-activity-groups";
 
 let callSeq = 0;
-function tool(
-  overrides: Partial<MessageToolBlock> = {},
-): MessageToolBlock {
+function tool(overrides: Partial<MessageToolBlock> = {}): MessageToolBlock {
   callSeq += 1;
   return {
     type: "tool",
@@ -25,7 +23,7 @@ function assistantMessage(
   overrides: Partial<ConversationMessage> = {},
 ): ConversationMessage {
   return {
-    id: `msg-${Math.random().toString(36).slice(2)}`,
+    id: `msg-${++callSeq}`,
     role: "assistant",
     status: "complete",
     blocks,
@@ -35,160 +33,176 @@ function assistantMessage(
   };
 }
 
-function bashRounds(count: number): ConversationMessage[] {
-  return Array.from({ length: count }, () => assistantMessage([tool()]));
-}
-
 describe("buildToolActivityGroups", () => {
-  it("merges consecutive tool rounds across message boundaries into one group", () => {
-    const layout = buildToolActivityGroups(bashRounds(3));
-    expect(layout.groups).toHaveLength(1);
-    const group = layout.groups[0]!;
-    expect(group.rounds).toHaveLength(3);
-    expect(group.toolCount).toBe(3);
-    // every run maps to the same group
-    expect(layout.runGroupByFirstCallId.size).toBe(3);
-    for (const round of group.rounds)
-      expect(layout.runGroupByFirstCallId.get(round.tools[0]!.callId)).toBe(
-        group,
-      );
-    // the group starts in the first message
-    expect(group.startMessageIndex).toBe(0);
-    expect(group.startCallId).toBe(group.rounds[0]!.tools[0]!.callId);
-  });
-
-  it("breaks the group on non-empty text blocks but not on reasoning", () => {
+  it("merges adjacent assistant rounds into one activity burst", () => {
     const messages = [
-      assistantMessage([tool()]),
-      assistantMessage([tool({ name: "read" })]),
-      // text before the tool: breaks the chain, next tool opens a new group
+      assistantMessage([{ type: "reasoning", text: "inspect" }, tool()]),
       assistantMessage([
-        { type: "text", text: "我发现问题了，接下来修复。" },
-        tool(),
+        { type: "reasoning", text: "adjust" },
+        tool({ name: "read" }),
       ]),
-      assistantMessage([{ type: "reasoning", text: "thinking..." }, tool()]),
-      // empty text does not break
-      assistantMessage([
-        { type: "text", text: "   " },
-        tool(),
-      ]),
+      assistantMessage([tool({ name: "write" })]),
     ];
     const layout = buildToolActivityGroups(messages);
-    expect(layout.groups).toHaveLength(2);
-    const [first, second] = layout.groups;
-    expect(first!.rounds).toHaveLength(2);
-    expect(first!.endMessageIndex).toBe(1);
-    expect(second!.startMessageIndex).toBe(2);
-    expect(second!.rounds).toHaveLength(3);
-    // message 3's reasoning-only round did not break the group
-    expect(second!.rounds[1]!.messageId).toBe(messages[3]!.id);
-    expect(second!.toolCount).toBe(3);
+    const group = layout.groups[0]!;
+
+    expect(layout.groups).toHaveLength(1);
+    expect(group.id).toBe(
+      `tool-burst-${messages[0]?.id}-${group.tools[0]?.callId}`,
+    );
+    expect(group.startMessageId).toBe(messages[0]?.id);
+    expect(group.startBlockIndex).toBe(0);
+    expect(group.toolCount).toBe(3);
+    expect(group.roundCount).toBe(3);
+    expect(group.phase).toBe("open");
+    expect(group.processing).toBe(true);
+    expect(group.messageIds).toEqual(messages.map((message) => message.id));
+    expect(layout.groupsByBlock.get(`${messages[1]?.id}:0`)).toBe(group);
+    expect(layout.groupsByBlock.get(`${messages[2]?.id}:0`)).toBe(group);
   });
 
-  it("marks running, awaiting and error states on the group", () => {
-    const layout = buildToolActivityGroups([
-      assistantMessage([tool({ state: "complete" })]),
-      assistantMessage([
-        tool({ state: "error" }),
-        tool({ state: "awaiting-approval" }),
-      ]),
-    ]);
+  it("includes reasoning-only rounds inside an open burst", () => {
+    const messages = [
+      assistantMessage([tool()]),
+      assistantMessage([{ type: "reasoning", text: "checking result" }]),
+      assistantMessage([tool({ name: "read" })]),
+    ];
+    const layout = buildToolActivityGroups(messages);
     const group = layout.groups[0]!;
-    expect(group.running).toBe(false);
+
+    expect(layout.groups).toHaveLength(1);
+    expect(group.roundCount).toBe(3);
+    expect(layout.groupsByBlock.get(`${messages[1]?.id}:0`)).toBe(group);
+    expect(
+      buildToolActivityGroups([
+        assistantMessage([{ type: "reasoning", text: "standalone" }]),
+      ]).groups,
+    ).toHaveLength(0);
+  });
+
+  it("splits bursts at non-empty text and records both bursts for one message", () => {
+    const message = assistantMessage([
+      { type: "reasoning", text: "first" },
+      tool(),
+      { type: "text", text: "First pass is done." },
+      { type: "reasoning", text: "second" },
+      tool({ name: "read" }),
+    ]);
+    const layout = buildToolActivityGroups([message]);
+
+    expect(layout.groups).toHaveLength(2);
+    expect(layout.groups.map((group) => group.toolCount)).toEqual([1, 1]);
+    expect(layout.groups.map((group) => group.phase)).toEqual([
+      "sealed-by-text",
+      "open",
+    ]);
+    expect(layout.groups.map((group) => group.processing)).toEqual([
+      false,
+      true,
+    ]);
+    expect(layout.groupsByMessageId.get(message.id)).toEqual(layout.groups);
+    expect(layout.groupsByBlock.get(`${message.id}:0`)).toBe(layout.groups[0]);
+    expect(layout.groupsByBlock.get(`${message.id}:3`)).toBe(layout.groups[1]);
+  });
+
+  it("splits bursts at artifacts and response errors", () => {
+    const messages = [
+      assistantMessage([
+        tool(),
+        { type: "artifact", artifactId: "a", name: "report", kind: "report" },
+        tool({ name: "read" }),
+      ]),
+      assistantMessage([tool({ name: "write" })], {
+        status: "error",
+        errorMessage: "failed",
+      }),
+      assistantMessage([tool({ name: "bash" })]),
+    ];
+    const layout = buildToolActivityGroups(messages);
+
+    expect(layout.groups).toHaveLength(4);
+    expect(layout.groups.map((group) => group.toolCount)).toEqual([1, 1, 1, 1]);
+    expect(layout.groups.map((group) => group.phase)).toEqual([
+      "sealed-by-artifact",
+      "sealed-by-error",
+      "sealed-by-error",
+      "open",
+    ]);
+  });
+
+  it("aggregates processing, awaiting and errors across the burst", () => {
+    const group = buildToolActivityGroups([
+      assistantMessage([tool({ state: "complete" })], { status: "streaming" }),
+      assistantMessage([
+        tool({ state: "awaiting-approval" }),
+        tool({ state: "error" }),
+      ]),
+    ]).groups[0]!;
+
+    expect(group.processing).toBe(true);
     expect(group.hasAwaiting).toBe(true);
     expect(group.errorCount).toBe(1);
-    expect(group.toolCount).toBe(3);
-
-    const runningLayout = buildToolActivityGroups([
-      assistantMessage([tool({ state: "running" })]),
-    ]);
-    expect(runningLayout.groups[0]!.running).toBe(true);
+    expect(group.roundCount).toBe(2);
   });
 
-  it("aggregates live timing and message timestamps", () => {
-    const layout = buildToolActivityGroups([
-      assistantMessage([tool({ startedAt: 1_000, completedAt: 1_500 })], {
-        timestamp: 1_400,
-      }),
-      assistantMessage([tool({ startedAt: 2_000, completedAt: 3_000 })], {
-        timestamp: 2_600,
-      }),
-    ]);
-    const group = layout.groups[0]!;
-    expect(group.startedAt).toBe(1_000);
-    expect(group.completedAt).toBe(3_000);
-    expect(group.firstMessageTimestamp).toBe(1_400);
-    expect(group.lastMessageTimestamp).toBe(2_600);
+  it("marks a completed burst as processed on the first non-empty text delta", () => {
+    const message = assistantMessage(
+      [tool({ state: "complete" }), { type: "text", text: "Done." }],
+      { status: "streaming" },
+    );
+    const group = buildToolActivityGroups([message]).groups[0]!;
+
+    expect(group.phase).toBe("sealed-by-text");
+    expect(group.hasActiveTool).toBe(false);
+    expect(group.processing).toBe(false);
   });
 
-  it("counts merged research delegations as a single step", () => {
+  it("keeps a text-sealed burst processing while one of its tools runs", () => {
+    const group = buildToolActivityGroups([
+      assistantMessage([
+        tool({ state: "running" }),
+        { type: "text", text: "Partial result." },
+      ]),
+    ]).groups[0]!;
+
+    expect(group.phase).toBe("sealed-by-text");
+    expect(group.hasActiveTool).toBe(true);
+    expect(group.processing).toBe(true);
+  });
+
+  it("deduplicates research delegations by analysis id", () => {
     const details = {
       analysisId: "analysis-1",
-      tasks: [{ taskId: "t1", title: "a" }],
+      tasks: [{ taskId: "task-1", status: "completed" }],
     };
-    const layout = buildToolActivityGroups([
+    const messages = [
+      assistantMessage([tool({ name: "research_delegate", details })]),
       assistantMessage([
-        tool({ name: "research_delegate", details }),
+        { type: "reasoning", text: "waiting for researchers" },
         tool({ name: "research_delegate", details }),
         tool({ name: "read" }),
       ]),
-    ]);
-    expect(layout.groups[0]!.toolCount).toBe(2);
-  });
-
-  it("breaks the group on a message-level response error", () => {
-    const layout = buildToolActivityGroups([
-      assistantMessage([tool()]),
-      assistantMessage([tool()], { status: "error", errorMessage: "boom" }),
-      assistantMessage([tool()]),
-    ]);
-    expect(layout.groups).toHaveLength(2);
-  });
-});
-
-describe("collapsedToolGroupMessageIndexes", () => {
-  it("hides continuation messages of a collapsed group but never the group start", () => {
-    const messages = bashRounds(3);
-    const layout = buildToolActivityGroups(messages);
-    const expanded = () => false;
-    const hidden = collapsedToolGroupMessageIndexes(
-      messages,
-      layout,
-      expanded,
-    );
-    expect(hidden.has(0)).toBe(false);
-    expect(hidden.has(1)).toBe(true);
-    expect(hidden.has(2)).toBe(true);
-    const expandedAll = () => true;
-    expect(
-      collapsedToolGroupMessageIndexes(messages, layout, expandedAll).size,
-    ).toBe(0);
-  });
-
-  it("keeps messages with their own text visible", () => {
-    const messages = [
-      assistantMessage([tool()]),
-      assistantMessage([{ type: "text", text: "结论" }, tool()]),
     ];
-    const layout = buildToolActivityGroups(messages);
-    const hidden = collapsedToolGroupMessageIndexes(
-      messages,
-      layout,
-      () => false,
-    );
-    expect(hidden.has(1)).toBe(false);
+    const group = buildToolActivityGroups(messages).groups[0]!;
+
+    expect(group.researchGroups).toHaveLength(1);
+    expect(group.researchGroups[0]?.block.callId).toBe(group.tools[0]?.callId);
+    expect(countRenderedUnits(group.tools)).toBe(2);
   });
 
-  it("returns empty when there are no groups", () => {
-    const messages = [
-      assistantMessage([{ type: "text", text: "纯文本回复" }]),
-    ];
-    expect(
-      collapsedToolGroupMessageIndexes(
-        messages,
-        buildToolActivityGroups(messages),
-        () => false,
-      ).size,
-    ).toBe(0);
+  it("keeps a stable group id when earlier reasoning arrives during streaming", () => {
+    const call = tool({ state: "running" });
+    const initial = assistantMessage([call], {
+      id: "streaming-message",
+      status: "streaming",
+    });
+    const updated = {
+      ...initial,
+      blocks: [{ type: "reasoning" as const, text: "inspect" }, call],
+    };
+
+    expect(buildToolActivityGroups([updated]).groups[0]?.id).toBe(
+      buildToolActivityGroups([initial]).groups[0]?.id,
+    );
   });
 });

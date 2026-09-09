@@ -1091,6 +1091,8 @@ export interface AutomationConfiguration {
   prompt: string;
   entryId: string;
   workspaceId: string | null;
+  /** Linked history session; null = each run creates a new session. */
+  sessionId: string | null;
   accessLevel: SessionAccessLevel;
   toolApprovalMode: ToolApprovalMode;
   model: ModelReference | null;

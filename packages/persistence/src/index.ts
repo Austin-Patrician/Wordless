@@ -460,14 +460,19 @@ export class WordlessDatabase {
 
   listAutomations(): AutomationTask[] {
     return this.database.prepare("SELECT document FROM automations ORDER BY updated_at DESC").all().flatMap((row): AutomationTask[] => {
-      try { return [parseJson<AutomationTask>(asString((row as SqlRow).document))]; } catch { return []; }
+      try { return [this.normalizeAutomationTask(parseJson<AutomationTask>(asString((row as SqlRow).document)))]; } catch { return []; }
     });
   }
 
   getAutomation(id: string): AutomationTask | undefined {
     const row = this.database.prepare("SELECT document FROM automations WHERE id = ?").get(id) as SqlRow | undefined;
     if (!row) return undefined;
-    try { return parseJson<AutomationTask>(asString(row.document)); } catch { return undefined; }
+    try { return this.normalizeAutomationTask(parseJson<AutomationTask>(asString(row.document))); } catch { return undefined; }
+  }
+
+  /** Older documents predate the linked-session field; default it to null. */
+  private normalizeAutomationTask(task: AutomationTask): AutomationTask {
+    return { ...task, sessionId: typeof task.sessionId === "string" ? task.sessionId : null };
   }
 
   upsertAutomation(task: AutomationTask): void {
@@ -798,6 +803,14 @@ export class WordlessDatabase {
     const document = parseJson<AutomationRun>(asString(row.document));
     return {
       ...document,
+      // Older documents predate the linked-session field; default it to null.
+      configuration: {
+        ...document.configuration,
+        sessionId:
+          typeof document.configuration.sessionId === "string"
+            ? document.configuration.sessionId
+            : null,
+      },
       automationId: row.automation_id === null ? null : asString(row.automation_id),
       sessionId: row.session_id === null ? null : asString(row.session_id),
       status: asString(row.status) as AutomationRun["status"],

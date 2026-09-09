@@ -1,45 +1,37 @@
 import type { ConversationMessage } from "@wordless/protocol";
 import type { MessageToolBlock } from "@wordless/domain";
+import {
+  groupResearchDelegationBlocks,
+  type ResearchDelegationGroup,
+} from "../workbench/research-delegation";
 
-/**
- * Tool-activity grouping for assistant runs.
- *
- * Consecutive tool rounds (one round per assistant message) are merged into a
- * single collapsible group, crossing message boundaries. A non-empty text or
- * artifact block breaks the chain; reasoning blocks do not. A message-level
- * response error also breaks the chain.
- */
-
-export type ToolActivityGroupRound = {
-  messageId: string;
-  tools: MessageToolBlock[];
-};
+export type ToolActivityGroupPhase =
+  "open" | "sealed-by-text" | "sealed-by-artifact" | "sealed-by-error";
 
 export type ToolActivityGroup = {
   id: string;
-  /** callId of the first tool of the first round; identifies where the header renders. */
-  startCallId: string;
+  messageIds: string[];
+  messageIndexes: number[];
+  startMessageId: string;
   startMessageIndex: number;
-  endMessageIndex: number;
-  rounds: ToolActivityGroupRound[];
-  /** Rendered step count: parallel tools count individually, research delegations merge per analysisId. */
+  startBlockIndex: number;
+  tools: MessageToolBlock[];
   toolCount: number;
-  running: boolean;
+  roundCount: number;
+  /** A live activity chain stays expanded until a structural boundary seals it. */
+  phase: ToolActivityGroupPhase;
+  /** Real tool execution state, independent of the enclosing message stream. */
+  hasActiveTool: boolean;
+  processing: boolean;
   hasAwaiting: boolean;
   errorCount: number;
-  /** Live timing (renderer store), present only for sessions observed live. */
-  startedAt?: number;
-  completedAt?: number;
-  /** Message timestamps; fallback for wall-clock duration on reloaded sessions. */
-  firstMessageTimestamp?: number;
-  lastMessageTimestamp?: number;
+  researchGroups: ResearchDelegationGroup[];
 };
 
 export type ToolActivityLayout = {
   groups: ToolActivityGroup[];
-  /** First callId of every tool run → owning group. Runs not in this map are standalone. */
-  runGroupByFirstCallId: Map<string, ToolActivityGroup>;
-  groupsByMessageIndex: Map<number, ToolActivityGroup[]>;
+  groupsByMessageId: Map<string, ToolActivityGroup[]>;
+  groupsByBlock: Map<string, ToolActivityGroup>;
 };
 
 function asRecord(value: unknown): Record<string, unknown> | undefined {
@@ -47,148 +39,165 @@ function asRecord(value: unknown): Record<string, unknown> | undefined {
     ? (value as Record<string, unknown>)
     : undefined;
 }
-
 export function hasResponseErrorMessage(message: ConversationMessage): boolean {
   return message.status === "error" && Boolean(message.errorMessage);
 }
-
 function isToolActive(tool: MessageToolBlock): boolean {
   return tool.state === "pending" || tool.state === "running";
 }
-
 function isToolAwaiting(tool: MessageToolBlock): boolean {
   return (
     tool.state === "awaiting-approval" || tool.state === "awaiting-user-input"
   );
 }
-
-function countRenderedUnits(tools: readonly MessageToolBlock[]): number {
-  const researchAnalysisIds = new Set<string>();
-  let count = 0;
+export function countRenderedUnits(tools: readonly MessageToolBlock[]): number {
+  const researchGroups = groupResearchDelegationBlocks(
+    tools.filter((tool) => tool.name === "research_delegate"),
+  );
+  const researchIds = new Set(
+    researchGroups.map((group) => group.details.analysisId),
+  );
+  const renderedResearchIds = new Set<string>();
+  let count = researchGroups.length;
   for (const tool of tools) {
-    if (tool.name === "research_delegate") {
-      const analysisId = asRecord(tool.details)?.analysisId;
-      if (typeof analysisId === "string") {
-        if (researchAnalysisIds.has(analysisId)) continue;
-        researchAnalysisIds.add(analysisId);
-      }
+    if (tool.name !== "research_delegate") {
+      count += 1;
+      continue;
     }
-    count += 1;
+    const analysisId = asRecord(tool.details)?.analysisId;
+    if (typeof analysisId !== "string" || !researchIds.has(analysisId)) {
+      count += 1;
+      continue;
+    }
+    if (!renderedResearchIds.has(analysisId))
+      renderedResearchIds.add(analysisId);
   }
   return count;
 }
+function blockKey(messageId: string, blockIndex: number): string {
+  return `${messageId}:${blockIndex}`;
+}
 
+/** Build adjacent activity bursts within one TURN. A non-empty text block seals a burst. */
 export function buildToolActivityGroups(
   messages: readonly ConversationMessage[],
 ): ToolActivityLayout {
   const groups: ToolActivityGroup[] = [];
-  const runGroupByFirstCallId = new Map<string, ToolActivityGroup>();
-  const groupsByMessageIndex = new Map<number, ToolActivityGroup[]>();
-  let open: ToolActivityGroup | null = null;
-
+  const groupsByMessageId = new Map<string, ToolActivityGroup[]>();
+  const groupsByBlock = new Map<string, ToolActivityGroup>();
+  let current: ToolActivityGroup | undefined;
+  const pendingReasoning: Array<{
+    message: ConversationMessage;
+    messageIndex: number;
+    blockIndex: number;
+  }> = [];
+  const close = (phase: Exclude<ToolActivityGroupPhase, "open">) => {
+    if (current) current.phase = phase;
+    current = undefined;
+    pendingReasoning.length = 0;
+  };
+  const addMessage = (
+    group: ToolActivityGroup,
+    message: ConversationMessage,
+    messageIndex: number,
+  ) => {
+    if (group.messageIds.at(-1) !== message.id) {
+      group.messageIds.push(message.id);
+      group.messageIndexes.push(messageIndex);
+    }
+    const messageGroups = groupsByMessageId.get(message.id) ?? [];
+    if (messageGroups.at(-1) !== group) messageGroups.push(group);
+    groupsByMessageId.set(message.id, messageGroups);
+  };
+  const addBlock = (
+    group: ToolActivityGroup,
+    message: ConversationMessage,
+    messageIndex: number,
+    blockIndex: number,
+  ) => {
+    groupsByBlock.set(blockKey(message.id, blockIndex), group);
+    addMessage(group, message, messageIndex);
+  };
   messages.forEach((message, messageIndex) => {
-    if (hasResponseErrorMessage(message)) open = null;
-
-    const messageGroups = new Set<ToolActivityGroup>();
-    let currentRun: MessageToolBlock[] = [];
-
-    const flushRun = () => {
-      if (currentRun.length === 0) return;
-      const firstCallId = currentRun[0]!.callId;
-      let group = open;
-      if (!group) {
-        group = {
-          id: `tool-group-${messageIndex}-${firstCallId}`,
-          startCallId: firstCallId,
-          startMessageIndex: messageIndex,
-          endMessageIndex: messageIndex,
-          rounds: [],
-          toolCount: 0,
-          running: false,
-          hasAwaiting: false,
-          errorCount: 0,
-        };
-        groups.push(group);
-      }
-      runGroupByFirstCallId.set(firstCallId, group);
-      group.endMessageIndex = messageIndex;
-      group.rounds.push({ messageId: message.id, tools: currentRun });
-      group.toolCount += countRenderedUnits(currentRun);
-      for (const tool of currentRun) {
-        if (isToolActive(tool)) group.running = true;
-        if (isToolAwaiting(tool)) group.hasAwaiting = true;
-        if (tool.state === "error") group.errorCount += 1;
-        if (
-          typeof tool.startedAt === "number" &&
-          (group.startedAt === undefined || tool.startedAt < group.startedAt)
-        )
-          group.startedAt = tool.startedAt;
-        if (
-          typeof tool.completedAt === "number" &&
-          (group.completedAt === undefined ||
-            tool.completedAt > group.completedAt)
-        )
-          group.completedAt = tool.completedAt;
-      }
-      if (group.firstMessageTimestamp === undefined)
-        group.firstMessageTimestamp = message.timestamp;
-      group.lastMessageTimestamp = message.timestamp;
-      messageGroups.add(group);
-      open = group;
-      currentRun = [];
-    };
-
-    for (const block of message.blocks) {
-      if (block.type === "tool") {
-        currentRun.push(block);
+    if (hasResponseErrorMessage(message)) close("sealed-by-error");
+    for (
+      let blockIndex = 0;
+      blockIndex < message.blocks.length;
+      blockIndex += 1
+    ) {
+      const block = message.blocks[blockIndex]!;
+      if (block.type === "text") {
+        if (block.text.trim().length > 0) close("sealed-by-text");
         continue;
       }
-      flushRun();
-      if (block.type === "text" && block.text.trim().length > 0) open = null;
-      if (block.type === "artifact") open = null;
-    }
-    flushRun();
-
-    if (messageGroups.size > 0)
-      groupsByMessageIndex.set(messageIndex, [...messageGroups]);
-  });
-
-  return { groups, runGroupByFirstCallId, groupsByMessageIndex };
-}
-
-/**
- * Message indexes whose rendered content is entirely owned by collapsed
- * groups (no visible text/artifact of their own). These sections collapse to
- * zero height so the collapsed group header reads as a single row.
- */
-export function collapsedToolGroupMessageIndexes(
-  messages: readonly ConversationMessage[],
-  layout: ToolActivityLayout,
-  isGroupExpanded: (group: ToolActivityGroup) => boolean,
-): Set<number> {
-  const hidden = new Set<number>();
-  if (layout.groups.length === 0) return hidden;
-  messages.forEach((message, messageIndex) => {
-    const groups = layout.groupsByMessageIndex.get(messageIndex);
-    if (!groups || groups.length === 0) return;
-    // A group start renders the group header — never hide it.
-    if (groups.some((group) => group.startMessageIndex === messageIndex))
-      return;
-    let hasVisibleOwnContent = false;
-    for (const block of message.blocks) {
-      if (block.type === "tool") continue;
-      if (block.type === "text" && block.text.trim().length > 0) {
-        hasVisibleOwnContent = true;
-        break;
-      }
       if (block.type === "artifact") {
-        hasVisibleOwnContent = true;
-        break;
+        close("sealed-by-artifact");
+        continue;
       }
+      if (block.type === "reasoning") {
+        if (current) {
+          addBlock(current, message, messageIndex, blockIndex);
+          if (message.status === "streaming") current.processing = true;
+        } else {
+          pendingReasoning.push({ message, messageIndex, blockIndex });
+        }
+        continue;
+      }
+      if (block.type !== "tool") continue;
+      if (!current) {
+        current = {
+          id: `tool-burst-${message.id}-${block.callId}`,
+          messageIds: [],
+          messageIndexes: [],
+          startMessageId: message.id,
+          startMessageIndex: messageIndex,
+          startBlockIndex: blockIndex,
+          tools: [],
+          toolCount: 0,
+          roundCount: 0,
+          phase: "open",
+          hasActiveTool: false,
+          processing: false,
+          hasAwaiting: false,
+          errorCount: 0,
+          researchGroups: [],
+        };
+        groups.push(current);
+        for (const pending of pendingReasoning) {
+          addBlock(
+            current,
+            pending.message,
+            pending.messageIndex,
+            pending.blockIndex,
+          );
+        }
+        const firstPending = pendingReasoning[0];
+        if (firstPending) {
+          current.startMessageId = firstPending.message.id;
+          current.startMessageIndex = firstPending.messageIndex;
+          current.startBlockIndex = firstPending.blockIndex;
+        }
+        pendingReasoning.length = 0;
+      }
+      const activityGroup = current;
+      activityGroup.tools.push(block);
+      addBlock(activityGroup, message, messageIndex, blockIndex);
+      if (isToolActive(block)) activityGroup.hasActiveTool = true;
+      if (isToolAwaiting(block)) activityGroup.hasAwaiting = true;
+      if (block.state === "error") activityGroup.errorCount += 1;
     }
-    if (hasVisibleOwnContent) return;
-    if (groups.every((group) => !isGroupExpanded(group)))
-      hidden.add(messageIndex);
+    if (hasResponseErrorMessage(message)) close("sealed-by-error");
   });
-  return hidden;
+  for (const group of groups) {
+    group.roundCount = group.messageIndexes.length;
+    // A live burst is still in progress even during the gap between adjacent
+    // tool rounds. Once a text block seals it, only a genuinely active tool
+    // can keep the processing state alive.
+    group.processing = group.phase === "open" || group.hasActiveTool;
+    group.researchGroups = groupResearchDelegationBlocks(
+      group.tools.filter((tool) => tool.name === "research_delegate"),
+    );
+    group.toolCount = countRenderedUnits(group.tools);
+  }
+  return { groups, groupsByMessageId, groupsByBlock };
 }
