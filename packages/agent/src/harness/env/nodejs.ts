@@ -31,6 +31,20 @@ import {
 const MAX_TIMEOUT_MS = 2_147_483_647;
 const MAX_TIMEOUT_SECONDS = MAX_TIMEOUT_MS / 1000;
 const EXIT_STDIO_GRACE_MS = 100;
+/** Total post-exit stdio budget: even if orphaned grandchildren keep the pipe
+ * alive, the wait after process exit is bounded instead of indefinite. */
+const EXIT_STDIO_GRACE_BUDGET_MS = 2_000;
+/** Upper bound for a single taskkill invocation. */
+const TASKKILL_TIMEOUT_MS = 5_000;
+/** Delay before retrying a failed tree kill. */
+const KILL_RETRY_DELAY_MS = 200;
+/** Final grace after a timeout/abort kill before the exec promise is forced
+ * to settle. Guarantees the caller is never left waiting forever. */
+const KILL_GRACE_MS = 3_000;
+
+function delay(ms: number): Promise<void> {
+	return new Promise((resolvePromise) => setTimeout(resolvePromise, ms));
+}
 
 function resolveTimeoutMs(timeout: number | undefined): Result<number | undefined, ExecutionError> {
 	if (timeout === undefined) return ok(undefined);
@@ -134,7 +148,7 @@ async function runCommand(
 			return;
 		}
 		const timeout = setTimeout(() => {
-			if (child.pid) killProcessTree(child.pid);
+			if (child.pid) void killProcessTree(child.pid);
 		}, timeoutMs);
 		child.stdout?.setEncoding("utf8");
 		child.stdout?.on("data", (chunk: string) => {
@@ -219,27 +233,58 @@ function getShellEnv(baseEnv?: NodeJS.ProcessEnv, extraEnv?: Record<string, stri
 	};
 }
 
-function killProcessTree(pid: number): void {
-	if (process.platform === "win32") {
+async function runTaskkill(pid: number): Promise<boolean> {
+	return await new Promise((resolvePromise) => {
+		let child: ChildProcess;
 		try {
-			spawn("taskkill", ["/F", "/T", "/PID", String(pid)], {
+			child = spawn("taskkill", ["/F", "/T", "/PID", String(pid)], {
 				stdio: "ignore",
 				detached: true,
 				windowsHide: true,
 			});
 		} catch {
-			// Ignore errors.
+			resolvePromise(false);
+			return;
 		}
-		return;
+		const timer = setTimeout(() => {
+			child.removeAllListeners();
+			child.kill("SIGKILL");
+			resolvePromise(false);
+		}, TASKKILL_TIMEOUT_MS);
+		child.once("close", (code) => {
+			clearTimeout(timer);
+			resolvePromise(code === 0);
+		});
+		child.once("error", () => {
+			clearTimeout(timer);
+			resolvePromise(false);
+		});
+	});
+}
+
+/** Forcefully terminates the process tree rooted at `pid` and reports whether
+ * the termination was likely successful. Best-effort: callers must never rely
+ * on it alone and need a bounded fallback (see exec's force settle). */
+async function killProcessTree(pid: number): Promise<boolean> {
+	if (process.platform === "win32") {
+		for (let attempt = 0; attempt < 2; attempt += 1) {
+			const killed = await runTaskkill(pid);
+			if (killed) return true;
+			if (attempt === 0) await delay(KILL_RETRY_DELAY_MS);
+		}
+		return false;
 	}
 
 	try {
 		process.kill(-pid, "SIGKILL");
+		return true;
 	} catch {
 		try {
 			process.kill(pid, "SIGKILL");
+			return true;
 		} catch {
-			// Process already dead.
+			// Process already dead or cannot be signalled.
+			return false;
 		}
 	}
 }
@@ -250,6 +295,7 @@ function waitForChildProcess(child: ChildProcess): Promise<number | null> {
 		let exited = false;
 		let exitCode: number | null = null;
 		let postExitTimer: ReturnType<typeof setTimeout> | undefined;
+		let graceBudget = EXIT_STDIO_GRACE_BUDGET_MS;
 		let stdoutEnded = child.stdout === null;
 		let stderrEnded = child.stderr === null;
 
@@ -275,8 +321,16 @@ function waitForChildProcess(child: ChildProcess): Promise<number | null> {
 			if (exited && stdoutEnded && stderrEnded) finalize(exitCode);
 		};
 		const armIdleTimer = (): void => {
+			if (graceBudget <= 0) {
+				// Budget exhausted: orphaned grandchildren keep writing to the
+				// inherited stdio pipes. Finalize anyway instead of waiting forever.
+				finalize(exitCode);
+				return;
+			}
+			const slice = Math.min(EXIT_STDIO_GRACE_MS, graceBudget);
+			graceBudget -= slice;
 			if (postExitTimer) clearTimeout(postExitTimer);
-			postExitTimer = setTimeout(() => finalize(exitCode), EXIT_STDIO_GRACE_MS);
+			postExitTimer = setTimeout(() => finalize(exitCode), slice);
 		};
 		const onData = (): void => {
 			if (exited && !settled) armIdleTimer();
@@ -367,19 +421,52 @@ export class NodeExecutionEnv implements ExecutionEnv {
 			let callbackError: ExecutionError | undefined;
 			let child: ReturnType<typeof spawn> | undefined;
 			let timeoutId: ReturnType<typeof setTimeout> | undefined;
+			let forceSettleId: ReturnType<typeof setTimeout> | undefined;
 
 			const onAbort = () => {
-				if (child?.pid) {
-					killProcessTree(child.pid);
-				}
+				if (settled) return;
+				scheduleForceSettle("aborted");
+				if (child?.pid) void killProcessTree(child.pid);
+			};
+
+			/** Arm the bounded fallback that settles the exec promise even when the
+			 * tree kill failed or orphaned grandchildren keep the stdio pipes open.
+			 * Created at most once, only on the timeout/abort paths. */
+			const scheduleForceSettle = (code: "timeout" | "aborted") => {
+				if (forceSettleId || settled) return;
+				forceSettleId = setTimeout(() => {
+					timedOut = timedOut || code === "timeout";
+					// Best-effort final strike; only when the child has not exited yet
+					// (guards against killing a reused PID).
+					if (child?.pid && child.exitCode === null && child.signalCode === null) {
+						void killProcessTree(child.pid);
+					}
+					settle(
+						callbackError
+							? err(callbackError)
+							: err(
+									new ExecutionError(
+										code,
+										code === "timeout" ? `Command timed out after ${options?.timeout} seconds` : "aborted",
+									),
+								),
+					);
+				}, KILL_GRACE_MS);
 			};
 
 			const settle = (result: Result<{ stdout: string; stderr: string; exitCode: number }, ExecutionError>) => {
 				if (timeoutId) clearTimeout(timeoutId);
+				if (forceSettleId) clearTimeout(forceSettleId);
+				forceSettleId = undefined;
 				if (options?.abortSignal) options.abortSignal.removeEventListener("abort", onAbort);
 				if (child?.pid) this.activeChildPids.delete(child.pid);
 				if (settled) return;
 				settled = true;
+				// Stop consuming output: orphaned descendants may keep writing to the
+				// inherited pipes, so destroy the streams to avoid unbounded memory
+				// growth and further streaming updates after termination.
+				child?.stdout?.destroy();
+				child?.stderr?.destroy();
 				resolvePromise(result);
 			};
 
@@ -411,9 +498,11 @@ export class NodeExecutionEnv implements ExecutionEnv {
 				timeoutMs !== undefined
 					? setTimeout(() => {
 							timedOut = true;
-							if (child?.pid) {
-								killProcessTree(child.pid);
-							}
+							// Unconditionally arm the bounded fallback: it covers both a
+							// failed tree kill and a killed child whose stdio is held open
+							// by orphaned descendants.
+							scheduleForceSettle("timeout");
+							if (child?.pid) void killProcessTree(child.pid);
 						}, timeoutMs)
 					: undefined;
 
@@ -428,6 +517,7 @@ export class NodeExecutionEnv implements ExecutionEnv {
 			child.stdout?.setEncoding("utf8");
 			child.stderr?.setEncoding("utf8");
 			child.stdout?.on("data", (chunk: string) => {
+				if (settled) return;
 				stdout += chunk;
 				try {
 					options?.onStdout?.(chunk);
@@ -438,6 +528,7 @@ export class NodeExecutionEnv implements ExecutionEnv {
 				}
 			});
 			child.stderr?.on("data", (chunk: string) => {
+				if (settled) return;
 				stderr += chunk;
 				try {
 					options?.onStderr?.(chunk);
@@ -642,7 +733,8 @@ export class NodeExecutionEnv implements ExecutionEnv {
 	}
 
 	async cleanup(): Promise<void> {
-		for (const pid of this.activeChildPids) killProcessTree(pid);
+		const kills = [...this.activeChildPids].map((pid) => killProcessTree(pid));
 		this.activeChildPids.clear();
+		await Promise.all(kills);
 	}
 }
