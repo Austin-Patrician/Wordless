@@ -1,7 +1,20 @@
 import { Check, ChevronDown, CircleAlert, LoaderCircle } from "lucide-react";
 import { useCallback, useState } from "react";
 import { usePreferences } from "../../shared/preferences";
-import type { ToolActivityGroup } from "./tool-activity-groups";
+import type { MessageKey } from "../../shared/i18n";
+import type {
+  ToolActivityCategory,
+  ToolActivityGroup,
+} from "./tool-activity-groups";
+
+const CATEGORY_KEYS: Record<ToolActivityCategory, MessageKey> = {
+  read: "threadGroupCategoryRead",
+  edit: "threadGroupCategoryEdit",
+  command: "threadGroupCategoryCommand",
+  research: "threadGroupCategoryResearch",
+  extension: "threadGroupCategoryExtension",
+  other: "threadGroupCategoryOther",
+};
 
 /**
  * A burst stays expanded for its whole live activity chain. Tool state updates
@@ -55,13 +68,32 @@ export function ToolActivityGroupHeader({
   onToggle: (group: ToolActivityGroup) => void;
 }) {
   const { t } = usePreferences();
-  const label = (
-    group.hasAwaiting
-      ? t("threadGroupAwaiting")
-      : group.processing
-        ? t("threadGroupProcessing")
-        : t("threadGroupProcessed")
-  )
+  // Compact per-category summary, e.g. "已处理 · 编辑 3 · 读取 8 · 等其他 4 项".
+  const categoryLabel = (category: ToolActivityCategory, count: number) =>
+    t(CATEGORY_KEYS[category]).replaceAll("{count}", String(count));
+  let processedLabel = t("threadGroupProcessed");
+  const parts = group.breakdown.slice(0, 3);
+  if (parts.length > 0) {
+    const shownCount = parts.reduce((sum, part) => sum + part.count, 0);
+    const remainingCount = group.toolCount - shownCount;
+    let partsLabel = parts
+      .map((part) => categoryLabel(part.category, part.count))
+      .join(" · ");
+    if (remainingCount > 0) {
+      partsLabel +=
+        " · " + t("threadGroupMore").replaceAll("{count}", String(remainingCount));
+    }
+    processedLabel = t("threadGroupProcessedBreakdown").replaceAll(
+      "{parts}",
+      partsLabel,
+    );
+  }
+  const label = group.hasAwaiting
+    ? t("threadGroupAwaiting")
+    : group.processing
+      ? t("threadGroupProcessing")
+      : processedLabel;
+  const displayLabel = label
     .replaceAll("{count}", String(group.toolCount))
     .replaceAll("{rounds}", String(group.roundCount));
   return (
@@ -96,7 +128,7 @@ export function ToolActivityGroupHeader({
             : "text-[#777770] dark:text-muted-foreground"
         }`}
       >
-        {label}
+        {displayLabel}
         {group.errorCount > 0 ? (
           <span className="text-[#ad7956] dark:text-[#d6a16d]">
             {" · "}

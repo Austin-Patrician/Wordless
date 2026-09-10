@@ -658,4 +658,55 @@ describe("AgentHarness", () => {
 		expect(resolved.skills).not.toBe(resources.skills);
 		expect(resolved.promptTemplates).not.toBe(resources.promptTemplates);
 	});
+
+	it("runs next-turn compaction during continue()-driven runs (retry phase)", async () => {
+		const registration = newFaux();
+		// Model-call order:
+		// 1. prompt run, turn 1 -> tool call
+		// 2. prompt run, turn 2 -> retryable error (the driver retries via continue())
+		// 3. continue run, turn 1 -> tool call
+		// 4. compaction summary request (fired by beforeNextTurn inside the continue run)
+		// 5. continue run, turn 2 -> final answer
+		registration.setResponses([
+			fauxAssistantMessage([fauxToolCall("calculate", { expression: "1 + 1" })]),
+			fauxAssistantMessage("ignored", { stopReason: "error", errorMessage: "Connection error." }),
+			fauxAssistantMessage([fauxToolCall("calculate", { expression: "2 + 2" })]),
+			fauxAssistantMessage("Summary of the prior history."),
+			fauxAssistantMessage("done"),
+		]);
+		const session = new Session(new InMemorySessionStorage());
+		let boundaryCount = 0;
+		let compactedDuringContinue = false;
+		const harness = new AgentHarness({
+			models,
+			env: new NodeExecutionEnv({ cwd: process.cwd() }),
+			session,
+			model: registration.getModel(),
+			tools: [calculateTool],
+			activeToolNames: ["calculate"],
+			beforeNextTurn: async () => {
+				boundaryCount += 1;
+				// Boundary 1 fires inside the prompt() run (phase "turn"). The
+				// regression is boundary 2: a continue()-driven run hosts the same
+				// agent loop while phase is "retry", and compaction must work there
+				// instead of failing the whole run with
+				// "Next-turn compaction requires an active turn".
+				if (boundaryCount !== 2) return undefined;
+				await harness.compactForNextTurn();
+				compactedDuringContinue = true;
+				return undefined;
+			},
+		});
+
+		await harness.prompt("hi");
+		// Mirror the driver's retry preparation: detach the failed response so the
+		// branch ends with the tool result, then restart via continue().
+		await harness.prepareFailedResponseRecovery();
+		const final = await harness.continue();
+
+		expect(final.stopReason).toBe("stop");
+		expect(final.errorMessage).toBeUndefined();
+		expect(compactedDuringContinue).toBe(true);
+		expect((await session.getBranch()).some((entry) => entry.type === "compaction")).toBe(true);
+	});
 });

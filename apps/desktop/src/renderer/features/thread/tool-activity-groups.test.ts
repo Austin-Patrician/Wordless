@@ -4,6 +4,7 @@ import type { MessageToolBlock } from "@wordless/domain";
 import {
   buildToolActivityGroups,
   countRenderedUnits,
+  summarizeToolCategories,
 } from "./tool-activity-groups";
 
 let callSeq = 0;
@@ -204,5 +205,50 @@ describe("buildToolActivityGroups", () => {
     expect(buildToolActivityGroups([updated]).groups[0]?.id).toBe(
       buildToolActivityGroups([initial]).groups[0]?.id,
     );
+  });
+
+  it("summarizes per-category breakdown aligned with toolCount", () => {
+    const details = {
+      analysisId: "analysis-1",
+      tasks: [{ taskId: "task-1", status: "completed" }],
+    };
+    const messages = [
+      assistantMessage([
+        tool({ name: "read" }),
+        tool({ name: "bash" }),
+        tool({ name: "read" }),
+      ]),
+      assistantMessage([
+        tool({ name: "write" }),
+        tool({ name: "mcp_abc_tavily_search" }),
+        tool({ name: "weird_custom_tool" }),
+        tool({ name: "research_delegate", details }),
+        tool({ name: "research_delegate", details }),
+      ]),
+    ];
+    const group = buildToolActivityGroups(messages).groups[0]!;
+
+    expect(group.breakdown).toEqual([
+      { category: "read", count: 2 },
+      { category: "command", count: 1 },
+      { category: "edit", count: 1 },
+      { category: "extension", count: 1 },
+      { category: "other", count: 1 },
+      { category: "research", count: 1 },
+    ]);
+    expect(group.toolCount).toBe(7);
+    const breakdownTotal = group.breakdown.reduce(
+      (sum, part) => sum + part.count,
+      0,
+    );
+    expect(breakdownTotal).toBe(group.toolCount);
+  });
+
+  it("keeps the breakdown empty for a group without tools", () => {
+    const messages = [assistantMessage([{ type: "text", text: "hello" }])];
+    const layout = buildToolActivityGroups(messages);
+
+    expect(layout.groups).toHaveLength(0);
+    expect(summarizeToolCategories([], [])).toEqual([]);
   });
 });

@@ -871,7 +871,12 @@ export class AgentHarness<
 
 	/** Run compaction between tool turns without terminating the active agent loop. */
 	async compactForNextTurn(customInstructions?: string): Promise<{ summary: string; firstKeptEntryId: string; tokensBefore: number; details?: unknown }> {
-		if (this.phase !== "turn") throw new AgentHarnessError("busy", "Next-turn compaction requires an active turn");
+		// Both "turn" (prompt/skill/template) and "retry" (continue) host an active
+		// agent loop suspended in prepareNextTurn, so compaction is safe in both.
+		// All other in-run checks accept any non-idle phase; keep that convention.
+		if (this.phase !== "turn" && this.phase !== "retry") {
+			throw new AgentHarnessError("busy", "Next-turn compaction requires an active turn");
+		}
 		const previousPhase = this.phase;
 		this.phase = "idle";
 		try {

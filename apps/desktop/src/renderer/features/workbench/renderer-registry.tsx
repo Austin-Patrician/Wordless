@@ -994,17 +994,9 @@ function SubagentToolActivity({
               ) : null}
               {task.usage ? (
                 <p className="mt-2 font-mono text-[10px] text-[#92928a]">
-                  {block.name === "delegate_expert"
-                    ? formatMessage(t, "toolTokens", {
-                        count: formatCompactTokenCount(task.usage.totalTokens),
-                      })
-                    : `${formatMessage(t, "toolTokens", {
-                        count: task.usage.totalTokens.toLocaleString(),
-                      })}${
-                        typeof task.usage.totalCost === "number"
-                          ? ` · $${task.usage.totalCost.toFixed(4)}`
-                          : ""
-                      }`}
+                  {formatMessage(t, "toolTokens", {
+                    count: formatCompactTokenCount(task.usage.totalTokens),
+                  })}
                 </p>
               ) : null}
             </div>

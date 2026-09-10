@@ -243,6 +243,26 @@ export const planModeExtension: AgentExtensionDefinition = {
         context.harness.on("before_agent_start", (event) => {
           const state = getPlanState();
           if (state.mode === "off") return undefined;
+          // A finished plan must not linger into the next conversation turn:
+          // once every step is completed while executing, close the plan
+          // lifecycle at the turn boundary so the docked plan steps auto-hide
+          // and the composer plan toggle returns to off.
+          if (
+            state.mode === "executing" &&
+            state.plan.length > 0 &&
+            state.plan.every((step) => step.status === "completed")
+          ) {
+            const next: PlanModeState = { mode: "off", plan: state.plan };
+            localState = next;
+            // The public harness hook type is synchronous; the async teardown
+            // is fire-and-forget and lands within the same turn startup.
+            void (async () => {
+              await setPlanToolActive(false);
+              await context.setState(next);
+              context.emit("plan.updated", next);
+            })().catch(() => {});
+            return undefined;
+          }
           const instruction =
             state.mode === "planning"
               ? "You are in Plan Mode. Explore the workspace and reason about the request without changing files. A structured plan is optional. Only after exploration is complete, and only when a concrete multi-step plan is genuinely useful or explicitly requested, call update_plan once with the final ordered plan; every step must be pending. Do not call update_plan while inspecting, reasoning, narrating investigation, reporting work, or repeating an unchanged plan. Do not change files until the user explicitly asks to execute the plan."

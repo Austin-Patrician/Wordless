@@ -18,6 +18,8 @@ export type ToolActivityGroup = {
   tools: MessageToolBlock[];
   toolCount: number;
   roundCount: number;
+  /** Per-category unit counts, aligned with toolCount semantics. */
+  breakdown: ToolCategoryCount[];
   /** A live activity chain stays expanded until a structural boundary seals it. */
   phase: ToolActivityGroupPhase;
   /** Real tool execution state, independent of the enclosing message stream. */
@@ -33,6 +35,72 @@ export type ToolActivityLayout = {
   groupsByMessageId: Map<string, ToolActivityGroup[]>;
   groupsByBlock: Map<string, ToolActivityGroup>;
 };
+
+export type ToolActivityCategory =
+  | "read"
+  | "edit"
+  | "command"
+  | "research"
+  | "extension"
+  | "other";
+
+export type ToolCategoryCount = {
+  category: ToolActivityCategory;
+  count: number;
+};
+
+const TOOL_CATEGORY_BY_NAME: Partial<Record<string, ToolActivityCategory>> = {
+  read: "read",
+  ls: "read",
+  grep: "read",
+  find: "read",
+  edit: "edit",
+  write: "edit",
+  write_verify: "edit",
+  bash: "command",
+  research_delegate: "research",
+};
+
+/**
+ * Counts rendered units per activity category. Research delegation groups
+ * collapse into a single unit, matching countRenderedUnits semantics so the
+ * breakdown always sums up to the group's toolCount.
+ */
+export function summarizeToolCategories(
+  tools: readonly MessageToolBlock[],
+  researchGroups: readonly ResearchDelegationGroup[],
+): ToolCategoryCount[] {
+  const counts = new Map<ToolActivityCategory, number>();
+  const bump = (category: ToolActivityCategory, count: number) => {
+    if (count <= 0) return;
+    counts.set(category, (counts.get(category) ?? 0) + count);
+  };
+  const researchIds = new Set(
+    researchGroups.map((group) => group.details.analysisId),
+  );
+  bump("research", researchGroups.length);
+  for (const tool of tools) {
+    if (tool.name === "research_delegate") {
+      const analysisId = asRecord(tool.details)?.analysisId;
+      // Orphan delegates that do not map into a research group are still
+      // rendered as individual units, so count them separately.
+      if (
+        typeof analysisId !== "string" ||
+        !researchIds.has(analysisId)
+      ) {
+        bump("research", 1);
+      }
+      continue;
+    }
+    const category =
+      TOOL_CATEGORY_BY_NAME[tool.name] ??
+      (tool.name.startsWith("mcp_") ? "extension" : "other");
+    bump(category, 1);
+  }
+  return [...counts.entries()]
+    .map(([category, count]) => ({ category, count }))
+    .sort((a, b) => b.count - a.count || a.category.localeCompare(b.category));
+}
 
 function asRecord(value: unknown): Record<string, unknown> | undefined {
   return typeof value === "object" && value !== null
@@ -155,6 +223,7 @@ export function buildToolActivityGroups(
           tools: [],
           toolCount: 0,
           roundCount: 0,
+          breakdown: [],
           phase: "open",
           hasActiveTool: false,
           processing: false,
@@ -198,6 +267,7 @@ export function buildToolActivityGroups(
       group.tools.filter((tool) => tool.name === "research_delegate"),
     );
     group.toolCount = countRenderedUnits(group.tools);
+    group.breakdown = summarizeToolCategories(group.tools, group.researchGroups);
   }
   return { groups, groupsByMessageId, groupsByBlock };
 }

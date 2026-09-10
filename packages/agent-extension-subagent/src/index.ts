@@ -17,10 +17,6 @@ import { Type, type Static } from "typebox";
 
 export { expertTeamExtension } from "./expert-team.ts";
 
-export interface SubagentExtensionState extends JsonObject {
-  roles: SubagentRoleDefinition[];
-}
-
 export interface SubagentExtensionSettings extends JsonObject {
   roleModels?: Partial<
     Record<
@@ -175,14 +171,13 @@ export const subagentExtension: AgentExtensionDefinition = {
     let reviewerAllowed = false;
     const roles = (): SubagentRoleDefinition[] => {
       const configured = configuredRoleModels(context.configuration.settings);
-      const saved = Array.isArray(context.state.roles)
-        ? context.state.roles.flatMap((role) => (isRole(role) ? [role] : []))
-        : [];
-      const source =
-        saved.length === DEFAULT_ROLES.length ? saved : DEFAULT_ROLES;
-      return source.map((role) => ({
+      // Single source of truth for role models: the extension settings. A
+      // role without a configured model inherits the current session's model
+      // at delegation time; a configured but unavailable model surfaces the
+      // runtime error instead of silently falling back.
+      return DEFAULT_ROLES.map((role) => ({
         ...role,
-        model: configured[role.id] ?? role.model,
+        model: configured[role.id] ?? null,
       }));
     };
 
@@ -204,23 +199,6 @@ export const subagentExtension: AgentExtensionDefinition = {
           roles: roles(),
           reviewerAllowed,
         });
-      },
-      async interact(action, payload) {
-        if (action !== "set-role-models" || !Array.isArray(payload))
-          throw new Error(`Unknown Subagent action: ${action}`);
-        const models = new Map(
-          payload.flatMap((item) =>
-            isRoleModel(item) ? [[item.role, item.model] as const] : [],
-          ),
-        );
-        const next = {
-          roles: roles().map((role) => ({
-            ...role,
-            model: models.get(role.id) ?? role.model,
-          })),
-        } satisfies SubagentExtensionState;
-        await context.setState(next);
-        context.emit("roles.updated", next.roles);
       },
       dispose() {},
     };
@@ -489,23 +467,6 @@ function cloneDetails(details: DelegationDetails): DelegationDetails {
   return JSON.parse(JSON.stringify(details)) as DelegationDetails;
 }
 
-function isRole(value: unknown): value is SubagentRoleDefinition {
-  if (typeof value !== "object" || value === null || Array.isArray(value))
-    return false;
-  const role = value as Record<string, unknown>;
-  return (
-    (role.id === "scout" ||
-      role.id === "planner" ||
-      role.id === "reviewer" ||
-      role.id === "worker" ||
-      role.id === "researcher" ||
-      role.id === "research-reviewer") &&
-    typeof role.name === "string" &&
-    typeof role.description === "string" &&
-    (role.model === null || isModelReference(role.model))
-  );
-}
-
 function isModelReference(
   value: unknown,
 ): value is { connectionId: string; modelId: string } {
@@ -516,19 +477,4 @@ function isModelReference(
     typeof reference.connectionId === "string" &&
     typeof reference.modelId === "string"
   );
-}
-
-function isRoleModel(value: unknown): value is {
-  role: SubagentRoleDefinition["id"];
-  model: { connectionId: string; modelId: string } | null;
-} {
-  if (typeof value !== "object" || value === null || Array.isArray(value))
-    return false;
-  const candidate = value as Record<string, unknown>;
-  return isRole({
-    id: candidate.role,
-    name: "",
-    description: "",
-    model: candidate.model,
-  });
 }
