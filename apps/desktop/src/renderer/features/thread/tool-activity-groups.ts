@@ -108,7 +108,12 @@ function asRecord(value: unknown): Record<string, unknown> | undefined {
     : undefined;
 }
 export function hasResponseErrorMessage(message: ConversationMessage): boolean {
-  return message.status === "error" && Boolean(message.errorMessage);
+  // An interrupted run ("aborted") must seal an activity burst exactly like a
+  // failed one, otherwise the burst stays open and its summary spins forever.
+  return (
+    (message.status === "error" || message.status === "aborted") &&
+    Boolean(message.errorMessage)
+  );
 }
 function isToolActive(tool: MessageToolBlock): boolean {
   return tool.state === "pending" || tool.state === "running";

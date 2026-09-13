@@ -251,4 +251,24 @@ describe("buildToolActivityGroups", () => {
     expect(layout.groups).toHaveLength(0);
     expect(summarizeToolCategories([], [])).toEqual([]);
   });
+
+  it("seals a burst as errored when the run is interrupted", () => {
+    const messages = [
+      assistantMessage([{ type: "reasoning", text: "working" }, tool()]),
+      // The harness writes an aborted failure message with EMPTY text and
+      // status "aborted" (distinct from "error") after user interruption.
+      {
+        ...assistantMessage([{ type: "text", text: "" }], {
+          id: "aborted-msg",
+        }),
+        status: "aborted" as const,
+        errorMessage: "Request was aborted.",
+      },
+    ];
+    const group = buildToolActivityGroups(messages).groups[0]!;
+
+    expect(group.phase).toBe("sealed-by-error");
+    expect(group.processing).toBe(false);
+    expect(group.hasActiveTool).toBe(false);
+  });
 });
