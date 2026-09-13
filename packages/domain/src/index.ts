@@ -104,6 +104,8 @@ export interface ConnectorToolSummary {
   name: string;
   title: string;
   description: string;
+  /** JSON Schema declared by the MCP server for this tool's arguments. */
+  inputSchema: Record<string, unknown> | null;
   readOnly: boolean | null;
   destructive: boolean | null;
 }

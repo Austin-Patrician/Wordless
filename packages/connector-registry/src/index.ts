@@ -226,10 +226,12 @@ function toolSummary(value: unknown): ConnectorToolSummary | undefined {
   const record = asRecord(value);
   if (!record || typeof record.name !== "string") return undefined;
   const annotations = asRecord(record.annotations);
+  const inputSchema = asRecord(record.inputSchema);
   return {
     name: record.name,
     title: typeof record.title === "string" ? record.title : record.name,
     description: typeof record.description === "string" ? record.description : "",
+    inputSchema: inputSchema ?? null,
     readOnly: typeof annotations?.readOnlyHint === "boolean" ? annotations.readOnlyHint : null,
     destructive: typeof annotations?.destructiveHint === "boolean" ? annotations.destructiveHint : null,
   };
@@ -462,7 +464,7 @@ export class ConnectorRegistry {
         name: toolName(entry.configuration.id, tool.name),
         label: `${entry.configuration.name}: ${tool.title}`,
         description: tool.description || `Run ${tool.name} through ${entry.configuration.name}.`,
-        parameters: Type.Unsafe<Record<string, unknown>>({ type: "object", additionalProperties: true }),
+        parameters: Type.Unsafe<Record<string, unknown>>(tool.inputSchema ?? { type: "object", additionalProperties: true }),
         source: {
           kind: "mcp" as const,
           connectorId: entry.configuration.id,
