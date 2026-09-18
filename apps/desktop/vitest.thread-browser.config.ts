@@ -66,6 +66,7 @@ export default defineConfig({
     },
     include: [
       "test/thread-production-row.browser.test.tsx",
+      "test/sidebar-settings-menu.browser.test.tsx",
       "test/thread-selection-menu.browser.test.tsx",
       "test/translation-settings.browser.test.tsx",
       "test/thread-virtuoso.browser.test.tsx",

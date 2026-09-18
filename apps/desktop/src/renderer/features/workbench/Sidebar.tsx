@@ -1,8 +1,9 @@
-import { Button, DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger, Tooltip, TooltipContent, TooltipTrigger } from "@wordless/ui-kit";
-import { Bell, CalendarClock, ChevronDown, ChevronLeft, ChevronsDown, ChevronsUp, Cloud, Command, Ellipsis, Folder, FolderOpen, Images, LoaderCircle, LogIn, LogOut, Pin, PinOff, Search, Settings, Trash2, Pencil, UserRoundSearch, X, ListTodo } from "lucide-react";
+import { Button, DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger, Popover, PopoverAnchor, PopoverContent, Tooltip, TooltipContent, TooltipTrigger } from "@wordless/ui-kit";
+import { Bell, CalendarClock, ChevronDown, ChevronLeft, ChevronsDown, ChevronsUp, Cloud, Command, Ellipsis, Folder, FolderOpen, Images, LoaderCircle, LogIn, LogOut, Monitor, Moon, Pin, PinOff, Search, Settings, Sun, Trash2, Pencil, UserRoundSearch, X, ListTodo } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import type { SessionRecord } from "@wordless/domain";
+import type { Locale, ThemeMode } from "../../shared/models";
 import { usePreferences } from "../../shared/preferences";
 import { useRuntime, useRuntimeClient } from "../../shared/runtime";
 import folderIcon from "../../../icons/common-icons/floder.svg";
@@ -159,6 +160,50 @@ function SidebarActionNotice({ message, onDismiss }: { message: string | null; o
   );
 }
 
+const THEME_OPTIONS: ReadonlyArray<{ Icon: typeof Sun; id: ThemeMode }> = [
+  { Icon: Sun, id: "light" },
+  { Icon: Moon, id: "dark" },
+  { Icon: Monitor, id: "system" },
+];
+
+const LANGUAGE_OPTIONS: ReadonlyArray<{ glyph: string; id: Locale; label: string }> = [
+  { glyph: "中", id: "zh-CN", label: "简体中文" },
+  { glyph: "EN", id: "en-US", label: "English" },
+];
+
+const segmentedGroupClassName = "flex gap-0.5 rounded-[8px] border border-[#e1e1db] bg-[#f7f7f5] p-0.5 dark:border-border dark:bg-muted";
+
+function segmentedButtonClassName(selected: boolean): string {
+  return `grid h-7 place-items-center rounded-[6px] outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring ${selected ? "bg-[#30312e] text-white dark:bg-[#d8ef79] dark:text-[#202610]" : "text-[#686860] hover:bg-[#ecece7] dark:text-muted-foreground dark:hover:bg-muted"}`;
+}
+
+/** Quick appearance controls shown above the sidebar footer, so the settings dialog is not required for theme/language. */
+function SidebarSettingsMenu({ onOpenSettings }: { onOpenSettings: () => void }) {
+  const { locale, setLocale, setTheme, t, theme } = usePreferences();
+  return (
+    <div className="space-y-1.5">
+      <div className="flex items-center justify-between gap-3 px-1">
+        <span className="text-[11px] font-medium text-[#6f6f68] dark:text-muted-foreground">{t("theme")}</span>
+        <div aria-label={t("theme")} className={segmentedGroupClassName} role="group">
+          {THEME_OPTIONS.map(({ Icon, id }) => (
+            <button aria-label={t(id)} aria-pressed={theme === id} className={`${segmentedButtonClassName(theme === id)} w-7`} key={id} onClick={() => setTheme(id)} title={t(id)} type="button"><Icon className="h-3 w-3" /></button>
+          ))}
+        </div>
+      </div>
+      <div className="flex items-center justify-between gap-3 px-1">
+        <span className="text-[11px] font-medium text-[#6f6f68] dark:text-muted-foreground">{t("displayLanguage")}</span>
+        <div aria-label={t("displayLanguage")} className={segmentedGroupClassName} role="group">
+          {LANGUAGE_OPTIONS.map(({ glyph, id, label }) => (
+            <button aria-label={label} aria-pressed={locale === id} className={`${segmentedButtonClassName(locale === id)} w-9 text-[10px] font-semibold`} key={id} onClick={() => setLocale(id)} title={label} type="button">{glyph}</button>
+          ))}
+        </div>
+      </div>
+      <div className="my-1 h-px bg-[#e9e9e4] dark:bg-border" />
+      <button className="flex w-full items-center gap-2 rounded-[7px] px-2 py-2 text-left text-[12px] text-[#454540] outline-none transition-colors hover:bg-[#f1f1ed] focus-visible:ring-2 focus-visible:ring-ring dark:text-foreground dark:hover:bg-muted" onClick={onOpenSettings} type="button"><Settings className="h-3 w-3" />{t("settings")}</button>
+    </div>
+  );
+}
+
 export function Sidebar({ automationActive, collapsed, expertsActive, mediaActive, onNewThread, onOpenAutomation, onOpenExperts, onOpenMedia, onOpenSettings, onOpenSession, onSessionDeleted, onOpenSkills, onToggle, runningSessionIds, selectedSessionId, skillsActive, tasksActive, onOpenTasks }: SidebarProps & { onOpenTasks: () => void }) {
   const client = useRuntimeClient();
   const { refresh, snapshot } = useRuntime();
@@ -170,6 +215,7 @@ export function Sidebar({ automationActive, collapsed, expertsActive, mediaActiv
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const [sessionSearchOpen, setSessionSearchOpen] = useState(false);
   const [recentSessionsExpanded, setRecentSessionsExpanded] = useState(false);
   const sessions = useMemo(
@@ -330,7 +376,7 @@ export function Sidebar({ automationActive, collapsed, expertsActive, mediaActiv
         return <section key={workspace.id}><button aria-expanded={expanded} className="flex h-8 w-full items-center gap-2 rounded-[7px] px-2 text-left text-[11px] text-[#4f4f4a] outline-none hover:bg-[#e7e7e3] focus-visible:ring-2 focus-visible:ring-ring dark:text-muted-foreground dark:hover:bg-[#282a21]" onClick={() => setExpandedWorkspaceIds((current) => { const next = new Set(current); if (next.has(workspace.id)) next.delete(workspace.id); else next.add(workspace.id); return next; })} type="button"><img alt="" className="h-3.5 w-3.5 shrink-0 opacity-75 dark:invert" src={folderIcon} /><span className="min-w-0 flex-1 truncate font-medium">{workspace.name}</span><ChevronDown className={`h-3.5 w-3.5 transition-transform ${expanded ? "" : "-rotate-90"}`} /></button>{expanded ? <div className="mt-0.5 space-y-1 pl-2">{workspaceSessions.map(sessionRow)}</div> : null}</section>;
       })}</div></section></div> : null}
 
-      <div className={`mt-auto flex shrink-0 items-center ${collapsed ? "justify-center" : "justify-between px-2"}`}><AccountMenu collapsed={collapsed} onOpenSettings={onOpenSettings} onToggle={onToggle} t={t} />{!collapsed ? <div className="flex gap-1"><Button aria-label={t("settings")} onClick={() => onOpenSettings()} size="icon" type="button" variant="ghost"><Settings className="h-4 w-4" /></Button><Button aria-label={t("notifications")} size="icon" type="button" variant="ghost"><Bell className="h-4 w-4" /></Button></div> : null}</div>
+      <div className={`mt-auto flex shrink-0 items-center ${collapsed ? "justify-center" : "justify-between px-2"}`}><AccountMenu collapsed={collapsed} onOpenSettings={onOpenSettings} onToggle={onToggle} t={t} />{!collapsed ? <Popover onOpenChange={setSettingsOpen} open={settingsOpen}><PopoverAnchor asChild><div className="flex gap-1"><Button aria-expanded={settingsOpen} aria-label={t("settings")} className={settingsOpen ? "bg-[#e3e3df] text-foreground dark:bg-[#2a2c22]" : undefined} onClick={() => setSettingsOpen((open) => !open)} size="icon" type="button" variant="ghost"><Settings className="h-4 w-4" /></Button><Button aria-label={t("notifications")} size="icon" type="button" variant="ghost"><Bell className="h-4 w-4" /></Button></div></PopoverAnchor><PopoverContent align="end" className="w-[196px] p-2" side="top" sideOffset={8}><SidebarSettingsMenu onOpenSettings={() => { setSettingsOpen(false); onOpenSettings(); }} /></PopoverContent></Popover> : null}</div>
 
       <SessionDeleteConfirm error={deleteError} onCancel={() => { setDeleteError(null); setDeleting(null); }} onConfirm={() => void confirmDelete()} saving={saving} session={deleting} t={t} />
       <SessionSearchDialog entries={entries} onOpenChange={setSessionSearchOpen} onSelectSession={openSession} open={sessionSearchOpen} sessions={sessions} workspaces={workspaces} />
