@@ -6,5 +6,3 @@ import { flattenModelCatalog, type ModelCatalog } from "../model-catalog.ts";
 
 export const VERCEL_AI_GATEWAY_MODELS: ModelCatalog<typeof values, "vercel-ai-gateway"> =
 	flattenModelCatalog("vercel-ai-gateway", values);
-
-

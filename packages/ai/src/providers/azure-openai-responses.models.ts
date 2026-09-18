@@ -6,5 +6,3 @@ import { flattenModelCatalog, type ModelCatalog } from "../model-catalog.ts";
 
 export const AZURE_OPENAI_RESPONSES_MODELS: ModelCatalog<typeof values, "azure-openai-responses"> =
 	flattenModelCatalog("azure-openai-responses", values);
-
-

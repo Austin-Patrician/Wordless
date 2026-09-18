@@ -6,5 +6,3 @@ import { flattenModelCatalog, type ModelCatalog } from "../model-catalog.ts";
 
 export const OPENCODE_MODELS: ModelCatalog<typeof values, "opencode"> =
 	flattenModelCatalog("opencode", values);
-
-

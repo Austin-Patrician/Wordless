@@ -6,5 +6,3 @@ import { flattenModelCatalog, type ModelCatalog } from "../model-catalog.ts";
 
 export const XAI_MODELS: ModelCatalog<typeof values, "xai"> =
 	flattenModelCatalog("xai", values);
-
-

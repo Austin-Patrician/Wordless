@@ -6,5 +6,3 @@ import { flattenModelCatalog, type ModelCatalog } from "../model-catalog.ts";
 
 export const KIMI_CODING_MODELS: ModelCatalog<typeof values, "kimi-coding"> =
 	flattenModelCatalog("kimi-coding", values);
-
-

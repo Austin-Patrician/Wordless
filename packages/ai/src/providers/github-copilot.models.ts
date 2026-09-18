@@ -6,5 +6,3 @@ import { flattenModelCatalog, type ModelCatalog } from "../model-catalog.ts";
 
 export const GITHUB_COPILOT_MODELS: ModelCatalog<typeof values, "github-copilot"> =
 	flattenModelCatalog("github-copilot", values);
-
-

@@ -6,5 +6,3 @@ import { flattenModelCatalog, type ModelCatalog } from "../model-catalog.ts";
 
 export const MINIMAX_MODELS: ModelCatalog<typeof values, "minimax"> =
 	flattenModelCatalog("minimax", values);
-
-

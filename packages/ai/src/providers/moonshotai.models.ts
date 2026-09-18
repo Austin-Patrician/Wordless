@@ -6,5 +6,3 @@ import { flattenModelCatalog, type ModelCatalog } from "../model-catalog.ts";
 
 export const MOONSHOTAI_MODELS: ModelCatalog<typeof values, "moonshotai"> =
 	flattenModelCatalog("moonshotai", values);
-
-

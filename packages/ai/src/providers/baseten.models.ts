@@ -6,5 +6,3 @@ import { flattenModelCatalog, type ModelCatalog } from "../model-catalog.ts";
 
 export const BASETEN_MODELS: ModelCatalog<typeof values, "baseten"> =
 	flattenModelCatalog("baseten", values);
-
-

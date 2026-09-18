@@ -6,5 +6,3 @@ import { flattenModelCatalog, type ModelCatalog } from "../model-catalog.ts";
 
 export const XIAOMI_TOKEN_PLAN_AMS_MODELS: ModelCatalog<typeof values, "xiaomi-token-plan-ams"> =
 	flattenModelCatalog("xiaomi-token-plan-ams", values);
-
-

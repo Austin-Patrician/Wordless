@@ -6,5 +6,3 @@ import { flattenModelCatalog, type ModelCatalog } from "../model-catalog.ts";
 
 export const AMAZON_BEDROCK_MODELS: ModelCatalog<typeof values, "amazon-bedrock"> =
 	flattenModelCatalog("amazon-bedrock", values);
-
-
