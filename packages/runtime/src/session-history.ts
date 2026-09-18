@@ -99,16 +99,24 @@ function selectedTimelineRange(timeline: readonly SessionHistoryTimelineItem[], 
   return { start, end };
 }
 
-export function createSessionHistoryProjection(messages: readonly ConversationMessage[], compactions: readonly ContextCompactionRecord[]): SessionHistoryProjection {
+export function createSessionHistoryProjection(
+  messages: readonly ConversationMessage[],
+  compactions: readonly ContextCompactionRecord[],
+  turnVersions?: ReadonlyMap<string, { active: number; total: number }>,
+): SessionHistoryProjection {
   const turns: SessionHistoryTurn[] = [];
   let current: SessionHistoryTurn | undefined;
   for (const message of messages) {
     if (message.role === "user" || !current) {
+      const versions = turnVersions?.get(message.id);
       current = {
         id: `turn:${message.id}`,
         anchorMessageId: message.id,
         messages: [message],
         timestamp: message.timestamp,
+        ...(versions
+          ? { versions: { active: versions.active, total: versions.total } }
+          : {}),
       };
       turns.push(current);
     } else {

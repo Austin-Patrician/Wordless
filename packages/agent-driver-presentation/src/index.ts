@@ -243,7 +243,7 @@ function createTools(office: PresentationOfficeService, context: AgentDriverSess
 export function createPresentationAgentDriver(office: PresentationOfficeService, options: PresentationAgentDriverOptions): AgentDriver {
   return createAgentHarnessDriver({
     id: "presentation",
-    features: ["steer", "follow-up", "thinking", "compact", "artifacts", "approval", "user-request"],
+    features: ["steer", "follow-up", "thinking", "compact", "branch", "artifacts", "approval", "user-request"],
     createTools: (context) => [...options.createWorkspaceTools(context), ...createTools(office, context)],
     preflightOperation: (context, request) => request.toolName.startsWith("presentation_")
       ? preflightPresentationOperation(context, request)

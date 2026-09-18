@@ -5,6 +5,7 @@ import { createDesktopRuntime } from "./bootstrap/create-runtime";
 import { prepareUserDataPath } from "./bootstrap/user-data";
 import { registerRuntimeIpc } from "./ipc/register-runtime-ipc";
 import { DesktopNotificationService } from "./notifications/desktop-notification-service";
+import { DesktopTranslationService } from "./translation/translation-service";
 import { AppearanceAssetService } from "./appearance/appearance-asset-service";
 import { registerAppearanceProtocol } from "./protocols/appearance";
 import { registerMediaProtocol } from "./protocols/media";
@@ -42,6 +43,7 @@ let office: OfficeCliService | undefined;
 let account: GoogleAccountService | undefined;
 let cloudSync: CloudSyncService | undefined;
 let automation: AutomationService | undefined;
+let translation: DesktopTranslationService | undefined;
 let tray: Tray | undefined;
 let disposing = false;
 let quitting = false;
@@ -165,6 +167,10 @@ app.whenReady().then(async () => {
   applicationMenu.install();
   const updateService = new DesktopUpdateService(sendHostEvent);
   updateService.initialize();
+  translation = new DesktopTranslationService({
+    getRuntime: () => runtime,
+    send: sendHostEvent,
+  });
   nativeTheme.on("updated", () => {
     const preferences = runtime?.getSnapshot().preferences;
     if (preferences) updateTitleBarOverlays(preferences);
@@ -185,6 +191,7 @@ app.whenReady().then(async () => {
     dataAnalysis,
     automation,
     mcpMarketplace: new McpRegistryService(userData.path),
+    translation,
     skillMarketplace: new SkillsMpMarketplaceService(userData.path, {
       apiKey: process.env.WORDLESS_SKILLSMP_API_KEY?.trim() || __WORDLESS_SKILLSMP_API_KEY__,
     }),
@@ -228,6 +235,7 @@ app.on("before-quit", (event) => {
   disposing = true;
   quitting = true;
   automation?.dispose();
+  translation?.dispose();
   tray?.destroy();
   cloudSync?.dispose();
   runtime?.dispose();

@@ -1473,6 +1473,25 @@ class AgentHarnessDriverSession implements AgentDriverSession {
           this.selectedSkillsForRun = [];
         }
       }
+      case "continue": {
+        this.currentPrompt = undefined;
+        this.overflowRecoveryAttempted = false;
+        this.suppressedOverflowMessage = undefined;
+        this.suppressedRetryMessage = undefined;
+        this.modelRetryAttempt = 0;
+        this.modelRetryAbortController = new AbortController();
+        this.selectedSkillsForRun = [];
+        try {
+          this.activeUserSubmission = undefined;
+          await this.executePromptWithRecovery(command);
+          return;
+        } finally {
+          this.modelRetryAbortController = undefined;
+          this.suppressedRetryMessage = undefined;
+          this.activeUserSubmission = undefined;
+          this.selectedSkillsForRun = [];
+        }
+      }
       case "steer":
         this.currentPrompt = command.text;
         await this.harness.steer(command.text);
@@ -1677,17 +1696,25 @@ class AgentHarnessDriverSession implements AgentDriverSession {
   }
 
   private async executePromptWithRecovery(
-    command: Extract<AgentDriverCommand, { type: "prompt" }>,
+    command: Extract<AgentDriverCommand, { type: "prompt" | "continue" }>,
   ): Promise<void> {
     let nextCall = 0;
     let preparedFailure: { entryId: string; messageId: string } | undefined;
     const produce = async (): Promise<AssistantMessage> => {
       let response: AssistantMessage;
       if (nextCall++ === 0) {
-        response = await this.harness.prompt(command.text, command.submission ? {
-          messageId: command.submission.messageId,
-          timestamp: command.submission.submittedAt,
-        } : undefined);
+        response =
+          command.type === "continue"
+            ? await this.harness.continue()
+            : await this.harness.prompt(
+                command.text,
+                command.submission
+                  ? {
+                      messageId: command.submission.messageId,
+                      timestamp: command.submission.submittedAt,
+                    }
+                  : undefined,
+              );
       } else {
         response = await this.harness.continue();
       }

@@ -230,6 +230,40 @@ export interface ImagesProvider {
   generateImages(model: ImagesModel, context: ImagesContext, options?: ImagesOptions): Promise<AssistantImages>;
 }
 
+export interface ModelStreamOptions {
+  signal?: AbortSignal;
+  maxTokens?: number;
+  /** Routing identity for providers that key requests per conversation. */
+  sessionId?: string;
+  /** Request headers merged over the provider's configured ones. */
+  headers?: ProviderHeaders;
+}
+
+/** Single-turn request context, as accepted by `Models.streamSimple`. */
+export interface Context {
+  systemPrompt?: string;
+  messages: Array<{ role: "user"; content: string; timestamp: number }>;
+}
+
+/**
+ * Minimal assistant event surface. Only `text_delta` is consumed by the
+ * runtime; other events exist for type completeness of the stream contract.
+ */
+export interface AssistantMessageEvent {
+  type: string;
+  delta?: string;
+  partial?: AssistantMessage;
+  message?: AssistantMessage;
+  error?: AssistantMessage;
+}
+
+/** Async event stream that also resolves the final assistant message. */
+export interface AssistantTextStream extends AsyncIterable<AssistantMessageEvent> {
+  result(): Promise<AssistantMessage>;
+}
+
+export function contentText(content: unknown, separator?: string): string;
+
 export interface MutableModels {
   setProvider(provider: Provider): void;
   deleteProvider(id: string): void;
@@ -239,7 +273,8 @@ export interface MutableModels {
   getModel(provider: string, id: string): Model | undefined;
   getModels(provider?: string): readonly Model[];
   refresh(provider?: string): Promise<void>;
-  streamSimple(model: Model, context: unknown, options?: unknown): unknown;
+  stream(model: Model, context: Context, options?: ModelStreamOptions): AssistantTextStream;
+  streamSimple(model: Model, context: Context, options?: ModelStreamOptions): AssistantTextStream;
 }
 
 export interface Models extends MutableModels {}

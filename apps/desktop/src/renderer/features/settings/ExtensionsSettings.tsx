@@ -72,7 +72,7 @@ export function ExtensionsSettings() {
   };
 
   return (
-    <section className="min-h-0 flex-1 overflow-y-auto px-6 py-6 sm:px-9">
+    <section className="px-6 py-6 sm:px-9">
       <div className="max-w-[680px]">
         <h2 className="text-[14px] font-semibold">{t("extensions")}</h2>
         <p className="mt-1 text-[12px] leading-5 text-muted-foreground">{t("extensionsHelp")}</p>

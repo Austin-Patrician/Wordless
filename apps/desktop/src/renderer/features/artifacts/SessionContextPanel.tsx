@@ -54,6 +54,12 @@ export function SessionContextPanel({ collapsed, fullscreen, leftSidebarWidth, m
   }, [tabs]);
 
   useEffect(() => {
+    // The translation panel shows the original next to its translation, so it
+    // opens wider than the 300px default, while never shrinking a manual resize.
+    setWidth((current) => view === "translation" && current < 400 ? 400 : current);
+  }, [view]);
+
+  useEffect(() => {
     const close = (event: MouseEvent) => {
       if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) setDropdownOpen(false);
     };

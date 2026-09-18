@@ -9,7 +9,7 @@ import {
 } from "../messages.ts";
 import type { BranchSummaryResult, Session, SessionTreeEntry } from "../types.ts";
 import { BranchSummaryError, err, ok, type Result, SessionError } from "../types.ts";
-import { estimateTokens, SUMMARIZATION_SYSTEM_PROMPT } from "./compaction.ts";
+import { estimateTokens, SUMMARIZATION_SYSTEM_PROMPT, withSummaryRequestIdentity } from "./compaction.ts";
 import {
 	computeFileLists,
 	createFileOps,
@@ -231,7 +231,7 @@ export async function generateBranchSummary(
 	const response = await models.completeSimple(
 		model,
 		{ systemPrompt: SUMMARIZATION_SYSTEM_PROMPT, messages: summarizationMessages },
-		{ signal, maxTokens: 2048 },
+		withSummaryRequestIdentity({ signal, maxTokens: 2048 }),
 	);
 	if (response.stopReason === "aborted") {
 		return err(new BranchSummaryError("aborted", response.errorMessage || "Branch summary aborted"));

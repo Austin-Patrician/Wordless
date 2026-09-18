@@ -155,7 +155,7 @@ const CodeBlock = memo(function CodeBlock({ code, highlight = true, language }: 
         <IconAction active={wrap} label={locale === "zh-CN" ? "切换自动换行" : "Toggle line wrapping"} onClick={() => setWrap((value) => !value)}><TextWrap className="h-3.5 w-3.5" /></IconAction>
         <IconAction label={copied ? locale === "zh-CN" ? "已复制" : "Copied" : locale === "zh-CN" ? "复制代码" : "Copy code"} onClick={() => void copy()}>{copied ? <Check className="h-3.5 w-3.5 text-[#66833d]" /> : <Copy className="h-3.5 w-3.5" />}</IconAction>
       </header>
-      <pre className={cn("message-code-scroll m-0 overflow-auto px-3 py-3 font-mono text-[12px] leading-5 text-[#42423e] dark:text-[#d8dbd2]", !expanded && long && "max-h-96", wrap ? "whitespace-pre-wrap break-words" : "whitespace-pre")}><code className="hljs" dangerouslySetInnerHTML={highlighted === null ? undefined : { __html: highlighted }}>{highlighted === null ? code : undefined}</code></pre>
+      <pre className={cn("message-code-scroll m-0 overflow-auto px-3 py-3 font-mono text-[12px] leading-5 text-[#42423e] dark:text-[#d8dbd2]", !expanded && long && "max-h-96", wrap ? "whitespace-pre-wrap break-words" : "whitespace-pre")}><code className="hljs" data-wordless-language={normalizedLanguage || undefined} dangerouslySetInnerHTML={highlighted === null ? undefined : { __html: highlighted }}>{highlighted === null ? code : undefined}</code></pre>
       {long ? <div className="flex h-7 items-center justify-center border-t border-[#e5e5e0] dark:border-border"><IconAction label={expanded ? locale === "zh-CN" ? "收起代码" : "Collapse code" : locale === "zh-CN" ? "展开代码" : "Expand code"} onClick={() => setExpanded((value) => !value)}>{expanded ? <ChevronUp className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}</IconAction></div> : null}
     </section>
   );
@@ -167,7 +167,7 @@ const EmbeddedCodeSource = memo(function EmbeddedCodeSource({ code, language }: 
   const highlighted = useMemo(() => hljs.getLanguage(highlightLanguage)
     ? hljs.highlight(code, { language: highlightLanguage, ignoreIllegals: true }).value
     : null, [code, highlightLanguage]);
-  return <pre className="message-code-scroll m-0 max-h-96 overflow-auto whitespace-pre px-3 py-3 font-mono text-[12px] leading-5 text-[#42423e] dark:text-[#d8dbd2]"><code className="hljs" dangerouslySetInnerHTML={highlighted === null ? undefined : { __html: highlighted }}>{highlighted === null ? code : undefined}</code></pre>;
+  return <pre className="message-code-scroll m-0 max-h-96 overflow-auto whitespace-pre px-3 py-3 font-mono text-[12px] leading-5 text-[#42423e] dark:text-[#d8dbd2]"><code className="hljs" data-wordless-language={normalizedLanguage || undefined} dangerouslySetInnerHTML={highlighted === null ? undefined : { __html: highlighted }}>{highlighted === null ? code : undefined}</code></pre>;
 });
 
 function sandboxPreviewDocument(source: string, language: "html" | "svg"): string {

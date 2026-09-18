@@ -3,6 +3,7 @@ import { useMemo } from "react";
 import { FileTypeIcon } from "../../shared/FileTypeIcon";
 import { usePreferences } from "../../shared/preferences";
 import { MessageMarkdown } from "../thread/MessageMarkdown";
+import { MessageSelectionMenu } from "../thread/MessageSelectionMenu";
 import "./document-preview.css";
 
 type DocumentPreviewProps = {
@@ -16,7 +17,9 @@ type DocumentPreviewProps = {
 function MarkdownPreview({ content }: { content: string }) {
   return (
     <div className="artifact-markdown-preview px-4 py-3.5">
-      <MessageMarkdown text={content} />
+      <MessageSelectionMenu style={{ display: "contents" }}>
+        <MessageMarkdown text={content} />
+      </MessageSelectionMenu>
     </div>
   );
 }

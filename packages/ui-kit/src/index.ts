@@ -1,5 +1,18 @@
 export { Button } from "./components/button";
 export {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuLabel,
+  ContextMenuRadioGroup,
+  ContextMenuRadioItem,
+  ContextMenuSeparator,
+  ContextMenuSub,
+  ContextMenuSubContent,
+  ContextMenuSubTrigger,
+  ContextMenuTrigger,
+} from "./components/context-menu";
+export {
   Dialog,
   DialogClose,
   DialogContent,
@@ -20,6 +33,7 @@ export {
   HoverCardTrigger,
 } from "./components/hover-card";
 export { ScrollArea } from "./components/scroll-area";
+export { Popover, PopoverAnchor, PopoverContent } from "./components/popover";
 export {
   Select,
   SelectContent,

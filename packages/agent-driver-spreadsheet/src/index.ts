@@ -287,7 +287,7 @@ function createTools(office: SpreadsheetOfficeService, context: AgentDriverSessi
 export function createSpreadsheetAgentDriver(office: SpreadsheetOfficeService, options: SpreadsheetAgentDriverOptions): AgentDriver {
   return createAgentHarnessDriver({
     id: "spreadsheet",
-    features: ["steer", "follow-up", "thinking", "compact", "artifacts", "approval", "user-request"],
+    features: ["steer", "follow-up", "thinking", "compact", "branch", "artifacts", "approval", "user-request"],
     createTools: (context) => [...options.createWorkspaceTools(context), ...createTools(office, context)],
     preflightOperation: (context, request) => request.toolName.startsWith("spreadsheet_")
       ? preflightSpreadsheetOperation(office, context, request)

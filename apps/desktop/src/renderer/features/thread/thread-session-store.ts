@@ -45,6 +45,13 @@ export type ThreadRowSnapshot = {
   messages: readonly ConversationMessage[];
   presentation: AssistantRunPresentation | null;
   compaction?: ContextCompactionRecord;
+  /** Assistant response versions of the turn, when the response was retried. */
+  versions?: ThreadTurnVersions | null;
+};
+
+export type ThreadTurnVersions = {
+  active: number;
+  total: number;
 };
 
 export type ThreadTimelineSnapshot = {
@@ -88,6 +95,7 @@ type TurnRecord = {
   timestamp: number;
   turnId: string;
   userId?: string;
+  versions?: ThreadTurnVersions | null;
 };
 
 type ToolLocation = { blockIndex: number; messageId: string };
@@ -503,6 +511,54 @@ export class ThreadSessionStore {
     }
   }
 
+  /**
+   * Replaces the projection with the authoritative runtime snapshot. Retry and
+   * version switching rewind the session branch, so messages that left the
+   * branch must disappear instead of being merged.
+   */
+  async reload(): Promise<void> {
+    const [snapshot, view] = await Promise.all([
+      this.client.getSessionSnapshot(this.sessionId),
+      this.client.getSessionView(this.sessionId),
+    ]);
+    if (this.disposed) return;
+    this.transaction(() => this.installFullSnapshot(snapshot, view));
+  }
+
+  /** Surfaces an action failure in the thread status banner. */
+  reportActionError(message: string | undefined): void {
+    this.patchMetadata({ error: message });
+  }
+
+  /**
+   * Starts a retry the same way a normal turn starts: the turn is left without
+   * its previous response and gains a run status, so the regenerated answer
+   * streams in place under the user message.
+   *
+   * The superseded version is not lost — it stays in the session journal as an
+   * inactive branch and comes back through the version switcher.
+   */
+  beginTurnRetry(turnId: string): void {
+    this.transaction(() => {
+      const turn = this.turns.get(turnId);
+      if (!turn) return;
+      for (const assistantId of turn.assistantIds) {
+        this.messagesById.delete(assistantId);
+        this.messageToTurn.delete(assistantId);
+      }
+      turn.assistantIds = [];
+      this.messagesSnapshotDirty = true;
+      this.activeTurnId = turnId;
+      this.updateAssistantRow(
+        turnId,
+        turn.userId
+          ? createAssistantRunPresentation(turn.userId, Date.now())
+          : null,
+      );
+      this.patchMetadata({ isRunning: true });
+    });
+  }
+
   async ensureTurnLoaded(turnId: string): Promise<number> {
     const existing = this.timelineSnapshot.items.findIndex((item) =>
       item.type !== "compaction" && item.turnId === turnId,
@@ -521,17 +577,30 @@ export class ThreadSessionStore {
   private installView(view: SessionViewSnapshot, replace: boolean): void {
     this.installHistoryPage(view.history, replace ? "replace" : "merge");
     this.installViewMetadata(view);
-    if (view.isRunning) {
-      const messages = messagesFromPage(view.history);
-      const presentation = assistantRunPresentationFromMessages(messages, Date.now());
-      if (presentation.userMessageId) {
-        const turnId = `turn:${presentation.userMessageId}`;
-        this.activeTurnId = turnId;
-        if (view.modelRetry)
-          presentation.activity = { type: "reconnecting", retry: view.modelRetry };
-        this.updateAssistantRow(turnId, presentation);
-      }
-    }
+    this.installRunningPresentation(messagesFromPage(view.history), view);
+  }
+
+  /**
+   * Restores the run status for a session that is streaming when its projection
+   * is replaced. A settled session must get no presentation at all, otherwise
+   * the recovered turn keeps rendering a "waiting for the model" status that no
+   * later event will clear.
+   */
+  private installRunningPresentation(
+    messages: readonly ConversationMessage[],
+    view: SessionViewSnapshot,
+  ): void {
+    if (!view.isRunning) return;
+    const presentation = assistantRunPresentationFromMessages(
+      [...messages],
+      Date.now(),
+    );
+    if (!presentation.userMessageId) return;
+    const turnId = `turn:${presentation.userMessageId}`;
+    this.activeTurnId = turnId;
+    if (view.modelRetry)
+      presentation.activity = { type: "reconnecting", retry: view.modelRetry };
+    this.updateAssistantRow(turnId, presentation);
   }
 
   private installViewMetadata(view: SessionViewSnapshot): void {
@@ -585,6 +654,7 @@ export class ThreadSessionStore {
         timestamp: item.turn.timestamp,
         turnId: item.turn.id,
       };
+      record.versions = item.turn.versions ?? null;
       if (user) record.userId = user.id;
       for (const message of item.turn.messages) {
         const current = this.messagesById.get(message.id);
@@ -699,7 +769,14 @@ export class ThreadSessionStore {
       const previous = this.messagesById.get(event.message.id);
       const turnId = this.messageToTurn.get(event.message.id) ?? envelope.turnId ?? this.activeTurnId;
       if (!turnId) return;
-      this.upsertLiveMessage(turnId, previous ? mergeCompletedAssistantMessage(previous, event.message) : event.message);
+      // A turn without a presentation must stay without one: a retry has no
+      // pending turn, and inventing one here would leave a run status that no
+      // later event ever clears.
+      this.upsertLiveMessage(
+        turnId,
+        previous ? mergeCompletedAssistantMessage(previous, event.message) : event.message,
+        this.rows.get(this.assistantKey(turnId))?.presentation ?? null,
+      );
       this.patchMetadata({ turnUsage: calculateCurrentTurnUsage([...this.messagesForTurn(turnId)]) ?? this.metadataSnapshot.turnUsage });
       this.upsertTurnSummary(turnId);
       return;
@@ -995,6 +1072,7 @@ export class ThreadSessionStore {
       type: "assistant",
       messages,
       presentation: presentation === undefined ? current?.presentation ?? null : presentation,
+      versions: turn.versions ?? null,
     });
   }
 
@@ -1206,7 +1284,7 @@ export class ThreadSessionStore {
 
   private setRow(key: string, snapshot: ThreadRowSnapshot): void {
     const current = this.rows.get(key);
-    if (current && current.presentation === snapshot.presentation && current.compaction === snapshot.compaction && sameReferenceArray(current.messages, snapshot.messages))
+    if (current && current.presentation === snapshot.presentation && current.compaction === snapshot.compaction && current.versions === snapshot.versions && sameReferenceArray(current.messages, snapshot.messages))
       return;
     this.rows.set(key, snapshot);
     if (this.timelineSnapshot.items.at(-1)?.key === key)
@@ -1312,8 +1390,15 @@ export class ThreadSessionStore {
 
   private installFullSnapshot(snapshot: SessionSnapshot, view: SessionViewSnapshot): void {
     const persistedTurnByMessage = new Map<string, string>();
+    const versionsByTurn = new Map<string, ThreadTurnVersions>();
     for (const item of view.history.items) {
       if (item.type !== "turn") continue;
+      if (item.turn.versions) {
+        versionsByTurn.set(item.turn.id, {
+          active: item.turn.versions.active,
+          total: item.turn.versions.total,
+        });
+      }
       for (const message of item.turn.messages)
         persistedTurnByMessage.set(message.id, item.turn.id);
     }
@@ -1323,7 +1408,15 @@ export class ThreadSessionStore {
       const persistedTurnId = persistedTurnByMessage.get(message.id);
       if (persistedTurnId) currentTurnId = persistedTurnId;
       else if (message.role === "user" || !currentTurnId) currentTurnId = `turn:${message.id}`;
-      this.upsertLiveMessage(currentTurnId, message);
+      // The snapshot is authoritative: messages come back without a run status,
+      // and only a still-running session restores one below.
+      this.upsertLiveMessage(currentTurnId, message, null);
+    }
+    for (const [turnId, versions] of versionsByTurn) {
+      const turn = this.turns.get(turnId);
+      if (!turn) continue;
+      turn.versions = versions;
+      this.updateAssistantRow(turnId);
     }
     for (const compaction of snapshot.contextCompactions) {
       this.compactions.set(compaction.id, compaction);
@@ -1333,6 +1426,7 @@ export class ThreadSessionStore {
       });
     }
     this.installViewMetadata(view);
+    this.installRunningPresentation(snapshot.messages, view);
     this.rebuildTimeline(100_000 - this.projectedItemCount());
   }
 

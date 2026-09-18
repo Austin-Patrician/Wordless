@@ -2,7 +2,7 @@ import { createContext, type ReactNode, useContext, useEffect, useMemo, useState
 import { translate, type MessageKey } from "./i18n";
 import type { Locale, ThemeMode } from "./models";
 import { useRuntime } from "./runtime";
-import type { AppearancePreferences, NotificationPreferences, SecurityPreferences } from "@wordless/domain";
+import type { AppearancePreferences, NotificationPreferences, SecurityPreferences, TranslationPreferences } from "@wordless/domain";
 
 const defaultAppearance: AppearancePreferences = {
   background: {
@@ -14,6 +14,13 @@ const defaultAppearance: AppearancePreferences = {
   },
 };
 
+/** Mirrors the runtime defaults so the interface works before the first snapshot arrives. */
+const defaultTranslation: TranslationPreferences = {
+  targetLanguage: null,
+  model: null,
+  bubbleMaxChars: 600,
+};
+
 type Preferences = {
   locale: Locale;
   theme: ThemeMode;
@@ -22,6 +29,7 @@ type Preferences = {
   notifications: NotificationPreferences;
   security: SecurityPreferences;
   appearance: AppearancePreferences;
+  translation: TranslationPreferences;
   setLocale: (locale: Locale) => void;
   setTheme: (theme: ThemeMode) => void;
   setFontScale: (fontScale: number) => void;
@@ -30,6 +38,7 @@ type Preferences = {
   setSecurity: (security: SecurityPreferences) => Promise<void>;
   previewAppearance: (appearance: AppearancePreferences) => void;
   setAppearance: (appearance: AppearancePreferences) => Promise<void>;
+  setTranslation: (translation: TranslationPreferences) => Promise<void>;
   t: (key: MessageKey) => string;
 };
 
@@ -44,6 +53,7 @@ export function PreferencesProvider({ children }: { children: ReactNode }) {
   const [notifications, setNotifications] = useState<NotificationPreferences>({ enabled: false, onActionRequired: true, onRunCompleted: true, onRunFailed: true });
   const [security, setSecurityPreferences] = useState<SecurityPreferences>({ customFileRules: [], customCommandRules: [] });
   const [appearance, setAppearancePreferences] = useState<AppearancePreferences>(defaultAppearance);
+  const [translation, setTranslationPreferences] = useState<TranslationPreferences>(defaultTranslation);
 
   useEffect(() => {
     if (!snapshot) return;
@@ -54,6 +64,7 @@ export function PreferencesProvider({ children }: { children: ReactNode }) {
     setNotifications(snapshot.preferences.notifications);
     setSecurityPreferences(snapshot.preferences.security);
     setAppearancePreferences(snapshot.preferences.appearance);
+    setTranslationPreferences(snapshot.preferences.translation ?? defaultTranslation);
   }, [snapshot]);
 
   useEffect(() => {
@@ -87,6 +98,7 @@ export function PreferencesProvider({ children }: { children: ReactNode }) {
       notifications,
       security,
       appearance,
+      translation,
       setLocale: (nextLocale) => {
         setLocale(nextLocale);
         if (snapshot && client) void client.setPreferences({ ...snapshot.preferences, locale: nextLocale });
@@ -118,9 +130,13 @@ export function PreferencesProvider({ children }: { children: ReactNode }) {
         setAppearancePreferences(nextAppearance);
         if (snapshot && client) await client.setPreferences({ ...snapshot.preferences, appearance: nextAppearance });
       },
+      setTranslation: async (nextTranslation) => {
+        setTranslationPreferences(nextTranslation);
+        if (snapshot && client) await client.setPreferences({ ...snapshot.preferences, translation: nextTranslation });
+      },
       t: (key) => translate(locale, key),
     }),
-    [appearance, client, fontScale, locale, notifications, reduceMotion, security, snapshot, theme],
+    [appearance, client, fontScale, locale, notifications, reduceMotion, security, snapshot, theme, translation],
   );
 
   return <PreferencesContext.Provider value={value}>{children}</PreferencesContext.Provider>;

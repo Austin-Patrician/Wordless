@@ -104,6 +104,13 @@ export class WordlessDatabase {
             ...(typeof stored.appearance === "object" && stored.appearance !== null && !Array.isArray(stored.appearance) && "background" in stored.appearance && typeof stored.appearance.background === "object" && stored.appearance.background !== null && !Array.isArray(stored.appearance.background) ? stored.appearance.background : {}),
           },
         },
+        // Nested merge, not a shallow spread: a preference written by an older
+        // build only carries the fields that existed then, so new translation
+        // fields must fall back to their defaults instead of disappearing.
+        translation: {
+          ...defaults.translation,
+          ...(typeof stored.translation === "object" && stored.translation !== null && !Array.isArray(stored.translation) ? stored.translation : {}),
+        },
       };
     } catch {
       return defaults;

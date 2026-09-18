@@ -5,6 +5,7 @@ import { useEffect, useState } from "react";
 import { GeneralSettings } from "./GeneralSettings";
 import { ModelSettings } from "./ModelSettings";
 import { ExtensionsSettings } from "./ExtensionsSettings";
+import { TranslationSettings } from "./TranslationSettings";
 import { SecuritySettings } from "./SecuritySettings";
 import { PersonalizationSettings } from "./PersonalizationSettings";
 import { UsageSettings } from "./UsageSettings";
@@ -42,7 +43,7 @@ export function SettingsDialog({ initialPage = "general", open, onOpenChange }: 
         <SettingsSidebar page={page} onPageChange={setPage} />
         <div className="flex min-w-0 flex-1 flex-col">
           <SettingsHeader page={page} onClose={() => onOpenChange(false)} />
-          {page === "general" ? <GeneralSettings /> : page === "models" ? <ModelSettings /> : page === "assistant" ? <ExtensionsSettings /> : page === "usage" ? <UsageSettings /> : page === "security" ? <SecuritySettings /> : page === "personalization" ? <PersonalizationSettings /> : page === "dataPrivacy" ? <DataPrivacySettings /> : <AboutUpdatesSettings />}
+          {page === "general" ? <GeneralSettings /> : page === "models" ? <ModelSettings /> : page === "assistant" ? <AssistantSettings /> : page === "usage" ? <UsageSettings /> : page === "security" ? <SecuritySettings /> : page === "personalization" ? <PersonalizationSettings /> : page === "dataPrivacy" ? <DataPrivacySettings /> : <AboutUpdatesSettings />}
         </div>
       </div>
     </div>
@@ -52,7 +53,7 @@ export function SettingsDialog({ initialPage = "general", open, onOpenChange }: 
 function SettingsHeader({ page, onClose }: { page: SettingsPage; onClose: () => void }) {
   const { t } = usePreferences();
   const title = page === "about" ? "About & Updates" : page === "dataPrivacy" ? t("dataPrivacy") : page === "models" ? t("models") : page === "assistant" ? t("assistant") : page === "usage" ? t("usage") : page === "security" ? t("securityCenter") : page === "personalization" ? t("personalization") : t("general");
-  const description = page === "about" ? "Version information, updates, and release history" : page === "dataPrivacy" ? t("dataPrivacyDescription") : page === "models" ? t("configuredModels") : page === "assistant" ? t("extensionsHelp") : page === "usage" ? t("usageHelp") : page === "security" ? t("securityCenterHelp") : page === "personalization" ? t("personalizationHelp") : t("configure");
+  const description = page === "about" ? "Version information, updates, and release history" : page === "dataPrivacy" ? t("dataPrivacyDescription") : page === "models" ? t("configuredModels") : page === "assistant" ? t("assistantHelp") : page === "usage" ? t("usageHelp") : page === "security" ? t("securityCenterHelp") : page === "personalization" ? t("personalizationHelp") : t("configure");
 
   return (
     <header className="flex shrink-0 items-center justify-between border-b border-border px-6 py-5 sm:px-9">
@@ -89,6 +90,20 @@ function SettingsSidebar({ page, onPageChange }: { page: SettingsPage; onPageCha
         <SettingsNav active={page === "about"} icon={CircleHelp} label="About & Updates" onClick={() => onPageChange("about")} />
       </nav>
     </aside>
+  );
+}
+
+/**
+ * The Assistant page groups what shapes assistant behaviour: how replies are
+ * translated, and which extensions are active. It owns the scroll container so
+ * both sections share one scrollbar instead of competing for height.
+ */
+function AssistantSettings() {
+  return (
+    <div className="min-h-0 flex-1 overflow-y-auto">
+      <TranslationSettings />
+      <ExtensionsSettings />
+    </div>
   );
 }
 

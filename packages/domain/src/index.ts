@@ -1049,6 +1049,15 @@ export interface SecurityPolicySnapshot {
   commandRules: CommandSecurityRule[];
 }
 
+export interface TranslationPreferences {
+  /** Language tag used for translations. `null` follows the interface language. */
+  targetLanguage: string | null;
+  /** Chat model used for translation. `null` follows the session's selected model. */
+  model: ModelReference | null;
+  /** Selection length above which a translation opens in the panel instead of a bubble. */
+  bubbleMaxChars: number;
+}
+
 export interface AppPreferences {
   locale: "zh-CN" | "en-US";
   theme: "light" | "dark" | "system";
@@ -1060,6 +1069,44 @@ export interface AppPreferences {
   defaultWorkspaceRoot: string;
   defaultModel: ModelReference | null;
   entryModels: Record<string, ModelReference>;
+  translation: TranslationPreferences;
+}
+
+/** Languages offered for translation; the label is resolved by the interface locale. */
+export const TRANSLATION_LANGUAGE_IDS = [
+  "zh-CN",
+  "zh-TW",
+  "en-US",
+  "ja",
+  "ko",
+  "fr",
+  "de",
+  "es",
+  "pt",
+  "ru",
+  "it",
+  "ar",
+] as const;
+
+export type TranslationLanguageId = (typeof TRANSLATION_LANGUAGE_IDS)[number];
+
+export function isTranslationLanguageId(value: unknown): value is TranslationLanguageId {
+  return typeof value === "string" && (TRANSLATION_LANGUAGE_IDS as readonly string[]).includes(value);
+}
+
+/**
+ * Resolves the language a translation should target.
+ *
+ * An explicit preference wins; otherwise the interface language is used, which
+ * matches the behaviour users expect from a translate action: foreign-language
+ * output comes back in the language they read the interface in.
+ */
+export function resolveTranslationTargetLanguage(
+  preferences: Pick<AppPreferences, "locale" | "translation">,
+): TranslationLanguageId {
+  const configured = preferences.translation?.targetLanguage;
+  if (isTranslationLanguageId(configured)) return configured;
+  return preferences.locale === "en-US" ? "en-US" : "zh-CN";
 }
 
 export interface SessionDraft {

@@ -1,4 +1,4 @@
-import type { ImagesProvider, Provider } from "./ai";
+import type { ImagesProvider, Model, Provider, ProviderHeaders } from "./ai";
 
 export function openAICompletionsApi(): unknown;
 export function openAIResponsesApi(): unknown;
@@ -15,6 +15,13 @@ export function googleInteractionsImagesApi(): unknown;
 export function dashscopeImagesApi(): unknown;
 export function volcengineImagesApi(): unknown;
 export function builtinProviders(): Provider[];
+
+/** Shared rule for the OpenCode per-conversation routing header. */
+export function openCodeSessionHeadersFor(
+  model: Pick<Model, "provider" | "baseUrl">,
+  options?: { sessionId?: string; headers?: ProviderHeaders },
+): ProviderHeaders | undefined;
+export function isOpenCodeEndpoint(model: Pick<Model, "provider" | "baseUrl">): boolean;
 export function builtinImagesProviders(): ImagesProvider[];
 
 export interface BuiltinCatalogModel {

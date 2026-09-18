@@ -128,6 +128,12 @@ export class Session<TMetadata extends SessionMetadata = SessionMetadata> {
   appendModelChange(provider: string, modelId: string): Promise<string>;
   appendThinkingLevelChange(thinkingLevel: string): Promise<string>;
   appendCustomEntry(customType: string, data?: unknown): Promise<string>;
+  appendCustomMessageEntry<T = unknown>(
+    customType: string,
+    content: string | unknown[],
+    display: boolean,
+    details?: T,
+  ): Promise<string>;
 }
 
 export class SessionError extends Error {

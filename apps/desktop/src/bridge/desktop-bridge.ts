@@ -212,6 +212,16 @@ export interface DesktopBridge {
     submission: UserMessageSubmission,
     attachments?: File[],
   ): Promise<void>;
+  retrySessionTurn(
+    sessionId: string,
+    messageId: string,
+    instruction?: string,
+  ): Promise<void>;
+  selectSessionTurnVersion(
+    sessionId: string,
+    messageId: string,
+    version: number,
+  ): Promise<void>;
   compactSession(sessionId: string): Promise<void>;
   getSessionContext(sessionId: string): Promise<SessionContextSnapshot>;
   getSessionArtifacts(sessionId: string): Promise<SessionArtifactsSnapshot>;
@@ -369,6 +379,19 @@ export interface DesktopBridge {
     interactionMode: AgentInteractionModeId,
   ): Promise<void>;
   setPreferences(preferences: AppPreferences): Promise<void>;
+  /**
+   * Starts a streaming translation of a message selection. Deltas, completion,
+   * and failure arrive through `subscribeHost` as `translation` events keyed by
+   * `requestId`, which the caller generates so it can correlate events from the
+   * moment the request is issued.
+   */
+  translateSelection(request: {
+    requestId: string;
+    sessionId: string;
+    text: string;
+    targetLanguage?: string;
+  }): Promise<void>;
+  abortTranslation(requestId: string): Promise<void>;
   importAppearanceBackground(file: File): Promise<AppearanceBackgroundAsset>;
   removeAppearanceBackground(assetId: string): Promise<void>;
   getModelConfiguration(): Promise<AppSnapshot["modelConfiguration"]>;
@@ -531,6 +554,8 @@ const requiredMethods: Array<Exclude<keyof DesktopBridge, "version">> = [
   "openExternalUrl",
   "createAndPrompt",
   "promptSession",
+  "retrySessionTurn",
+  "selectSessionTurnVersion",
   "compactSession",
   "getSessionContext",
   "getSessionArtifacts",
@@ -618,6 +643,8 @@ const requiredMethods: Array<Exclude<keyof DesktopBridge, "version">> = [
   "updateExtensionSettings",
   "interactWithSessionExtension",
   "setSessionExtensionState",
+  "translateSelection",
+  "abortTranslation",
   "subscribe",
   "subscribeHost",
 ];

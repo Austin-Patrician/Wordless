@@ -1,5 +1,5 @@
 import { Button } from "@wordless/ui-kit";
-import { AlertTriangle, ChevronLeft, ListTodo, LoaderCircle, PackageOpen, Search, Settings } from "lucide-react";
+import { AlertTriangle, ChevronLeft, Languages, ListTodo, LoaderCircle, PackageOpen, Search, Settings } from "lucide-react";
 import { useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
 import { SessionContextPanel } from "../artifacts/SessionContextPanel";
 import { SettingsDialog, type SettingsPage } from "../settings/SettingsDialog";
@@ -12,6 +12,7 @@ import { usePreferences } from "../../shared/preferences";
 import { useRuntime } from "../../shared/runtime";
 import { workbenchContextPanelRegistry } from "./context-panel-registry";
 import type { ContextPanelView, FileChangeSelection, ResearchTaskSelection } from "./context-panel-types";
+import { TranslationPanelSlot, TranslationProvider } from "../translation/TranslationPanelSlot";
 import { WelcomeView } from "./WelcomeView";
 import { Sidebar } from "./Sidebar";
 import { SkillsView } from "../skills/SkillsView";
@@ -304,7 +305,16 @@ export function WorkbenchShell() {
 
   const contextPanelDefinition = workbenchContextPanelRegistry.resolve(activeSession?.workbenchId);
   const ContextPanelContent = contextPanelDefinition.component;
-  const contextPanelTabs = contextPanelDefinition.tabs.map(({ labelKey, ...tab }) => ({ ...tab, label: t(labelKey) }));
+  // The translation tab is appended centrally: translating a selection is a
+  // global capability, not something each workbench registers.
+  const contextPanelTabs = [
+    ...contextPanelDefinition.tabs.map(({ labelKey, ...tab }) => ({ ...tab, label: t(labelKey) })),
+    { id: "translation" as const, label: t("translationPanelTitle"), icon: Languages },
+  ];
+  const revealTranslationPanel = () => {
+    setContextView("translation");
+    setRightOpen(true);
+  };
   const addWorkspaceReference = (reference: InlineWorkspaceReferenceToken) => {
     setPendingWorkspaceReferences((current) => current.some((item) => item.path === reference.path) ? current : [...current, reference]);
     setRightOpen(true);
@@ -325,7 +335,9 @@ export function WorkbenchShell() {
       showFooter={selectedWorkbenchId !== "analysis" && selectedWorkbenchId !== "conversation"}
       showMenu={selectedWorkbenchId !== "analysis" && selectedWorkbenchId !== "conversation"}
       tabs={contextPanelTabs}
-      renderContent={(view) => activeSession
+      renderContent={(view) => view === "translation"
+        ? <TranslationPanelSlot />
+        : activeSession
         ? <ContextPanelContent fileChangeSelection={fileChangeSelection} onArtifactSelection={(selection) => { setPendingArtifactSelection(selection); setRightOpen(true); }} onAttachFile={addWorkspaceReference} onClearResearchSelection={() => setResearchTaskSelection(null)} onFileChangeSelectionConsumed={consumeFileChangeSelection} onViewChange={setContextView} researchSelection={researchTaskSelection} sessionId={activeSession.id} view={view} />
         : <div className="p-4 text-[12px] text-muted-foreground">Select a session to view its context.</div>}
       view={contextView}
@@ -333,6 +345,7 @@ export function WorkbenchShell() {
   );
 
   return (
+    <TranslationProvider onOpenSettings={() => openSettings("assistant")} onRevealPanel={revealTranslationPanel} sessionId={selectedSessionId ?? undefined}>
     <main className="relative isolate min-h-screen overflow-hidden bg-transparent text-foreground">
       <AppBackgroundLayer />
       <div className="relative z-10 flex min-h-screen flex-col">
@@ -366,5 +379,6 @@ export function WorkbenchShell() {
       {activeSession && client ? <ConversationSearchDialog onNavigate={(result) => setMessageNavigationTarget({ matchText: result.snippet.slice(result.matchStart, result.matchEnd), messageId: result.messageId, sessionId: activeSession.id, turnId: result.turnId, requestId: ++messageNavigationSequenceRef.current })} onOpenChange={setConversationSearchOpen} open={conversationSearchOpen} searchMessages={(request) => client.searchSessionMessages(activeSession.id, request)} sessionId={activeSession.id} /> : null}
       </div>
     </main>
+    </TranslationProvider>
   );
 }

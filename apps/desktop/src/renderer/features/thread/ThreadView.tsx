@@ -1,9 +1,11 @@
-import { Tooltip, TooltipContent, TooltipTrigger } from "@wordless/ui-kit";
+import { Tooltip, TooltipContent, TooltipTrigger, Popover, PopoverAnchor, PopoverContent } from "@wordless/ui-kit";
 import {
   Archive,
   ArrowDown,
   ArrowLeft,
   Check,
+  ChevronLeft,
+  ChevronRight,
   Circle,
   ChevronDown,
   ChevronUp,
@@ -16,6 +18,7 @@ import {
   ListChecks,
   RotateCcw,
   UsersRound,
+  X,
 } from "lucide-react";
 import {
   Fragment,
@@ -102,6 +105,7 @@ import {
 import { TurnTokenUsageRow } from "./TurnTokenUsageRow";
 import { ThreadContentFrame } from "./ThreadContentFrame";
 import { MessageMarkdown } from "./MessageMarkdown";
+import { MessageSelectionMenu } from "./MessageSelectionMenu";
 import {
   RESPONSE_ERROR_COLLAPSED_HEIGHT,
   shouldCollapseResponseError,
@@ -111,6 +115,7 @@ import {
   ThreadSessionStore,
   type ThreadHistorySnapshot,
   type ThreadTimelineDescriptor,
+  type ThreadTurnVersions,
 } from "./thread-session-store";
 import { getThreadSessionStore } from "./thread-session-store-registry";
 import type { ExpertMemberSessionStore } from "./expert-member-session-store";
@@ -157,6 +162,8 @@ type ThreadVirtuosoContext = {
   densityRail: boolean;
   isCompacting: boolean;
   onRetryCompaction: () => void;
+  /** Failure of a thread action such as turn retry or version switching. */
+  actionError?: string;
 };
 
 function ThreadVirtuosoHeader({ context }: { context: ThreadVirtuosoContext }) {
@@ -166,6 +173,11 @@ function ThreadVirtuosoHeader({ context }: { context: ThreadVirtuosoContext }) {
 function ThreadVirtuosoFooter({ context }: { context: ThreadVirtuosoContext }) {
   return (
     <ThreadContentFrame className="pb-10" densityRail={context.densityRail}>
+      {context.actionError ? (
+        <div className="mb-3 rounded-[7px] border border-destructive/25 bg-destructive/5 px-3 py-2 text-[11px] text-destructive">
+          {context.actionError}
+        </div>
+      ) : null}
       {context.isCompacting ? (
         <ContextCompactionPending trigger={context.compactionTrigger} />
       ) : null}
@@ -1533,8 +1545,10 @@ function planStateFromExtensions(extensions: SessionSnapshot["extensions"]): {
 
 function PlanProgressBar({
   plan,
+  onEndPlan,
 }: {
   plan: NonNullable<ReturnType<typeof planStateFromExtensions>>;
+  onEndPlan: () => void;
 }) {
   const { t } = usePreferences();
   const dockRef = useRef<HTMLDivElement>(null);
@@ -1590,13 +1604,16 @@ function PlanProgressBar({
         <div
           className={`overflow-hidden ${expanded ? "rounded-lg border border-black/10 bg-white/90 shadow-[0_8px_20px_rgba(0,0,0,0.10)] backdrop-blur-md dark:border-white/10 dark:bg-card/90 dark:shadow-[0_8px_20px_rgba(0,0,0,0.34)]" : "bg-transparent"}`}
         >
+          <div
+          className={`flex min-h-8 w-full min-w-0 items-center py-0.5 transition-colors duration-150 hover:bg-[#f5f5f2] focus-within:bg-[#f5f5f2] dark:hover:bg-muted dark:focus-within:bg-muted ${expanded ? "px-3" : "px-1"}`}
+        >
           <button
             aria-controls={detailsId}
             aria-expanded={expanded}
             aria-label={
               expanded ? t("planCollapseSteps") : t("planExpandSteps")
             }
-            className={`flex min-h-8 w-full min-w-0 items-center gap-2 px-1 py-0.5 text-left transition-colors duration-150 hover:bg-[#f5f5f2] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring dark:hover:bg-muted ${expanded ? "px-3" : ""}`}
+            className="flex min-w-0 flex-1 items-center gap-2 py-0.5 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
             onClick={() => setExpanded((value) => !value)}
             type="button"
           >
@@ -1626,6 +1643,16 @@ function PlanProgressBar({
               className={`h-3.5 w-3.5 shrink-0 text-muted-foreground transition-transform duration-150 motion-reduce:transition-none ${expanded ? "rotate-180" : ""}`}
             />
           </button>
+          <button
+            aria-label={t("planEndPlan")}
+            className="ml-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors duration-150 hover:bg-black/5 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring dark:hover:bg-white/10"
+            onClick={onEndPlan}
+            title={t("planEndPlan")}
+            type="button"
+          >
+            <X aria-hidden className="h-3.5 w-3.5" />
+          </button>
+        </div>
           {expanded ? (
             <ol
               id={detailsId}
@@ -2427,6 +2454,10 @@ function AssistantMessageBody({
   planMode,
   runPresentation,
   showFooter,
+  turnUserMessageId,
+  turnVersions,
+  onRetryTurn,
+  onSelectTurnVersion,
   workbenchId,
 }: {
   assistantIdentity?: Pick<ExpertCollaborationLeader, "name" | "portrait">;
@@ -2461,6 +2492,18 @@ function AssistantMessageBody({
   planMode: "off" | "planning" | "executing";
   runPresentation: AssistantRunPresentation | null;
   showFooter: boolean;
+  /** User message id of this turn; enables retry when present. */
+  turnUserMessageId?: string;
+  /** Assistant response versions of this turn, when the response was retried. */
+  turnVersions?: ThreadTurnVersions | null;
+  onRetryTurn?: (
+    userMessageId: string,
+    instruction?: string,
+  ) => Promise<void>;
+  onSelectTurnVersion?: (
+    userMessageId: string,
+    version: number,
+  ) => Promise<void>;
   workbenchId: WorkbenchId;
 }) {
   const { t } = usePreferences();
@@ -2591,6 +2634,17 @@ function AssistantMessageBody({
             >
               <Copy className="h-3.5 w-3.5" />
             </button>
+            {turnUserMessageId && onRetryTurn && onSelectTurnVersion ? (
+              <AssistantRetryActions
+                onRetry={(instruction) =>
+                  onRetryTurn(turnUserMessageId, instruction)
+                }
+                onSelectVersion={(version) =>
+                  onSelectTurnVersion(turnUserMessageId, version)
+                }
+                versions={turnVersions ?? null}
+              />
+            ) : null}
             <span className="ml-auto font-mono text-[11px] text-[#aaa9a1]">
               {new Date(message.timestamp).toLocaleTimeString([], {
                 hour: "2-digit",
@@ -2615,6 +2669,116 @@ function AssistantMessageBody({
 }
 
 const USER_MESSAGE_COLLAPSED_HEIGHT = 72;
+
+/**
+ * Retry control for one assistant response.
+ *
+ * Retrying does not delete the previous response: the regenerated answer is
+ * stored as a sibling session branch, and the `1/2` switcher moves the session
+ * leaf between versions. Only the latest turn renders this control.
+ */
+function AssistantRetryActions({
+  onRetry,
+  onSelectVersion,
+  versions,
+}: {
+  onRetry: (instruction?: string) => Promise<void>;
+  onSelectVersion: (version: number) => Promise<void>;
+  versions: ThreadTurnVersions | null;
+}) {
+  const { t } = usePreferences();
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const total = versions?.total ?? 1;
+  const active = Math.min(Math.max(versions?.active ?? 1, 1), total);
+  const run = (action: () => Promise<void>) => {
+    setMenuOpen(false);
+    setBusy(true);
+    void action().finally(() => setBusy(false));
+  };
+  const choices: Array<{ id: string; label: string; instruction?: string }> = [
+    { id: "again", label: t("threadRetryTryAgain") },
+    {
+      id: "longer",
+      label: t("threadRetryLonger"),
+      instruction: t("threadRetryLongerInstruction"),
+    },
+    {
+      id: "shorter",
+      label: t("threadRetryShorter"),
+      instruction: t("threadRetryShorterInstruction"),
+    },
+  ];
+  return (
+    <div className="flex items-center gap-1">
+      <Popover onOpenChange={setMenuOpen} open={menuOpen}>
+        <PopoverAnchor asChild>
+          <button
+            aria-expanded={menuOpen}
+            aria-label={t("threadRetryResponse")}
+            className="grid h-6 w-6 place-items-center rounded-[5px] hover:bg-[#efefeb] hover:text-[#454540] disabled:opacity-40 disabled:hover:bg-transparent"
+            disabled={busy}
+            onClick={() => setMenuOpen((open) => !open)}
+            type="button"
+          >
+            {busy ? (
+              <LoaderCircle className="h-3.5 w-3.5 animate-spin" />
+            ) : (
+              <RotateCcw className="h-3.5 w-3.5" />
+            )}
+          </button>
+        </PopoverAnchor>
+        <PopoverContent
+          align="start"
+          className="w-[160px] p-1"
+          side="top"
+          sideOffset={6}
+        >
+          {choices.map((choice) => (
+            <button
+              className="block w-full rounded-[5px] px-2 py-1.5 text-left text-[12px] text-[#454540] hover:bg-[#f1f1ed] dark:text-foreground dark:hover:bg-muted"
+              key={choice.id}
+              onClick={() => run(() => onRetry(choice.instruction))}
+              type="button"
+            >
+              {choice.label}
+            </button>
+          ))}
+        </PopoverContent>
+      </Popover>
+      {total > 1 ? (
+        <div className="flex items-center gap-0.5">
+          <button
+            aria-label={t("threadRetryPreviousVersion")}
+            className="grid h-6 w-6 place-items-center rounded-[5px] hover:bg-[#efefeb] hover:text-[#454540] disabled:opacity-40 disabled:hover:bg-transparent"
+            disabled={busy || active <= 1}
+            onClick={() => run(() => onSelectVersion(active - 1))}
+            type="button"
+          >
+            <ChevronLeft className="h-3.5 w-3.5" />
+          </button>
+          <span
+            aria-label={t("threadRetryVersionLabel")
+              .replace("{index}", String(active))
+              .replace("{total}", String(total))}
+            className="font-mono text-[11px] text-[#aaa9a1]"
+          >
+            {active}/{total}
+          </span>
+          <button
+            aria-label={t("threadRetryNextVersion")}
+            className="grid h-6 w-6 place-items-center rounded-[5px] hover:bg-[#efefeb] hover:text-[#454540] disabled:opacity-40 disabled:hover:bg-transparent"
+            disabled={busy || active >= total}
+            onClick={() => run(() => onSelectVersion(active + 1))}
+            type="button"
+          >
+            <ChevronRight className="h-3.5 w-3.5" />
+          </button>
+        </div>
+      ) : null}
+    </div>
+  );
+}
 
 function CollapsibleUserMessage({
   children,
@@ -2691,6 +2855,10 @@ function MessageBody({
   planMode,
   runPresentation,
   showFooter,
+  turnUserMessageId,
+  turnVersions,
+  onRetryTurn,
+  onSelectTurnVersion,
   workbenchId,
   sessionId,
 }: {
@@ -2728,6 +2896,18 @@ function MessageBody({
   planMode: "off" | "planning" | "executing";
   runPresentation: AssistantRunPresentation | null;
   showFooter: boolean;
+  /** User message id of this turn; enables retry when present. */
+  turnUserMessageId?: string;
+  /** Assistant response versions of this turn, when the response was retried. */
+  turnVersions?: ThreadTurnVersions | null;
+  onRetryTurn?: (
+    userMessageId: string,
+    instruction?: string,
+  ) => Promise<void>;
+  onSelectTurnVersion?: (
+    userMessageId: string,
+    version: number,
+  ) => Promise<void>;
   workbenchId: WorkbenchId;
   sessionId: string;
 }) {
@@ -2911,9 +3091,13 @@ function MessageBody({
       onResolveClarificationQuestion={onResolveClarificationQuestion}
       onResolvePlanResult={onResolvePlanResult}
       onResolveUserRequest={onResolveUserRequest}
+      onRetryTurn={onRetryTurn}
+      onSelectTurnVersion={onSelectTurnVersion}
       planMode={planMode}
       runPresentation={runPresentation}
       showFooter={showFooter}
+      turnUserMessageId={turnUserMessageId}
+      turnVersions={turnVersions}
       workbenchId={workbenchId}
     />
   );
@@ -2936,6 +3120,13 @@ type ThreadRowActions = {
     value: string | boolean,
   ) => Promise<void>;
   resolvePlanResult: (action: "implement" | "stay") => Promise<void>;
+  /** Regenerates the assistant response of one turn. */
+  retryTurn: (userMessageId: string, instruction?: string) => Promise<void>;
+  /** Makes a previously generated response version active again. */
+  selectTurnVersion: (
+    userMessageId: string,
+    version: number,
+  ) => Promise<void>;
   resolveUserRequest: (
     requestId: string,
     resolution: {
@@ -2977,6 +3168,9 @@ class ThreadRowEnvironment {
       this.requireActions().resolvePlanResult(...args),
     resolveUserRequest: (...args) =>
       this.requireActions().resolveUserRequest(...args),
+    retryTurn: (...args) => this.requireActions().retryTurn(...args),
+    selectTurnVersion: (...args) =>
+      this.requireActions().selectTurnVersion(...args),
     setToolApprovalMode: (...args) =>
       this.requireActions().setToolApprovalMode(...args),
   };
@@ -3272,10 +3466,18 @@ function ThreadStoreRow({
           }
           onResolvePlanResult={context.environment.actions.resolvePlanResult}
           onResolveUserRequest={context.environment.actions.resolveUserRequest}
+          onRetryTurn={context.environment.actions.retryTurn}
+          onSelectTurnVersion={context.environment.actions.selectTurnVersion}
           pendingAssistant={descriptor.type === "assistant"}
           planMode={environment.planMode}
           runPresentation={row.presentation}
           showFooter={!isRunning && isLastMessage}
+          turnUserMessageId={
+            descriptor.type === "assistant"
+              ? descriptor.turnId.slice("turn:".length)
+              : undefined
+          }
+          turnVersions={row.versions ?? null}
           workbenchId={workbenchId}
           sessionId={context.store.sessionId}
         />
@@ -3534,6 +3736,11 @@ const ThreadTimelineViewport = memo(
         return <div className="h-full" />;
       return (
         <>
+          {/* One selection menu per thread: covering only rendered markdown used to
+              leave user messages, tool output, and error details without any
+              right-click actions. `display: contents` keeps the wrapper out of the
+              layout while it still owns the selection events. */}
+          <MessageSelectionMenu streaming={responding} style={{ display: "contents" }}>
           <Virtuoso
             key={store.sessionId}
             atBottomStateChange={atBottomChanged}
@@ -3565,6 +3772,7 @@ const ThreadTimelineViewport = memo(
             responding={responding}
             store={viewportStore}
           />
+          </MessageSelectionMenu>
         </>
       );
     },
@@ -4074,6 +4282,49 @@ export function ThreadView({
     }
   }, [client, sessionId, threadStore]);
 
+  /**
+   * Regenerates the assistant response of a turn. The runtime rewinds the
+   * session branch and streams the new response into the same turn, so the
+   * projection is reloaded once the run has settled to drop the version that
+   * left the branch.
+   */
+  const retryTurn = useCallback(
+    async (userMessageId: string, instruction?: string) => {
+      threadStore.reportActionError(undefined);
+      try {
+        threadStore.beginTurnRetry(`turn:${userMessageId}`);
+        await client.retrySessionTurn(sessionId, userMessageId, instruction);
+      } catch (cause) {
+        threadStore.reportActionError(
+          cause instanceof Error ? cause.message : String(cause),
+        );
+      } finally {
+        await threadStore.reload().catch(() => {});
+      }
+    },
+    [client, sessionId, threadStore],
+  );
+
+  /** Moves the session branch back to an earlier response version. */
+  const selectTurnVersion = useCallback(
+    async (userMessageId: string, version: number) => {
+      threadStore.reportActionError(undefined);
+      try {
+        await client.selectSessionTurnVersion(
+          sessionId,
+          userMessageId,
+          version,
+        );
+        await threadStore.reload();
+      } catch (cause) {
+        threadStore.reportActionError(
+          cause instanceof Error ? cause.message : String(cause),
+        );
+      }
+    },
+    [client, sessionId, threadStore],
+  );
+
   const navigateToTurn = useCallback(
     (turnId: string, messageId?: string, matchText?: string) =>
       timelineViewportRef.current?.navigateToTurn(
@@ -4102,6 +4353,7 @@ export function ThreadView({
 
   const threadVirtuosoContext = useMemo<ThreadVirtuosoContext>(
     () => ({
+      actionError: threadMetadata.error ?? undefined,
       compactionError: threadMetadata.compactionError,
       compactionTrigger: threadMetadata.compactionTrigger,
       densityRail: showDensityRail,
@@ -4115,6 +4367,7 @@ export function ThreadView({
       showDensityRail,
       threadMetadata.compactionError,
       threadMetadata.compactionTrigger,
+      threadMetadata.error,
       threadMetadata.isCompacting,
     ],
   );
@@ -4140,6 +4393,8 @@ export function ThreadView({
     resolveClarificationQuestion,
     resolvePlanResult,
     resolveUserRequest,
+    retryTurn,
+    selectTurnVersion,
     setToolApprovalMode,
   });
   useLayoutEffect(() => {
@@ -4243,7 +4498,10 @@ export function ThreadView({
               >
                 <div className="relative">
                   {!hideCompletedPlan && planState ? (
-                    <PlanProgressBar plan={planState} />
+                    <PlanProgressBar
+                      plan={planState}
+                      onEndPlan={() => void setPlanMode("off")}
+                    />
                   ) : null}
                   <Composer
                     key={sessionId}

@@ -34,9 +34,11 @@ import {
   createImagesProvider,
   createProvider,
   getSupportedThinkingLevels,
+  contentText,
   type Api,
   type AssistantImages,
   type ApiKeyAuth,
+  type Context,
   type CredentialStore,
   type ImagesApi,
   type ImagesModel,
@@ -52,7 +54,7 @@ import {
   type ProviderStreams,
 } from "@wordless/ai";
 import { builtinImagesProviders, builtinProviders } from "@wordless/ai/providers/all";
-import type { ConfiguredModelSummary, ConfiguredProviderSummary, ModelConfigurationSnapshot, ProviderAvatarId, ProviderModelCandidate, ProviderModelDiscoveryRequest } from "@wordless/domain";
+import type { ConfiguredModelSummary, ConfiguredProviderSummary, ModelConfigurationSnapshot, ModelReference, ProviderAvatarId, ProviderModelCandidate, ProviderModelDiscoveryRequest } from "@wordless/domain";
 import { discoverProviderModels as discoverRemoteProviderModels, enrichProviderModelCandidates } from "./provider-model-discovery.ts";
 
 type ModelKind = "chat" | "image";
@@ -443,6 +445,52 @@ export class RuntimeModelConfiguration {
   enabledChatModels(): Model<Api>[] {
     const enabled = new Set(this.settings.enabledChatModels);
     return this.options.models.getModels().filter((model) => enabled.has(modelReferenceKey(model.provider, model.id))) as Model<Api>[];
+  }
+
+  /**
+   * Streams one tool-free chat completion for lightweight side tasks such as
+   * selection translation. Mirrors `generateImage`: the reference must be an
+   * enabled chat model, and provider credentials are already applied to the
+   * registry by `rebuild()`, so no key handling is needed here.
+   *
+   * `sessionId` is forwarded as the request's routing identity. Providers that
+   * route per conversation (OpenCode answers `MissingSessionID`) reject a
+   * request without one, so any standalone request has to supply it.
+   *
+   * Resolves with the complete text, or throws when the model reports an error
+   * or the caller aborts through `signal`.
+   */
+  async streamText(
+    reference: ModelReference,
+    input: { system: string; prompt: string; sessionId: string; signal?: AbortSignal },
+    onDelta: (delta: string) => void,
+  ): Promise<string> {
+    const key = modelReferenceKey(reference.connectionId, reference.modelId);
+    if (!this.settings.enabledChatModels.includes(key)) throw new Error("The selected model is not enabled");
+    const model = this.options.models.getModel(reference.connectionId, reference.modelId);
+    if (!model) throw new Error("The selected model is no longer available");
+    const context: Context = {
+      systemPrompt: input.system,
+      messages: [{ role: "user", content: input.prompt, timestamp: Date.now() }],
+    };
+    const stream = this.options.models.streamSimple(model, context, {
+      sessionId: input.sessionId,
+      ...(input.signal ? { signal: input.signal } : {}),
+    });
+    let streamed = "";
+    for await (const event of stream) {
+      // Only assistant text is forwarded: thinking deltas and tool calls are not
+      // part of the requested translation.
+      if (event.type === "text_delta" && event.delta) {
+        streamed += event.delta;
+        onDelta(event.delta);
+      }
+    }
+    const message = await stream.result();
+    if (message.stopReason === "error" || message.stopReason === "aborted") {
+      throw new Error(message.errorMessage ?? (message.stopReason === "aborted" ? "The translation was cancelled" : "The model request failed"));
+    }
+    return contentText(message.content) || streamed;
   }
 
   async generateImage(providerId: string, modelId: string, context: ImagesContext, options?: { signal?: AbortSignal }): Promise<AssistantImages> {

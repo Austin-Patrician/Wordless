@@ -15,6 +15,7 @@ export default defineConfig({
       "@lexical/react/LexicalOnChangePlugin",
       "@lexical/react/LexicalPlainTextPlugin",
       "lexical",
+      "@radix-ui/react-context-menu",
       "@radix-ui/react-dialog",
       "@radix-ui/react-dropdown-menu",
       "@radix-ui/react-hover-card",
@@ -65,6 +66,8 @@ export default defineConfig({
     },
     include: [
       "test/thread-production-row.browser.test.tsx",
+      "test/thread-selection-menu.browser.test.tsx",
+      "test/translation-settings.browser.test.tsx",
       "test/thread-virtuoso.browser.test.tsx",
       "test/automation-form.browser.test.tsx",
     ],

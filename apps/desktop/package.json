@@ -48,7 +48,6 @@
     "@dicebear/core": "9.4.2",
     "@lexical/react": "0.48.0",
     "@lezer/highlight": "^1.2.3",
-    "@radix-ui/react-popover": "1.1.21",
     "@tailwindcss/vite": "4.3.2",
     "@types/mdast": "4.0.4",
     "@types/react": "19.2.17",

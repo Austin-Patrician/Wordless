@@ -16,6 +16,7 @@ import {
 	createCustomMessage,
 } from "../messages.ts";
 import { buildSessionContext } from "../session/session.ts";
+import { uuidv7 } from "../session/uuid.ts";
 import { type CompactionEntry, CompactionError, err, ok, type Result, type SessionTreeEntry } from "../types.ts";
 import {
 	computeFileLists,
@@ -26,6 +27,18 @@ import {
 	serializeConversation,
 } from "./utils.ts";
 import { DEFAULT_MAX_BYTES, DEFAULT_MAX_LINES, truncateTail } from "../utils/truncate.ts";
+
+/**
+ * Adds the request identity a standalone summarization request needs.
+ *
+ * A summary is a request of its own rather than part of the conversation it
+ * summarizes, so it carries its own session id: providers that route by session
+ * reject a request without one (OpenCode answers `MissingSessionID`), and cache
+ * retention is disabled because no later request can reuse a summary prompt.
+ */
+export function withSummaryRequestIdentity<TOptions extends { signal?: AbortSignal }>(options: TOptions): TOptions & { cacheRetention: "none"; sessionId: string } {
+	return { ...options, cacheRetention: "none", sessionId: uuidv7() };
+}
 
 /** File-operation details stored on generated compaction entries. */
 export interface CompactionDetails {
@@ -555,7 +568,7 @@ export async function generateSummary(
 	const response = await models.completeSimple(
 		model,
 		{ systemPrompt: SUMMARIZATION_SYSTEM_PROMPT, messages: summarizationMessages },
-		completionOptions,
+		withSummaryRequestIdentity(completionOptions),
 	);
 	if (response.stopReason === "aborted") {
 		return err(new CompactionError("aborted", response.errorMessage || "Summarization aborted"));
@@ -795,9 +808,11 @@ async function generateTurnPrefixSummary(
 	const response = await models.completeSimple(
 		model,
 		{ systemPrompt: SUMMARIZATION_SYSTEM_PROMPT, messages: summarizationMessages },
-		model.reasoning && thinkingLevel && thinkingLevel !== "off"
-			? { maxTokens, signal, reasoning: thinkingLevel }
-			: { maxTokens, signal },
+		withSummaryRequestIdentity(
+			model.reasoning && thinkingLevel && thinkingLevel !== "off"
+				? { maxTokens, signal, reasoning: thinkingLevel }
+				: { maxTokens, signal },
+		),
 	);
 	if (response.stopReason === "aborted") {
 		return err(new CompactionError("aborted", response.errorMessage || "Turn prefix summarization aborted"));

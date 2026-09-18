@@ -184,6 +184,18 @@ const wordlessBridge: DesktopBridge = {
       submission,
       ...(attachments ? { attachments: await Promise.all(attachments.map(fileToPromptAttachment)) } : {}),
     }),
+  retrySessionTurn: (sessionId, messageId, instruction) =>
+    ipcRenderer.invoke("wordless:session:retry-turn", {
+      sessionId,
+      messageId,
+      ...(instruction ? { instruction } : {}),
+    }),
+  selectSessionTurnVersion: (sessionId, messageId, version) =>
+    ipcRenderer.invoke("wordless:session:select-turn-version", {
+      sessionId,
+      messageId,
+      version,
+    }),
   compactSession: (sessionId) =>
     ipcRenderer.invoke("wordless:session:compact", { sessionId }),
   getSessionContext: (sessionId) =>
@@ -382,6 +394,10 @@ const wordlessBridge: DesktopBridge = {
       key: "app",
       value: preferences,
     }),
+  translateSelection: (request) =>
+    ipcRenderer.invoke("wordless:translation:translate", request),
+  abortTranslation: (requestId) =>
+    ipcRenderer.invoke("wordless:translation:abort", { requestId }),
   importAppearanceBackground: async (file) => {
     const sourcePath = webUtils.getPathForFile(file);
     if (!sourcePath)

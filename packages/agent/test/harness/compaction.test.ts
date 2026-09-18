@@ -499,6 +499,30 @@ describe("harness compaction", () => {
 		expect(seenOptions[2]).not.toHaveProperty("reasoning");
 	});
 
+	it("gives every summarization request its own session identity without cache retention", async () => {
+		const messages: AgentMessage[] = [createUserMessage("Summarize this.")];
+		const seenOptions: Array<Record<string, unknown> | undefined> = [];
+		const { faux, model } = createFauxModel(true);
+		const respond = (_context: unknown, options: unknown) => {
+			seenOptions.push(options as Record<string, unknown> | undefined);
+			return fauxAssistantMessage("## Goal\nTest summary");
+		};
+		// The faux provider consumes one queued response per request.
+		faux.setResponses([respond, respond]);
+		getOrThrow(await generateSummary(messages, models, model, 2000));
+		getOrThrow(await generateSummary(messages, models, model, 2000));
+
+		// A summary is a standalone request: providers that route by session
+		// reject a request without an identity, and a summary prompt can never be
+		// reused from cache.
+		expect(seenOptions).toHaveLength(2);
+		for (const options of seenOptions) {
+			expect(typeof options?.sessionId).toBe("string");
+			expect(options?.cacheRetention).toBe("none");
+		}
+		expect(seenOptions[0]?.sessionId).not.toBe(seenOptions[1]?.sessionId);
+	});
+
 	it("includes previous summaries and custom instructions in generateSummary prompts", async () => {
 		const messages: AgentMessage[] = [createUserMessage("Summarize this.")];
 		let promptText = "";

@@ -696,6 +696,12 @@ export type AgentDriverCommand =
     }
   | { type: "steer"; text: string; submission?: UserMessageSubmission }
   | { type: "follow-up"; text: string; submission?: UserMessageSubmission }
+  /**
+   * Regenerates the assistant response for the active session branch without
+   * appending another user message. Used by turn retry after the session leaf
+   * has been rewound to the turn's user message.
+   */
+  | { type: "continue" }
   | { type: "cancel" }
   | { type: "resolve-approval"; resolution: OperationApprovalResolution }
   | { type: "set-tool-approval-mode"; mode: ToolApprovalMode }

@@ -48,10 +48,14 @@ import {
   SessionToolOutputRequestSchema,
   SessionArtifactRequestSchema,
   ListWorkspaceDirectorySchema,
+  AbortTranslationSchema,
+  TranslateSelectionSchema,
   OpenExternalUrlSchema,
   OpenWorkspaceSchema,
   MediaProjectRequestSchema,
   PromptSessionSchema,
+  RetrySessionTurnSchema,
+  SelectSessionTurnVersionSchema,
   RenameSessionSchema,
   ResolveOperationApprovalSchema,
   ResolveClarificationQuestionSchema,
@@ -104,6 +108,7 @@ import { GoogleAccountService } from "../account/google-account-service";
 import { CloudSyncService } from "../cloud-sync/cloud-sync-service";
 import { updateTitleBarOverlays } from "../windows/main-window";
 import type { DesktopDataAnalysisService } from "../data-analysis/data-analysis-service";
+import type { DesktopTranslationService } from "../translation/translation-service";
 import type { AutomationService } from "../automation/automation-service";
 import { McpRegistryService } from "../marketplace/mcp-registry-service";
 import { SkillsMpMarketplaceService } from "../marketplace/skillsmp-marketplace-service";
@@ -205,6 +210,7 @@ function isAppPreferences(value: unknown): value is AppPreferences {
     !("entryModels" in value) ||
     !("notifications" in value) ||
     !("security" in value) ||
+    !("translation" in value) ||
     !("appearance" in value)
   )
     return false;
@@ -227,7 +233,27 @@ function isAppPreferences(value: unknown): value is AppPreferences {
     "customCommandRules" in security &&
     isSecurityRuleList(security.customFileRules, "pattern") &&
     isSecurityRuleList(security.customCommandRules, "command") &&
-    isAppearancePreferences(value.appearance)
+    isAppearancePreferences(value.appearance) &&
+    isTranslationPreferences(value.translation)
+  );
+}
+
+/**
+ * The renderer writes preferences as a whole object, so a field the main
+ * process does not check here would still be stored but unvalidated. Keep the
+ * guard in step with `AppPreferences`.
+ */
+function isTranslationPreferences(value: unknown): boolean {
+  if (typeof value !== "object" || value === null) return false;
+  const targetLanguage = (value as { targetLanguage?: unknown }).targetLanguage;
+  const model = (value as { model?: unknown }).model;
+  const bubbleMaxChars = (value as { bubbleMaxChars?: unknown }).bubbleMaxChars;
+  return (
+    (targetLanguage === null || typeof targetLanguage === "string") &&
+    (model === null || isRecord(model)) &&
+    typeof bubbleMaxChars === "number" &&
+    Number.isFinite(bubbleMaxChars) &&
+    bubbleMaxChars > 0
   );
 }
 
@@ -248,6 +274,7 @@ type DesktopIpcOptions = {
   automation: AutomationService;
   mcpMarketplace: McpRegistryService;
   skillMarketplace: SkillsMpMarketplaceService;
+  translation: DesktopTranslationService;
 };
 
 function isDesktopMenuId(value: unknown): value is DesktopMenuId {
@@ -442,6 +469,28 @@ export function registerRuntimeIpc(
     await shell.openExternal(url.toString());
   });
   ipcMain.handle("wordless:snapshot", () => runtime.getSnapshot());
+  ipcMain.handle(
+    "wordless:translation:translate",
+    (_event, payload: unknown) => {
+      const input = parsePayload<{
+        requestId: string;
+        sessionId: string;
+        text: string;
+        targetLanguage?: string;
+      }>(TranslateSelectionSchema, payload);
+      options.translation.start(input);
+    },
+  );
+  ipcMain.handle(
+    "wordless:translation:abort",
+    (_event, payload: unknown) => {
+      const input = parsePayload<{ requestId: string }>(
+        AbortTranslationSchema,
+        payload,
+      );
+      options.translation.abort(input.requestId);
+    },
+  );
   ipcMain.handle("wordless:usage:report", async (_event, payload: unknown) => {
     const input = parsePayload<{
       startAt: number;
@@ -782,6 +831,34 @@ export function registerRuntimeIpc(
         payload,
       );
       await runtime.compactSession(input.sessionId);
+    },
+  );
+  ipcMain.handle(
+    "wordless:session:retry-turn",
+    async (_event, payload: unknown) => {
+      const input = parsePayload<{
+        sessionId: string;
+        messageId: string;
+        instruction?: string;
+      }>(RetrySessionTurnSchema, payload);
+      await runtime.retrySessionTurn(input.sessionId, input.messageId, {
+        ...(input.instruction ? { instruction: input.instruction } : {}),
+      });
+    },
+  );
+  ipcMain.handle(
+    "wordless:session:select-turn-version",
+    async (_event, payload: unknown) => {
+      const input = parsePayload<{
+        sessionId: string;
+        messageId: string;
+        version: number;
+      }>(SelectSessionTurnVersionSchema, payload);
+      await runtime.selectSessionTurnVersion(
+        input.sessionId,
+        input.messageId,
+        input.version,
+      );
     },
   );
   ipcMain.handle("wordless:session:context", (_event, sessionId: unknown) =>
