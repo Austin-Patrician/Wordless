@@ -149,6 +149,7 @@ export function QuickModelSetup({ configuration, onAdvanced, onConfigured, onOpe
         aria-label={t("quickModelSetupTitle")}
         aria-modal="true"
         className="quick-model-setup__dialog"
+        data-tour="quick-model-setup"
         onKeyDown={(event) => {
           if (event.key === "ArrowLeft") { event.preventDefault(); move(-1); }
           if (event.key === "ArrowRight") { event.preventDefault(); move(1); }
@@ -158,7 +159,7 @@ export function QuickModelSetup({ configuration, onAdvanced, onConfigured, onOpe
         role="dialog"
         tabIndex={-1}
       >
-        <header className="quick-model-setup__header">
+        <header className="quick-model-setup__header" data-tour="quick-model-setup-header">
           <img alt="" className="quick-model-setup__brand-icon" draggable={false} src={wordlessIcon} />
           <div className="min-w-0">
             <h2>{t("quickModelSetupTitle")}</h2>

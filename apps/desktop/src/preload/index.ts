@@ -394,6 +394,9 @@ const wordlessBridge: DesktopBridge = {
       key: "app",
       value: preferences,
     }),
+  getOnboardingState: () => ipcRenderer.invoke("wordless:onboarding:state"),
+  completeOnboarding: () => ipcRenderer.invoke("wordless:onboarding:complete"),
+  resetOnboarding: () => ipcRenderer.invoke("wordless:onboarding:reset"),
   translateSelection: (request) =>
     ipcRenderer.invoke("wordless:translation:translate", request),
   abortTranslation: (requestId) =>

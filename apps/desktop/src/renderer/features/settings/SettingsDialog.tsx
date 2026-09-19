@@ -3,6 +3,7 @@ import { BarChart3, CircleHelp, Database, Package, Palette, Settings, ShieldAler
 import type { LucideIcon } from "lucide-react";
 import { useEffect, useState } from "react";
 import { GeneralSettings } from "./GeneralSettings";
+import { useOnboarding } from "../onboarding/OnboardingFlow";
 import { ModelSettings } from "./ModelSettings";
 import { ExtensionsSettings } from "./ExtensionsSettings";
 import { TranslationSettings } from "./TranslationSettings";
@@ -24,6 +25,7 @@ type SettingsDialogProps = {
 
 export function SettingsDialog({ initialPage = "general", open, onOpenChange }: SettingsDialogProps) {
   const { t } = usePreferences();
+  const onboarding = useOnboarding();
   const [page, setPage] = useState<SettingsPage>("general");
 
   useEffect(() => {
@@ -43,7 +45,7 @@ export function SettingsDialog({ initialPage = "general", open, onOpenChange }: 
         <SettingsSidebar page={page} onPageChange={setPage} />
         <div className="flex min-w-0 flex-1 flex-col">
           <SettingsHeader page={page} onClose={() => onOpenChange(false)} />
-          {page === "general" ? <GeneralSettings /> : page === "models" ? <ModelSettings /> : page === "assistant" ? <AssistantSettings /> : page === "usage" ? <UsageSettings /> : page === "security" ? <SecuritySettings /> : page === "personalization" ? <PersonalizationSettings /> : page === "dataPrivacy" ? <DataPrivacySettings /> : <AboutUpdatesSettings />}
+          {page === "general" ? <GeneralSettings onReplayOnboarding={() => { onOpenChange(false); onboarding?.replay(); }} /> : page === "models" ? <ModelSettings /> : page === "assistant" ? <AssistantSettings /> : page === "usage" ? <UsageSettings /> : page === "security" ? <SecuritySettings /> : page === "personalization" ? <PersonalizationSettings /> : page === "dataPrivacy" ? <DataPrivacySettings /> : <AboutUpdatesSettings />}
         </div>
       </div>
     </div>

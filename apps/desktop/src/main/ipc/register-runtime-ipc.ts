@@ -112,6 +112,7 @@ import type { DesktopTranslationService } from "../translation/translation-servi
 import type { AutomationService } from "../automation/automation-service";
 import { McpRegistryService } from "../marketplace/mcp-registry-service";
 import { SkillsMpMarketplaceService } from "../marketplace/skillsmp-marketplace-service";
+import { OnboardingService } from "../onboarding/onboarding-service";
 
 function parsePayload<T>(schema: TSchema, payload: unknown): T {
   if (!Value.Check(schema, payload)) throw new Error("Invalid request payload");
@@ -274,6 +275,7 @@ type DesktopIpcOptions = {
   automation: AutomationService;
   mcpMarketplace: McpRegistryService;
   skillMarketplace: SkillsMpMarketplaceService;
+  onboarding: OnboardingService;
   translation: DesktopTranslationService;
 };
 
@@ -1558,6 +1560,9 @@ export function registerRuntimeIpc(
     options.cloudSync.markDirty();
     updateTitleBarOverlays(input.value);
   });
+  ipcMain.handle("wordless:onboarding:state", () => options.onboarding.read());
+  ipcMain.handle("wordless:onboarding:complete", () => options.onboarding.complete());
+  ipcMain.handle("wordless:onboarding:reset", () => options.onboarding.reset());
   ipcMain.handle(
     "wordless:appearance:import",
     async (_event, payload: unknown) => {

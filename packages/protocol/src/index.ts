@@ -99,6 +99,17 @@ export type DesktopAppInfo = {
   arch: string;
 };
 
+/**
+ * First-run guide progress, persisted by the desktop host so the guide is shown
+ * once per installation and can be replayed later from Settings.
+ */
+export type OnboardingState = {
+  /** Guide revision this record was written for. */
+  version: number;
+  /** Milliseconds since epoch when the user finished the guide, or null. */
+  completedAt: number | null;
+};
+
 export type AccountStatus = "signed-out" | "signed-in" | "needs-login";
 
 export interface AccountSnapshot {

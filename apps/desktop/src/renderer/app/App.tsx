@@ -1,5 +1,6 @@
 import { TooltipProvider } from "@wordless/ui-kit";
 import { WorkbenchShell } from "../features/workbench/WorkbenchShell";
+import { OnboardingProvider } from "../features/onboarding/OnboardingFlow";
 import { PreferencesProvider } from "../shared/preferences";
 import { RuntimeProvider } from "../shared/runtime";
 import { DesktopHostProvider } from "../platform/desktop-host";
@@ -12,7 +13,9 @@ export function App() {
         <DesktopUpdateProvider>
           <PreferencesProvider>
             <TooltipProvider delayDuration={250}>
-              <WorkbenchShell />
+              <OnboardingProvider>
+                <WorkbenchShell />
+              </OnboardingProvider>
             </TooltipProvider>
           </PreferencesProvider>
         </DesktopUpdateProvider>

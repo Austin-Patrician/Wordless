@@ -15,6 +15,7 @@ import { ModelPicker, thinkingLevelForModelSelection } from "./ModelPicker";
 import { WorkspacePicker } from "./WorkspacePicker";
 import { AgentEntryIcon } from "./AgentEntryIcon";
 import { QuickModelSetup } from "./QuickModelSetup";
+import { useOnboarding } from "../onboarding/OnboardingFlow";
 import { ExpertPortrait } from "../experts/ExpertPortrait";
 import { hasEnabledChatModel } from "./quick-model-setup-model";
 import { supportsGeneralWorkAccessSelection } from "../thread/access-control";
@@ -129,7 +130,11 @@ export function WelcomeView({ initialExpertPrompt, initialExpertSelection, onOpe
   const workspaceRequired = entry?.workbenchId === "code" || entry?.workbenchId === "analysis";
   const canPlan = entry?.workbenchId === "code" && (snapshot?.extensions.configurations["wordless.plan-mode"]?.enabled ?? false);
   const hasEnabledModels = snapshot ? hasEnabledChatModel(snapshot.modelConfiguration) : false;
-  const quickSetupOpen = Boolean(snapshot && !hasEnabledModels && !quickSetupDismissed);
+  // The guide owns the screen while it runs. Letting the model setup dialog
+  // open underneath it would leave two overlays competing for the same space,
+  // so it waits until the guide is finished.
+  const onboarding = useOnboarding();
+  const quickSetupOpen = Boolean(snapshot && !hasEnabledModels && !quickSetupDismissed && !onboarding?.active);
 
   useEffect(() => {
     const candidate = defaultEntry(entries, mode);
@@ -321,7 +326,7 @@ export function WelcomeView({ initialExpertPrompt, initialExpertSelection, onOpe
           </div>
           {snapshot && entry ? (
             <div className="-mt-px flex flex-wrap items-center gap-1.5 rounded-b-[14px] border-x border-b border-[#e6e6e2] bg-[#f1f1ef] px-3.5 py-1.5 dark:border-border dark:bg-[#252620]">
-              <div className="relative">
+              <div className="relative" data-tour="welcome-workspace">
                 <Button
                   className="min-w-0 text-[#64645e]"
                   disabled={submitting}

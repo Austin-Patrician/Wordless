@@ -1,6 +1,6 @@
 import type { Locale } from "./models";
 
-const messages = {
+export const messages = {
   "zh-CN": {
     appName: "Wordless",
     file: "文件",
@@ -1282,6 +1282,41 @@ const messages = {
     marketplaceLanguageUnknown: "未知语言",
     marketplaceLoadingSkills: "正在搜索 SkillsMP",
     marketplaceNoSkillMatches: "SkillsMP 中没有匹配的技能。",
+    onboardingWelcomeTitle: "欢迎使用 Wordless",
+    onboardingWelcomeBody:
+      "先用一分钟完成基础设置，我们会带你认识工作区的主要入口。",
+    onboardingStartTour: "开始导览",
+    onboardingWelcomeHint: "约 1 分钟 · 之后可在「设置 → 通用」重新查看",
+    onboardingSkip: "跳过",
+    onboardingStepProgress: "第 {current} / {total} 步",
+    onboardingBack: "上一步",
+    onboardingNext: "下一步",
+    onboardingFinish: "开始使用",
+    onboardingStepNewThreadTitle: "新建会话",
+    onboardingStepNewThreadBody:
+      "每次开始一项新任务都在这里创建会话。一个会话对应一段连续的对话与产物。",
+    onboardingStepWorkspaceTitle: "选择工作区",
+    onboardingStepWorkspaceBody:
+      "工作区是 Agent 可以读写文件的目录。可以是本地文件夹，也可以关联已有项目。",
+    onboardingStepModelTitle: "配置模型",
+    onboardingStepModelBody:
+      "点这里选择模型。首次使用先填入服务商 API Key，之后可以随时切换。",
+    onboardingStepComposerTitle: "输入你的需求",
+    onboardingStepComposerBody:
+      "在输入框中描述任务，输入 @ 可以引用工作区文件。Shift + Enter 换行，Enter 发送。",
+    onboardingStepSkillsTitle: "技能与 MCP",
+    onboardingStepSkillsBody:
+      "在这里启用技能、连接外部 MCP 服务，让 Agent 具备搜索、办公文档等能力。",
+    onboardingStepTasksTitle: "任务与专家",
+    onboardingStepTasksBody:
+      "任务板用来跟踪长期事项，数字专家可以组队并行处理复杂工作。",
+    onboardingStepSettingsTitle: "设置",
+    onboardingStepSettingsBody:
+      "语言、主题、模型与数据都在设置中管理。也可以在这里重新查看本导览。",
+    onboardingReplayTitle: "新手导览",
+    onboardingReplayBody: "清空引导进度，并从欢迎页重新体验完整的首次使用引导。",
+    onboardingReplayAction: "重新查看导览",
+    onboardingReplayDone: "已重置，导览将在主界面重新开始。",
   },
   "en-US": {
     appName: "Wordless",
@@ -2649,6 +2684,41 @@ const messages = {
     marketplaceLanguageUnknown: "Unknown language",
     marketplaceLoadingSkills: "Searching SkillsMP",
     marketplaceNoSkillMatches: "No matching skills were found on SkillsMP.",
+    onboardingWelcomeTitle: "Welcome to Wordless",
+    onboardingWelcomeBody:
+      "Take a minute to set the basics, then we will point out the main parts of the workspace.",
+    onboardingStartTour: "Start the tour",
+    onboardingWelcomeHint: "About a minute · revisit anytime in Settings → General",
+    onboardingSkip: "Skip",
+    onboardingStepProgress: "Step {current} of {total}",
+    onboardingBack: "Back",
+    onboardingNext: "Next",
+    onboardingFinish: "Get started",
+    onboardingStepNewThreadTitle: "Start a session",
+    onboardingStepNewThreadBody:
+      "Create a session here whenever you begin a task. A session holds one continuous conversation and its artifacts.",
+    onboardingStepWorkspaceTitle: "Pick a workspace",
+    onboardingStepWorkspaceBody:
+      "A workspace is the folder the agent may read and write. It can be a new folder or an existing project.",
+    onboardingStepModelTitle: "Configure a model",
+    onboardingStepModelBody:
+      "Pick a model here. You will add a provider API key the first time, then switch freely.",
+    onboardingStepComposerTitle: "Describe what you need",
+    onboardingStepComposerBody:
+      "Type your request here. Use @ to reference workspace files. Shift + Enter adds a line, Enter sends.",
+    onboardingStepSkillsTitle: "Skills & MCP",
+    onboardingStepSkillsBody:
+      "Enable skills and connect external MCP servers so the agent can search the web or work with office documents.",
+    onboardingStepTasksTitle: "Tasks & experts",
+    onboardingStepTasksBody:
+      "The task board tracks longer-running work, and digital experts can team up on complex jobs.",
+    onboardingStepSettingsTitle: "Settings",
+    onboardingStepSettingsBody:
+      "Language, theme, models and data all live in Settings. You can replay this tour from here too.",
+    onboardingReplayTitle: "Getting started tour",
+    onboardingReplayBody: "Clear the guide progress and replay the full first-run guide from the welcome screen.",
+    onboardingReplayAction: "Replay the tour",
+    onboardingReplayDone: "Reset. The tour will start again on the main view.",
   },
 } as const satisfies Record<Locale, Record<string, string>>;
 

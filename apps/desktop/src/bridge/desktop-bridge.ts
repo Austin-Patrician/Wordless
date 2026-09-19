@@ -64,6 +64,7 @@ import type {
   DesktopRelease,
   DesktopUpdateSnapshot,
   OfficeEngineHealth,
+  OnboardingState,
   PresentationTemplate,
   RuntimeEventEnvelope,
   ExpertMemberLiveMessage,
@@ -86,7 +87,7 @@ import type {
 } from "@wordless/protocol";
 import type { ToolApprovalMode } from "@wordless/domain";
 
-export const DESKTOP_BRIDGE_VERSION = 34;
+export const DESKTOP_BRIDGE_VERSION = 35;
 
 export interface DesktopBridge {
   readonly version: typeof DESKTOP_BRIDGE_VERSION;
@@ -379,6 +380,9 @@ export interface DesktopBridge {
     interactionMode: AgentInteractionModeId,
   ): Promise<void>;
   setPreferences(preferences: AppPreferences): Promise<void>;
+  getOnboardingState(): Promise<OnboardingState>;
+  completeOnboarding(): Promise<OnboardingState>;
+  resetOnboarding(): Promise<OnboardingState>;
   /**
    * Starts a streaming translation of a message selection. Deltas, completion,
    * and failure arrive through `subscribeHost` as `translation` events keyed by
@@ -607,6 +611,9 @@ const requiredMethods: Array<Exclude<keyof DesktopBridge, "version">> = [
   "resolveClarificationQuestion",
   "handoffClarification",
   "setPreferences",
+  "getOnboardingState",
+  "completeOnboarding",
+  "resetOnboarding",
   "importAppearanceBackground",
   "removeAppearanceBackground",
   "getModelConfiguration",

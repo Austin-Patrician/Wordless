@@ -12,6 +12,7 @@ import { registerMediaProtocol } from "./protocols/media";
 import { registerPresentationProtocol } from "./protocols/presentation";
 import { registerAnalysisProtocol } from "./protocols/analysis";
 import { registerAttachmentProtocol } from "./protocols/attachment";
+import { OnboardingService } from "./onboarding/onboarding-service";
 import { createMainWindow, updateTitleBarOverlays } from "./windows/main-window";
 import { createDesktopHostInfo } from "./platform/desktop-platform";
 import { ApplicationMenuController } from "./menu/application-menu";
@@ -191,6 +192,7 @@ app.whenReady().then(async () => {
     dataAnalysis,
     automation,
     mcpMarketplace: new McpRegistryService(userData.path),
+    onboarding: new OnboardingService(userData.path),
     translation,
     skillMarketplace: new SkillsMpMarketplaceService(userData.path, {
       apiKey: process.env.WORDLESS_SKILLSMP_API_KEY?.trim() || __WORDLESS_SKILLSMP_API_KEY__,

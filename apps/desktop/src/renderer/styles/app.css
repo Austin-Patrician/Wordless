@@ -8,6 +8,13 @@ body {
   --wordless-shell-sidebar: #f1f1ee;
   --wordless-shell-workspace: #fbfbfa;
   --wordless-shell-context: #fbfbfa;
+  /*
+   * Full-screen overlays (the first-run guide) need a surface that is always
+   * opaque. The shell tokens above turn translucent when a custom background is
+   * active so the background image can show through, which would let the
+   * interface behind an overlay bleed into it.
+   */
+  --wordless-overlay-surface: #fbfbfa;
   --wordless-background-scrim: rgb(248 248 246 / 0.32);
   --wordless-background-pattern-ink: rgb(86 88 78 / 0.3);
   --wordless-background-grain: rgb(95 96 88 / 0.22);
@@ -457,6 +464,7 @@ body {
   --wordless-shell-sidebar: #202219;
   --wordless-shell-workspace: #151610;
   --wordless-shell-context: #1c1d18;
+  --wordless-overlay-surface: #151610;
   --wordless-background-scrim: rgb(20 21 17 / 0.56);
   --wordless-background-pattern-ink: rgb(220 225 203 / 0.2);
   --wordless-background-grain: rgb(227 233 207 / 0.15);
