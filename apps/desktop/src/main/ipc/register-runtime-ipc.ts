@@ -111,6 +111,7 @@ import { updateTitleBarOverlays } from "../windows/main-window";
 import type { DesktopDataAnalysisService } from "../data-analysis/data-analysis-service";
 import type { DesktopTranslationService } from "../translation/translation-service";
 import type { AutomationService } from "../automation/automation-service";
+import type { BrowserService } from "../browser/browser-service";
 import { McpRegistryService } from "../marketplace/mcp-registry-service";
 import { SkillsMpMarketplaceService } from "../marketplace/skillsmp-marketplace-service";
 import { OnboardingService } from "../onboarding/onboarding-service";
@@ -274,6 +275,8 @@ type DesktopIpcOptions = {
   office: OfficeCliService;
   dataAnalysis: DesktopDataAnalysisService;
   automation: AutomationService;
+  /** Present so deleting a session can drop the grants it was given. */
+  browser?: BrowserService;
   mcpMarketplace: McpRegistryService;
   skillMarketplace: SkillsMpMarketplaceService;
   onboarding: OnboardingService;
@@ -585,7 +588,12 @@ export function registerRuntimeIpc(
       // documents and drops automation references.
       beforeDelete: async (session) =>
         await options.office.releaseSession(session.id, session.runtimeRootPath),
-      afterDelete: (sessionId) => options.automation.onSessionDeleted(sessionId),
+      afterDelete: (sessionId) => {
+        options.automation.onSessionDeleted(sessionId);
+        // A deleted session's grants must not outlive it: an id reused later would
+        // otherwise inherit access nobody granted.
+        options.browser?.releaseSession(sessionId);
+      },
       // Prefer the OS trash so a mistaken deletion stays recoverable outside
       // Wordless; the runtime falls back to a real removal when it cannot.
       trash: async (absolutePath) => await shell.trashItem(absolutePath),

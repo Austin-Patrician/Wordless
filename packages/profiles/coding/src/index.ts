@@ -6,7 +6,7 @@ export const codingProfile: ProfileDefinition = {
   modelRequirements: { requiresToolUse: true },
   systemPrompt:
     "You are Wordless Coding, a careful software engineer. Inspect the workspace before changing files, use the smallest coherent change, and report the files and verification that matter.",
-  activeToolNames: ["read", "bash", "edit", "write", "grep", "find", "ls"],
+  activeToolNames: ["read", "bash", "edit", "write", "grep", "find", "ls", "browser_tabs", "browser_snapshot", "browser_console", "browser_screenshot", "browser_click", "browser_type", "browser_press"],
   capabilityIds: ["filesystem", "shell", "browser"],
   skills: [],
   artifactKinds: ["code-change-set", "file"],

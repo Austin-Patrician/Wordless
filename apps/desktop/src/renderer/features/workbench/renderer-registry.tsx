@@ -50,6 +50,16 @@ import updatePlanIcon from "../../../icons/common-icons/update-plan.svg";
 import writeIcon from "../../../icons/common-icons/Write.svg";
 import terminalBashIcon from "../../../icons/common-icons/terminal-bash.svg";
 import { ConnectorIcon } from "../../shared/ConnectorIcon";
+import {
+  Camera,
+  CornerDownLeft,
+  ListTree,
+  Pointer,
+  SquareStack,
+  SquareTerminal,
+  TextCursorInput,
+  type LucideIcon,
+} from "lucide-react";
 import { ExpertPortrait } from "../experts/ExpertPortrait";
 import { parseExpertPortrait } from "../experts/avataaars-portrait";
 import type { MessageKey } from "../../shared/i18n";
@@ -66,10 +76,17 @@ import type {
 } from "./context-panel-types";
 import { formatToolInput, summarizeToolInput } from "./tool-input-preview";
 
-type StandardToolIconSource = {
-  path: string;
-  invertOnDark?: boolean;
-};
+/**
+ * A tool's icon is either a bundled glyph or a Lucide component.
+ *
+ * Both exist because the app has two icon languages: filled iconfont glyphs for
+ * tool identity, and Lucide for its own chrome. The browser tool icons use Lucide
+ * because the panel they belong to is already Lucide — and because Lucide draws
+ * with `currentColor`, so dark mode needs no colour inversion.
+ */
+type StandardToolIconSource =
+  | { path: string; invertOnDark?: boolean }
+  | { Icon: LucideIcon };
 
 type Translate = ReturnType<typeof usePreferences>["t"];
 
@@ -87,6 +104,18 @@ function formatMessage(
 const standardToolIconSources: Record<string, StandardToolIconSource> = {
   ask_clarifying_question: { path: innovationIcon, invertOnDark: true },
   bash: { path: terminalBashIcon, invertOnDark: true },
+  // The browser panel's tools, drawn in the panel's own icon language.
+  // `ListTree` is the closest match of the set: the agent reads an accessibility
+  // *tree*, and a tree-shaped list says that directly. `browser_click` deliberately
+  // avoids MousePointerClick, which the panel toolbar already uses for "allow
+  // actions" — two different meanings should not share a glyph.
+  browser_click: { Icon: Pointer },
+  browser_console: { Icon: SquareTerminal },
+  browser_press: { Icon: CornerDownLeft },
+  browser_screenshot: { Icon: Camera },
+  browser_snapshot: { Icon: ListTree },
+  browser_tabs: { Icon: SquareStack },
+  browser_type: { Icon: TextCursorInput },
   complete_clarification: { path: innovationIcon, invertOnDark: true },
   data_catalog: { path: folderIcon, invertOnDark: true },
   data_inspect: { path: readFileIcon, invertOnDark: true },
@@ -210,13 +239,18 @@ function McpToolIcon({ source }: { source: MessageToolSource }) {
 
 function standardToolIcon(toolName: string): ReactNode | undefined {
   const source = standardToolIconSources[toolName];
-  return source ? (
+  if (!source) return undefined;
+  if ("Icon" in source) {
+    const { Icon } = source;
+    return <Icon className="h-3.5 w-3.5" />;
+  }
+  return (
     <img
       alt=""
       className={`h-3.5 w-3.5 object-contain ${source.invertOnDark ? "dark:invert" : ""}`}
       src={source.path}
     />
-  ) : undefined;
+  );
 }
 
 function AutoApproveIcon({ className }: { className?: string }) {

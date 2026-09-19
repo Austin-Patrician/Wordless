@@ -71,6 +71,7 @@
     "@wordless/ai": "0.80.6-wordless.0",
     "@wordless/capability-data": "0.0.0",
     "@wordless/capability-office": "0.0.0",
+    "@wordless/capability-browser": "0.0.0",
     "@wordless/coding-agent": "0.0.0",
     "@wordless/domain": "0.0.0",
     "@wordless/model-config": "0.0.0",

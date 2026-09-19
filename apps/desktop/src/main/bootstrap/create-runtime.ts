@@ -15,6 +15,7 @@ import { preflightWorkspaceOperation } from "@wordless/agent-workspace-policy";
 import { createHeadlessCodingTools } from "@wordless/coding-agent";
 import { createGenericAgentDriver } from "@wordless/agent-driver-generic";
 import { createDataAnalysisTools, type DataAnalysisService } from "@wordless/capability-data";
+import { createBrowserTools } from "@wordless/capability-browser";
 import { createAgentDriverRegistry } from "@wordless/agent-driver-sdk";
 import { codingProfile } from "@wordless/profile-coding";
 import { generalProfile } from "@wordless/profile-general";
@@ -27,8 +28,15 @@ import { WorkspaceSearchService } from "@wordless/platform-node";
 import { ElectronCredentialVault } from "../adapters/electron-credential-vault";
 import { OfficeCliService } from "../office/office-cli-service";
 import { DesktopDataAnalysisService } from "../data-analysis/data-analysis-service";
+import { createBrowserPort } from "../browser/browser-port";
+import type { BrowserService } from "../browser/browser-service";
 
-export function createDesktopRuntime(userData: string, office: OfficeCliService, credentialVault = new ElectronCredentialVault(path.join(userData, "credentials.json")), dataAnalysis: DataAnalysisService = new DesktopDataAnalysisService({ metadataRoot: path.join(userData, "analysis-metadata"), resourcesRoot: app.isPackaged ? process.resourcesPath : path.resolve(__dirname, "../../resources") })): WordlessRuntime {
+export function createDesktopRuntime(userData: string, office: OfficeCliService, credentialVault = new ElectronCredentialVault(path.join(userData, "credentials.json")), dataAnalysis: DataAnalysisService = new DesktopDataAnalysisService({ metadataRoot: path.join(userData, "analysis-metadata"), resourcesRoot: app.isPackaged ? process.resourcesPath : path.resolve(__dirname, "../../resources") }), browser?: BrowserService): WordlessRuntime {
+  // Browser tools are built per session, following the data capability: the port
+  // captures the session id, because sharing and action grants belong to the task
+  // the user was working on rather than to the app as a whole.
+  const browserToolsFor = (sessionId: string) =>
+    browser ? createBrowserTools(createBrowserPort(browser, sessionId)) : [];
   const resourcesRoot = app.isPackaged ? process.resourcesPath : path.resolve(__dirname, "../../resources");
   const extensions = new AgentExtensionManager({
     path: path.join(userData, "agent-extensions.json"),
@@ -67,6 +75,7 @@ export function createDesktopRuntime(userData: string, office: OfficeCliService,
         createExtensionHost: extensions,
         createTools: (context) => [
           ...createHeadlessCodingTools(context.env, context.workspaceSearch),
+          ...browserToolsFor(context.resourceOwnerSessionId ?? context.record.id),
           ...(context.profile.reference.id === "data" ? createDataAnalysisTools(dataAnalysis, {
             sessionId: context.resourceOwnerSessionId ?? context.record.id,
             workspaceRoot: context.record.runtimeRootPath,
@@ -76,7 +85,10 @@ export function createDesktopRuntime(userData: string, office: OfficeCliService,
         ],
         preflightOperation: preflightWorkspaceOperation,
       }),
-      createCodingAgentDriver({ createExtensionHost: extensions }),
+      createCodingAgentDriver({
+        createExtensionHost: extensions,
+        extraTools: (context) => browserToolsFor(context.resourceOwnerSessionId ?? context.record.id),
+      }),
       createPresentationAgentDriver(office, {
         createWorkspaceTools: (context) => createHeadlessCodingTools(context.env, context.workspaceSearch),
         preflightWorkspaceOperation,

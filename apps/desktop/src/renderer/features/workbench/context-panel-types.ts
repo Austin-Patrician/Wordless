@@ -5,7 +5,7 @@ import type { ArtifactSelection } from "@wordless/protocol";
 import type { InlineWorkspaceReferenceToken } from "../thread/InlineSkillComposer";
 import type { MessageKey } from "../../shared/i18n";
 
-export type ContextPanelView = "overview" | "files" | "changes" | "preview" | "slides" | "sheets" | "assets" | "artifacts" | "issues" | "report" | "research" | "data" | "charts" | "translation";
+export type ContextPanelView = "overview" | "files" | "changes" | "preview" | "slides" | "sheets" | "assets" | "artifacts" | "issues" | "report" | "research" | "data" | "charts" | "translation" | "browser";
 
 export type ContextPanelTab = {
   id: ContextPanelView;

@@ -4,6 +4,9 @@ import type { AppPreferences } from "@wordless/domain";
 import { createDesktopRuntime } from "./bootstrap/create-runtime";
 import { prepareUserDataPath } from "./bootstrap/user-data";
 import { registerRuntimeIpc } from "./ipc/register-runtime-ipc";
+import { registerBrowserIpc } from "./ipc/register-browser-ipc";
+import { WebContentsViewHost } from "./browser/browser-host";
+import { BrowserService } from "./browser/browser-service";
 import { DesktopNotificationService } from "./notifications/desktop-notification-service";
 import { DesktopTranslationService } from "./translation/translation-service";
 import { AppearanceAssetService } from "./appearance/appearance-asset-service";
@@ -48,6 +51,7 @@ let translation: DesktopTranslationService | undefined;
 let tray: Tray | undefined;
 let disposing = false;
 let quitting = false;
+let browser: BrowserService | undefined;
 const hostInfo = createDesktopHostInfo();
 let mainWindow: BrowserWindow | undefined;
 const hasSingleInstance = app.requestSingleInstanceLock();
@@ -136,7 +140,18 @@ app.whenReady().then(async () => {
     openExternal: async (url) => await shell.openExternal(url),
   });
   await account.initialize();
-  runtime = createDesktopRuntime(userData.path, office, credentialVault, dataAnalysis);
+  // Constructed before the runtime so the agent driver can be handed the read-only
+  // browser tools. Both the window and its content view are resolved lazily, so
+  // building this before the window exists is safe.
+  browser = new BrowserService({
+    host: new WebContentsViewHost(() => (mainWindow && !mainWindow.isDestroyed() ? mainWindow : undefined)),
+    onChange: (state) => {
+      // The toolbar needs to follow navigations the page starts itself (a link
+      // click, a redirect), not just the ones the user typed.
+      if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send("wordless:browser:state", state);
+    },
+  });
+  runtime = createDesktopRuntime(userData.path, office, credentialVault, dataAnalysis, browser);
   await runtime.initialize();
   registerAttachmentProtocol(async (sessionId, previewPath) => await runtime!.resolveSessionAttachmentPreview(sessionId, previewPath));
   automation = new AutomationService({
@@ -193,6 +208,9 @@ app.whenReady().then(async () => {
     automation,
     mcpMarketplace: new McpRegistryService(userData.path),
     onboarding: new OnboardingService(userData.path),
+    // The browser service is created above the runtime so its tools can be built
+    // per session; handing it here lets session deletion drop that session's grants.
+    ...(browser ? { browser } : {}),
     translation,
     skillMarketplace: new SkillsMpMarketplaceService(userData.path, {
       apiKey: process.env.WORDLESS_SKILLSMP_API_KEY?.trim() || __WORDLESS_SKILLSMP_API_KEY__,
@@ -201,6 +219,10 @@ app.whenReady().then(async () => {
   mainWindow = createMainWindow(path.join(__dirname, "preload.cjs"), runtime.getSnapshot().preferences);
   mainWindow.on("close", (event) => { if (!quitting) { event.preventDefault(); mainWindow?.hide(); } });
   mainWindow.on("focus", () => notifications.clearBadge());
+  // The browser service needs the window, which is created after the runtime
+  // IPC is registered, so it takes a late-bound accessor rather than the window
+  // itself.
+  registerBrowserIpc(browser);
   // macOS AppKit synchronously redraws NSStatusItem replicants when the app
   // becomes active or display metrics change. That redraw runs on the main
   // thread and is the source of the focus-return hitch, so the Dock remains
@@ -236,6 +258,7 @@ app.on("before-quit", (event) => {
   event.preventDefault();
   disposing = true;
   quitting = true;
+  browser?.dispose();
   automation?.dispose();
   translation?.dispose();
   tray?.destroy();

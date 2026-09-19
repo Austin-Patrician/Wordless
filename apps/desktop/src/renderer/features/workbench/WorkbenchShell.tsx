@@ -1,5 +1,5 @@
 import { Button } from "@wordless/ui-kit";
-import { AlertTriangle, ChevronLeft, Languages, ListTodo, LoaderCircle, PackageOpen, Search, Settings } from "lucide-react";
+import { AlertTriangle, ChevronLeft, Globe, Languages, ListTodo, LoaderCircle, PackageOpen, Search, Settings } from "lucide-react";
 import { useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
 import { SessionContextPanel } from "../artifacts/SessionContextPanel";
 import { SettingsDialog, type SettingsPage } from "../settings/SettingsDialog";
@@ -10,6 +10,7 @@ import type { PendingThreadTurn } from "../thread/pending-thread-turn";
 import type { ArtifactSelection } from "@wordless/protocol";
 import { usePreferences } from "../../shared/preferences";
 import { useRuntime } from "../../shared/runtime";
+import { BrowserPanel } from "../browser/BrowserPanel";
 import { workbenchContextPanelRegistry } from "./context-panel-registry";
 import type { ContextPanelView, FileChangeSelection, ResearchTaskSelection } from "./context-panel-types";
 import { TranslationPanelSlot, TranslationProvider } from "../translation/TranslationPanelSlot";
@@ -31,6 +32,10 @@ const THREAD_COLUMN_MIN_WIDTH = 640;
 const SIDEBAR_COLLAPSED_WIDTH = 58;
 const SIDEBAR_EXPANDED_WIDTH = 238;
 const CONTEXT_PANEL_MIN_WIDTH = 240;
+// Workbenches whose context panel has room for a browser tab. Conversation
+// because the agent may open a page unprompted, code and ui-preview because
+// that is where a page under development gets verified.
+const browserPanelWorkbenchIds = new Set<string>(["conversation", "code", "ui-preview"]);
 
 export function WorkbenchShell() {
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -318,6 +323,9 @@ export function WorkbenchShell() {
   const contextPanelTabs = [
     ...contextPanelDefinition.tabs.map(({ labelKey, ...tab }) => ({ ...tab, label: t(labelKey) })),
     { id: "translation" as const, label: t("translationPanelTitle"), icon: Languages },
+    // The browser is offered where a previewable surface is expected; on
+    // presentation/workbook/analysis the panel is already spoken for.
+    ...(browserPanelWorkbenchIds.has(selectedWorkbenchId ?? "") ? [{ id: "browser" as const, label: t("browserPanelTitle"), icon: Globe }] : []),
   ];
   const revealTranslationPanel = () => {
     setContextView("translation");
@@ -339,11 +347,13 @@ export function WorkbenchShell() {
         setRightFullscreen(false);
         setRightOpen(false);
       }}
-      contentClassName={selectedWorkbenchId === "analysis" || selectedWorkbenchId === "conversation" ? "overflow-hidden" : undefined}
+      contentClassName={selectedWorkbenchId === "analysis" || selectedWorkbenchId === "conversation" || contextView === "browser" ? "overflow-hidden" : undefined}
       showFooter={selectedWorkbenchId !== "analysis" && selectedWorkbenchId !== "conversation"}
       showMenu={selectedWorkbenchId !== "analysis" && selectedWorkbenchId !== "conversation"}
       tabs={contextPanelTabs}
-      renderContent={(view) => view === "translation"
+      renderContent={(view) => view === "browser"
+        ? <BrowserPanel sessionId={activeSession?.id ?? null} />
+        : view === "translation"
         ? <TranslationPanelSlot />
         : activeSession
         ? <ContextPanelContent fileChangeSelection={fileChangeSelection} onArtifactSelection={(selection) => { setPendingArtifactSelection(selection); setRightOpen(true); }} onAttachFile={addWorkspaceReference} onClearResearchSelection={() => setResearchTaskSelection(null)} onFileChangeSelectionConsumed={consumeFileChangeSelection} onViewChange={setContextView} researchSelection={researchTaskSelection} sessionId={activeSession.id} view={view} />

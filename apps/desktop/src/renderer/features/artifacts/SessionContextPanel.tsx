@@ -1,5 +1,6 @@
 import { ChevronDown, Maximize2, Menu, Minimize2, PanelRightClose } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
+import { useBrowserOcclusion } from "../browser/use-occlusion";
 import type { ReactNode } from "react";
 import type { ContextPanelTab, ContextPanelView } from "../workbench/context-panel-types";
 
@@ -23,6 +24,11 @@ export function SessionContextPanel({ collapsed, fullscreen, leftSidebarWidth, m
   const [width, setWidth] = useState(() => tabs[0]?.id === "preview" ? 420 : 300);
   const [viewportWidth, setViewportWidth] = useState(() => window.innerWidth);
   const [dropdownOpen, setDropdownOpen] = useState(false);
+  // This dropdown is hand-rolled and absolute-positioned inside the panel
+  // header, so it is neither portalled nor reliably caught by sampling. It
+  // overlaps the page whenever it is open, which would leave the native view
+  // painted on top of it.
+  useBrowserOcclusion(dropdownOpen, "dropdown");
   const dragging = useRef(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
   const availableWidth = Math.max(0, viewportWidth - leftSidebarWidth - minimumMainWidth);
