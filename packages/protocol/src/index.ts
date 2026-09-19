@@ -808,6 +808,14 @@ export const DeleteSessionSchema = Type.Object({
   sessionId: Type.String({ minLength: 1 }),
 });
 
+/**
+ * Erases sessions, including their journals, attachments and artifacts. The
+ * desktop host routes the removal through the OS trash where it can.
+ */
+export const DeleteSessionsSchema = Type.Object({
+  sessionIds: Type.Array(Type.String({ minLength: 1 }), { minItems: 1 }),
+});
+
 export const SetSessionModelSchema = Type.Object({
   sessionId: Type.String({ minLength: 1 }),
   model: ModelReferenceSchema,
@@ -1257,6 +1265,7 @@ export type ResolveUserRequestDto = Static<typeof ResolveUserRequestSchema>;
 export type RenameSessionDto = Static<typeof RenameSessionSchema>;
 export type SetSessionPinnedDto = Static<typeof SetSessionPinnedSchema>;
 export type DeleteSessionDto = Static<typeof DeleteSessionSchema>;
+export type DeleteSessionsDto = Static<typeof DeleteSessionsSchema>;
 export type SetSessionModelDto = Static<typeof SetSessionModelSchema>;
 export type SetSessionAccessDto = Static<typeof SetSessionAccessSchema>;
 export type SetPreferenceDto = Static<typeof SetPreferenceSchema>;

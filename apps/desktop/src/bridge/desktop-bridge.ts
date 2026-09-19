@@ -87,7 +87,7 @@ import type {
 } from "@wordless/protocol";
 import type { ToolApprovalMode } from "@wordless/domain";
 
-export const DESKTOP_BRIDGE_VERSION = 35;
+export const DESKTOP_BRIDGE_VERSION = 37;
 
 export interface DesktopBridge {
   readonly version: typeof DESKTOP_BRIDGE_VERSION;
@@ -173,6 +173,14 @@ export interface DesktopBridge {
   renameSession(sessionId: string, title: string): Promise<SessionRecord>;
   setSessionPinned(sessionId: string, pinned: boolean): Promise<SessionRecord>;
   deleteSession(sessionId: string): Promise<void>;
+  /**
+   * Erases sessions and the files they own (journal, attachments, artifacts).
+   * The host moves them to the OS trash when it can, so an accidental deletion
+   * is still recoverable outside the app.
+   */
+  deleteSessions(sessionIds: string[]): Promise<{ deleted: string[]; failed: { sessionId: string; error: string }[] }>;
+  /** Bytes owned by each session, for the storage column in session history. */
+  getSessionStorageUsage(sessionIds?: string[]): Promise<Record<string, number>>;
   createMediaProject(title?: string): Promise<MediaProject>;
   getMediaProject(sessionId: string): Promise<MediaProject>;
   importMediaImages(
@@ -539,6 +547,8 @@ const requiredMethods: Array<Exclude<keyof DesktopBridge, "version">> = [
   "renameSession",
   "setSessionPinned",
   "deleteSession",
+  "deleteSessions",
+  "getSessionStorageUsage",
   "createMediaProject",
   "getMediaProject",
   "importMediaImages",

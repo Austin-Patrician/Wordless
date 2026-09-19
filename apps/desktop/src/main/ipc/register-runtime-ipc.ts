@@ -36,6 +36,7 @@ import {
   DeleteCustomProviderSchema,
   DiscoverProviderModelsSchema,
   DeleteSessionSchema,
+  DeleteSessionsSchema,
   DuplicateMediaAssetSchema,
   ImportSkillFileSchema,
   ImportMediaImagesSchema,
@@ -577,6 +578,26 @@ export function registerRuntimeIpc(
       options.automation.onSessionDeleted(input.sessionId);
     },
   );
+  ipcMain.handle("wordless:sessions:delete", async (_event, payload: unknown) => {
+    const input = parsePayload<{ sessionIds: string[] }>(DeleteSessionsSchema, payload);
+    return await runtime.deleteSessions(input.sessionIds, {
+      // Mirrors wordless:session:delete so bulk deletion also releases office
+      // documents and drops automation references.
+      beforeDelete: async (session) =>
+        await options.office.releaseSession(session.id, session.runtimeRootPath),
+      afterDelete: (sessionId) => options.automation.onSessionDeleted(sessionId),
+      // Prefer the OS trash so a mistaken deletion stays recoverable outside
+      // Wordless; the runtime falls back to a real removal when it cannot.
+      trash: async (absolutePath) => await shell.trashItem(absolutePath),
+    });
+  });
+  ipcMain.handle("wordless:sessions:storage-usage", async (_event, payload: unknown) => {
+    const input = (payload ?? {}) as { sessionIds?: unknown };
+    const sessionIds = Array.isArray(input.sessionIds)
+      ? input.sessionIds.filter((value): value is string => typeof value === "string")
+      : undefined;
+    return await runtime.getSessionStorageUsage(sessionIds);
+  });
   ipcMain.handle("wordless:media:create", async (_event, payload: unknown) => {
     const input = parsePayload<{ title?: string }>(
       CreateMediaProjectSchema,

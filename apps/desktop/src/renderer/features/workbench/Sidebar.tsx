@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import type { SessionRecord } from "@wordless/domain";
 import { usePreferences } from "../../shared/preferences";
+import { relativeTimeFrom as relativeTime } from "../../shared/relative-time";
 import { useRuntime, useRuntimeClient } from "../../shared/runtime";
 import folderIcon from "../../../icons/common-icons/floder.svg";
 import wordlessIcon from "../../../icons/common-icons/wordless.jpeg";
@@ -42,15 +43,6 @@ function sortSessions(sessions: SessionRecord[]): SessionRecord[] {
     if (left.pinnedAt !== null && right.pinnedAt !== null && left.pinnedAt !== right.pinnedAt) return right.pinnedAt - left.pinnedAt;
     return right.updatedAt - left.updatedAt;
   });
-}
-
-function relativeTime(timestamp: number, locale: "zh-CN" | "en-US"): string {
-  const elapsed = Math.max(0, Date.now() - timestamp);
-  const formatter = new Intl.RelativeTimeFormat(locale, { numeric: "auto" });
-  if (elapsed < 60_000) return formatter.format(0, "second");
-  if (elapsed < 3_600_000) return formatter.format(-Math.floor(elapsed / 60_000), "minute");
-  if (elapsed < 86_400_000) return formatter.format(-Math.floor(elapsed / 3_600_000), "hour");
-  return formatter.format(-Math.floor(elapsed / 86_400_000), "day");
 }
 
 type SessionRowProps = {

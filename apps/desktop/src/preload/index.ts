@@ -118,6 +118,10 @@ const wordlessBridge: DesktopBridge = {
     ipcRenderer.invoke("wordless:session:pin", { sessionId, pinned }),
   deleteSession: (sessionId) =>
     ipcRenderer.invoke("wordless:session:delete", { sessionId }),
+  deleteSessions: (sessionIds) =>
+    ipcRenderer.invoke("wordless:sessions:delete", { sessionIds }),
+  getSessionStorageUsage: (sessionIds) =>
+    ipcRenderer.invoke("wordless:sessions:storage-usage", { sessionIds }),
   createMediaProject: (title) =>
     ipcRenderer.invoke("wordless:media:create", {
       ...(title ? { title } : {}),

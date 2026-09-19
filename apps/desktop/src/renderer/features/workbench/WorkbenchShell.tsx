@@ -247,6 +247,14 @@ export function WorkbenchShell() {
     }
   }, [selectedSessionId, selectedWorkbenchId]);
 
+  // A session can disappear while it is open (deleted from the sidebar or from
+  // Settings → session history). Leaving selectedSessionId set would render the
+  // thread for a conversation that no longer exists.
+  useEffect(() => {
+    if (!selectedSessionId || !snapshot) return;
+    if (!snapshot.sessions.some((session) => session.id === selectedSessionId)) newThread();
+  }, [snapshot, selectedSessionId]);
+
   useEffect(() => {
     if (!hasSelectedThread) return;
     const onKeyDown = (event: KeyboardEvent) => {
@@ -374,7 +382,21 @@ export function WorkbenchShell() {
         {showSessionTools ? contextPanel : null}
         </>}
       </div>
-      <SettingsDialog initialPage={settingsPage} onOpenChange={setSettingsOpen} open={settingsOpen} />
+      <SettingsDialog
+        initialPage={settingsPage}
+        onOpenChange={setSettingsOpen}
+        onOpenSession={(sessionId) => {
+          const session = snapshot.sessions.find((candidate) => candidate.id === sessionId);
+          setPendingWorkspaceReferences([]);
+          setPendingArtifactSelection(null);
+          setSelectedSessionId(sessionId);
+          setMainView(session?.workbenchId === "media-canvas" ? "media" : "thread");
+          setRightFullscreen(false);
+          setMediaFullscreen(false);
+          setSettingsOpen(false);
+        }}
+        open={settingsOpen}
+      />
       <SkillImportDialog onImport={importSkill} onOpenChange={setSkillImportOpen} open={skillImportOpen} />
       {activeSession && client ? <ConversationSearchDialog onNavigate={(result) => setMessageNavigationTarget({ matchText: result.snippet.slice(result.matchStart, result.matchEnd), messageId: result.messageId, sessionId: activeSession.id, turnId: result.turnId, requestId: ++messageNavigationSequenceRef.current })} onOpenChange={setConversationSearchOpen} open={conversationSearchOpen} searchMessages={(request) => client.searchSessionMessages(activeSession.id, request)} sessionId={activeSession.id} /> : null}
       </div>
