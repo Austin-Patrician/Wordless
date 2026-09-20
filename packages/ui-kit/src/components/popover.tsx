@@ -4,6 +4,7 @@ import { cn } from "../lib/cn";
 
 const Popover = PopoverPrimitive.Root;
 const PopoverAnchor = PopoverPrimitive.Anchor;
+const PopoverTrigger = PopoverPrimitive.Trigger;
 
 function PopoverContent({ className, ...props }: ComponentPropsWithoutRef<typeof PopoverPrimitive.Content>) {
   return (
@@ -16,4 +17,4 @@ function PopoverContent({ className, ...props }: ComponentPropsWithoutRef<typeof
   );
 }
 
-export { Popover, PopoverAnchor, PopoverContent };
+export { Popover, PopoverAnchor, PopoverContent, PopoverTrigger };

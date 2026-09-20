@@ -9,7 +9,7 @@ import {
   type SessionStorage,
   type SessionTreeEntry,
 } from "@wordless/agent";
-import { normalizeShortcutBindings } from "@wordless/domain";
+import { normalizeShortcutBindings, normalizeSidebarPreferences } from "@wordless/domain";
 import type {
   AppPreferences,
   AutomationRun,
@@ -123,6 +123,16 @@ export class WordlessDatabase {
               : defaults.shortcuts?.bindings,
           ),
         },
+        // The arranged sidebar is repaired on read for the same reason: a key
+        // list is typed text as well, and the limit decides how much of it the
+        // interface is allowed to show. Keys the catalog no longer offers are
+        // kept here — dropping them belongs to the renderer, and keeping them
+        // lets an entry that comes back keep its place.
+        sidebar: normalizeSidebarPreferences(
+          typeof stored.sidebar === "object" && stored.sidebar !== null && !Array.isArray(stored.sidebar)
+            ? stored.sidebar
+            : defaults.sidebar,
+        ),
       };
     } catch {
       return defaults;

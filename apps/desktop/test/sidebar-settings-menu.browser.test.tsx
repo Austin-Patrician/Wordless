@@ -69,10 +69,8 @@ async function renderSidebar(): Promise<HTMLElement> {
       <StrictMode>
         <PreferencesProvider>
           <Sidebar
-            automationActive={false}
             collapsed={false}
-            expertsActive={false}
-            mediaActive={false}
+            mainView="thread"
             onNewThread={() => {}}
             onOpenAutomation={() => {}}
             onOpenExperts={() => {}}
@@ -85,8 +83,6 @@ async function renderSidebar(): Promise<HTMLElement> {
             onToggle={() => {}}
             runningSessionIds={new Set<string>()}
             selectedSessionId={null}
-            skillsActive={false}
-            tasksActive={false}
           />
         </PreferencesProvider>
       </StrictMode>,

@@ -26,7 +26,7 @@ const actionCopy: Record<ShortcutActionId, { label: MessageKey; description: Mes
   "open-automation": { label: "automations", description: "shortcutOpenAutomationDescription" },
   "open-tasks": { label: "tasks", description: "shortcutOpenTasksDescription" },
   "open-experts": { label: "digitalEmployees", description: "shortcutOpenExpertsDescription" },
-  "open-skills": { label: "shortcutOpenSkillsLabel", description: "shortcutOpenSkillsDescription" },
+  "open-skills": { label: "skillsMcp", description: "shortcutOpenSkillsDescription" },
   "find-in-conversation": { label: "shortcutFindLabel", description: "shortcutFindDescription" },
   "toggle-sidebar": { label: "shortcutToggleSidebarLabel", description: "shortcutToggleSidebarDescription" },
   "toggle-context-panel": { label: "shortcutToggleContextPanelLabel", description: "shortcutToggleContextPanelDescription" },

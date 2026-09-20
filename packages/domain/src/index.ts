@@ -1211,6 +1211,184 @@ export function normalizeShortcutBindings(value: unknown): ShortcutBindings {
   return bindings;
 }
 
+/**
+ * The entry that starts a conversation. It is locked to the first inline
+ * position: it is an action rather than a view, the first-run guide points at
+ * it, and a sidebar whose first row can disappear looks broken.
+ */
+export const SIDEBAR_PINNED_ANCHOR = "new";
+
+/**
+ * Which sidebar entries are shown inline and which are listed in the "More"
+ * panel, in the order the user arranged them.
+ *
+ * Only keys are stored, never the entries themselves: a view that is removed
+ * and later comes back keeps the place it was given instead of taking over the
+ * layout. Everything here is pure — the arrangement is arranged by the pointer
+ * and the keyboard through the same functions, so the two cannot disagree.
+ */
+export interface SidebarNavLayout {
+  /** Keys shown inline, in order. Never holds {@link SIDEBAR_PINNED_ANCHOR}. */
+  pinned: readonly string[];
+  /** Keys listed in the "More" panel, in order. */
+  more: readonly string[];
+}
+
+export interface SidebarPreferences {
+  layout: SidebarNavLayout;
+  /**
+   * Inline rows at most, {@link SIDEBAR_PINNED_ANCHOR} included. Counted from
+   * the top row because that is what the user counts on screen.
+   */
+  pinnedLimit: number;
+}
+
+/** Inline rows: the anchor always takes one, so the floor leaves two choices. */
+export const SIDEBAR_PINNED_LIMIT_MIN = 3;
+export const SIDEBAR_PINNED_LIMIT_MAX = 6;
+/**
+ * One more than the entries a first-time sidebar shows inline, so a slot is
+ * free from the start: a limit equal to what is already shown would leave every
+ * "Show inline" button disabled until the user hid something first.
+ */
+export const SIDEBAR_PINNED_LIMIT_DEFAULT = 5;
+
+/** Keys are entries of the interface catalog; only their arrangement is stored. */
+const SIDEBAR_LOCKED_KEYS: ReadonlySet<string> = new Set([SIDEBAR_PINNED_ANCHOR]);
+
+/** Slots the user may fill, the locked anchor not counted. */
+export function sidebarPinnedCapacity(pinnedLimit: number): number {
+  return Math.max(0, clampSidebarPinnedLimit(pinnedLimit) - 1);
+}
+
+export function clampSidebarPinnedLimit(value: unknown): number {
+  if (typeof value !== "number" || !Number.isFinite(value)) return SIDEBAR_PINNED_LIMIT_DEFAULT;
+  return Math.min(SIDEBAR_PINNED_LIMIT_MAX, Math.max(SIDEBAR_PINNED_LIMIT_MIN, Math.round(value)));
+}
+
+function sidebarNavKeys(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  const keys: string[] = [];
+  for (const candidate of value) {
+    if (typeof candidate !== "string" || candidate.length === 0 || candidate.length > 120) continue;
+    if (SIDEBAR_LOCKED_KEYS.has(candidate) || keys.includes(candidate)) continue;
+    keys.push(candidate);
+  }
+  return keys;
+}
+
+/**
+ * Read-time repair, the counterpart of {@link normalizeShortcutBindings}: a
+ * hand-edited or older row must not reach the sidebar with a malformed key list
+ * or a limit outside the range. Keys the catalog no longer offers are kept —
+ * dropping them would be the renderer's business, and keeping them lets an
+ * entry that comes back keep the place the user gave it.
+ */
+export function normalizeSidebarPreferences(value: unknown): SidebarPreferences {
+  const record = typeof value === "object" && value !== null && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
+  const layout = typeof record.layout === "object" && record.layout !== null && !Array.isArray(record.layout) ? (record.layout as Record<string, unknown>) : {};
+  const pinned = sidebarNavKeys(layout.pinned);
+  const inPinned: ReadonlySet<string> = new Set(pinned);
+  return {
+    layout: { pinned, more: sidebarNavKeys(layout.more).filter((key) => !inPinned.has(key)) },
+    pinnedLimit: clampSidebarPinnedLimit(record.pinnedLimit),
+  };
+}
+
+/** Inline rows first, the locked anchor in front, then the "More" panel. */
+export interface ResolvedSidebarNavLayout {
+  pinned: readonly string[];
+  more: readonly string[];
+}
+
+/**
+ * Reconciles the stored arrangement with the entries the interface offers:
+ *
+ * - keys no longer in the catalog are dropped (a view was removed);
+ * - keys the arrangement never mentioned land at the end of "More", so a new
+ *   entry never pushes a chosen one out of the way;
+ * - inline rows above the limit fall back to the front of "More" instead of
+ *   disappearing silently when the user lowers the limit.
+ */
+export function resolveSidebarNavLayout(
+  catalogKeys: readonly string[],
+  layout: SidebarNavLayout,
+  pinnedLimit: number = SIDEBAR_PINNED_LIMIT_DEFAULT,
+  defaultPinned: readonly string[] = [],
+): ResolvedSidebarNavLayout {
+  const catalog: ReadonlySet<string> = new Set(catalogKeys.filter((key) => !SIDEBAR_LOCKED_KEYS.has(key)));
+  const arranged: ReadonlySet<string> = new Set([...layout.pinned, ...layout.more]);
+  const pinned = sidebarNavKeys(layout.pinned).filter((key) => catalog.has(key));
+  const more = sidebarNavKeys(layout.more).filter((key) => catalog.has(key));
+  const placed: ReadonlySet<string> = new Set([...pinned, ...more]);
+
+  for (const key of catalogKeys) {
+    if (SIDEBAR_LOCKED_KEYS.has(key) || placed.has(key)) continue;
+    if (!arranged.has(key) && defaultPinned.includes(key)) pinned.push(key);
+    else more.push(key);
+  }
+  // Rows above the limit are not dropped: they move to the front of "More".
+  const overflow = pinned.splice(sidebarPinnedCapacity(pinnedLimit));
+  return { pinned: [SIDEBAR_PINNED_ANCHOR, ...pinned], more: [...overflow, ...more] };
+}
+
+export function canPinSidebarNavItem(resolved: ResolvedSidebarNavLayout, pinnedLimit: number): boolean {
+  return resolved.pinned.length <= sidebarPinnedCapacity(pinnedLimit);
+}
+
+/** Stored form: the locked anchor is implied, so it is not written down. */
+export function toStoredSidebarNavLayout(resolved: ResolvedSidebarNavLayout): SidebarNavLayout {
+  return { pinned: resolved.pinned.filter((key) => key !== SIDEBAR_PINNED_ANCHOR), more: [...resolved.more] };
+}
+
+function withoutSidebarKey(keys: readonly string[], key: string): string[] {
+  return keys.filter((candidate) => candidate !== key);
+}
+
+/**
+ * Moves an entry into the inline list, at the end. Refuses when it is already
+ * there, is the locked anchor, or the limit is reached — silently ignoring a
+ * full list beats evicting an entry the user did not choose to lose.
+ */
+export function pinSidebarNavItem(resolved: ResolvedSidebarNavLayout, key: string, pinnedLimit: number): ResolvedSidebarNavLayout {
+  if (SIDEBAR_LOCKED_KEYS.has(key)) return resolved;
+  if (resolved.pinned.includes(key) || !resolved.more.includes(key)) return resolved;
+  if (!canPinSidebarNavItem(resolved, pinnedLimit)) return resolved;
+  return { pinned: [...resolved.pinned, key], more: withoutSidebarKey(resolved.more, key) };
+}
+
+/** Moves an entry back into "More", first, so it is visible where it landed. */
+export function unpinSidebarNavItem(resolved: ResolvedSidebarNavLayout, key: string): ResolvedSidebarNavLayout {
+  if (SIDEBAR_LOCKED_KEYS.has(key) || !resolved.pinned.includes(key)) return resolved;
+  return { pinned: withoutSidebarKey(resolved.pinned, key), more: [key, ...resolved.more] };
+}
+
+/**
+ * Puts an entry into a region, before `beforeKey` (null = at the end).
+ * The locked anchor keeps the first inline slot and the limit is enforced here,
+ * so the pointer and the keyboard cannot arrange the sidebar differently.
+ */
+export function moveSidebarNavItem(
+  resolved: ResolvedSidebarNavLayout,
+  key: string,
+  region: "pinned" | "more",
+  beforeKey: string | null,
+  pinnedLimit: number,
+): ResolvedSidebarNavLayout {
+  if (SIDEBAR_LOCKED_KEYS.has(key)) return resolved;
+  if (!resolved.pinned.includes(key) && !resolved.more.includes(key)) return resolved;
+  if (region === "pinned" && !resolved.pinned.includes(key) && !canPinSidebarNavItem(resolved, pinnedLimit)) return resolved;
+
+  const pinned = withoutSidebarKey(resolved.pinned, key);
+  const more = withoutSidebarKey(resolved.more, key);
+  const target = region === "pinned" ? pinned : more;
+  const index = beforeKey === null ? -1 : target.indexOf(beforeKey);
+  const at = index < 0 ? target.length : index;
+  // The anchor occupies the first inline slot; insertions are clamped past it.
+  target.splice(region === "pinned" ? Math.max(1, at) : at, 0, key);
+  return { pinned, more };
+}
+
 export interface AppPreferences {
   locale: "zh-CN" | "en-US";
   theme: "light" | "dark" | "system";
@@ -1224,6 +1402,7 @@ export interface AppPreferences {
   entryModels: Record<string, ModelReference>;
   translation: TranslationPreferences;
   shortcuts: ShortcutPreferences;
+  sidebar: SidebarPreferences;
 }
 
 /** Languages offered for translation; the label is resolved by the interface locale. */

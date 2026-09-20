@@ -33,7 +33,7 @@ export {
   HoverCardTrigger,
 } from "./components/hover-card";
 export { ScrollArea } from "./components/scroll-area";
-export { Popover, PopoverAnchor, PopoverContent } from "./components/popover";
+export { Popover, PopoverAnchor, PopoverContent, PopoverTrigger } from "./components/popover";
 export {
   Select,
   SelectContent,

@@ -17,6 +17,7 @@ import type { ContextPanelView, FileChangeSelection, ResearchTaskSelection } fro
 import { TranslationPanelSlot, TranslationProvider } from "../translation/TranslationPanelSlot";
 import { WelcomeView } from "./WelcomeView";
 import { Sidebar } from "./Sidebar";
+import type { WorkbenchMainView } from "./sidebar-nav";
 import { SkillsView } from "../skills/SkillsView";
 import { SkillImportDialog } from "../skills/SkillImportDialog";
 import { MediaCanvas } from "../media/MediaCanvas";
@@ -47,7 +48,7 @@ export function WorkbenchShell() {
   const [mediaFullscreen, setMediaFullscreen] = useState(false);
   const [contextView, setContextView] = useState<ContextPanelView>("overview");
   const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null);
-  const [mainView, setMainView] = useState<"thread" | "skills" | "experts" | "media" | "automation" | "tasks">("thread");
+  const [mainView, setMainView] = useState<WorkbenchMainView>("thread");
   const [pendingExpertSelection, setPendingExpertSelection] = useState<ExpertSelection | undefined>();
   const [pendingExpertPrompt, setPendingExpertPrompt] = useState<string | undefined>();
   const [pendingWorkspaceReferences, setPendingWorkspaceReferences] = useState<InlineWorkspaceReferenceToken[]>([]);
@@ -405,7 +406,7 @@ export function WorkbenchShell() {
       <DesktopChrome onNewThread={newThread} onOpenSettings={openSettings} />
       <div className="flex h-[calc(100dvh-var(--wordless-chrome-height))] overflow-hidden">
         {mainView === "media" && selectedSessionId && activeSession?.workbenchId === "media-canvas" && mediaFullscreen ? <MediaCanvas fullscreen leftOpen sessionId={selectedSessionId} onBackToLibrary={() => { setMediaFullscreen(false); setSelectedSessionId(null); }} onOpenModels={() => openSettings("models")} onToggleFullscreen={() => setMediaFullscreen(false)} onToggleLeft={() => setLeftOpen((value) => !value)} /> : <>
-        <div className={showSessionTools && rightFullscreen ? "hidden" : undefined}><Sidebar tasksActive={mainView === "tasks"} onOpenTasks={openTasks} automationActive={mainView === "automation"} collapsed={!leftOpen} expertsActive={mainView === "experts"} mediaActive={mainView === "media"} onNewThread={newThread} onOpenAutomation={openAutomation} onOpenExperts={openExperts} onOpenMedia={openMedia} onOpenSession={(sessionId) => { const session = snapshot.sessions.find((candidate) => candidate.id === sessionId); setPendingWorkspaceReferences([]); setPendingArtifactSelection(null); setSelectedSessionId(sessionId); setMainView(session?.workbenchId === "media-canvas" ? "media" : "thread"); setRightFullscreen(false); setMediaFullscreen(false); }} onOpenSettings={(page) => openSettings(page)} onOpenSkills={openSkills} onSessionDeleted={(sessionId) => { deletedSessionIdsRef.current.add(sessionId); sessionDraftsRef.current.delete(sessionId); if (selectedSessionId === sessionId) newThread(); }} onToggle={() => setLeftOpen((value) => !value)} runningSessionIds={runningSessionIds} selectedSessionId={selectedSessionId} skillsActive={mainView === "skills"} /></div>
+        <div className={showSessionTools && rightFullscreen ? "hidden" : undefined}><Sidebar mainView={mainView} onOpenTasks={openTasks} collapsed={!leftOpen} onNewThread={newThread} onOpenAutomation={openAutomation} onOpenExperts={openExperts} onOpenMedia={openMedia} onOpenSession={(sessionId) => { const session = snapshot.sessions.find((candidate) => candidate.id === sessionId); setPendingWorkspaceReferences([]); setPendingArtifactSelection(null); setSelectedSessionId(sessionId); setMainView(session?.workbenchId === "media-canvas" ? "media" : "thread"); setRightFullscreen(false); setMediaFullscreen(false); }} onOpenSettings={(page) => openSettings(page)} onOpenSkills={openSkills} onSessionDeleted={(sessionId) => { deletedSessionIdsRef.current.add(sessionId); sessionDraftsRef.current.delete(sessionId); if (selectedSessionId === sessionId) newThread(); }} onToggle={() => setLeftOpen((value) => !value)} runningSessionIds={runningSessionIds} selectedSessionId={selectedSessionId} /></div>
         <section className={showSessionTools && rightFullscreen ? "hidden" : "relative flex min-w-0 flex-1 flex-col overflow-hidden bg-[var(--wordless-shell-workspace)] lg:min-w-[640px]"} style={{ "--thread-content-max-width": rightOpen ? "820px" : "clamp(820px, 78%, 1180px)" } as CSSProperties}>
           {showSessionTools ? <header className="flex h-[62px] shrink-0 items-center justify-between px-4 sm:px-5">
             <div className="flex min-w-0 items-center gap-2">

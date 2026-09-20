@@ -1,5 +1,6 @@
-import { Button, DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger, Popover, PopoverAnchor, PopoverContent, Tooltip, TooltipContent, TooltipTrigger } from "@wordless/ui-kit";
-import { Bell, CalendarClock, ChevronDown, ChevronLeft, ChevronsDown, ChevronsUp, Cloud, Command, Ellipsis, Folder, FolderOpen, Images, LoaderCircle, LogIn, LogOut, Monitor, Moon, Pin, PinOff, Search, Settings, Sun, Trash2, Pencil, UserRoundSearch, X, ListTodo } from "lucide-react";
+import { Button, DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger, Popover, PopoverAnchor, PopoverContent, PopoverTrigger, Tooltip, TooltipContent, TooltipTrigger } from "@wordless/ui-kit";
+import { canPinSidebarNavItem, moveSidebarNavItem, pinSidebarNavItem, resolveSidebarNavLayout, sidebarPinnedCapacity, toStoredSidebarNavLayout, unpinSidebarNavItem, type ResolvedSidebarNavLayout, type SidebarNavLayout } from "@wordless/domain";
+import { Bell, CalendarClock, ChevronDown, ChevronLeft, ChevronsDown, ChevronsUp, Cloud, Ellipsis, FolderOpen, LoaderCircle, LogIn, LogOut, Monitor, Moon, Pin, PinOff, Search, Settings, Sun, Trash2, Pencil, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import type { SessionRecord } from "@wordless/domain";
@@ -11,12 +12,14 @@ import folderIcon from "../../../icons/common-icons/floder.svg";
 import wordlessIcon from "../../../icons/common-icons/wordless.jpeg";
 import { AgentEntryIcon } from "./AgentEntryIcon";
 import { SessionSearchDialog } from "./SessionSearchDialog";
+import { SidebarNavMorePanel } from "./SidebarNavMorePanel";
+import { activeSidebarNavRow, DEFAULT_PINNED_SIDEBAR_NAV_IDS, sidebarNavButtonClassName, SIDEBAR_NAV_ITEM_IDS, toSidebarNavClickHandlers, toSidebarNavRows, type SidebarNavRow, type WorkbenchMainView } from "./sidebar-nav";
+import { useSidebarNavDrag, type SidebarNavRegion } from "./use-sidebar-nav-drag";
 import { sortWorkspaceGroupsByRecentSession } from "./sidebar-sessions";
 import { useDesktopAccount } from "../../shared/account";
 import type { SettingsPage } from "../settings/SettingsDialog";
 
 type SidebarProps = {
-  automationActive: boolean;
   collapsed: boolean;
   onNewThread: () => void;
   onOpenMedia: () => void;
@@ -29,10 +32,8 @@ type SidebarProps = {
   onToggle: () => void;
   runningSessionIds: ReadonlySet<string>;
   selectedSessionId: string | null;
-  mediaActive: boolean;
-  skillsActive: boolean;
-  expertsActive: boolean;
-  tasksActive: boolean;
+  /** The view the shell shows; the sidebar derives which entry is current. */
+  mainView: WorkbenchMainView;
 };
 
 const RECENT_SESSION_LIMIT = 5;
@@ -196,10 +197,10 @@ function SidebarSettingsMenu({ onOpenSettings }: { onOpenSettings: () => void })
   );
 }
 
-export function Sidebar({ automationActive, collapsed, expertsActive, mediaActive, onNewThread, onOpenAutomation, onOpenExperts, onOpenMedia, onOpenSettings, onOpenSession, onSessionDeleted, onOpenSkills, onToggle, runningSessionIds, selectedSessionId, skillsActive, tasksActive, onOpenTasks }: SidebarProps & { onOpenTasks: () => void }) {
+export function Sidebar({ collapsed, mainView, onNewThread, onOpenAutomation, onOpenExperts, onOpenMedia, onOpenSettings, onOpenSession, onSessionDeleted, onOpenSkills, onToggle, runningSessionIds, selectedSessionId, onOpenTasks }: SidebarProps & { onOpenTasks: () => void }) {
   const client = useRuntimeClient();
   const { refresh, snapshot } = useRuntime();
-  const { locale, t } = usePreferences();
+  const { locale, setSidebar, sidebar, t } = usePreferences();
   const [expandedWorkspaceIds, setExpandedWorkspaceIds] = useState<Set<string>>(() => new Set());
   const [renaming, setRenaming] = useState<SessionRecord | null>(null);
   const [title, setTitle] = useState("");
@@ -333,14 +334,40 @@ export function Sidebar({ automationActive, collapsed, expertsActive, mediaActiv
     }
   };
 
-  const navItems = [
-    { id: "new", label: t("newThread"), icon: Folder, onClick: onNewThread },
-    { id: "media", label: t("imageVideoGeneration"), icon: Images, onClick: onOpenMedia },
-    { id: "automation", label: t("automations"), icon: CalendarClock, onClick: onOpenAutomation },
-    { id: "tasks", label: t("tasks"), icon: ListTodo, onClick: onOpenTasks },
-    { id: "experts", label: t("digitalEmployees"), icon: UserRoundSearch, onClick: onOpenExperts },
-    { id: "skills", label: "Skills & MCP", icon: Command, onClick: onOpenSkills },
-  ];
+  // Which entries exist comes from the catalog; which are inline comes from the
+  // user's arrangement, reconciled with the catalog on every render so a view
+  // that disappears cannot leave a dangling row behind.
+  const resolvedNav = useMemo(
+    () => resolveSidebarNavLayout(SIDEBAR_NAV_ITEM_IDS, sidebar.layout, sidebar.pinnedLimit, DEFAULT_PINNED_SIDEBAR_NAV_IDS),
+    [sidebar.layout, sidebar.pinnedLimit],
+  );
+  const pinnedNavRows = useMemo(() => toSidebarNavRows(resolvedNav.pinned, mainView, selectedSessionId, t), [mainView, resolvedNav.pinned, selectedSessionId, t]);
+  const moreNavRows = useMemo(() => toSidebarNavRows(resolvedNav.more, mainView, selectedSessionId, t), [mainView, resolvedNav.more, selectedSessionId, t]);
+  const [navMoreOpen, setNavMoreOpen] = useState(false);
+  const navClickHandlers = useMemo(
+    () => toSidebarNavClickHandlers({ newThread: onNewThread, openMedia: onOpenMedia, openAutomation: onOpenAutomation, openTasks: onOpenTasks, openExperts: onOpenExperts, openSkills: onOpenSkills }),
+    [onNewThread, onOpenAutomation, onOpenExperts, onOpenMedia, onOpenSkills, onOpenTasks],
+  );
+  const commitNavLayout = (next: ResolvedSidebarNavLayout, pinnedLimit: number = sidebar.pinnedLimit) => {
+    const layout: SidebarNavLayout = toStoredSidebarNavLayout(next);
+    void setSidebar({ layout, pinnedLimit });
+  };
+  // Lowering the limit writes the split it produces, so the stored arrangement
+  // and what is on screen always agree, whether or not the user arranged
+  // anything before.
+  const setNavLimit = (pinnedLimit: number) =>
+    commitNavLayout(resolveSidebarNavLayout(SIDEBAR_NAV_ITEM_IDS, sidebar.layout, pinnedLimit, DEFAULT_PINNED_SIDEBAR_NAV_IDS), pinnedLimit);
+  const moveNavRow = (id: string, region: SidebarNavRegion, beforeId: string | null) =>
+    commitNavLayout(moveSidebarNavItem(resolvedNav, id, region, beforeId, sidebar.pinnedLimit));
+  const navDrag = useSidebarNavDrag(moveNavRow, { pinned: resolvedNav.pinned, more: resolvedNav.more });
+  // A collapsed sidebar hides two rows' worth of width, so "More" is the only
+  // place the hidden entries can be reached from; it never disappears entirely.
+  const activeMoreRow = activeSidebarNavRow(moreNavRows);
+  const moreTriggerLabel = activeMoreRow ? activeMoreRow.label : t("sidebarNavMore");
+  const openNavRow = (row: SidebarNavRow) => {
+    navClickHandlers[row.id]();
+    setNavMoreOpen(false);
+  };
 
   const sessionRow = (session: SessionRecord) => <SessionRow active={selectedSessionId === session.id} editingTitle={renaming?.id === session.id ? title : null} entryIconKey={entryIconKeys.get(session.entryId)} key={session.id} onDelete={(candidate) => { setDeleteError(null); setDeleting(candidate); }} onEditCancel={() => setRenaming(null)} onEditSave={() => void saveRename()} onEditTitleChange={setTitle} onOpen={openSession} onOpenFolder={(candidate) => void run(async () => await client.openSessionFolder(candidate.id))} onRename={beginRename} onSetPinned={(candidate, pinned) => void run(async () => await client.setSessionPinned(candidate.id, pinned))} running={runningSessionIds.has(session.id)} session={session} t={t} timeLabel={relativeTime(session.updatedAt, locale)} />;
 
@@ -355,12 +382,36 @@ export function Sidebar({ automationActive, collapsed, expertsActive, mediaActiv
       </div>
 
       <nav aria-label="Primary navigation" className="mt-7 shrink-0 space-y-1">
-        {navItems.map((item) => {
-          const Icon = item.icon;
-          const active = (item.id === "new" && selectedSessionId === null && !skillsActive && !expertsActive && !mediaActive && !automationActive && !tasksActive) || (item.id === "experts" && expertsActive) || (item.id === "skills" && skillsActive) || (item.id === "media" && mediaActive) || (item.id === "automation" && automationActive) || (item.id === "tasks" && tasksActive);
-          const button = <button className={`flex w-full items-center gap-3 rounded-xl px-3 py-2 text-left text-[13px] font-medium transition-colors ${collapsed ? "justify-center" : ""} ${active ? "bg-[#e3e3df] text-foreground dark:bg-[#2a2c22]" : "text-[#4c4c47] hover:bg-[#e7e7e3] dark:text-muted-foreground dark:hover:bg-[#282a21] dark:hover:text-foreground"}`} data-tour={`nav-${item.id}`} onClick={item.onClick} type="button"><Icon className="h-[17px] w-[17px] shrink-0" />{!collapsed ? <span className="truncate">{item.label}</span> : null}</button>;
-          return collapsed ? <Tooltip key={item.id}><TooltipTrigger asChild>{button}</TooltipTrigger><TooltipContent side="right">{item.label}</TooltipContent></Tooltip> : <div key={item.id}>{button}</div>;
+        {pinnedNavRows.map((row) => {
+          const Icon = row.icon;
+          const button = <button className={sidebarNavButtonClassName(row.active, collapsed)} data-tour={`nav-${row.id}`} onClick={() => openNavRow(row)} type="button"><Icon className="h-[17px] w-[17px] shrink-0" />{!collapsed ? <span className="truncate">{row.label}</span> : null}</button>;
+          return collapsed ? <Tooltip key={row.id}><TooltipTrigger asChild>{button}</TooltipTrigger><TooltipContent side="right">{row.label}</TooltipContent></Tooltip> : <div key={row.id}>{button}</div>;
         })}
+        {/* Always present: it is the only way to arrange the sidebar, so it has to
+            survive the arrangement that pins every entry inline. */}
+        <Popover onOpenChange={(open) => { setNavMoreOpen(open); if (!open) navDrag.resetDrag(); }} open={navMoreOpen}>
+          <PopoverTrigger asChild>
+            <button className={sidebarNavButtonClassName(activeMoreRow !== undefined, collapsed)} data-tour="nav-more" title={moreTriggerLabel} type="button">
+              {activeMoreRow ? <activeMoreRow.icon className="h-[17px] w-[17px] shrink-0" /> : <Ellipsis className="h-[17px] w-[17px] shrink-0" />}
+              {!collapsed ? <><span className="min-w-0 flex-1 truncate">{moreTriggerLabel}</span><ChevronDown className={`h-3.5 w-3.5 shrink-0 transition-transform ${navMoreOpen ? "rotate-180" : ""}`} /></> : null}
+            </button>
+          </PopoverTrigger>
+          <PopoverContent align="start" className="w-[248px] p-1" side="right" sideOffset={8}>
+            <SidebarNavMorePanel
+              canPinMore={canPinSidebarNavItem(resolvedNav, sidebar.pinnedLimit)}
+              drag={navDrag}
+              moreRows={moreNavRows}
+              onItemClick={openNavRow}
+              onLimitChange={setNavLimit}
+              onPin={(id) => commitNavLayout(pinSidebarNavItem(resolvedNav, id, sidebar.pinnedLimit))}
+              onReorder={moveNavRow}
+              onReset={() => void setSidebar({ layout: { pinned: [], more: [] }, pinnedLimit: sidebar.pinnedLimit })}
+              onUnpin={(id) => commitNavLayout(unpinSidebarNavItem(resolvedNav, id))}
+              pinnedLimit={sidebar.pinnedLimit}
+              pinnedRows={pinnedNavRows}
+            />
+          </PopoverContent>
+        </Popover>
       </nav>
 
       {!collapsed ? <div className="wordless-sidebar-session-scroll mt-7 min-h-0 flex-1 overflow-y-auto pr-1"><section><div className="mb-2 flex items-center justify-between px-3"><span className="flex min-w-0 items-center gap-1.5"><p className="font-mono text-[10px] uppercase tracking-[0.14em] text-muted-foreground">{t("recentThreads")}</p>{hiddenRecentSessionCount > 0 ? <Tooltip><TooltipTrigger asChild><button aria-expanded={recentSessionsExpanded} aria-label={recentSessionsExpanded ? t("collapseRecentThreads") : t("expandRecentThreads")} className="grid h-5 w-5 shrink-0 place-items-center rounded-[5px] text-[#5d7a28] outline-none transition-colors hover:bg-[#eff8d3] hover:text-[#4f6c21] focus-visible:ring-2 focus-visible:ring-ring dark:text-[#d7e9a4] dark:hover:bg-[#303a1c] dark:hover:text-[#e4f2b8]" onClick={() => setRecentSessionsExpanded((current) => !current)} type="button">{recentSessionsExpanded ? <ChevronsUp className="h-3 w-3" /> : <ChevronsDown className="h-3 w-3" />}</button></TooltipTrigger><TooltipContent>{recentSessionsExpanded ? t("collapseRecentThreads") : t("expandRecentThreads")}</TooltipContent></Tooltip> : null}</span><span className="font-mono text-[10px] text-muted-foreground">{recentSessions.length.toString().padStart(2, "0")}</span></div><div className="space-y-1">{visibleRecentSessions.map(sessionRow)}</div>{hiddenRecentSessionCount > 0 ? <Tooltip><TooltipTrigger asChild><button aria-expanded={recentSessionsExpanded} aria-label={recentSessionsExpanded ? t("collapseRecentThreads") : t("expandRecentThreads")} className="mt-1 flex h-7 w-full items-center justify-center rounded-[7px] text-[#85857e] outline-none transition-colors hover:bg-[#e7e7e3] hover:text-[#4d4d48] focus-visible:ring-2 focus-visible:ring-ring dark:text-muted-foreground dark:hover:bg-[#282a21] dark:hover:text-foreground" onClick={() => setRecentSessionsExpanded((current) => !current)} type="button"><Ellipsis className="h-4 w-4" /></button></TooltipTrigger><TooltipContent>{recentSessionsExpanded ? t("collapseRecentThreads") : t("expandRecentThreads")}</TooltipContent></Tooltip> : null}</section><section className={hiddenRecentSessionCount > 0 ? "mt-3" : "mt-6"} data-tour="side-workspaces"><div className="mb-2 flex items-center justify-between px-3"><span className="flex min-w-0 items-center gap-1.5"><p className="font-mono text-[10px] uppercase tracking-[0.14em] text-muted-foreground">{t("yourSpace")}</p>{workspaceGroups.length > 0 ? <Tooltip><TooltipTrigger asChild><button aria-expanded={allWorkspacesExpanded} aria-label={allWorkspacesExpanded ? t("collapseYourSpace") : t("expandYourSpace")} className="grid h-5 w-5 shrink-0 place-items-center rounded-[5px] text-[#5d7a28] outline-none transition-colors hover:bg-[#eff8d3] hover:text-[#4f6c21] focus-visible:ring-2 focus-visible:ring-ring dark:text-[#d7e9a4] dark:hover:bg-[#303a1c] dark:hover:text-[#e4f2b8]" onClick={toggleAllWorkspaces} type="button">{allWorkspacesExpanded ? <ChevronsUp className="h-3 w-3" /> : <ChevronsDown className="h-3 w-3" />}</button></TooltipTrigger><TooltipContent>{allWorkspacesExpanded ? t("collapseYourSpace") : t("expandYourSpace")}</TooltipContent></Tooltip> : null}</span><span className="font-mono text-[10px] text-muted-foreground">{workspaceGroups.length.toString().padStart(2, "0")}</span></div><div className="space-y-2">{workspaceGroups.map(({ workspace, sessions: workspaceSessions }) => {

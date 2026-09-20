@@ -80,6 +80,7 @@ import {
   calculateCurrentTurnUsage,
   conversationUsageFromUnknown,
   resolveTranslationTargetLanguage,
+  SIDEBAR_PINNED_LIMIT_DEFAULT,
 } from "@wordless/domain";
 
 type SharpFactory = typeof import("sharp").default;
@@ -667,6 +668,11 @@ const DEFAULT_PREFERENCES = (defaultWorkspaceRoot: string): AppPreferences => ({
   shortcuts: {
     // Every action keeps its default until the user rebinds it.
     bindings: {},
+  },
+  sidebar: {
+    // Nothing arranged yet: the app's default split decides what shows inline.
+    layout: { pinned: [], more: [] },
+    pinnedLimit: SIDEBAR_PINNED_LIMIT_DEFAULT,
   },
 });
 
