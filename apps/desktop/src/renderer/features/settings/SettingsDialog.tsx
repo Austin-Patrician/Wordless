@@ -1,5 +1,5 @@
 import { Button } from "@wordless/ui-kit";
-import { ArchiveX, BarChart3, CircleHelp, Database, Package, Palette, Settings, ShieldAlert, SlidersHorizontal, X } from "lucide-react";
+import { ArchiveX, BarChart3, CircleHelp, Database, Keyboard, Package, Palette, Settings, ShieldAlert, SlidersHorizontal, X } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { useEffect, useState } from "react";
 import { GeneralSettings } from "./GeneralSettings";
@@ -8,6 +8,7 @@ import { useOnboarding } from "../onboarding/OnboardingFlow";
 import { ModelSettings } from "./ModelSettings";
 import { ExtensionsSettings } from "./ExtensionsSettings";
 import { TranslationSettings } from "./TranslationSettings";
+import { ShortcutSettings } from "./ShortcutSettings";
 import { SecuritySettings } from "./SecuritySettings";
 import { PersonalizationSettings } from "./PersonalizationSettings";
 import { UsageSettings } from "./UsageSettings";
@@ -15,8 +16,9 @@ import { usePreferences } from "../../shared/preferences";
 import { useDesktopUpdate } from "../../platform/desktop-update";
 import { AboutUpdatesSettings } from "./AboutUpdatesSettings";
 import { DataPrivacySettings } from "./DataPrivacySettings";
+import { useShortcutScope } from "../../shared/shortcuts/use-shortcut-scope";
 
-export type SettingsPage = "general" | "models" | "assistant" | "usage" | "sessionHistory" | "security" | "personalization" | "dataPrivacy" | "about";
+export type SettingsPage = "general" | "models" | "assistant" | "shortcuts" | "usage" | "sessionHistory" | "security" | "personalization" | "dataPrivacy" | "about";
 
 type SettingsDialogProps = {
   /** Opens a session from the history page and leaves Settings. */
@@ -35,6 +37,10 @@ export function SettingsDialog({ initialPage = "general", onOpenSession, open, o
     if (open) setPage(initialPage);
   }, [initialPage, open]);
 
+  // Settings is modal, so the global shortcuts must not run behind it: pressing
+  // the key for "new task" while reading a preference should not start one.
+  useShortcutScope({ active: open, claim: () => false, exclusive: true, id: "settings-dialog", kind: "modal" });
+
   if (!open) return null;
 
   return (
@@ -48,7 +54,7 @@ export function SettingsDialog({ initialPage = "general", onOpenSession, open, o
         <SettingsSidebar page={page} onPageChange={setPage} />
         <div className="flex min-w-0 flex-1 flex-col">
           <SettingsHeader page={page} onClose={() => onOpenChange(false)} />
-          {page === "general" ? <GeneralSettings onReplayOnboarding={() => { onOpenChange(false); onboarding?.replay(); }} /> : page === "sessionHistory" ? <SessionHistorySettings onOpenSession={onOpenSession} /> : page === "models" ? <ModelSettings /> : page === "assistant" ? <AssistantSettings /> : page === "usage" ? <UsageSettings /> : page === "security" ? <SecuritySettings /> : page === "personalization" ? <PersonalizationSettings /> : page === "dataPrivacy" ? <DataPrivacySettings /> : <AboutUpdatesSettings />}
+          {page === "general" ? <GeneralSettings onReplayOnboarding={() => { onOpenChange(false); onboarding?.replay(); }} /> : page === "sessionHistory" ? <SessionHistorySettings onOpenSession={onOpenSession} /> : page === "models" ? <ModelSettings /> : page === "assistant" ? <AssistantSettings /> : page === "shortcuts" ? <ShortcutSettings /> : page === "usage" ? <UsageSettings /> : page === "security" ? <SecuritySettings /> : page === "personalization" ? <PersonalizationSettings /> : page === "dataPrivacy" ? <DataPrivacySettings /> : <AboutUpdatesSettings />}
         </div>
       </div>
     </div>
@@ -57,8 +63,8 @@ export function SettingsDialog({ initialPage = "general", onOpenSession, open, o
 
 function SettingsHeader({ page, onClose }: { page: SettingsPage; onClose: () => void }) {
   const { t } = usePreferences();
-  const title = page === "about" ? "About & Updates" : page === "sessionHistory" ? t("historyTitle") : page === "dataPrivacy" ? t("dataPrivacy") : page === "models" ? t("models") : page === "assistant" ? t("assistant") : page === "usage" ? t("usage") : page === "security" ? t("securityCenter") : page === "personalization" ? t("personalization") : t("general");
-  const description = page === "about" ? "Version information, updates, and release history" : page === "sessionHistory" ? t("historyPageDescription") : page === "dataPrivacy" ? t("dataPrivacyDescription") : page === "models" ? t("configuredModels") : page === "assistant" ? t("assistantHelp") : page === "usage" ? t("usageHelp") : page === "security" ? t("securityCenterHelp") : page === "personalization" ? t("personalizationHelp") : t("configure");
+  const title = page === "shortcuts" ? t("shortcutSettings") : page === "about" ? "About & Updates" : page === "sessionHistory" ? t("historyTitle") : page === "dataPrivacy" ? t("dataPrivacy") : page === "models" ? t("models") : page === "assistant" ? t("assistant") : page === "usage" ? t("usage") : page === "security" ? t("securityCenter") : page === "personalization" ? t("personalization") : t("general");
+  const description = page === "shortcuts" ? t("shortcutSettingsHelp") : page === "about" ? "Version information, updates, and release history" : page === "sessionHistory" ? t("historyPageDescription") : page === "dataPrivacy" ? t("dataPrivacyDescription") : page === "models" ? t("configuredModels") : page === "assistant" ? t("assistantHelp") : page === "usage" ? t("usageHelp") : page === "security" ? t("securityCenterHelp") : page === "personalization" ? t("personalizationHelp") : t("configure");
 
   return (
     <header className="flex shrink-0 items-center justify-between border-b border-border px-6 py-5 sm:px-9">
@@ -86,6 +92,7 @@ function SettingsSidebar({ page, onPageChange }: { page: SettingsPage; onPageCha
         <SettingsNav active={page === "general"} icon={Settings} label={t("general")} onClick={() => onPageChange("general")} />
         <SettingsNav active={page === "models"} icon={Package} label={t("models")} onClick={() => onPageChange("models")} />
         <SettingsNav active={page === "assistant"} icon={SlidersHorizontal} label={t("assistant")} onClick={() => onPageChange("assistant")} />
+        <SettingsNav active={page === "shortcuts"} icon={Keyboard} label={t("shortcutSettings")} onClick={() => onPageChange("shortcuts")} />
         <SettingsNav active={page === "usage"} icon={BarChart3} label={t("usage")} onClick={() => onPageChange("usage")} />
         <SettingsNav active={page === "sessionHistory"} icon={ArchiveX} label={t("historyTitle")} onClick={() => onPageChange("sessionHistory")} />
         <SettingsNav active={page === "security"} icon={ShieldAlert} label={t("securityCenter")} onClick={() => onPageChange("security")} />

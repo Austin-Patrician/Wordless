@@ -1058,6 +1058,159 @@ export interface TranslationPreferences {
   bubbleMaxChars: number;
 }
 
+/**
+ * Actions a keyboard shortcut can be bound to.
+ *
+ * The table is the single source for the dispatcher, the stored bindings and,
+ * later, the settings page, so no binding can name an action the interface does
+ * not handle. A combo is written the way the application menu writes an
+ * accelerator: `mod` is Command on macOS and Control elsewhere, so `mod+,` is
+ * the `CommandOrControl+,` the menu installs.
+ */
+export const SHORTCUT_ACTIONS = [
+  { id: "new-thread", defaultShortcut: "mod+n" },
+  // The digits follow the order of the sidebar: the conversation first, then
+  // the views in the order they are listed there.
+  { id: "open-conversation", defaultShortcut: "mod+1" },
+  { id: "open-media", defaultShortcut: "mod+2" },
+  { id: "open-automation", defaultShortcut: "mod+3" },
+  { id: "open-tasks", defaultShortcut: "mod+4" },
+  { id: "open-experts", defaultShortcut: "mod+5" },
+  { id: "open-skills", defaultShortcut: "mod+6" },
+  { id: "find-in-conversation", defaultShortcut: "mod+f" },
+  { id: "toggle-sidebar", defaultShortcut: "mod+b" },
+  { id: "toggle-context-panel", defaultShortcut: "mod+j" },
+  { id: "open-settings", defaultShortcut: "mod+," },
+] as const;
+
+export type ShortcutActionId = (typeof SHORTCUT_ACTIONS)[number]["id"];
+
+/** Combos by action. An action left out keeps its default. */
+export type ShortcutBindings = Partial<Record<ShortcutActionId, string>>;
+
+export interface ShortcutPreferences {
+  bindings: ShortcutBindings;
+}
+
+const SHORTCUT_ACTION_IDS: ReadonlySet<string> = new Set(SHORTCUT_ACTIONS.map((action) => action.id));
+const SHORTCUT_MODIFIERS: ReadonlySet<string> = new Set(["mod", "ctrl", "shift", "alt"]);
+/** Modifiers that make a binding safe to hold; Shift only ever comes along. */
+const SHORTCUT_HOLDING_MODIFIERS: ReadonlySet<string> = new Set(["mod", "ctrl", "alt"]);
+/** Both the key serializer and the normalizer write modifiers in this order. */
+const SHORTCUT_MODIFIER_ORDER = ["mod", "ctrl", "shift", "alt"] as const;
+
+export function isShortcutActionId(value: unknown): value is ShortcutActionId {
+  return typeof value === "string" && SHORTCUT_ACTION_IDS.has(value);
+}
+
+export function getShortcutActionDef(id: ShortcutActionId): (typeof SHORTCUT_ACTIONS)[number] {
+  const action = SHORTCUT_ACTIONS.find((candidate) => candidate.id === id);
+  if (!action) throw new Error(`Unknown shortcut action: ${id}`);
+  return action;
+}
+
+/**
+ * Canonical form of one combo, or null when it is not a shortcut:
+ * modifiers in a fixed order and a lowercase last part ("Shift+Mod+N" →
+ * "mod+shift+n"), so two spellings of one key can never both be stored.
+ */
+function normalizeShortcutCombo(value: string): string | null {
+  const parts = value.trim().toLowerCase().split("+").filter(Boolean);
+  const key = parts.at(-1);
+  if (!key) return null;
+  // Modifiers may appear once each, and never as the key itself.
+  const modifiers = parts.slice(0, -1);
+  if (SHORTCUT_MODIFIERS.has(key) || /\s/.test(key) || key.length > 24) return null;
+  if (new Set(modifiers).size !== modifiers.length) return null;
+  if (modifiers.some((modifier) => !SHORTCUT_MODIFIERS.has(modifier))) return null;
+  return [...SHORTCUT_MODIFIER_ORDER.filter((modifier) => modifiers.includes(modifier)), key].join("+");
+}
+
+export function getEffectiveShortcut(actionId: ShortcutActionId, bindings: ShortcutBindings = {}): string {
+  return bindings[actionId] ?? getShortcutActionDef(actionId).defaultShortcut;
+}
+
+/**
+ * True when a combo is safe to hold. A binding needs a key plus one of `mod`,
+ * `ctrl` or `alt`: a bare key or a Shift-only combo would swallow ordinary
+ * typing, which is the one failure a global shortcut must never cause. Shift is
+ * therefore only ever a companion of a holding modifier.
+ */
+export function isBindableShortcut(combo: string): boolean {
+  const normalized = normalizeShortcutCombo(combo);
+  if (!normalized) return false;
+  return normalized
+    .split("+")
+    .slice(0, -1)
+    .some((modifier) => SHORTCUT_HOLDING_MODIFIERS.has(modifier));
+}
+
+/**
+ * The action that already holds `combo`, or null when it is free.
+ *
+ * Effective keys are compared, not stored ones: an action without a binding
+ * still holds its default, and the user has to be told which action to move
+ * before this key can be used. Only the interface can explain that, which is
+ * why conflicts are refused here rather than filtered silently.
+ */
+export function findShortcutConflict(
+  actionId: ShortcutActionId,
+  combo: string,
+  bindings: ShortcutBindings = {},
+): ShortcutActionId | null {
+  const normalized = normalizeShortcutCombo(combo);
+  if (!normalized) return null;
+  for (const action of SHORTCUT_ACTIONS) {
+    if (action.id === actionId) continue;
+    if (getEffectiveShortcut(action.id, bindings) === normalized) return action.id;
+  }
+  return null;
+}
+
+export interface ShortcutBindingSnapshot {
+  id: ShortcutActionId;
+  /** The combo in effect, whether stored or default. */
+  shortcut: string;
+  defaultShortcut: string;
+  /** True while the action still answers to its default. */
+  isDefault: boolean;
+}
+
+export function listShortcutBindings(bindings: ShortcutBindings = {}): ShortcutBindingSnapshot[] {
+  return SHORTCUT_ACTIONS.map((action) => ({
+    id: action.id,
+    defaultShortcut: action.defaultShortcut,
+    isDefault: bindings[action.id] === undefined,
+    shortcut: getEffectiveShortcut(action.id, bindings),
+  }));
+}
+
+/**
+ * Keeps only bindings the interface can honour: known actions, bindable
+ * combos, and no entry that merely restates a default — so "is this action
+ * customized?" is answerable from the stored value alone and a cleared binding
+ * is recoverable.
+ *
+ * Conflicts *between* actions (one key claimed twice) are prevented where a
+ * binding is offered, because only there can the user be told which action
+ * holds the key. A row that still contains one dispatches in table order, which
+ * keeps a hand-edited database predictable rather than random.
+ */
+export function normalizeShortcutBindings(value: unknown): ShortcutBindings {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return {};
+  const raw = value as Record<string, unknown>;
+  const bindings: ShortcutBindings = {};
+  for (const action of SHORTCUT_ACTIONS) {
+    const combo = raw[action.id];
+    if (typeof combo !== "string") continue;
+    const normalized = normalizeShortcutCombo(combo);
+    if (!normalized || normalized === action.defaultShortcut) continue;
+    if (!isBindableShortcut(normalized)) continue;
+    bindings[action.id] = normalized;
+  }
+  return bindings;
+}
+
 export interface AppPreferences {
   locale: "zh-CN" | "en-US";
   theme: "light" | "dark" | "system";
@@ -1070,6 +1223,7 @@ export interface AppPreferences {
   defaultModel: ModelReference | null;
   entryModels: Record<string, ModelReference>;
   translation: TranslationPreferences;
+  shortcuts: ShortcutPreferences;
 }
 
 /** Languages offered for translation; the label is resolved by the interface locale. */

@@ -664,6 +664,10 @@ const DEFAULT_PREFERENCES = (defaultWorkspaceRoot: string): AppPreferences => ({
     model: null,
     bubbleMaxChars: 600,
   },
+  shortcuts: {
+    // Every action keeps its default until the user rebinds it.
+    bindings: {},
+  },
 });
 
 function connectionSecretId(connectionId: string): string {

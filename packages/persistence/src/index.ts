@@ -9,6 +9,7 @@ import {
   type SessionStorage,
   type SessionTreeEntry,
 } from "@wordless/agent";
+import { normalizeShortcutBindings } from "@wordless/domain";
 import type {
   AppPreferences,
   AutomationRun,
@@ -110,6 +111,17 @@ export class WordlessDatabase {
         translation: {
           ...defaults.translation,
           ...(typeof stored.translation === "object" && stored.translation !== null && !Array.isArray(stored.translation) ? stored.translation : {}),
+        },
+        // Bindings are typed text, so they are filtered on read as well as on
+        // write: a hand-edited or older row must not reach the dispatcher with
+        // an unknown action or a malformed combo. `defaults` can predate the
+        // field, so it is read defensively.
+        shortcuts: {
+          bindings: normalizeShortcutBindings(
+            typeof stored.shortcuts === "object" && stored.shortcuts !== null && !Array.isArray(stored.shortcuts)
+              ? stored.shortcuts.bindings
+              : defaults.shortcuts?.bindings,
+          ),
         },
       };
     } catch {

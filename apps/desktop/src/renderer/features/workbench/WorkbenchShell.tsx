@@ -9,6 +9,7 @@ import type { InlineSkillComposerValue, InlineWorkspaceReferenceToken } from "..
 import type { PendingThreadTurn } from "../thread/pending-thread-turn";
 import type { ArtifactSelection } from "@wordless/protocol";
 import { usePreferences } from "../../shared/preferences";
+import { useGlobalShortcuts } from "../../shared/shortcuts/use-global-shortcuts";
 import { useRuntime } from "../../shared/runtime";
 import { BrowserPanel } from "../browser/BrowserPanel";
 import { workbenchContextPanelRegistry } from "./context-panel-registry";
@@ -260,17 +261,51 @@ export function WorkbenchShell() {
     if (!snapshot.sessions.some((session) => session.id === selectedSessionId)) newThread();
   }, [snapshot, selectedSessionId]);
 
-  useEffect(() => {
-    if (!hasSelectedThread) return;
-    const onKeyDown = (event: KeyboardEvent) => {
-      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "f") {
-        event.preventDefault();
-        setConversationSearchOpen(true);
-      }
-    };
-    window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
-  }, [hasSelectedThread]);
+  // The keyboard's half of the application menu plus navigation. macOS gets the
+  // menu keys from the native menu; Windows and Linux have no native menu, so
+  // they arrive here instead. Keys that depend on what is on screen are gated
+  // here rather than unbound, so a rebind never points at nothing.
+  useGlobalShortcuts((actionId) => {
+    switch (actionId) {
+      case "new-thread":
+        newThread();
+        break;
+      case "open-conversation":
+        setMainView("thread");
+        setRightFullscreen(false);
+        setMediaFullscreen(false);
+        break;
+      case "open-media":
+        openMedia();
+        break;
+      case "open-automation":
+        openAutomation();
+        break;
+      case "open-tasks":
+        openTasks();
+        break;
+      case "open-experts":
+        openExperts();
+        break;
+      case "open-skills":
+        openSkills();
+        break;
+      // Searching only makes sense with a conversation open; the key is claimed
+      // either way, because nothing else in the window answers to it.
+      case "find-in-conversation":
+        if (hasSelectedThread) setConversationSearchOpen(true);
+        break;
+      case "toggle-sidebar":
+        setLeftOpen((open) => !open);
+        break;
+      case "toggle-context-panel":
+        if (showSessionTools) setRightOpen((open) => !open);
+        break;
+      case "open-settings":
+        openSettings();
+        break;
+    }
+  });
 
   useEffect(() => {
     if (!rightOpen || rightFullscreen || !leftOpen) return;

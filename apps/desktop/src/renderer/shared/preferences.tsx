@@ -2,7 +2,15 @@ import { createContext, type ReactNode, useContext, useEffect, useMemo, useState
 import { translate, type MessageKey } from "./i18n";
 import type { Locale, ThemeMode } from "./models";
 import { useRuntime } from "./runtime";
-import type { AppearancePreferences, NotificationPreferences, SecurityPreferences, TranslationPreferences } from "@wordless/domain";
+import {
+  normalizeShortcutBindings,
+  type AppearancePreferences,
+  type NotificationPreferences,
+  type SecurityPreferences,
+  type ShortcutBindings,
+  type ShortcutPreferences,
+  type TranslationPreferences,
+} from "@wordless/domain";
 
 const defaultAppearance: AppearancePreferences = {
   background: {
@@ -21,6 +29,9 @@ const defaultTranslation: TranslationPreferences = {
   bubbleMaxChars: 600,
 };
 
+/** Every action keeps its default until the user rebinds it. */
+const defaultShortcuts: ShortcutPreferences = { bindings: {} };
+
 type Preferences = {
   locale: Locale;
   theme: ThemeMode;
@@ -30,6 +41,7 @@ type Preferences = {
   security: SecurityPreferences;
   appearance: AppearancePreferences;
   translation: TranslationPreferences;
+  shortcuts: ShortcutPreferences;
   setLocale: (locale: Locale) => void;
   setTheme: (theme: ThemeMode) => void;
   setFontScale: (fontScale: number) => void;
@@ -39,6 +51,8 @@ type Preferences = {
   previewAppearance: (appearance: AppearancePreferences) => void;
   setAppearance: (appearance: AppearancePreferences) => Promise<void>;
   setTranslation: (translation: TranslationPreferences) => Promise<void>;
+  /** Replaces the whole binding set; unknown actions and malformed combos are dropped. */
+  setShortcutBindings: (bindings: ShortcutBindings) => Promise<void>;
   t: (key: MessageKey) => string;
 };
 
@@ -54,6 +68,7 @@ export function PreferencesProvider({ children }: { children: ReactNode }) {
   const [security, setSecurityPreferences] = useState<SecurityPreferences>({ customFileRules: [], customCommandRules: [] });
   const [appearance, setAppearancePreferences] = useState<AppearancePreferences>(defaultAppearance);
   const [translation, setTranslationPreferences] = useState<TranslationPreferences>(defaultTranslation);
+  const [shortcuts, setShortcutPreferences] = useState<ShortcutPreferences>(defaultShortcuts);
 
   useEffect(() => {
     if (!snapshot) return;
@@ -65,6 +80,7 @@ export function PreferencesProvider({ children }: { children: ReactNode }) {
     setSecurityPreferences(snapshot.preferences.security);
     setAppearancePreferences(snapshot.preferences.appearance);
     setTranslationPreferences(snapshot.preferences.translation ?? defaultTranslation);
+    setShortcutPreferences(snapshot.preferences.shortcuts ?? defaultShortcuts);
   }, [snapshot]);
 
   useEffect(() => {
@@ -99,6 +115,7 @@ export function PreferencesProvider({ children }: { children: ReactNode }) {
       security,
       appearance,
       translation,
+      shortcuts,
       setLocale: (nextLocale) => {
         setLocale(nextLocale);
         if (snapshot && client) void client.setPreferences({ ...snapshot.preferences, locale: nextLocale });
@@ -134,9 +151,16 @@ export function PreferencesProvider({ children }: { children: ReactNode }) {
         setTranslationPreferences(nextTranslation);
         if (snapshot && client) await client.setPreferences({ ...snapshot.preferences, translation: nextTranslation });
       },
+      setShortcutBindings: async (nextBindings) => {
+        // Normalize before storing: the dispatcher and the stored row then agree
+        // on what a binding looks like.
+        const nextShortcuts: ShortcutPreferences = { bindings: normalizeShortcutBindings(nextBindings) };
+        setShortcutPreferences(nextShortcuts);
+        if (snapshot && client) await client.setPreferences({ ...snapshot.preferences, shortcuts: nextShortcuts });
+      },
       t: (key) => translate(locale, key),
     }),
-    [appearance, client, fontScale, locale, notifications, reduceMotion, security, snapshot, theme, translation],
+    [appearance, client, fontScale, locale, notifications, reduceMotion, security, shortcuts, snapshot, theme, translation],
   );
 
   return <PreferencesContext.Provider value={value}>{children}</PreferencesContext.Provider>;

@@ -173,14 +173,19 @@ app.whenReady().then(async () => {
   });
   await cloudSync.initialize();
   const notifications = new DesktopNotificationService();
+  // Built before the subscription below, which reads it on every preference change.
+  const applicationMenu = new ApplicationMenuController(hostInfo, runtime.getSnapshot().preferences.shortcuts.bindings);
+  applicationMenu.install();
   runtime.subscribe((event) => {
     notifications.handle(event, runtime!.getSnapshot().preferences);
-    if (event.event.type === "preferences.changed")
-      updateTrayMenu(runtime!.getSnapshot().preferences);
+    if (event.event.type === "preferences.changed") {
+      const preferences = runtime!.getSnapshot().preferences;
+      updateTrayMenu(preferences);
+      // The menu shows accelerators, so it has to follow a rebound key.
+      applicationMenu.applyShortcutBindings(preferences.shortcuts.bindings);
+    }
     for (const window of BrowserWindow.getAllWindows()) window.webContents.send("wordless:event", event);
   });
-  const applicationMenu = new ApplicationMenuController(hostInfo);
-  applicationMenu.install();
   const updateService = new DesktopUpdateService(sendHostEvent);
   updateService.initialize();
   translation = new DesktopTranslationService({

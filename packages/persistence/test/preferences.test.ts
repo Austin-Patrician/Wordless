@@ -19,6 +19,7 @@ function defaults(overrides: Partial<AppPreferences> = {}): AppPreferences {
     defaultModel: null,
     entryModels: {},
     translation: { targetLanguage: null, model: null, bubbleMaxChars: 600 },
+    shortcuts: { bindings: {} },
     ...overrides,
   };
 }
@@ -66,5 +67,41 @@ test("stored preferences keep unrelated fields while translation is merged", asy
   const loaded = database.getPreferences(defaults());
   assert.equal(loaded.theme, "dark");
   assert.deepEqual(loaded.translation, { targetLanguage: "en-US", model: { connectionId: "openai", modelId: "gpt" }, bubbleMaxChars: 1_200 });
+  database.close();
+});
+
+test("shortcut bindings are filtered when they are read back", async (context) => {
+  const root = await mkdtemp(join(tmpdir(), "wordless-preferences-"));
+  context.after(async () => await rm(root, { recursive: true, force: true }));
+  const database = new WordlessDatabase(join(root, "wordless.db"));
+
+  // A row that was hand-edited or written by a build with a different action
+  // table: only the usable binding may survive.
+  database.savePreferences({
+    ...defaults(),
+    shortcuts: {
+      bindings: {
+        "open-settings": "Shift+Mod+,",
+        "removed-action": "mod+j",
+        "new-thread": "mod+n",
+        "bad-combo": "mod+",
+      },
+    } as unknown as AppPreferences["shortcuts"],
+  });
+
+  const loaded = database.getPreferences(defaults());
+  assert.deepEqual(loaded.shortcuts.bindings, { "open-settings": "mod+shift+," });
+  database.close();
+});
+
+test("stored preferences written before shortcuts existed fall back to no bindings", async (context) => {
+  const root = await mkdtemp(join(tmpdir(), "wordless-preferences-"));
+  context.after(async () => await rm(root, { recursive: true, force: true }));
+  const database = new WordlessDatabase(join(root, "wordless.db"));
+
+  database.savePreferences({ ...defaults(), shortcuts: undefined } as unknown as AppPreferences);
+
+  const loaded = database.getPreferences(defaults());
+  assert.deepEqual(loaded.shortcuts, { bindings: {} });
   database.close();
 });

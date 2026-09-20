@@ -18,6 +18,8 @@ const defaultPreferences: AppPreferences = {
   defaultWorkspaceRoot: "C:/Wordless",
   defaultModel: null,
   entryModels: {},
+  translation: { targetLanguage: null, model: null, bubbleMaxChars: 600 },
+  shortcuts: { bindings: {} },
 };
 
 test("persists workspace metadata and JSONL model changes", async (context) => {
