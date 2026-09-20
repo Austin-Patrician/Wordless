@@ -99,6 +99,144 @@ export type DesktopAppInfo = {
   arch: string;
 };
 
+/**
+ * First-run guide progress, persisted by the desktop host so the guide is shown
+ * once per installation and can be replayed later from Settings.
+ */
+export type OnboardingState = {
+  /** Guide revision this record was written for. */
+  version: number;
+  /** Milliseconds since epoch when the user finished the guide, or null. */
+  completedAt: number | null;
+};
+
+/// Embedded browser panel
+///
+/// The panel hosts a real Chromium `WebContentsView` that the main process
+/// owns, so the renderer and the agent only ever exchange layout and
+/// navigation intent — never page content. `getBoundingClientRect` values from
+/// the renderer are already in device-independent pixels relative to the window
+/// content area, which is exactly what `View.setBounds` consumes.
+
+export type BrowserViewBounds = {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+};
+
+export type BrowserNavigationAction = "url" | "back" | "forward" | "reload";
+
+/**
+ * Why a main-frame load failed. Surfaced to the panel so it can explain the
+ * failure instead of leaving a blank rectangle, and so the native view can step
+ * aside and let DOM render that explanation.
+ */
+export type BrowserLoadError = {
+  /** Chromium net error code, e.g. -102 for ERR_CONNECTION_REFUSED. */
+  code: number;
+  /** Chromium's symbolic name for `code`, which is what users recognise. */
+  description: string;
+  /** The address that failed. */
+  url: string;
+};
+
+export type BrowserTabState = {
+  id: string;
+  /** Last committed URL, or "" before the first navigation. */
+  url: string;
+  title: string;
+  loading: boolean;
+  /** True after this tab's renderer process died; the page is rebuilt on demand. */
+  crashed: boolean;
+  /** Set after a failed main-frame load, cleared when the next load starts. */
+  loadError: BrowserLoadError | null;
+  canGoBack: boolean;
+  canGoForward: boolean;
+  /**
+   * Whether the session currently shown in the panel has shared this tab.
+   *
+   * Relative to a session, not to the app: tabs are global like a browser's, but a
+   * grant belongs to the task the user was working on when they gave it.
+   */
+  sharedWithAgent: boolean;
+  /**
+   * Whether the session shown in the panel may click and type on this tab's
+   * *current* origin.
+   *
+   * Loopback pages qualify as soon as they are shared, since verifying a dev
+   * server is what this is for. Anything else needs that session to approve the
+   * origin, and the answer follows the page: navigating to another host turns it
+   * off again until that host is approved.
+   */
+  actionsAllowed: boolean;
+};
+
+/**
+ * Where a tab keeps cookies and storage.
+ *
+ * `ephemeral` lives in memory and disappears with the app; `persistent` is
+ * written to disk so logins survive a restart.
+ */
+export type BrowserSessionScope = "ephemeral" | "persistent";
+
+export type BrowserPanelState = {
+  tabs: BrowserTabState[];
+  activeTabId: string | null;
+  /**
+   * Scope applied to tabs opened from now on. Changing it starts a fresh strip,
+   * because an Electron session is fixed at view creation.
+   */
+  sessionScope: BrowserSessionScope;
+  /** Whether the active tab's native view is currently mounted on the window. */
+  attached: boolean;
+  /** How many tabs the strip allows, so the panel can explain a refusal. */
+  tabLimit: number;
+};
+
+/**
+ * Result of a navigation request.
+ *
+ * `accepted` is reported separately from the resulting state because a refused
+ * address and a refused connection both leave `url` unchanged, and the panel
+ * needs to tell them apart to say the right thing.
+ */
+export type BrowserNavigateResult = {
+  state: BrowserPanelState;
+  accepted: boolean;
+};
+
+export const BrowserViewBoundsSchema = Type.Object({
+  x: Type.Number(),
+  y: Type.Number(),
+  width: Type.Number(),
+  height: Type.Number(),
+});
+
+export const BrowserNavigateSchema = Type.Object({
+  action: Type.Union([
+    Type.Literal("url"),
+    Type.Literal("back"),
+    Type.Literal("forward"),
+    Type.Literal("reload"),
+  ]),
+  url: Type.Optional(Type.String()),
+});
+
+export const BrowserTabIdSchema = Type.Object({ tabId: Type.String() });
+
+export const BrowserSetSharedSchema = Type.Object({ tabId: Type.String(), shared: Type.Boolean() });
+
+export const BrowserSetActionsAllowedSchema = Type.Object({ tabId: Type.String(), allowed: Type.Boolean() });
+
+export const BrowserPanelSessionSchema = Type.Object({ sessionId: Type.Union([Type.String(), Type.Null()]) });
+
+export const BrowserCreateTabSchema = Type.Object({ url: Type.Optional(Type.String()) });
+
+export const BrowserSessionScopeSchema = Type.Object({
+  scope: Type.Union([Type.Literal("ephemeral"), Type.Literal("persistent")]),
+});
+
 export type AccountStatus = "signed-out" | "signed-in" | "needs-login";
 
 export interface AccountSnapshot {
@@ -797,6 +935,14 @@ export const DeleteSessionSchema = Type.Object({
   sessionId: Type.String({ minLength: 1 }),
 });
 
+/**
+ * Erases sessions, including their journals, attachments and artifacts. The
+ * desktop host routes the removal through the OS trash where it can.
+ */
+export const DeleteSessionsSchema = Type.Object({
+  sessionIds: Type.Array(Type.String({ minLength: 1 }), { minItems: 1 }),
+});
+
 export const SetSessionModelSchema = Type.Object({
   sessionId: Type.String({ minLength: 1 }),
   model: ModelReferenceSchema,
@@ -1246,6 +1392,7 @@ export type ResolveUserRequestDto = Static<typeof ResolveUserRequestSchema>;
 export type RenameSessionDto = Static<typeof RenameSessionSchema>;
 export type SetSessionPinnedDto = Static<typeof SetSessionPinnedSchema>;
 export type DeleteSessionDto = Static<typeof DeleteSessionSchema>;
+export type DeleteSessionsDto = Static<typeof DeleteSessionsSchema>;
 export type SetSessionModelDto = Static<typeof SetSessionModelSchema>;
 export type SetSessionAccessDto = Static<typeof SetSessionAccessSchema>;
 export type SetPreferenceDto = Static<typeof SetPreferenceSchema>;

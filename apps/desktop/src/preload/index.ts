@@ -118,6 +118,37 @@ const wordlessBridge: DesktopBridge = {
     ipcRenderer.invoke("wordless:session:pin", { sessionId, pinned }),
   deleteSession: (sessionId) =>
     ipcRenderer.invoke("wordless:session:delete", { sessionId }),
+  deleteSessions: (sessionIds) =>
+    ipcRenderer.invoke("wordless:sessions:delete", { sessionIds }),
+  getSessionStorageUsage: (sessionIds) =>
+    ipcRenderer.invoke("wordless:sessions:storage-usage", { sessionIds }),
+  // Embedded browser panel. Bounds are sent with `invoke` like the rest of the
+  // bridge for a uniform error path; the main process drops no-op updates so
+  // the extra round trip stays cheap.
+  showBrowserView: () => ipcRenderer.invoke("wordless:browser:show"),
+  setBrowserPanelSession: (sessionId) =>
+    ipcRenderer.invoke("wordless:browser:panel-session", { sessionId }),
+  hideBrowserView: () => ipcRenderer.invoke("wordless:browser:hide"),
+  setBrowserViewBounds: (bounds) =>
+    ipcRenderer.invoke("wordless:browser:bounds", bounds),
+  navigateBrowserView: (action, url) =>
+    ipcRenderer.invoke("wordless:browser:navigate", {
+      action,
+      ...(url === undefined ? {} : { url }),
+    }),
+  createBrowserTab: (url) =>
+    ipcRenderer.invoke("wordless:browser:tab-create", url === undefined ? {} : { url }),
+  closeBrowserTab: (tabId) =>
+    ipcRenderer.invoke("wordless:browser:tab-close", { tabId }),
+  selectBrowserTab: (tabId) =>
+    ipcRenderer.invoke("wordless:browser:tab-select", { tabId }),
+  setBrowserSessionScope: (scope) =>
+    ipcRenderer.invoke("wordless:browser:session-scope", { scope }),
+  setBrowserTabShared: (tabId, shared) =>
+    ipcRenderer.invoke("wordless:browser:share", { tabId, shared }),
+  setBrowserActionsAllowed: (tabId, allowed) =>
+    ipcRenderer.invoke("wordless:browser:actions-allowed", { tabId, allowed }),
+  openBrowserViewDevTools: () => ipcRenderer.invoke("wordless:browser:devtools"),
   createMediaProject: (title) =>
     ipcRenderer.invoke("wordless:media:create", {
       ...(title ? { title } : {}),
@@ -394,6 +425,9 @@ const wordlessBridge: DesktopBridge = {
       key: "app",
       value: preferences,
     }),
+  getOnboardingState: () => ipcRenderer.invoke("wordless:onboarding:state"),
+  completeOnboarding: () => ipcRenderer.invoke("wordless:onboarding:complete"),
+  resetOnboarding: () => ipcRenderer.invoke("wordless:onboarding:reset"),
   translateSelection: (request) =>
     ipcRenderer.invoke("wordless:translation:translate", request),
   abortTranslation: (requestId) =>
@@ -521,6 +555,14 @@ const wordlessBridge: DesktopBridge = {
     ) => listener(event);
     ipcRenderer.on("wordless:event", handler);
     return () => ipcRenderer.removeListener("wordless:event", handler);
+  },
+  subscribeBrowserViewState: (listener) => {
+    const handler = (
+      _event: Electron.IpcRendererEvent,
+      state: Parameters<typeof listener>[0],
+    ) => listener(state);
+    ipcRenderer.on("wordless:browser:state", handler);
+    return () => ipcRenderer.removeListener("wordless:browser:state", handler);
   },
   subscribeHost: (listener) => {
     const handler = (

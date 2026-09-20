@@ -1422,6 +1422,7 @@ export function Composer({
     <>
       <div
         ref={composerRef}
+        data-tour="composer"
         className={cn(
           "relative flex flex-col border border-[#e6e6e2] bg-white dark:border-border dark:bg-[#1c1d18]",
           compact
@@ -2260,6 +2261,7 @@ export function Composer({
             />
             <Button
               className="hidden max-w-44 text-[#474741] sm:inline-flex"
+              data-tour="composer-model"
               disabled={interactionDisabled || running}
               onClick={onOpenModelPicker}
               size="sm"

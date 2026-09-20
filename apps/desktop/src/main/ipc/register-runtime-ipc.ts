@@ -36,6 +36,7 @@ import {
   DeleteCustomProviderSchema,
   DiscoverProviderModelsSchema,
   DeleteSessionSchema,
+  DeleteSessionsSchema,
   DuplicateMediaAssetSchema,
   ImportSkillFileSchema,
   ImportMediaImagesSchema,
@@ -110,8 +111,10 @@ import { updateTitleBarOverlays } from "../windows/main-window";
 import type { DesktopDataAnalysisService } from "../data-analysis/data-analysis-service";
 import type { DesktopTranslationService } from "../translation/translation-service";
 import type { AutomationService } from "../automation/automation-service";
+import type { BrowserService } from "../browser/browser-service";
 import { McpRegistryService } from "../marketplace/mcp-registry-service";
 import { SkillsMpMarketplaceService } from "../marketplace/skillsmp-marketplace-service";
+import { OnboardingService } from "../onboarding/onboarding-service";
 
 function parsePayload<T>(schema: TSchema, payload: unknown): T {
   if (!Value.Check(schema, payload)) throw new Error("Invalid request payload");
@@ -272,8 +275,11 @@ type DesktopIpcOptions = {
   office: OfficeCliService;
   dataAnalysis: DesktopDataAnalysisService;
   automation: AutomationService;
+  /** Present so deleting a session can drop the grants it was given. */
+  browser?: BrowserService;
   mcpMarketplace: McpRegistryService;
   skillMarketplace: SkillsMpMarketplaceService;
+  onboarding: OnboardingService;
   translation: DesktopTranslationService;
 };
 
@@ -575,6 +581,31 @@ export function registerRuntimeIpc(
       options.automation.onSessionDeleted(input.sessionId);
     },
   );
+  ipcMain.handle("wordless:sessions:delete", async (_event, payload: unknown) => {
+    const input = parsePayload<{ sessionIds: string[] }>(DeleteSessionsSchema, payload);
+    return await runtime.deleteSessions(input.sessionIds, {
+      // Mirrors wordless:session:delete so bulk deletion also releases office
+      // documents and drops automation references.
+      beforeDelete: async (session) =>
+        await options.office.releaseSession(session.id, session.runtimeRootPath),
+      afterDelete: (sessionId) => {
+        options.automation.onSessionDeleted(sessionId);
+        // A deleted session's grants must not outlive it: an id reused later would
+        // otherwise inherit access nobody granted.
+        options.browser?.releaseSession(sessionId);
+      },
+      // Prefer the OS trash so a mistaken deletion stays recoverable outside
+      // Wordless; the runtime falls back to a real removal when it cannot.
+      trash: async (absolutePath) => await shell.trashItem(absolutePath),
+    });
+  });
+  ipcMain.handle("wordless:sessions:storage-usage", async (_event, payload: unknown) => {
+    const input = (payload ?? {}) as { sessionIds?: unknown };
+    const sessionIds = Array.isArray(input.sessionIds)
+      ? input.sessionIds.filter((value): value is string => typeof value === "string")
+      : undefined;
+    return await runtime.getSessionStorageUsage(sessionIds);
+  });
   ipcMain.handle("wordless:media:create", async (_event, payload: unknown) => {
     const input = parsePayload<{ title?: string }>(
       CreateMediaProjectSchema,
@@ -1558,6 +1589,9 @@ export function registerRuntimeIpc(
     options.cloudSync.markDirty();
     updateTitleBarOverlays(input.value);
   });
+  ipcMain.handle("wordless:onboarding:state", () => options.onboarding.read());
+  ipcMain.handle("wordless:onboarding:complete", () => options.onboarding.complete());
+  ipcMain.handle("wordless:onboarding:reset", () => options.onboarding.reset());
   ipcMain.handle(
     "wordless:appearance:import",
     async (_event, payload: unknown) => {

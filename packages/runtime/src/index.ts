@@ -10,7 +10,7 @@ import {
   stat,
   writeFile,
 } from "node:fs/promises";
-import type { Dirent } from "node:fs";
+import { existsSync, type Dirent } from "node:fs";
 import { homedir } from "node:os";
 import {
   basename,
@@ -3649,6 +3649,108 @@ export class WordlessRuntime {
     return session;
   }
 
+  /**
+   * Erases several sessions. Deletion touches the filesystem, so runs are
+   * sequential rather than concurrent, and each session is handled
+   * independently so one failure cannot strand the rest of the selection.
+   */
+  async deleteSessions(
+    sessionIds: readonly string[],
+    hooks?: {
+      beforeDelete?: (session: SessionRecord) => Promise<void>;
+      afterDelete?: (sessionId: string) => void;
+      onProgress?: (done: number, total: number) => void;
+      trash?: (absolutePath: string) => Promise<void>;
+    },
+  ): Promise<{ deleted: string[]; failed: { sessionId: string; error: string }[] }> {
+    const unique = [...new Set(sessionIds)];
+    const deleted: string[] = [];
+    const failed: { sessionId: string; error: string }[] = [];
+    let done = 0;
+    hooks?.onProgress?.(0, unique.length);
+    for (const sessionId of unique) {
+      try {
+        await this.deleteSession(sessionId, hooks?.beforeDelete, { trash: hooks?.trash });
+        hooks?.afterDelete?.(sessionId);
+        deleted.push(sessionId);
+      } catch (cause) {
+        failed.push({ sessionId, error: cause instanceof Error ? cause.message : String(cause) });
+      }
+      done += 1;
+      hooks?.onProgress?.(done, unique.length);
+    }
+    return { deleted, failed };
+  }
+
+  /**
+   * Bytes owned by each session: its journal, the managed session workspace, the
+   * subagent journals and the media assets. Only application-owned paths are
+   * measured, so a linked user workspace is never walked.
+   */
+  async getSessionStorageUsage(sessionIds?: readonly string[]): Promise<Record<string, number>> {
+    const targets = (sessionIds ? [...new Set(sessionIds)] : this.database.listSessions().map((session) => session.id))
+      .flatMap((id) => {
+        const session = this.database.getSession(id);
+        return session ? [session] : [];
+      });
+    const usage: Record<string, number> = {};
+    for (const session of targets) {
+      usage[session.id] = await this.measureSessionStorage(session);
+    }
+    return usage;
+  }
+
+  private async measureSessionStorage(session: SessionRecord): Promise<number> {
+    const paths = [
+      session.journalPath,
+      this.sessionAttachmentRoot(session),
+      join(this.options.paths.journalsRoot, "subagents", session.id),
+      join(this.mediaAssetsRoot(), session.id),
+    ];
+    let total = 0;
+    for (const target of new Set(paths)) {
+      total += await directorySize(target);
+    }
+    return total;
+  }
+
+  /**
+   * Removes an application-owned path, preferring the OS trash when the host
+   * provides one so an accidental deletion stays recoverable outside the app.
+   * A path that is already gone is not an error; a trashing failure falls back
+   * to a real removal because the caller asked for the data to be gone.
+   */
+  private async removeOwnedPath(
+    target: string,
+    trash: ((absolutePath: string) => Promise<void>) | undefined,
+    options: { recursive?: boolean; maxRetries?: number; retryDelay?: number },
+  ): Promise<void> {
+    if (trash) {
+      try {
+        await trash(target);
+        return;
+      } catch {
+        if (!existsSync(target)) return;
+      }
+    }
+    await rm(target, { force: true, ...options });
+  }
+
+  private assertSessionIdleForArchive(sessionId: string): void {
+    if (this.runs.has(sessionId))
+      throw new Error("Wait for the current response before archiving this session");
+    this.requireSession(sessionId);
+  }
+
+  /**
+   * Archived conversations must not keep their parsed history resident: the
+   * user has explicitly said they are done with them for now.
+   */
+  private closeArchivedSessionResources(sessionId: string): void {
+    this.historyCache.delete(sessionId);
+    this.artifactRevisions.delete(sessionId);
+  }
+
   setSessionAccess(
     sessionId: string,
     accessLevel: SessionRecord["accessLevel"],
@@ -3846,6 +3948,7 @@ export class WordlessRuntime {
   async deleteSession(
     sessionId: string,
     beforeDelete?: (session: SessionRecord) => Promise<void>,
+    options?: { trash?: (absolutePath: string) => Promise<void> },
   ): Promise<void> {
     if (this.runs.has(sessionId))
       throw new Error(
@@ -3853,37 +3956,15 @@ export class WordlessRuntime {
       );
     const session = this.requireSession(sessionId);
     await beforeDelete?.(session);
-    if (this.isInternalSessionRoot(session.runtimeRootPath))
-      await rm(session.runtimeRootPath, {
-        force: true,
-        recursive: true,
-        maxRetries: 10,
-        retryDelay: 200,
-      });
-    else
-      await rm(this.sessionAttachmentRoot(session), {
-        force: true,
-        recursive: true,
-        maxRetries: 10,
-        retryDelay: 200,
-      });
-    await rm(session.journalPath, {
-      force: true,
-      maxRetries: 5,
-      retryDelay: 100,
-    });
-    await rm(join(this.options.paths.journalsRoot, "subagents", sessionId), {
-      force: true,
-      recursive: true,
-      maxRetries: 5,
-      retryDelay: 100,
-    });
-    await rm(join(this.mediaAssetsRoot(), sessionId), {
-      force: true,
-      recursive: true,
-      maxRetries: 5,
-      retryDelay: 100,
-    });
+    // Only application-owned paths are removed here. A session whose workspace
+    // is the user's own folder never has that folder deleted.
+    // sessionAttachmentRoot() decides between the internal session root and the
+    // managed per-session workspace; deleting runtimeRootPath directly would
+    // destroy a linked user workspace, so the accessor must be used here.
+    await this.removeOwnedPath(this.sessionAttachmentRoot(session), options?.trash, { recursive: true, maxRetries: 10, retryDelay: 200 });
+    await this.removeOwnedPath(session.journalPath, options?.trash, { maxRetries: 5, retryDelay: 100 });
+    await this.removeOwnedPath(join(this.options.paths.journalsRoot, "subagents", sessionId), options?.trash, { recursive: true, maxRetries: 5, retryDelay: 100 });
+    await this.removeOwnedPath(join(this.mediaAssetsRoot(), sessionId), options?.trash, { recursive: true, maxRetries: 5, retryDelay: 100 });
     if (session.workbenchId === "media-canvas")
       this.database.deleteMediaProject(sessionId);
     this.database.clearTaskSession(sessionId);
@@ -7155,4 +7236,29 @@ export class WordlessRuntime {
       }
     }
   }
+}
+
+/**
+ * Total bytes of a file or a directory tree. Missing paths count as zero so a
+ * session whose artifacts were already cleaned up still reports a size.
+ */
+async function directorySize(target: string): Promise<number> {
+  let details;
+  try {
+    details = await stat(target);
+  } catch {
+    return 0;
+  }
+  if (!details.isDirectory()) return details.size;
+  let total = 0;
+  let entries: Dirent[];
+  try {
+    entries = await readdir(target, { withFileTypes: true });
+  } catch {
+    return 0;
+  }
+  for (const entry of entries) {
+    total += await directorySize(join(target, entry.name));
+  }
+  return total;
 }

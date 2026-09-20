@@ -8,6 +8,13 @@ body {
   --wordless-shell-sidebar: #f1f1ee;
   --wordless-shell-workspace: #fbfbfa;
   --wordless-shell-context: #fbfbfa;
+  /*
+   * Full-screen overlays (the first-run guide) need a surface that is always
+   * opaque. The shell tokens above turn translucent when a custom background is
+   * active so the background image can show through, which would let the
+   * interface behind an overlay bleed into it.
+   */
+  --wordless-overlay-surface: #fbfbfa;
   --wordless-background-scrim: rgb(248 248 246 / 0.32);
   --wordless-background-pattern-ink: rgb(86 88 78 / 0.3);
   --wordless-background-grain: rgb(95 96 88 / 0.22);
@@ -457,6 +464,7 @@ body {
   --wordless-shell-sidebar: #202219;
   --wordless-shell-workspace: #151610;
   --wordless-shell-context: #1c1d18;
+  --wordless-overlay-surface: #151610;
   --wordless-background-scrim: rgb(20 21 17 / 0.56);
   --wordless-background-pattern-ink: rgb(220 225 203 / 0.2);
   --wordless-background-grain: rgb(227 233 207 / 0.15);
@@ -542,25 +550,34 @@ body {
   animation: wordless-assistant-status-shimmer 2.4s ease-in-out infinite;
 }
 
-.wordless-sidebar-session-scroll {
+/* Thin, translucent scrollbars. Shared by the sidebar's session list and the
+   browser panel's tab strip so the two cannot drift apart. The horizontal rules
+   matter for the tab strip, which scrolls sideways as tabs accumulate. */
+.wordless-sidebar-session-scroll,
+.wordless-thin-scroll {
   scrollbar-color: rgba(104, 104, 96, 0.13) transparent;
   scrollbar-width: thin;
 }
 
-.wordless-sidebar-session-scroll::-webkit-scrollbar {
+.wordless-sidebar-session-scroll::-webkit-scrollbar,
+.wordless-thin-scroll::-webkit-scrollbar {
   width: 5px;
+  height: 5px;
 }
 
-.wordless-sidebar-session-scroll::-webkit-scrollbar-track {
+.wordless-sidebar-session-scroll::-webkit-scrollbar-track,
+.wordless-thin-scroll::-webkit-scrollbar-track {
   background: transparent;
 }
 
-.wordless-sidebar-session-scroll::-webkit-scrollbar-thumb {
+.wordless-sidebar-session-scroll::-webkit-scrollbar-thumb,
+.wordless-thin-scroll::-webkit-scrollbar-thumb {
   border-radius: 999px;
   background: rgba(104, 104, 96, 0.13);
 }
 
-.wordless-sidebar-session-scroll:hover::-webkit-scrollbar-thumb {
+.wordless-sidebar-session-scroll:hover::-webkit-scrollbar-thumb,
+.wordless-thin-scroll:hover::-webkit-scrollbar-thumb {
   background: rgba(104, 104, 96, 0.24);
 }
 
@@ -568,15 +585,18 @@ body {
   background-image: linear-gradient(100deg, #8b8b84 24%, #8b8b84 42%, #b5cf76 48%, #fbffe2 53%, #b5cf76 58%, #8b8b84 64%, #8b8b84 82%);
 }
 
-[data-theme="dark"] .wordless-sidebar-session-scroll {
+[data-theme="dark"] .wordless-sidebar-session-scroll,
+[data-theme="dark"] .wordless-thin-scroll {
   scrollbar-color: rgba(210, 216, 193, 0.12) transparent;
 }
 
-[data-theme="dark"] .wordless-sidebar-session-scroll::-webkit-scrollbar-thumb {
+[data-theme="dark"] .wordless-sidebar-session-scroll::-webkit-scrollbar-thumb,
+[data-theme="dark"] .wordless-thin-scroll::-webkit-scrollbar-thumb {
   background: rgba(210, 216, 193, 0.12);
 }
 
-[data-theme="dark"] .wordless-sidebar-session-scroll:hover::-webkit-scrollbar-thumb {
+[data-theme="dark"] .wordless-sidebar-session-scroll:hover::-webkit-scrollbar-thumb,
+[data-theme="dark"] .wordless-thin-scroll:hover::-webkit-scrollbar-thumb {
   background: rgba(210, 216, 193, 0.22);
 }
 

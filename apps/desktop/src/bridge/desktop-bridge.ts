@@ -64,6 +64,7 @@ import type {
   DesktopRelease,
   DesktopUpdateSnapshot,
   OfficeEngineHealth,
+  OnboardingState,
   PresentationTemplate,
   RuntimeEventEnvelope,
   ExpertMemberLiveMessage,
@@ -81,12 +82,17 @@ import type {
   SpreadsheetCapabilitySnapshot,
   SpreadsheetChangeRecord,
   SpreadsheetRangeProfile,
+  BrowserNavigateResult,
+  BrowserNavigationAction,
+  BrowserPanelState,
+  BrowserSessionScope,
+  BrowserViewBounds,
   SpreadsheetSelection,
   WorkspaceFileEntry,
 } from "@wordless/protocol";
 import type { ToolApprovalMode } from "@wordless/domain";
 
-export const DESKTOP_BRIDGE_VERSION = 34;
+export const DESKTOP_BRIDGE_VERSION = 43;
 
 export interface DesktopBridge {
   readonly version: typeof DESKTOP_BRIDGE_VERSION;
@@ -172,6 +178,28 @@ export interface DesktopBridge {
   renameSession(sessionId: string, title: string): Promise<SessionRecord>;
   setSessionPinned(sessionId: string, pinned: boolean): Promise<SessionRecord>;
   deleteSession(sessionId: string): Promise<void>;
+  /**
+   * Erases sessions and the files they own (journal, attachments, artifacts).
+   * The host moves them to the OS trash when it can, so an accidental deletion
+   * is still recoverable outside the app.
+   */
+  deleteSessions(sessionIds: string[]): Promise<{ deleted: string[]; failed: { sessionId: string; error: string }[] }>;
+  /** Bytes owned by each session, for the storage column in session history. */
+  getSessionStorageUsage(sessionIds?: string[]): Promise<Record<string, number>>;
+  // Embedded browser panel. The renderer owns layout and intent, the main
+  // process owns the pages; nothing but geometry and navigation crosses here.
+  showBrowserView(): Promise<BrowserPanelState>;
+  setBrowserPanelSession(sessionId: string | null): Promise<BrowserPanelState>;
+  hideBrowserView(): Promise<void>;
+  setBrowserViewBounds(bounds: BrowserViewBounds): Promise<void>;
+  navigateBrowserView(action: BrowserNavigationAction, url?: string): Promise<BrowserNavigateResult>;
+  createBrowserTab(url?: string): Promise<BrowserPanelState>;
+  closeBrowserTab(tabId: string): Promise<BrowserPanelState>;
+  selectBrowserTab(tabId: string): Promise<BrowserPanelState>;
+  setBrowserSessionScope(scope: BrowserSessionScope): Promise<BrowserPanelState>;
+  setBrowserTabShared(tabId: string, shared: boolean): Promise<BrowserPanelState>;
+  setBrowserActionsAllowed(tabId: string, allowed: boolean): Promise<BrowserPanelState>;
+  openBrowserViewDevTools(): Promise<void>;
   createMediaProject(title?: string): Promise<MediaProject>;
   getMediaProject(sessionId: string): Promise<MediaProject>;
   importMediaImages(
@@ -379,6 +407,9 @@ export interface DesktopBridge {
     interactionMode: AgentInteractionModeId,
   ): Promise<void>;
   setPreferences(preferences: AppPreferences): Promise<void>;
+  getOnboardingState(): Promise<OnboardingState>;
+  completeOnboarding(): Promise<OnboardingState>;
+  resetOnboarding(): Promise<OnboardingState>;
   /**
    * Starts a streaming translation of a message selection. Deltas, completion,
    * and failure arrive through `subscribeHost` as `translation` events keyed by
@@ -480,6 +511,8 @@ export interface DesktopBridge {
   ): Promise<void>;
   subscribe(listener: (event: RuntimeEventEnvelope) => void): () => void;
   subscribeHost(listener: (event: DesktopHostEvent) => void): () => void;
+  /** Pushes browser panel state so the toolbar tracks in-page navigation. */
+  subscribeBrowserViewState(listener: (state: BrowserPanelState) => void): () => void;
 }
 
 const requiredMethods: Array<Exclude<keyof DesktopBridge, "version">> = [
@@ -535,6 +568,20 @@ const requiredMethods: Array<Exclude<keyof DesktopBridge, "version">> = [
   "renameSession",
   "setSessionPinned",
   "deleteSession",
+  "deleteSessions",
+  "getSessionStorageUsage",
+  "showBrowserView",
+  "setBrowserPanelSession",
+  "hideBrowserView",
+  "setBrowserViewBounds",
+  "navigateBrowserView",
+  "createBrowserTab",
+  "closeBrowserTab",
+  "selectBrowserTab",
+  "setBrowserSessionScope",
+  "setBrowserTabShared",
+  "setBrowserActionsAllowed",
+  "openBrowserViewDevTools",
   "createMediaProject",
   "getMediaProject",
   "importMediaImages",
@@ -607,6 +654,9 @@ const requiredMethods: Array<Exclude<keyof DesktopBridge, "version">> = [
   "resolveClarificationQuestion",
   "handoffClarification",
   "setPreferences",
+  "getOnboardingState",
+  "completeOnboarding",
+  "resetOnboarding",
   "importAppearanceBackground",
   "removeAppearanceBackground",
   "getModelConfiguration",
@@ -647,6 +697,7 @@ const requiredMethods: Array<Exclude<keyof DesktopBridge, "version">> = [
   "abortTranslation",
   "subscribe",
   "subscribeHost",
+  "subscribeBrowserViewState",
 ];
 
 export function desktopBridgeError(value: unknown): string | undefined {

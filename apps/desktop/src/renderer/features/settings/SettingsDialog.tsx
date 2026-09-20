@@ -1,8 +1,10 @@
 import { Button } from "@wordless/ui-kit";
-import { BarChart3, CircleHelp, Database, Package, Palette, Settings, ShieldAlert, SlidersHorizontal, X } from "lucide-react";
+import { ArchiveX, BarChart3, CircleHelp, Database, Package, Palette, Settings, ShieldAlert, SlidersHorizontal, X } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { useEffect, useState } from "react";
 import { GeneralSettings } from "./GeneralSettings";
+import { SessionHistorySettings } from "./SessionHistorySettings";
+import { useOnboarding } from "../onboarding/OnboardingFlow";
 import { ModelSettings } from "./ModelSettings";
 import { ExtensionsSettings } from "./ExtensionsSettings";
 import { TranslationSettings } from "./TranslationSettings";
@@ -14,16 +16,19 @@ import { useDesktopUpdate } from "../../platform/desktop-update";
 import { AboutUpdatesSettings } from "./AboutUpdatesSettings";
 import { DataPrivacySettings } from "./DataPrivacySettings";
 
-export type SettingsPage = "general" | "models" | "assistant" | "usage" | "security" | "personalization" | "dataPrivacy" | "about";
+export type SettingsPage = "general" | "models" | "assistant" | "usage" | "sessionHistory" | "security" | "personalization" | "dataPrivacy" | "about";
 
 type SettingsDialogProps = {
+  /** Opens a session from the history page and leaves Settings. */
+  onOpenSession?: (sessionId: string) => void;
   initialPage?: SettingsPage;
   open: boolean;
   onOpenChange: (open: boolean) => void;
 };
 
-export function SettingsDialog({ initialPage = "general", open, onOpenChange }: SettingsDialogProps) {
+export function SettingsDialog({ initialPage = "general", onOpenSession, open, onOpenChange }: SettingsDialogProps) {
   const { t } = usePreferences();
+  const onboarding = useOnboarding();
   const [page, setPage] = useState<SettingsPage>("general");
 
   useEffect(() => {
@@ -43,7 +48,7 @@ export function SettingsDialog({ initialPage = "general", open, onOpenChange }: 
         <SettingsSidebar page={page} onPageChange={setPage} />
         <div className="flex min-w-0 flex-1 flex-col">
           <SettingsHeader page={page} onClose={() => onOpenChange(false)} />
-          {page === "general" ? <GeneralSettings /> : page === "models" ? <ModelSettings /> : page === "assistant" ? <AssistantSettings /> : page === "usage" ? <UsageSettings /> : page === "security" ? <SecuritySettings /> : page === "personalization" ? <PersonalizationSettings /> : page === "dataPrivacy" ? <DataPrivacySettings /> : <AboutUpdatesSettings />}
+          {page === "general" ? <GeneralSettings onReplayOnboarding={() => { onOpenChange(false); onboarding?.replay(); }} /> : page === "sessionHistory" ? <SessionHistorySettings onOpenSession={onOpenSession} /> : page === "models" ? <ModelSettings /> : page === "assistant" ? <AssistantSettings /> : page === "usage" ? <UsageSettings /> : page === "security" ? <SecuritySettings /> : page === "personalization" ? <PersonalizationSettings /> : page === "dataPrivacy" ? <DataPrivacySettings /> : <AboutUpdatesSettings />}
         </div>
       </div>
     </div>
@@ -52,8 +57,8 @@ export function SettingsDialog({ initialPage = "general", open, onOpenChange }: 
 
 function SettingsHeader({ page, onClose }: { page: SettingsPage; onClose: () => void }) {
   const { t } = usePreferences();
-  const title = page === "about" ? "About & Updates" : page === "dataPrivacy" ? t("dataPrivacy") : page === "models" ? t("models") : page === "assistant" ? t("assistant") : page === "usage" ? t("usage") : page === "security" ? t("securityCenter") : page === "personalization" ? t("personalization") : t("general");
-  const description = page === "about" ? "Version information, updates, and release history" : page === "dataPrivacy" ? t("dataPrivacyDescription") : page === "models" ? t("configuredModels") : page === "assistant" ? t("assistantHelp") : page === "usage" ? t("usageHelp") : page === "security" ? t("securityCenterHelp") : page === "personalization" ? t("personalizationHelp") : t("configure");
+  const title = page === "about" ? "About & Updates" : page === "sessionHistory" ? t("historyTitle") : page === "dataPrivacy" ? t("dataPrivacy") : page === "models" ? t("models") : page === "assistant" ? t("assistant") : page === "usage" ? t("usage") : page === "security" ? t("securityCenter") : page === "personalization" ? t("personalization") : t("general");
+  const description = page === "about" ? "Version information, updates, and release history" : page === "sessionHistory" ? t("historyPageDescription") : page === "dataPrivacy" ? t("dataPrivacyDescription") : page === "models" ? t("configuredModels") : page === "assistant" ? t("assistantHelp") : page === "usage" ? t("usageHelp") : page === "security" ? t("securityCenterHelp") : page === "personalization" ? t("personalizationHelp") : t("configure");
 
   return (
     <header className="flex shrink-0 items-center justify-between border-b border-border px-6 py-5 sm:px-9">
@@ -82,6 +87,7 @@ function SettingsSidebar({ page, onPageChange }: { page: SettingsPage; onPageCha
         <SettingsNav active={page === "models"} icon={Package} label={t("models")} onClick={() => onPageChange("models")} />
         <SettingsNav active={page === "assistant"} icon={SlidersHorizontal} label={t("assistant")} onClick={() => onPageChange("assistant")} />
         <SettingsNav active={page === "usage"} icon={BarChart3} label={t("usage")} onClick={() => onPageChange("usage")} />
+        <SettingsNav active={page === "sessionHistory"} icon={ArchiveX} label={t("historyTitle")} onClick={() => onPageChange("sessionHistory")} />
         <SettingsNav active={page === "security"} icon={ShieldAlert} label={t("securityCenter")} onClick={() => onPageChange("security")} />
         <SettingsNav active={page === "personalization"} icon={Palette} label={t("personalization")} onClick={() => onPageChange("personalization")} />
         <SettingsNav active={page === "dataPrivacy"} icon={Database} label={t("dataPrivacy")} onClick={() => onPageChange("dataPrivacy")} />

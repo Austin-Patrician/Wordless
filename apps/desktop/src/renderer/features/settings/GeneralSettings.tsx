@@ -1,9 +1,9 @@
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue, Slider, Switch } from "@wordless/ui-kit";
-import { Bell } from "lucide-react";
+import { Button, Select, SelectContent, SelectItem, SelectTrigger, SelectValue, Slider, Switch } from "@wordless/ui-kit";
+import { Bell, Compass } from "lucide-react";
 import type { Locale, ThemeMode } from "../../shared/models";
 import { usePreferences } from "../../shared/preferences";
 
-export function GeneralSettings() {
+export function GeneralSettings({ onReplayOnboarding }: { onReplayOnboarding?: () => void }) {
   const { fontScale, locale, notifications, reduceMotion, setFontScale, setLocale, setNotifications, setReduceMotion, setTheme, t, theme } = usePreferences();
 
   return (
@@ -47,6 +47,10 @@ export function GeneralSettings() {
             <NotificationToggle checked={notifications.onRunCompleted} description={t("notificationRunCompletedHelp")} disabled={!notifications.enabled} label={t("notificationRunCompleted")} onCheckedChange={(onRunCompleted) => setNotifications({ ...notifications, onRunCompleted })} />
             <NotificationToggle checked={notifications.onRunFailed} description={t("notificationRunFailedHelp")} disabled={!notifications.enabled} label={t("notificationRunFailed")} onCheckedChange={(onRunFailed) => setNotifications({ ...notifications, onRunFailed })} />
           </div>
+        </section>
+        <section className="flex items-start justify-between gap-5 rounded-2xl bg-[#f7f7f5] p-4 dark:bg-[#22241c]">
+          <div className="flex min-w-0 gap-3"><span className="grid h-8 w-8 shrink-0 place-items-center rounded-[8px] border border-[#e0e0da] bg-white text-[#69794a] dark:border-border dark:bg-card dark:text-[#c8df89]"><Compass className="h-4 w-4" /></span><div><p className="text-[13px] font-semibold">{t("onboardingReplayTitle")}</p><p className="mt-1 text-[12px] leading-5 text-muted-foreground">{t("onboardingReplayBody")}</p></div></div>
+          <Button onClick={() => onReplayOnboarding?.()} size="sm" type="button" variant="outline">{t("onboardingReplayAction")}</Button>
         </section>
       </div>
     </div>
