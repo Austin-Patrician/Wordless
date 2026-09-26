@@ -125,6 +125,15 @@ describe("sidebar settings menu", () => {
     expect(trigger.getAttribute("aria-expanded")).toBe("true");
   });
 
+  it("keeps the onboarding tour anchor on the trigger", async () => {
+    // The tour step for Settings resolves '[data-tour="sidebar-settings"]' and
+    // silently falls back to '[data-tour="header-settings"]' when it is gone,
+    // so losing this attribute would point the tour at a different button
+    // without failing anything else.
+    await renderSidebar();
+    expect(queryButton("设置").getAttribute("data-tour")).toBe("sidebar-settings");
+  });
+
   it("highlights the active theme and applies a new one immediately", async () => {
     await renderSidebar();
     await act(async () => {

@@ -164,36 +164,69 @@ const LANGUAGE_OPTIONS: ReadonlyArray<{ glyph: string; id: Locale; label: string
   { glyph: "EN", id: "en-US", label: "English" },
 ];
 
-const segmentedGroupClassName = "flex gap-0.5 rounded-[8px] border border-[#e1e1db] bg-[#f7f7f5] p-0.5 dark:border-border dark:bg-muted";
+// `w-fit` keeps the pill hugging its buttons. The rows have changed display type
+// before and will again: as a block child a plain `flex` group stretches to the
+// full row width, and the bordered pill ends up spanning the menu with its
+// buttons bunched against the left edge.
+const segmentedGroupClassName = "flex w-fit gap-0.5 rounded-[8px] border border-[#e1e1db] bg-[#f7f7f5] p-0.5 dark:border-border dark:bg-muted";
 
 function segmentedButtonClassName(selected: boolean): string {
-  return `grid h-7 place-items-center rounded-[6px] outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring ${selected ? "bg-[#30312e] text-white dark:bg-[#d8ef79] dark:text-[#202610]" : "text-[#686860] hover:bg-[#ecece7] dark:text-muted-foreground dark:hover:bg-muted"}`;
+  return `grid h-6 place-items-center rounded-[5px] outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring ${selected ? "bg-[#30312e] text-white dark:bg-[#d8ef79] dark:text-[#202610]" : "text-[#686860] hover:bg-[#ecece7] dark:text-muted-foreground dark:hover:bg-muted"}`;
 }
 
-/** Quick appearance controls shown above the sidebar footer, so the settings dialog is not required for theme/language. */
-function SidebarSettingsMenu({ onOpenSettings }: { onOpenSettings: () => void }) {
+/** Mirrors `Button` variant="ghost" size="icon".
+ *
+ * The trigger has to be a raw element because Radix needs a ref on it and
+ * `Button` is not a forwardRef component. The classes are duplicated rather
+ * than guessed at, so the gear still lines up with the bell beside it.
+ */
+const sidebarSettingsTriggerClassName =
+  "inline-flex h-8 w-8 shrink-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-lg font-medium outline-none transition-colors hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background";
+
+/**
+ * The sidebar footer's gear and the small menu it opens.
+ *
+ * This menu is why theme and language do not need the settings dialog: that
+ * dialog is a modal, full-screen layer, which is the wrong weight for switching
+ * to dark mode. Everything else stays one click further in, behind "Settings".
+ */
+function SidebarSettingsPopover({ onOpenSettings }: { onOpenSettings: (page?: SettingsPage) => void }) {
   const { locale, setLocale, setTheme, t, theme } = usePreferences();
+  const [open, setOpen] = useState(false);
+
   return (
-    <div className="space-y-1.5">
-      <div className="flex items-center justify-between gap-3 px-1">
-        <span className="text-[11px] font-medium text-[#6f6f68] dark:text-muted-foreground">{t("theme")}</span>
-        <div aria-label={t("theme")} className={segmentedGroupClassName} role="group">
-          {THEME_OPTIONS.map(({ Icon, id }) => (
-            <button aria-label={t(id)} aria-pressed={theme === id} className={`${segmentedButtonClassName(theme === id)} w-7`} key={id} onClick={() => setTheme(id)} title={t(id)} type="button"><Icon className="h-3 w-3" /></button>
-          ))}
+    <Popover onOpenChange={setOpen} open={open}>
+      <PopoverTrigger asChild>
+        <button aria-label={t("settings")} className={sidebarSettingsTriggerClassName} data-tour="sidebar-settings" type="button"><Settings className="h-4 w-4" /></button>
+      </PopoverTrigger>
+      <PopoverContent align="center" className="w-fit p-2" side="top" sideOffset={8}>
+        <div className="space-y-2">
+          <div className="flex items-center gap-4 px-2">
+            <span className="text-[11px] font-medium text-[#6f6f68] dark:text-muted-foreground">{t("theme")}</span>
+            <div aria-label={t("theme")} className={segmentedGroupClassName} role="group">
+              {THEME_OPTIONS.map(({ Icon, id }) => (
+                <button aria-label={t(id)} aria-pressed={theme === id} className={`${segmentedButtonClassName(theme === id)} w-6`} key={id} onClick={() => setTheme(id)} title={t(id)} type="button"><Icon className="h-3 w-3" /></button>
+              ))}
+            </div>
+          </div>
+          <div className="flex items-center gap-4 px-2">
+            <span className="text-[11px] font-medium text-[#6f6f68] dark:text-muted-foreground">{t("displayLanguage")}</span>
+            <div aria-label={t("displayLanguage")} className={segmentedGroupClassName} role="group">
+              {LANGUAGE_OPTIONS.map(({ glyph, id, label }) => (
+                <button aria-label={label} aria-pressed={locale === id} className={`${segmentedButtonClassName(locale === id)} w-7 text-[10px] font-semibold`} key={id} onClick={() => setLocale(id)} title={label} type="button">{glyph}</button>
+              ))}
+            </div>
+          </div>
+          <div className="my-1 h-px bg-[#e9e9e4] dark:bg-border" />
+          {/* Closing the popover before opening the dialog is required, not
+              cosmetic: the popover is portalled at z-[110] while the settings
+              dialog is an inline z-50 layer, so leaving it open would float the
+              menu on top of the dialog. Both updates land in one commit, so the
+              two never paint together. */}
+          <button className="flex w-full items-center gap-2 rounded-[7px] px-2 py-2 text-left text-[12px] text-[#454540] outline-none transition-colors hover:bg-[#f1f1ed] focus-visible:ring-2 focus-visible:ring-ring dark:text-foreground dark:hover:bg-muted" onClick={() => { setOpen(false); onOpenSettings(); }} type="button"><Settings className="h-3 w-3" />{t("settings")}</button>
         </div>
-      </div>
-      <div className="flex items-center justify-between gap-3 px-1">
-        <span className="text-[11px] font-medium text-[#6f6f68] dark:text-muted-foreground">{t("displayLanguage")}</span>
-        <div aria-label={t("displayLanguage")} className={segmentedGroupClassName} role="group">
-          {LANGUAGE_OPTIONS.map(({ glyph, id, label }) => (
-            <button aria-label={label} aria-pressed={locale === id} className={`${segmentedButtonClassName(locale === id)} w-9 text-[10px] font-semibold`} key={id} onClick={() => setLocale(id)} title={label} type="button">{glyph}</button>
-          ))}
-        </div>
-      </div>
-      <div className="my-1 h-px bg-[#e9e9e4] dark:bg-border" />
-      <button className="flex w-full items-center gap-2 rounded-[7px] px-2 py-2 text-left text-[12px] text-[#454540] outline-none transition-colors hover:bg-[#f1f1ed] focus-visible:ring-2 focus-visible:ring-ring dark:text-foreground dark:hover:bg-muted" onClick={onOpenSettings} type="button"><Settings className="h-3 w-3" />{t("settings")}</button>
-    </div>
+      </PopoverContent>
+    </Popover>
   );
 }
 
@@ -208,7 +241,6 @@ export function Sidebar({ collapsed, mainView, onNewThread, onOpenAutomation, on
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
-  const [settingsOpen, setSettingsOpen] = useState(false);
   const [sessionSearchOpen, setSessionSearchOpen] = useState(false);
   const [recentSessionsExpanded, setRecentSessionsExpanded] = useState(false);
   const sessions = useMemo(
@@ -419,7 +451,7 @@ export function Sidebar({ collapsed, mainView, onNewThread, onOpenAutomation, on
         return <section key={workspace.id}><button aria-expanded={expanded} className="flex h-8 w-full items-center gap-2 rounded-[7px] px-2 text-left text-[11px] text-[#4f4f4a] outline-none hover:bg-[#e7e7e3] focus-visible:ring-2 focus-visible:ring-ring dark:text-muted-foreground dark:hover:bg-[#282a21]" onClick={() => setExpandedWorkspaceIds((current) => { const next = new Set(current); if (next.has(workspace.id)) next.delete(workspace.id); else next.add(workspace.id); return next; })} type="button"><img alt="" className="h-3.5 w-3.5 shrink-0 opacity-75 dark:invert" src={folderIcon} /><span className="min-w-0 flex-1 truncate font-medium">{workspace.name}</span><ChevronDown className={`h-3.5 w-3.5 transition-transform ${expanded ? "" : "-rotate-90"}`} /></button>{expanded ? <div className="mt-0.5 space-y-1 pl-2">{workspaceSessions.map(sessionRow)}</div> : null}</section>;
       })}</div></section></div> : null}
 
-      <div className={`mt-auto flex shrink-0 items-center ${collapsed ? "justify-center" : "justify-between px-2"}`}><AccountMenu collapsed={collapsed} onOpenSettings={onOpenSettings} onToggle={onToggle} t={t} />{!collapsed ? <div className="flex gap-1"><Button aria-label={t("settings")} data-tour="sidebar-settings" onClick={() => onOpenSettings()} size="icon" type="button" variant="ghost"><Settings className="h-4 w-4" /></Button><Button aria-label={t("notifications")} size="icon" type="button" variant="ghost"><Bell className="h-4 w-4" /></Button></div> : null}</div>
+      <div className={`mt-auto flex shrink-0 items-center ${collapsed ? "justify-center" : "justify-between px-2"}`}><AccountMenu collapsed={collapsed} onOpenSettings={onOpenSettings} onToggle={onToggle} t={t} />{!collapsed ? <div className="flex gap-1"><SidebarSettingsPopover onOpenSettings={onOpenSettings} /><Button aria-label={t("notifications")} size="icon" type="button" variant="ghost"><Bell className="h-4 w-4" /></Button></div> : null}</div>
 
       <SessionDeleteConfirm error={deleteError} onCancel={() => { setDeleteError(null); setDeleting(null); }} onConfirm={() => void confirmDelete()} saving={saving} session={deleting} t={t} />
       <SessionSearchDialog entries={entries} onOpenChange={setSessionSearchOpen} onSelectSession={openSession} open={sessionSearchOpen} sessions={sessions} workspaces={workspaces} />
