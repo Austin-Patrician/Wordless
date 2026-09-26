@@ -73,7 +73,7 @@ export function ExtensionsSettings() {
 
   return (
     <section className="px-6 py-6 sm:px-9">
-      <div className="max-w-[680px]">
+      <div className="mx-auto max-w-[680px]">
         <h2 className="text-[14px] font-semibold">{t("extensions")}</h2>
         <p className="mt-1 text-[12px] leading-5 text-muted-foreground">{t("extensionsHelp")}</p>
         {error ? <p className="mt-3 border border-[#e4cfc8] bg-[#fbf3f0] px-3 py-2 text-[11px] text-[#9c5e4c] dark:border-[#654238] dark:bg-[#2c211d] dark:text-[#e8b9a9]">{error}</p> : null}

@@ -36,7 +36,7 @@ export function TranslationSettings() {
 
   return (
     <section className="px-6 py-6 sm:px-9">
-      <div className="max-w-[680px] space-y-2.5">
+      <div className="mx-auto max-w-[680px] space-y-2.5">
         <div className="flex items-start gap-3">
           <span className="grid h-8 w-8 shrink-0 place-items-center rounded-[8px] border border-[#e0e0da] bg-white text-[#69794a] dark:border-border dark:bg-card dark:text-[#c8df89]">
             <Languages className="h-4 w-4" />

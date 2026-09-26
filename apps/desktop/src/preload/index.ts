@@ -126,6 +126,10 @@ const wordlessBridge: DesktopBridge = {
   // bridge for a uniform error path; the main process drops no-op updates so
   // the extra round trip stays cheap.
   showBrowserView: () => ipcRenderer.invoke("wordless:browser:show"),
+  getProxySnapshot: () => ipcRenderer.invoke("wordless:proxy:snapshot"),
+  setProxyConfig: (patch) => ipcRenderer.invoke("wordless:proxy:set", patch),
+  testProxyConnection: () => ipcRenderer.invoke("wordless:proxy:test"),
+  detectLocalProxy: () => ipcRenderer.invoke("wordless:proxy:detect"),
   setBrowserPanelSession: (sessionId) =>
     ipcRenderer.invoke("wordless:browser:panel-session", { sessionId }),
   hideBrowserView: () => ipcRenderer.invoke("wordless:browser:hide"),

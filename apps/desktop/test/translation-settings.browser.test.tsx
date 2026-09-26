@@ -5,6 +5,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   client: {
     setPreferences: vi.fn(async () => {}),
+    // The dialog mounts General before switching to the assistant page, and
+    // General now ends with the proxy section. The stub only needs to answer
+    // what that section reads on mount.
+    getProxySnapshot: vi.fn(async () => ({
+      active: { invalid: false, source: "direct" },
+      config: { enabled: false, host: "", passwordConfigured: false, port: 0, protocol: "http", username: "" },
+    })),
   },
   snapshot: {
     extensions: { configurations: {}, descriptors: [] },

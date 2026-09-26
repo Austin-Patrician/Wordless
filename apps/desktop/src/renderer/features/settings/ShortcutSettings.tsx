@@ -1,5 +1,5 @@
 import { Button, Tooltip, TooltipContent, TooltipTrigger } from "@wordless/ui-kit";
-import { Keyboard, RotateCcw } from "lucide-react";
+import { RotateCcw } from "lucide-react";
 import { useEffect, useState } from "react";
 import {
   findShortcutConflict,
@@ -91,19 +91,31 @@ export function ShortcutSettings() {
   const customized = rows.filter((row) => !row.isDefault).length;
 
   return (
-    <section className="min-h-0 flex-1 overflow-y-auto px-6 py-6 sm:px-9">
-      <div className="max-w-[680px] space-y-2.5">
-        <div className="flex items-start gap-3">
-          <span className="grid h-8 w-8 shrink-0 place-items-center rounded-[8px] border border-[#e0e0da] bg-white text-[#69794a] dark:border-border dark:bg-card dark:text-[#c8df89]">
-            <Keyboard className="h-4 w-4" />
-          </span>
-          <div>
-            <h2 className="text-[14px] font-semibold">{t("shortcutSettings")}</h2>
-            <p className="mt-1 text-[12px] leading-5 text-muted-foreground">{t("shortcutSettingsHelp")}</p>
+    <div className="flex min-h-0 flex-1 flex-col">
+      {/* The hint and the reset action sit above the list, outside the scroll
+          area. The hint says what a recording accepts and how to cancel one, and
+          recording can start on any row, so it has to be readable without
+          scrolling to the bottom first — which is exactly what living outside
+          the scroll area guarantees. */}
+      <div className="shrink-0 px-6 pt-6 sm:px-9">
+        <div className="mx-auto max-w-[680px] space-y-2">
+          {/* An error used to render in the same muted grey as the hint, so a
+              rejected combination read as ordinary help text. */}
+          <p className={`text-[12px] leading-5 ${error ? "text-destructive" : "text-[#73736d] dark:text-muted-foreground"}`}>
+            {error ?? t("shortcutDefaultHint")}
+          </p>
+          <div className="flex items-center justify-between gap-3">
+            <p className="text-[11px] text-muted-foreground">{t("shortcutCustomized").replace("{count}", String(customized))}</p>
+            <Button disabled={customized === 0} onClick={() => void setShortcutBindings({})} size="sm" type="button" variant="ghost">
+              <RotateCcw className="h-3.5 w-3.5" />
+              {t("shortcutResetAll")}
+            </Button>
           </div>
         </div>
+      </div>
 
-        <section className="divide-y divide-[#e9e9e4] rounded-2xl bg-[#f7f7f5] px-4 dark:divide-border dark:bg-[#22241c]">
+      <section className="min-h-0 flex-1 overflow-y-auto px-6 pb-6 pt-3 sm:px-9">
+        <section className="mx-auto max-w-[680px] divide-y divide-[#e9e9e4] rounded-2xl bg-[#f7f7f5] px-4 dark:divide-border dark:bg-[#22241c]">
           {rows.map((row) => {
             const copy = actionCopy[row.id];
             const isRecording = recording === row.id;
@@ -147,25 +159,7 @@ export function ShortcutSettings() {
             );
           })}
         </section>
-
-        <p className="text-[12px] leading-5 text-[#73736d] dark:text-muted-foreground">
-          {error ?? t("shortcutDefaultHint")}
-        </p>
-
-        <div className="flex items-center justify-between gap-3">
-          <p className="text-[11px] text-muted-foreground">{t("shortcutCustomized").replace("{count}", String(customized))}</p>
-          <Button
-            disabled={customized === 0}
-            onClick={() => void setShortcutBindings({})}
-            size="sm"
-            type="button"
-            variant="ghost"
-          >
-            <RotateCcw className="h-3.5 w-3.5" />
-            {t("shortcutResetAll")}
-          </Button>
-        </div>
-      </div>
-    </section>
+      </section>
+    </div>
   );
 }

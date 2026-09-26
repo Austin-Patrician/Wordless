@@ -110,6 +110,103 @@ export type OnboardingState = {
   completedAt: number | null;
 };
 
+/// Application proxy
+///
+/// The proxy is configured in Settings and stored by the host, never in the
+/// renderer: the password is only ever held by the main process. Everything the
+/// renderer receives goes through `DesktopProxyConfigSnapshot`, which replaces
+/// the password with a boolean.
+
+/**
+ * Proxy protocols the host can actually use.
+ *
+ * Deliberately only http/https: the AI transport rejects anything else, and
+ * undici's proxy agents speak HTTP CONNECT. A socks or pac URL is reported as an
+ * unsupported protocol rather than being silently accepted and then failing
+ * every request.
+ */
+export type DesktopProxyProtocol = "http" | "https";
+
+export type DesktopProxyConfig = {
+  enabled: boolean;
+  protocol: DesktopProxyProtocol;
+  host: string;
+  port: number;
+  username: string;
+  password: string;
+};
+
+/** The renderer's view of the config: no password, only whether one is stored. */
+export type DesktopProxyConfigSnapshot = Omit<DesktopProxyConfig, "password"> & {
+  passwordConfigured: boolean;
+};
+
+/**
+ * The renderer's write shape.
+ *
+ * `password` is optional on purpose: omitting it keeps the stored password, so
+ * saving an unrelated field never requires the plaintext to travel back down to
+ * the renderer. An explicit empty string clears it.
+ */
+export type DesktopProxyConfigPatch = Partial<Omit<DesktopProxyConfig, "password">> & {
+  password?: string;
+};
+
+/** A local address that answered as an HTTP proxy when probed. */
+export type ProxyProbeCandidate = {
+  host: string;
+  port: number;
+};
+
+/**
+ * Why a probe of the effective proxy failed, if it did.
+ *
+ * Two cases only, because those are the two that can happen: the config cannot
+ * be used at all, or the address did not answer.
+ */
+export type ProxyTestFailure = "invalid" | "unreachable";
+
+export type ProxyTestResult = { ok: true } | { ok: false; reason: ProxyTestFailure };
+
+/**
+ * Which proxy the process is actually using right now.
+ *
+ * `environment` and `system` are detection results the user did not enter here;
+ * `application` means the config below is in effect. `invalid` is separate from
+ * `source` because an enabled-but-unusable config is still a distinct state the
+ * settings page has to be able to say out loud.
+ */
+export type DesktopProxyActive = {
+  source: "environment" | "system" | "application" | "direct";
+  /** `host:port` of the effective proxy; never includes credentials. */
+  target?: string;
+  invalid: boolean;
+};
+
+export type DesktopProxySnapshot = {
+  active: DesktopProxyActive;
+  config: DesktopProxyConfigSnapshot;
+};
+
+/**
+ * What the renderer may send when saving.
+ *
+ * `additionalProperties: false` so an unknown field is rejected at the boundary
+ * rather than being quietly dropped by normalisation — a typo in the renderer
+ * should be a loud error, not a setting that silently never applies.
+ */
+export const DesktopProxyConfigPatchSchema = Type.Object(
+  {
+    enabled: Type.Optional(Type.Boolean()),
+    protocol: Type.Optional(Type.String()),
+    host: Type.Optional(Type.String()),
+    port: Type.Optional(Type.Number()),
+    username: Type.Optional(Type.String()),
+    password: Type.Optional(Type.String()),
+  },
+  { additionalProperties: false },
+);
+
 /// Embedded browser panel
 ///
 /// The panel hosts a real Chromium `WebContentsView` that the main process

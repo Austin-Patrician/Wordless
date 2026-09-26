@@ -28,6 +28,9 @@ import { CloudSyncService } from "./cloud-sync/cloud-sync-service";
 import { GoogleDriveAppData } from "./cloud-sync/google-drive-app-data";
 import { DesktopDataAnalysisService } from "./data-analysis/data-analysis-service";
 import { configureHttpDispatcher } from "./network/http-dispatcher";
+import { applyDesktopProxy, proxyRulesFromEnvironment } from "./proxy/proxy-runtime";
+import { DesktopProxyStore } from "./proxy/proxy-store";
+import { registerProxyIpc } from "./ipc/register-proxy-ipc";
 import { AutomationService } from "./automation/automation-service";
 
 import { McpRegistryService } from "./marketplace/mcp-registry-service";
@@ -119,14 +122,37 @@ app.whenReady().then(async () => {
   office = new OfficeCliService({ artifactsRoot: presentationArtifactsRoot, resourcesPath: officeResourcesPath });
   const credentialVault = new ElectronCredentialVault(path.join(userData.path, "credentials.json"));
   const accountNetworkSession = session.fromPartition("wordless-account-network");
-  const accountProxy = process.env.HTTPS_PROXY?.trim()
-    || process.env.https_proxy?.trim()
-    || process.env.ALL_PROXY?.trim()
-    || process.env.all_proxy?.trim();
-  await accountNetworkSession.setProxy(accountProxy
-    ? { mode: "fixed_servers", proxyRules: accountProxy }
-    : { mode: "system" });
-  await configureHttpDispatcher(accountNetworkSession);
+  // Chromium networking ignores the proxy environment variables, so each session
+  // the app browses through is told explicitly. The two browser partitions are
+  // included so the embedded panel follows the same proxy as the rest of the app.
+  const proxySessions = [
+    session.defaultSession,
+    accountNetworkSession,
+    session.fromPartition("wordless-browser"),
+    session.fromPartition("persist:wordless-browser"),
+  ];
+  const proxyStore = new DesktopProxyStore(userData.path, credentialVault);
+  // Shared by the startup apply and every later save, so a change goes through
+  // exactly the same path as the initial value.
+  const proxyDeps = {
+    configureSessions: async (proxyRules: string | undefined) => {
+      // With no application proxy the inherited environment still decides: that
+      // is where a user's own HTTPS_PROXY and the system-resolved proxy land.
+      const rules = proxyRules ?? proxyRulesFromEnvironment();
+      const mode = rules
+        ? { mode: "fixed_servers" as const, proxyRules: rules }
+        : { mode: "system" as const };
+      for (const target of proxySessions) await target.setProxy(mode);
+    },
+    // Rebuilt on every change, because `EnvHttpProxyAgent` reads the environment
+    // when it is constructed rather than per request.
+    configureDispatcher: async () => {
+      await configureHttpDispatcher(accountNetworkSession);
+    },
+  };
+  // Applied before the runtime is built so agent commands inherit the proxy from
+  // their very first invocation.
+  const proxyActive = await applyDesktopProxy(await proxyStore.read(), proxyDeps);
   const sendHostEvent = (event: import("@wordless/protocol").DesktopHostEvent) => {
     for (const window of BrowserWindow.getAllWindows()) window.webContents.send("wordless:host-event", event);
   };
@@ -228,6 +254,7 @@ app.whenReady().then(async () => {
   // IPC is registered, so it takes a late-bound accessor rather than the window
   // itself.
   registerBrowserIpc(browser);
+  registerProxyIpc({ apply: async (config) => await applyDesktopProxy(config, proxyDeps), initialActive: proxyActive, store: proxyStore });
   // macOS AppKit synchronously redraws NSStatusItem replicants when the app
   // becomes active or display metrics change. That redraw runs on the main
   // thread and is the source of the focus-return hitch, so the Dock remains

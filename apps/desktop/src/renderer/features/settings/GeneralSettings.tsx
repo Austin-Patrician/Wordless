@@ -2,6 +2,7 @@ import { Button, Select, SelectContent, SelectItem, SelectTrigger, SelectValue, 
 import { Bell, Compass } from "lucide-react";
 import type { Locale, ThemeMode } from "../../shared/models";
 import { usePreferences } from "../../shared/preferences";
+import { ProxySettingsSection } from "./ProxySettingsSection";
 
 export function GeneralSettings({ onReplayOnboarding }: { onReplayOnboarding?: () => void }) {
   const { fontScale, locale, notifications, reduceMotion, setFontScale, setLocale, setNotifications, setReduceMotion, setTheme, t, theme } = usePreferences();
@@ -52,6 +53,7 @@ export function GeneralSettings({ onReplayOnboarding }: { onReplayOnboarding?: (
           <div className="flex min-w-0 gap-3"><span className="grid h-8 w-8 shrink-0 place-items-center rounded-[8px] border border-[#e0e0da] bg-white text-[#69794a] dark:border-border dark:bg-card dark:text-[#c8df89]"><Compass className="h-4 w-4" /></span><div><p className="text-[13px] font-semibold">{t("onboardingReplayTitle")}</p><p className="mt-1 text-[12px] leading-5 text-muted-foreground">{t("onboardingReplayBody")}</p></div></div>
           <Button onClick={() => onReplayOnboarding?.()} size="sm" type="button" variant="outline">{t("onboardingReplayAction")}</Button>
         </section>
+        <ProxySettingsSection />
       </div>
     </div>
   );

@@ -85,6 +85,10 @@ import type {
   BrowserNavigateResult,
   BrowserNavigationAction,
   BrowserPanelState,
+  DesktopProxyConfigPatch,
+  DesktopProxySnapshot,
+  ProxyProbeCandidate,
+  ProxyTestResult,
   BrowserSessionScope,
   BrowserViewBounds,
   SpreadsheetSelection,
@@ -92,7 +96,7 @@ import type {
 } from "@wordless/protocol";
 import type { ToolApprovalMode } from "@wordless/domain";
 
-export const DESKTOP_BRIDGE_VERSION = 43;
+export const DESKTOP_BRIDGE_VERSION = 44;
 
 export interface DesktopBridge {
   readonly version: typeof DESKTOP_BRIDGE_VERSION;
@@ -189,6 +193,17 @@ export interface DesktopBridge {
   // Embedded browser panel. The renderer owns layout and intent, the main
   // process owns the pages; nothing but geometry and navigation crosses here.
   showBrowserView(): Promise<BrowserPanelState>;
+  /** The stored proxy plus which proxy is actually in effect right now. */
+  getProxySnapshot(): Promise<DesktopProxySnapshot>;
+  /**
+   * Save a change. The password is optional: omitting it keeps the stored one,
+   * so a form that never received the plaintext can still save every other
+   * field.
+   */
+  setProxyConfig(patch: DesktopProxyConfigPatch): Promise<DesktopProxySnapshot>;
+  testProxyConnection(): Promise<ProxyTestResult>;
+  /** Probes well-known local proxy ports; null when none of them answers. */
+  detectLocalProxy(): Promise<ProxyProbeCandidate | null>;
   setBrowserPanelSession(sessionId: string | null): Promise<BrowserPanelState>;
   hideBrowserView(): Promise<void>;
   setBrowserViewBounds(bounds: BrowserViewBounds): Promise<void>;
@@ -571,6 +586,10 @@ const requiredMethods: Array<Exclude<keyof DesktopBridge, "version">> = [
   "deleteSessions",
   "getSessionStorageUsage",
   "showBrowserView",
+    "getProxySnapshot",
+    "setProxyConfig",
+    "testProxyConnection",
+    "detectLocalProxy",
   "setBrowserPanelSession",
   "hideBrowserView",
   "setBrowserViewBounds",
