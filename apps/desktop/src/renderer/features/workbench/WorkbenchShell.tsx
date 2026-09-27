@@ -26,9 +26,25 @@ import { AutomationView } from "../automation/AutomationView";
 import { AppBackgroundLayer } from "../appearance/AppBackgroundLayer";
 import wordlessIcon from "../../../icons/common-icons/wordless.jpeg";
 import { DesktopChrome } from "./DesktopChrome";
+import { useOnboarding } from "../onboarding/OnboardingFlow";
+import { foregroundSessionId } from "./foreground-session";
 import { ExpertsView } from "../experts/ExpertsView";
 import { TasksView } from "../tasks/TasksView";
 import type { ExpertSelection } from "@wordless/domain";
+
+/**
+ * Subscribes to host events for the lifetime of the component.
+ *
+ * Inline in an effect body the unsubscribe would be dropped by `useEffect`'s
+ * cleanup contract, so it is wrapped once here.
+ */
+function subscribeToHostEvents(
+  client: ReturnType<typeof useRuntime>["client"],
+  listener: (event: import("@wordless/protocol").DesktopHostEvent) => void,
+): () => void {
+  if (!client) return () => {};
+  return client.subscribeHost(listener);
+}
 
 const THREAD_COLUMN_MIN_WIDTH = 640;
 const SIDEBAR_COLLAPSED_WIDTH = 58;
@@ -70,7 +86,45 @@ export function WorkbenchShell() {
   const pendingRunningSessionStatesRef = useRef(new Map<string, boolean>());
   const { t } = usePreferences();
   const { client, error, refresh, snapshot, status } = useRuntime();
+  const onboarding = useOnboarding();
   const hasSelectedThread = mainView === "thread" && snapshot?.sessions.some((session) => session.id === selectedSessionId) === true;
+
+  /**
+   * Tell the host which session's chat is on screen, so it can decide whether a
+   * finished run needs a desktop notification.
+   *
+   * Null whenever the chat is not actually visible — another main view, or a
+   * dialog/tour covering it. That distinction is the whole point: "focused window"
+   * alone used to suppress every notification, so a run that finished while the
+   * user was reading a different session said nothing at all.
+   *
+   * Only the renderer can answer this; the host owns window focus and combines the
+   * two itself.
+   */
+  useEffect(() => {
+    const foreground = foregroundSessionId({
+      mainView,
+      selectedSessionId,
+      settingsOpen,
+      tourActive: onboarding?.active === true,
+    });
+    void client?.setForegroundSession(foreground);
+  }, [client, mainView, selectedSessionId, settingsOpen, onboarding?.active]);
+
+  /**
+   * A notification was clicked: bring the session it was about into view.
+   *
+   * The session is checked against the snapshot first — it may have been deleted
+   * between the notification appearing and the click, and selecting a session that
+   * no longer exists would leave the thread view empty.
+   */
+  useEffect(() => subscribeToHostEvents(client, (event) => {
+    if (event.type !== "open-session") return;
+    if (!snapshot?.sessions.some((session) => session.id === event.sessionId)) return;
+    setSettingsOpen(false);
+    setMainView("thread");
+    setSelectedSessionId(event.sessionId);
+  }), [client, snapshot?.sessions]);
   const selectedWorkbenchId = snapshot?.sessions.find((session) => session.id === selectedSessionId)?.workbenchId;
 
   const updateSessionRunningState = useCallback((sessionId: string, running: boolean) => {

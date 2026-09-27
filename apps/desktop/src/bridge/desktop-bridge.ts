@@ -93,10 +93,22 @@ import type {
   BrowserViewBounds,
   SpreadsheetSelection,
   WorkspaceFileEntry,
+  WebhookCreateInputDto,
+  WebhookEndpointPublic,
+  WebhookMessage,
+  WebhookMutationResult,
+  NotificationDefaults,
+  NotificationDefaultsPatchDto,
+  NotificationDefaultsResult,
+  WebhookProviderDescriptor,
+  WebhookSendResult,
+  WebhookSetEnabledRequestDto,
+  WebhookTestRequestDto,
+  WebhookUpdatePatchDto,
 } from "@wordless/protocol";
 import type { ToolApprovalMode } from "@wordless/domain";
 
-export const DESKTOP_BRIDGE_VERSION = 44;
+export const DESKTOP_BRIDGE_VERSION = 47;
 
 export interface DesktopBridge {
   readonly version: typeof DESKTOP_BRIDGE_VERSION;
@@ -204,6 +216,48 @@ export interface DesktopBridge {
   testProxyConnection(): Promise<ProxyTestResult>;
   /** Probes well-known local proxy ports; null when none of them answers. */
   detectLocalProxy(): Promise<ProxyProbeCandidate | null>;
+  /**
+   * Reports which session's chat the renderer is currently showing, or null when
+   * it is not on a chat (another main view, a dialog or the tour on top).
+   *
+   * The host combines this with its own window-focus state to decide whether a
+   * finished run needs a system notification: if the user is already looking at
+   * that output, stay quiet. The renderer owns "what is on screen"; the host owns
+   * focus, and neither can answer the other's half.
+   */
+  setForegroundSession(sessionId: string | null): Promise<void>;
+  // Message push. Group-robot webhooks the host posts task-completion messages
+  // to. As with the proxy, no credential crosses this boundary: the endpoints
+  // carry a masked URL and a "a secret is stored" flag instead.
+  listWebhookEndpoints(): Promise<WebhookEndpointPublic[]>;
+  /** Descriptors let the form render the right fields without knowing any kind. */
+  listWebhookProviders(): Promise<WebhookProviderDescriptor[]>;
+  /**
+   * Payloads are typed by the protocol DTOs rather than by hand.
+   *
+   * The renderer, the preload and the host all name the same type, so a change to
+   * a payload shape is a compile error on both sides. Hand-written shapes are how
+   * the update call once shipped sending `{ id, ...patch }` while the host
+   * validated it against the patch schema alone — which rejected its own caller on
+   * every single call.
+   */
+  createWebhookEndpoint(input: WebhookCreateInputDto): Promise<WebhookMutationResult>;
+  /**
+   * Omitting `url` or `signSecret` keeps what is stored, so a form that never
+   * received the plaintext can still save every other field.
+   */
+  updateWebhookEndpoint(id: string, patch: WebhookUpdatePatchDto): Promise<WebhookMutationResult>;
+  setWebhookEndpointEnabled(id: string, enabled: boolean): Promise<WebhookMutationResult>;
+  /**
+   * The global push subscription: what an automation nobody configured inherits.
+   * Each automation can still override any field.
+   */
+  getNotificationDefaults(): Promise<NotificationDefaults>;
+  setNotificationDefaults(patch: NotificationDefaultsPatchDto): Promise<NotificationDefaultsResult>;
+  deleteWebhookEndpoint(id: string): Promise<void>;
+  /** Sends through a stored endpoint; the text is supplied by the renderer. */
+  testWebhookEndpoint(id: string, message: WebhookMessage): Promise<WebhookSendResult>;
+  /** Narrower than the bridge method: the host reads no attachment path from here. */
   setBrowserPanelSession(sessionId: string | null): Promise<BrowserPanelState>;
   hideBrowserView(): Promise<void>;
   setBrowserViewBounds(bounds: BrowserViewBounds): Promise<void>;
@@ -530,7 +584,14 @@ export interface DesktopBridge {
   subscribeBrowserViewState(listener: (state: BrowserPanelState) => void): () => void;
 }
 
-const requiredMethods: Array<Exclude<keyof DesktopBridge, "version">> = [
+/**
+ * Methods the preload must implement.
+ *
+ * Checked at startup by `desktopBridgeError`, and covered by a test so a method
+ * added to the interface but forgotten here cannot pass silently — a missing
+ * entry means no check at all for that method.
+ */
+export const requiredMethods: Array<Exclude<keyof DesktopBridge, "version">> = [
   "getHostInfo",
   "getAppInfo",
   "openApplicationMenu",
@@ -590,6 +651,16 @@ const requiredMethods: Array<Exclude<keyof DesktopBridge, "version">> = [
     "setProxyConfig",
     "testProxyConnection",
     "detectLocalProxy",
+    "setForegroundSession",
+    "listWebhookEndpoints",
+    "listWebhookProviders",
+    "createWebhookEndpoint",
+    "updateWebhookEndpoint",
+    "setWebhookEndpointEnabled",
+    "getNotificationDefaults",
+    "setNotificationDefaults",
+    "deleteWebhookEndpoint",
+    "testWebhookEndpoint",
   "setBrowserPanelSession",
   "hideBrowserView",
   "setBrowserViewBounds",

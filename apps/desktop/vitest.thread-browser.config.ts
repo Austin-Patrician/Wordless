@@ -76,6 +76,7 @@ export default defineConfig({
       "test/translation-settings.browser.test.tsx",
       "test/thread-virtuoso.browser.test.tsx",
       "test/automation-form.browser.test.tsx",
+      "test/notifications-settings.browser.test.tsx",
     ],
   },
 });

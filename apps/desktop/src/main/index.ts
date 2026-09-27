@@ -8,6 +8,8 @@ import { registerBrowserIpc } from "./ipc/register-browser-ipc";
 import { WebContentsViewHost } from "./browser/browser-host";
 import { BrowserService } from "./browser/browser-service";
 import { DesktopNotificationService } from "./notifications/desktop-notification-service";
+import { createDesktopNotificationHost } from "./notifications/desktop-notification-host";
+import { registerDesktopNotificationIpc } from "./ipc/register-desktop-notification-ipc";
 import { DesktopTranslationService } from "./translation/translation-service";
 import { AppearanceAssetService } from "./appearance/appearance-asset-service";
 import { registerAppearanceProtocol } from "./protocols/appearance";
@@ -31,6 +33,16 @@ import { configureHttpDispatcher } from "./network/http-dispatcher";
 import { applyDesktopProxy, proxyRulesFromEnvironment } from "./proxy/proxy-runtime";
 import { DesktopProxyStore } from "./proxy/proxy-store";
 import { registerProxyIpc } from "./ipc/register-proxy-ipc";
+import { registerNotificationDefaultsIpc, registerNotificationIpc } from "./ipc/register-notification-ipc";
+import { WebhookManager } from "./notifications/webhook/manager";
+import { getProvider, isSupportedKind } from "./notifications/webhook/providers/registry.ts";
+import {
+  defaultNotificationDefaultsPath,
+  loadNotificationDefaults,
+  saveNotificationDefaults,
+} from "./notifications/settings-store.ts";
+import { NotificationBus } from "./notifications/bus.ts";
+import { lastAssistantText } from "./notifications/reply.ts";
 import { AutomationService } from "./automation/automation-service";
 
 import { McpRegistryService } from "./marketplace/mcp-registry-service";
@@ -55,6 +67,8 @@ let tray: Tray | undefined;
 let disposing = false;
 let quitting = false;
 let browser: BrowserService | undefined;
+let notifications: DesktopNotificationService | undefined;
+let notificationBus: NotificationBus | undefined;
 const hostInfo = createDesktopHostInfo();
 let mainWindow: BrowserWindow | undefined;
 const hasSingleInstance = app.requestSingleInstanceLock();
@@ -180,6 +194,56 @@ app.whenReady().then(async () => {
   runtime = createDesktopRuntime(userData.path, office, credentialVault, dataAnalysis, browser);
   await runtime.initialize();
   registerAttachmentProtocol(async (sessionId, previewPath) => await runtime!.resolveSessionAttachmentPreview(sessionId, previewPath));
+  // Built before the automation service because that service is handed a way to
+  // report finished runs. The bus's own dependencies point back at `automation`,
+  // which is fine: they are closures, resolved when a run finishes, not now.
+  const webhookManager = new WebhookManager({ userDataPath: userData.path, secrets: credentialVault });
+  await webhookManager.reload();
+  const notificationDefaultsPath = defaultNotificationDefaultsPath(userData.path);
+  const readDefaults = async () => await loadNotificationDefaults(notificationDefaultsPath);
+  const saveDefaults = async (defaults: import("@wordless/protocol").NotificationDefaults) =>
+    await saveNotificationDefaults(notificationDefaultsPath, defaults);
+
+  notificationBus = new NotificationBus({
+    locale: () => runtime!.getSnapshot().preferences.locale,
+    readDefaults,
+    readSubscription: async (sourceId) => automation?.listTasks().find((task) => task.id === sourceId)?.notification,
+    // Only enabled channels, and only ones this build can actually send through.
+    listTargets: () =>
+      webhookManager
+        .list()
+        .filter((endpoint) => endpoint.enabled && isSupportedKind(endpoint.kind))
+        .map((endpoint) => {
+          const capabilities = getProvider(endpoint.kind).capabilities;
+          return {
+            id: endpoint.id,
+            name: endpoint.name,
+            // Both ceilings when the platform declares one: DingTalk counts
+            // characters, the others count bytes (see §15.3.5).
+            limits: {
+              maxBytes: capabilities.maxTextBytes,
+              ...(capabilities.maxTextChars === undefined ? {} : { maxChars: capabilities.maxTextChars }),
+            },
+            ...(capabilities.maxMessagesPerMinute === undefined
+              ? {}
+              : { maxMessagesPerMinute: capabilities.maxMessagesPerMinute }),
+          };
+        }),
+    readReply: async (event) => {
+      // Only reached when the template uses {{reply}}; see NotificationBus.
+      if (!event.sessionId) return undefined;
+      const snapshot = await runtime!.getSessionSnapshot(event.sessionId);
+      return lastAssistantText(snapshot.messages);
+    },
+    send: async (targetId, message) => await webhookManager.send(targetId, message),
+    onResult: (event, failure) => {
+      // Only on failure, and off the completion path: the run is already recorded.
+      if (!failure) return;
+      const runId = event.eventId.slice(event.eventId.indexOf(":") + 1);
+      automation?.recordNotificationFailure(runId, failure);
+    },
+  });
+
   automation = new AutomationService({
     databasePath: path.join(userData.path, "wordless.db"),
     runtime,
@@ -188,6 +252,9 @@ app.whenReady().then(async () => {
       const envelope: import("@wordless/protocol").RuntimeEventEnvelope = { protocolVersion: 1, runtimeInstanceId: "desktop-automation", eventId: crypto.randomUUID(), sessionId: null, sequence: Date.now(), timestamp: Date.now(), event };
       for (const window of BrowserWindow.getAllWindows()) window.webContents.send("wordless:event", envelope);
     },
+    // Synchronous by contract: this runs on the run-completion path, where a webhook
+    // waiting on its 30s timeout would delay the run appearing as finished.
+    notify: (event) => notificationBus?.emit(event),
   });
   automation.initialize();
   cloudSync = new CloudSyncService({
@@ -198,12 +265,22 @@ app.whenReady().then(async () => {
     send: sendHostEvent,
   });
   await cloudSync.initialize();
-  const notifications = new DesktopNotificationService();
+  // Everything platform-specific is injected, so the service itself has no
+  // Electron import and its rules are testable with fakes.
+  notifications = new DesktopNotificationService(
+    createDesktopNotificationHost({
+      // Late-bound: the window is created further down.
+      getWindow: () => mainWindow,
+      sendHostEvent,
+      sessionTitle: (sessionId) => runtime?.getSnapshot().sessions.find((session) => session.id === sessionId)?.title,
+    }),
+  );
+  registerDesktopNotificationIpc({ notifications });
   // Built before the subscription below, which reads it on every preference change.
   const applicationMenu = new ApplicationMenuController(hostInfo, runtime.getSnapshot().preferences.shortcuts.bindings);
   applicationMenu.install();
   runtime.subscribe((event) => {
-    notifications.handle(event, runtime!.getSnapshot().preferences);
+    notifications?.handle(event, runtime!.getSnapshot().preferences);
     if (event.event.type === "preferences.changed") {
       const preferences = runtime!.getSnapshot().preferences;
       updateTrayMenu(preferences);
@@ -249,12 +326,20 @@ app.whenReady().then(async () => {
   });
   mainWindow = createMainWindow(path.join(__dirname, "preload.cjs"), runtime.getSnapshot().preferences);
   mainWindow.on("close", (event) => { if (!quitting) { event.preventDefault(); mainWindow?.hide(); } });
-  mainWindow.on("focus", () => notifications.clearBadge());
+  mainWindow.on("focus", () => notifications?.clearBadge());
   // The browser service needs the window, which is created after the runtime
   // IPC is registered, so it takes a late-bound accessor rather than the window
   // itself.
   registerBrowserIpc(browser);
   registerProxyIpc({ apply: async (config) => await applyDesktopProxy(config, proxyDeps), initialActive: proxyActive, store: proxyStore });
+  // Message push. Constructed like the proxy store rather than as a singleton:
+  // it owns no timers or sockets, so there is nothing to dispose, and a plain
+  // local keeps the process-global surface unchanged.
+  //
+  // `reload` never throws — a corrupt file degrades to "nothing configured"
+  // instead of blocking the window.
+  registerNotificationIpc({ manager: webhookManager });
+  registerNotificationDefaultsIpc({ readDefaults, saveDefaults });
   // macOS AppKit synchronously redraws NSStatusItem replicants when the app
   // becomes active or display metrics change. That redraw runs on the main
   // thread and is the source of the focus-return hitch, so the Dock remains
@@ -276,7 +361,7 @@ app.whenReady().then(async () => {
     } else if (runtime) {
       mainWindow = createMainWindow(path.join(__dirname, "preload.cjs"), runtime.getSnapshot().preferences);
       mainWindow.on("close", (event) => { if (!quitting) { event.preventDefault(); mainWindow?.hide(); } });
-      mainWindow.on("focus", () => notifications.clearBadge());
+      mainWindow.on("focus", () => notifications?.clearBadge());
     }
   });
 });
@@ -290,6 +375,8 @@ app.on("before-quit", (event) => {
   event.preventDefault();
   disposing = true;
   quitting = true;
+  notifications?.dispose();
+  notificationBus?.dispose();
   browser?.dispose();
   automation?.dispose();
   translation?.dispose();

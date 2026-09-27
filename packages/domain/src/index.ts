@@ -1486,6 +1486,11 @@ export interface AutomationConfiguration {
 export interface AutomationTask extends AutomationConfiguration {
   id: string;
   name: string;
+  /**
+   * Per-task push override. Absent means "use the global defaults"; present means
+   * the task decides, with any field it omits falling back to the defaults.
+   */
+  notification?: NotificationSubscription;
   schedule: AutomationSchedule;
   activeFrom: number | null;
   activeUntil: number | null;
@@ -1514,6 +1519,14 @@ export interface AutomationRun {
   sessionId: string | null;
   status: AutomationRunStatus;
   error: string | null;
+  /**
+   * Why the push notification failed, when one was attempted and did not arrive.
+   *
+   * Written *after* the terminal status above, by a second update. Delivery is
+   * asynchronous and must not sit on the completion path — a webhook that hangs for
+   * 30s would otherwise delay the run itself appearing as finished.
+   */
+  notifyError?: NotificationFailure;
   createdAt: number;
   startedAt: number | null;
   completedAt: number | null;
@@ -1521,6 +1534,7 @@ export interface AutomationRun {
 
 export interface AutomationTaskInput extends AutomationConfiguration {
   name: string;
+  notification?: NotificationSubscription;
   schedule: AutomationSchedule;
   activeFrom: number | null;
   activeUntil: number | null;
@@ -2058,6 +2072,307 @@ export interface ModelRetryState {
   errorMessage: string;
   failedMessageId: string;
 }
+
+/// Message push (group-robot webhooks)
+///
+/// The host POSTs task-completion messages to group robots the user created in
+/// Feishu / DingTalk / WeCom. Nothing here receives messages — that is what makes
+/// this affordable next to the IM gateway (docs/architecture/message-push.md).
+///
+/// Unlike the proxy, which is a single record, an endpoint is a *collection*, so
+/// this owns a Settings page of its own.
+///
+/// Credentials deliberately do not appear anywhere in this section: the URL and
+/// the sign secret live in the OS credential vault and never reach the renderer.
+/// `WebhookEndpointPublic` carries a mask and a boolean instead.
+
+export type WebhookKind = "feishu" | "dingtalk" | "wecom";
+
+export type WebhookMessageLevel = "info" | "warn" | "error" | "success";
+
+export interface WebhookAttachment {
+  /** Absolute local path. Providers read the bytes; callers never do. */
+  path: string;
+  name: string;
+  kind: "image" | "file";
+  sizeBytes: number;
+}
+
+/**
+ * The provider-neutral message contract. Each provider maps it to its own wire
+ * schema (Feishu prefers an interactive card, DingTalk markdown, ...).
+ *
+ * `attachments` exists from the first version even though only WeCom can deliver
+ * files: whether a platform can carry an attachment is a provider *capability*,
+ * and a message type without the field would force every provider, the approval
+ * preview and the settings form to change the day file delivery lands.
+ *
+ * Providers that cannot carry an attachment must degrade *visibly* — see
+ * `degradeAttachments` in the main process. Silently dropping one would let us
+ * report "sent" for something the user never received.
+ */
+export interface WebhookMessage {
+  title?: string;
+  /** Markdown. Providers decide how much of it their platform can render. */
+  text: string;
+  level?: WebhookMessageLevel;
+  attachments?: WebhookAttachment[];
+}
+
+/**
+ * Per-provider non-secret options.
+ *
+ * Kept as an opaque blob on purpose. Its true type is `unknown` — it comes back
+ * from a JSON file — and each provider owns a schema for it, so adding a channel
+ * adds no field here. Everywhere else the options are carried through untouched.
+ */
+export type WebhookOptions = Record<string, unknown>;
+
+/** A field a provider needs in order to send, so the form can be provider-driven. */
+export interface WebhookCredentialField {
+  key: "url" | "signSecret";
+  required: boolean;
+  /** Tells the user what a valid URL starts with, e.g. the platform's hook prefix. */
+  urlHint?: string;
+  /** Rendered as a password input and stripped from logs. */
+  secret: boolean;
+}
+
+/**
+ * What a provider's platform can do.
+ *
+ * This is the only place upper layers are allowed to branch on platform
+ * differences. There must be no `kind === "wecom"` outside a provider file:
+ * rate limiting, attachment degradation, length truncation and mention syntax
+ * differences are all driven from here.
+ */
+export interface WebhookProviderCapabilities {
+  /** Whether the platform offers a request signature at all. WeCom does not. */
+  supportsSign: boolean;
+  supportsImage: boolean;
+  supportsFile: boolean;
+  supportsMentionAll: boolean;
+  supportsMentionByMobile: boolean;
+  /**
+   * Character ceiling, for platforms that document their limit that way.
+   *
+   * The units genuinely differ: Feishu caps the request body in bytes, WeCom caps
+   * the body in bytes, and **DingTalk caps it in characters**. A byte ceiling alone
+   * is wrong for DingTalk in both directions — 4000 Chinese characters is 12000
+   * bytes, so a 4000-byte cap throws away two thirds of what the platform allows,
+   * while a 12000-byte cap lets pure ASCII through at 12000 characters and gets
+   * rejected. Both ceilings apply; whichever binds first wins.
+   */
+  maxTextChars?: number;
+
+  /** Body limit in *bytes*, not characters. Chinese text is 3 bytes per character. */
+  maxTextBytes: number;
+  maxTitleBytes: number;
+  /** Platform messages per minute; undefined when unknown. */
+  maxMessagesPerMinute?: number;
+  supportsMarkdown: boolean;
+}
+
+/**
+ * What the settings page needs to render a channel without knowing any of them.
+ *
+ * There is deliberately no label here. A label would have to be an i18n key
+ * carried as a plain string, which nothing can verify — one typo on the main side
+ * and the user sees a raw key. Labels live in the i18n layer, where the renderer
+ * maps the kind through an exhaustive `Record<WebhookKind, MessageKey>` and the
+ * compiler checks it.
+ */
+export interface WebhookProviderDescriptor {
+  kind: WebhookKind;
+  iconClass?: string;
+  credentialFields: WebhookCredentialField[];
+  capabilities: WebhookProviderCapabilities;
+}
+
+/** The part of an endpoint safe to send to the renderer, logs and agent context. */
+export interface WebhookEndpointPublic {
+  id: string;
+  kind: WebhookKind;
+  name: string;
+  enabled: boolean;
+  /** ISO timestamps. */
+  createdAt: string;
+  updatedAt: string;
+  /** Protocol + host + the last 4 characters, so the user can tell rows apart. */
+  urlMask?: string;
+  /** Whether a sign secret is stored. The value itself is never exposed. */
+  hasSignSecret: boolean;
+  options: WebhookOptions;
+}
+
+/** Held by the main process only. */
+export interface WebhookEndpointSecret {
+  url: string;
+  signSecret?: string;
+}
+
+/**
+ * Why a stored endpoint cannot be used.
+ *
+ * Codes rather than sentences: the message has to be translated, searchable in
+ * logs, and classifiable by the UI ("the address is wrong" is shown inline on the
+ * field, "the platform refused" belongs next to the send button).
+ */
+export type WebhookValidationErrorCode =
+  | "url-empty"
+  | "url-not-https"
+  | "url-http-not-allowed"
+  | "url-bad-format"
+  | "url-wrong-host"
+  | "url-wrong-path"
+  | "url-missing-token"
+  | "url-token-too-short"
+  | "sign-secret-required"
+  | "sign-secret-unexpected"
+  | "options-invalid";
+
+export type WebhookValidationResult =
+  | { ok: true }
+  | { ok: false; code: WebhookValidationErrorCode; detail?: string };
+
+/**
+ * Why a send failed. `detail` carries the platform's own wording, for the log and
+ * a "details" affordance — never the primary message.
+ */
+export type WebhookSendErrorCode =
+  | "url-invalid"
+  | "credentials-missing"
+  | "timeout"
+  | "http-error"
+  | "response-unparsable"
+  | "platform-rejected"
+  | "rate-limited"
+  | "attachment-unsupported"
+  | "attachment-too-large"
+  | "attachment-upload-failed"
+  | "unknown";
+
+export type WebhookSendResult =
+  | {
+      ok: true;
+      platformMessageId?: string;
+      /** Set when something was left out of the delivered message. */
+      degraded?: "attachment-dropped" | "truncated";
+    }
+  | { ok: false; code: WebhookSendErrorCode; detail?: string };
+
+export interface WebhookDispatchResult {
+  id: string;
+  kind: WebhookKind;
+  name: string;
+  ok: boolean;
+  code?: WebhookSendErrorCode;
+  detail?: string;
+}
+
+/**
+ * Outcome of creating or editing an endpoint.
+ *
+ * A typed failure rather than a thrown error: the renderer needs the code to
+ * show *which* field is wrong and why, and a generic "the operation failed" is
+ * exactly what the typed codes exist to avoid.
+ */
+export type WebhookMutationErrorCode =
+  | WebhookValidationErrorCode
+  /** The row disappeared underneath the form — most often a second window. */
+  | "endpoint-not-found"
+  /** This build cannot send through that channel. */
+  | "unsupported-kind";
+
+export type WebhookMutationResult =
+  | { ok: true; endpoint: WebhookEndpointPublic }
+  | { ok: false; code: WebhookMutationErrorCode; detail?: string };
+
+/**
+ * Why a push did not arrive.
+ *
+ * A code rather than a sentence, matching the send errors: the run list shows a
+ * translated message, and the raw platform wording is kept aside for the log.
+ * `no-endpoint` is the case where the task asked to be pushed and there was
+ * nothing usable to push to.
+ */
+export interface NotificationFailure {
+  code: WebhookSendErrorCode | "no-endpoint";
+  detail?: string;
+}
+
+/**
+ * One thing worth telling the user about, produced by whatever finished.
+ *
+ * Shaped after the *event*, not after any single producer: the notification bus
+ * knows how to resolve a subscription, apply a template and truncate for the
+ * target platform once, so adding a producer is one `emit` call.
+ */
+export interface NotificationEvent {
+  /**
+   * Idempotency key. The same run must never be announced twice, and the terminal
+   * branch that produces this event can fire more than once for one run.
+   */
+  eventId: string;
+  kind: "automation.finished" | "batch.finished" | "agent.notify";
+  /** Stable id of the producer, used for subscription lookup. */
+  sourceId: string;
+  /**
+   * The session the run used, when the producer knows it.
+   *
+   * Only needed to fetch the reply for `{{reply}}`, and only then.
+   */
+  sessionId?: string | null;
+  /**
+   * How the run ended. Carried explicitly rather than inferred from `level`,
+   * because the `when` filter has to tell `failed` from `configuration-error`,
+   * and both are "an error" to a card.
+   */
+  status: AutomationRunStatus;
+  title: string;
+  /**
+   * A finished body, for a producer that writes its own message (the agent, later).
+   * When absent the body is rendered from the subscription's template and `context`.
+   */
+  text?: string;
+  /** Defaults to whatever `status` implies; set it to override the card's colour. */
+  level?: WebhookMessageLevel;
+  attachments?: WebhookAttachment[];
+  /** Variables a user-editable template may reference. */
+  context: Record<string, string | number | undefined>;
+  at: string;
+}
+
+/**
+ * Per-producer override. A producer with `enabled` and no `endpointIds` falls back
+ * to the global defaults, so "notify me about every failure" does not require
+ * editing every automation.
+ */
+export interface NotificationSubscription {
+  enabled: boolean;
+  endpointIds: string[];
+  when: "always" | "success" | "failure";
+  /** User-editable template with {{variables}}. Absent means the built-in one. */
+  template?: string;
+}
+
+export interface NotificationDefaults {
+  enabled: boolean;
+  endpointIds: string[];
+  when: "always" | "success" | "failure";
+  /** Absent means the built-in default, rendered by the renderer at save time. */
+  template?: string;
+}
+
+/**
+ * A template problem, kept separate from `WebhookValidationErrorCode`: those are
+ * about an address, this is about a message body.
+ */
+export type NotificationTemplateErrorCode = "template-unknown-variable" | "template-empty";
+
+export type NotificationDefaultsResult =
+  | { ok: true; defaults: NotificationDefaults }
+  | { ok: false; code: NotificationTemplateErrorCode; detail?: string };
 
 export function conversationUsageFromUnknown(
   value: unknown,

@@ -1,6 +1,7 @@
 import { createContext, type ReactNode, useCallback, useContext, useEffect, useMemo, useState } from "react";
 import type { AppSnapshot, RuntimeEventEnvelope } from "@wordless/protocol";
 import { getRuntimeClient, type RuntimeClient } from "../bridge/runtime-client";
+import { shouldRefreshSnapshot } from "./snapshot-refresh";
 
 type RuntimeContextValue = {
   client: RuntimeClient | null;
@@ -40,7 +41,9 @@ export function RuntimeProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     if (!client) return;
     return client.subscribe((event) => {
-      if (event.event.type === "preferences.changed" || event.event.type === "skills.changed" || event.event.type === "experts.changed" || event.event.type === "connectors.changed" || event.event.type === "model-configuration.changed" || event.event.type === "media.project.changed") void refresh();
+      // The list of events that can change the snapshot lives in one place, with the
+      // reason for each; see snapshot-refresh.ts.
+      if (shouldRefreshSnapshot(event.event.type)) void refresh();
     });
   }, [client, refresh]);
 

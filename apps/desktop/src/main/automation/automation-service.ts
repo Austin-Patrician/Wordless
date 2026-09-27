@@ -8,7 +8,7 @@ import type {
   SessionDraft,
   ToolApprovalMode,
 } from "@wordless/domain";
-import type { RuntimeEventEnvelope } from "@wordless/protocol";
+import type { NotificationEvent, NotificationFailure, RuntimeEventEnvelope } from "@wordless/protocol";
 import { WordlessDatabase } from "@wordless/persistence";
 import type { WordlessRuntime } from "@wordless/runtime";
 import {
@@ -16,6 +16,7 @@ import {
   nextAutomationRun,
   validateAutomationClock,
 } from "./automation-schedule";
+import { formatDuration } from "../notifications/copy.ts";
 
 const MAX_CONCURRENT_RUNS = 3;
 const MAX_TIMER_DELAY = 2_147_000_000;
@@ -39,6 +40,14 @@ type AutomationServiceOptions = {
     type: "automation.changed" | "automation-run.changed";
     id?: string;
   }) => void;
+  /**
+   * Hands a finished run to the notification bus.
+   *
+   * Injected rather than imported: this service must not know that push, webhooks
+   * or rate limits exist. It is also **synchronous and non-blocking** by contract —
+   * see `emitNotification`, which sits on the run-completion path.
+   */
+  notify?: (event: NotificationEvent) => void;
 };
 
 export class AutomationService {
@@ -651,8 +660,57 @@ export class AutomationService {
       });
       this.active.delete(envelope.sessionId);
       void this.drain();
+      this.runChanged(run.id);
+      // Last on purpose. The run is written, the concurrency slot is released and the
+      // UI has been told it finished — only now is the notification handed over, and
+      // `notify` is contractually synchronous. A webhook that hangs for its full 30s
+      // timeout therefore cannot delay this run appearing as done.
+      this.emitNotification({ ...run, status, completedAt: Date.now() });
+      return;
     }
     this.runChanged(run.id);
+  }
+
+  /**
+   * Reports why a run's push did not arrive.
+   *
+   * Called by the notification bus after delivery, never on the completion path: the
+   * record is written once with its terminal status, and a second time only when
+   * there is something more to say. That ordering is what keeps a slow network out
+   * of the run's own lifecycle.
+   */
+  recordNotificationFailure(runId: string, failure: NotificationFailure): void {
+    const run = this.database.getAutomationRun(runId);
+    if (!run) return;
+    this.database.updateAutomationRun({ ...run, notifyError: failure });
+    this.runChanged(run.id);
+  }
+
+  private emitNotification(run: AutomationRun): void {
+    try {
+      if (!this.options.notify) return;
+      // An automation deleted while its run was in flight still reports — the run
+      // happened — but with no task to inherit a subscription from.
+      const startedAt = run.startedAt;
+      const completedAt = run.completedAt ?? Date.now();
+      this.options.notify({
+        eventId: `automation.finished:${run.id}`,
+        kind: "automation.finished",
+        sourceId: run.automationId ?? run.id,
+        sessionId: run.sessionId,
+        status: run.status,
+        title: run.automationName,
+        context: {
+          name: run.automationName,
+          startedAt: startedAt === null ? undefined : new Date(startedAt).toLocaleString(),
+          duration: formatDuration(startedAt === null ? undefined : completedAt - startedAt),
+          error: run.error ?? undefined,
+        },
+        at: new Date(completedAt).toISOString(),
+      });
+    } catch {
+      // A notification can never be allowed to fail the run that produced it.
+    }
   }
 
   private changed(id?: string): void {

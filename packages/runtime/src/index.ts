@@ -3454,6 +3454,9 @@ export class WordlessRuntime {
     if (record.interactionMode === "plan")
       await this.persistPlanModeState(record, "planning");
     this.database.upsertSession(record);
+    // A new session must reach the sidebar even when the host created it. Without
+    // this, an automation's conversation only appeared in the run list.
+    this.emitApp({ type: "sessions.changed" });
     if (expertSnapshot)
       this.database.saveSessionExpertSnapshot(id, expertSnapshot);
     this.rememberEntryModel(entry.id, model);
@@ -3983,6 +3986,7 @@ export class WordlessRuntime {
     this.artifactRevisions.delete(sessionId);
     if (session.workbenchId === "media-canvas")
       this.emitApp({ type: "media.project.changed", sessionId });
+    this.emitApp({ type: "sessions.changed" });
   }
 
   async createMediaProject(title?: string): Promise<MediaProject> {

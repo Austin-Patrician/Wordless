@@ -3,6 +3,13 @@ import {
   DESKTOP_BRIDGE_VERSION,
   type DesktopBridge,
 } from "../bridge/desktop-bridge";
+import type {
+  WebhookCreateInputDto,
+  WebhookIdRequestDto,
+  WebhookSetEnabledRequestDto,
+  WebhookTestRequestDto,
+  WebhookUpdateRequestDto,
+} from "@wordless/protocol";
 
 async function fileToPromptAttachment(file: File) {
   const path = webUtils.getPathForFile(file);
@@ -130,6 +137,23 @@ const wordlessBridge: DesktopBridge = {
   setProxyConfig: (patch) => ipcRenderer.invoke("wordless:proxy:set", patch),
   testProxyConnection: () => ipcRenderer.invoke("wordless:proxy:test"),
   detectLocalProxy: () => ipcRenderer.invoke("wordless:proxy:detect"),
+  setForegroundSession: (sessionId) => ipcRenderer.invoke("wordless:notification:foreground-session", { sessionId }),
+  listWebhookEndpoints: () => ipcRenderer.invoke("wordless:notifications:list"),
+  listWebhookProviders: () => ipcRenderer.invoke("wordless:notifications:providers"),
+  // Each envelope is checked against the same DTO the host validates with, so the
+  // two sides cannot drift apart without a compile error.
+  createWebhookEndpoint: (input) =>
+    ipcRenderer.invoke("wordless:notifications:create", input satisfies WebhookCreateInputDto),
+  updateWebhookEndpoint: (id, patch) =>
+    ipcRenderer.invoke("wordless:notifications:update", { id, patch } satisfies WebhookUpdateRequestDto),
+  setWebhookEndpointEnabled: (id, enabled) =>
+    ipcRenderer.invoke("wordless:notifications:set-enabled", { id, enabled } satisfies WebhookSetEnabledRequestDto),
+  deleteWebhookEndpoint: (id) =>
+    ipcRenderer.invoke("wordless:notifications:delete", { id } satisfies WebhookIdRequestDto),
+  getNotificationDefaults: () => ipcRenderer.invoke("wordless:notifications:defaults"),
+  setNotificationDefaults: (patch) => ipcRenderer.invoke("wordless:notifications:set-defaults", patch),
+  testWebhookEndpoint: (id, message) =>
+    ipcRenderer.invoke("wordless:notifications:test", { id, message } satisfies WebhookTestRequestDto),
   setBrowserPanelSession: (sessionId) =>
     ipcRenderer.invoke("wordless:browser:panel-session", { sessionId }),
   hideBrowserView: () => ipcRenderer.invoke("wordless:browser:hide"),

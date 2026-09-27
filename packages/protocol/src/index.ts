@@ -43,9 +43,52 @@ import type {
   ExpertTeamDefinitionInput,
   ExpertPortrait,
   SessionExpertTeamMemberSnapshot,
+  WebhookAttachment,
+  WebhookEndpointPublic,
+  WebhookKind,
+  WebhookMessage,
+  WebhookMessageLevel,
+  WebhookMutationResult,
+  WebhookOptions,
+  WebhookProviderDescriptor,
+  WebhookSendErrorCode,
+  WebhookSendResult,
+  WebhookValidationErrorCode,
+  NotificationDefaults,
+  NotificationDefaultsResult,
+  NotificationSubscription,
+  NotificationTemplateErrorCode,
 } from "@wordless/domain";
 
 export type { ConversationMessage } from "@wordless/domain";
+
+// Re-exported so the main process, preload and the renderer can all import the
+// message-push contract from one place, exactly like the proxy types below.
+export type {
+  WebhookAttachment,
+  WebhookCredentialField,
+  WebhookDispatchResult,
+  WebhookEndpointPublic,
+  WebhookEndpointSecret,
+  WebhookKind,
+  WebhookMessage,
+  WebhookMessageLevel,
+  WebhookMutationErrorCode,
+  WebhookMutationResult,
+  WebhookOptions,
+  WebhookProviderCapabilities,
+  WebhookProviderDescriptor,
+  WebhookSendErrorCode,
+  WebhookSendResult,
+  WebhookValidationErrorCode,
+  WebhookValidationResult,
+  NotificationDefaults,
+  NotificationDefaultsResult,
+  NotificationEvent,
+  NotificationFailure,
+  NotificationSubscription,
+  NotificationTemplateErrorCode,
+} from "@wordless/domain";
 
 export const PROTOCOL_VERSION = 1;
 
@@ -404,7 +447,12 @@ export type DesktopHostEvent =
   | { type: "cloud-sync.changed"; snapshot: CloudSyncSnapshot }
   // Selection translation streams over the host channel on purpose: it is not
   // part of any session journal, so it must not travel as a runtime event.
-  | { type: "translation"; event: TranslationStreamEvent };
+  | { type: "translation"; event: TranslationStreamEvent }
+  /**
+   * Asked for by the host, usually because the user clicked a desktop
+   * notification: bring the window forward and show this session.
+   */
+  | { type: "open-session"; sessionId: string };
 
 export type DesktopUpdateState = DesktopUpdateSnapshot;
 
@@ -470,8 +518,52 @@ export const AutomationScheduleSchema = Type.Union([
   Type.Object({ kind: Type.Literal("once"), at: Type.Number({ minimum: 0 }) }),
 ]);
 
+/**
+ * A template is a body with `{{variable}}` holes. Validated where it is saved so a
+ * typo can never reach a group chat as a literal `{{nam}}`.
+ */
+export const NOTIFICATION_TEMPLATE_VARIABLES = ["name", "status", "startedAt", "duration", "reply", "error"] as const;
+
+export const NotificationNotifyWhenSchema = Type.Union([
+  Type.Literal("always"),
+  Type.Literal("success"),
+  Type.Literal("failure"),
+]);
+
+export const NotificationSubscriptionSchema = Type.Object(
+  {
+    enabled: Type.Boolean(),
+    endpointIds: Type.Array(Type.String({ minLength: 1 }), { maxItems: 50 }),
+    when: NotificationNotifyWhenSchema,
+    template: Type.Optional(Type.String({ maxLength: 4000 })),
+  },
+  { additionalProperties: false },
+);
+
+export const NotificationDefaultsSchema = Type.Object(
+  {
+    enabled: Type.Boolean(),
+    endpointIds: Type.Array(Type.String({ minLength: 1 }), { maxItems: 50 }),
+    when: NotificationNotifyWhenSchema,
+    template: Type.Optional(Type.String({ maxLength: 4000 })),
+  },
+  { additionalProperties: false },
+);
+
+/** `additionalProperties: false` so a typo in the renderer is a loud error. */
+export const NotificationDefaultsPatchSchema = Type.Object(
+  {
+    enabled: Type.Optional(Type.Boolean()),
+    endpointIds: Type.Optional(Type.Array(Type.String({ minLength: 1 }), { maxItems: 50 })),
+    when: Type.Optional(NotificationNotifyWhenSchema),
+    template: Type.Optional(Type.String({ maxLength: 4000 })),
+  },
+  { additionalProperties: false, minProperties: 1 },
+);
+
 export const AutomationTaskInputSchema = Type.Object({
   name: Type.String({ minLength: 1, maxLength: 120 }),
+  notification: Type.Optional(NotificationSubscriptionSchema),
   prompt: Type.String({ minLength: 1, maxLength: 100000 }),
   entryId: Type.String({ minLength: 1 }),
   workspaceId: Type.Union([Type.String({ minLength: 1 }), Type.Null()]),
@@ -2265,6 +2357,17 @@ export type RuntimeEvent =
       messageId: string;
       resolution: UserRequestResolution;
     }
+  /**
+   * The set of sessions changed — one was created or removed.
+   *
+   * Distinct from the run events: those describe what a session is doing, this says
+   * the list itself is different. The renderer's snapshot is the only place the
+   * sidebar reads sessions from, and a session created by the *host* (an automation
+   * or a task) has no other way to reach it — the renderer refreshes after its own
+   * mutations, so a host-created session used to stay invisible until some unrelated
+   * event happened to refresh the snapshot.
+   */
+  | { type: "sessions.changed" }
   | { type: "model.changed"; model: ModelReference }
   | { type: "extension.event"; event: AgentExtensionEvent }
   | { type: "session.idle" };
@@ -2280,3 +2383,183 @@ export interface RuntimeEventEnvelope {
   timestamp: number;
   event: RuntimeEvent;
 }
+
+/// Message push (group-robot webhooks)
+///
+/// Wire shapes for the Settings page only. The agent-facing side is a capability
+/// that runs in the main process and calls the manager through a port, so it
+/// needs no IPC — which also means the renderer cannot ask the host to read an
+/// arbitrary file path as an attachment.
+///
+/// Inputs are validated at the boundary with `additionalProperties: false`: a
+/// typo in the renderer should fail loudly rather than be dropped by
+/// normalisation and turn into a setting that silently never applies.
+
+export const WebhookKindSchema = Type.Union([
+  Type.Literal("feishu"),
+  Type.Literal("dingtalk"),
+  Type.Literal("wecom"),
+]);
+
+export const WebhookMessageLevelSchema = Type.Union([
+  Type.Literal("info"),
+  Type.Literal("warn"),
+  Type.Literal("error"),
+  Type.Literal("success"),
+]);
+
+/**
+ * Opaque to the wire. Each provider owns a schema for its own slice, so adding a
+ * channel does not change this file.
+ */
+export const WebhookOptionsSchema = Type.Record(Type.String(), Type.Unknown());
+
+export const WebhookAttachmentSchema = Type.Object(
+  {
+    path: Type.String({ minLength: 1 }),
+    name: Type.String({ minLength: 1 }),
+    kind: Type.Union([Type.Literal("image"), Type.Literal("file")]),
+    sizeBytes: Type.Number({ minimum: 0 }),
+  },
+  { additionalProperties: false },
+);
+
+export const WebhookCredentialFieldSchema = Type.Object(
+  {
+    key: Type.Union([Type.Literal("url"), Type.Literal("signSecret")]),
+    required: Type.Boolean(),
+    urlHint: Type.Optional(Type.String()),
+    secret: Type.Boolean(),
+  },
+  { additionalProperties: false },
+);
+
+export const WebhookProviderCapabilitiesSchema = Type.Object(
+  {
+    supportsSign: Type.Boolean(),
+    supportsImage: Type.Boolean(),
+    supportsFile: Type.Boolean(),
+    supportsMentionAll: Type.Boolean(),
+    supportsMentionByMobile: Type.Boolean(),
+    maxTextBytes: Type.Number({ minimum: 1 }),
+    /** Only for platforms whose documented limit is in characters (DingTalk). */
+    maxTextChars: Type.Optional(Type.Number({ minimum: 1 })),
+    maxTitleBytes: Type.Number({ minimum: 1 }),
+    maxMessagesPerMinute: Type.Optional(Type.Number({ minimum: 1 })),
+    supportsMarkdown: Type.Boolean(),
+  },
+  { additionalProperties: false },
+);
+
+/** Drives the form: the page renders fields from this and never branches on kind. */
+export const WebhookProviderDescriptorSchema = Type.Object(
+  {
+    kind: WebhookKindSchema,
+    iconClass: Type.Optional(Type.String()),
+    credentialFields: Type.Array(WebhookCredentialFieldSchema),
+    capabilities: WebhookProviderCapabilitiesSchema,
+  },
+  { additionalProperties: false },
+);
+
+export const WebhookEndpointPublicSchema = Type.Object(
+  {
+    id: Type.String({ minLength: 1 }),
+    kind: WebhookKindSchema,
+    name: Type.String(),
+    enabled: Type.Boolean(),
+    createdAt: Type.String({ minLength: 1 }),
+    updatedAt: Type.String({ minLength: 1 }),
+    urlMask: Type.Optional(Type.String()),
+    hasSignSecret: Type.Boolean(),
+    options: WebhookOptionsSchema,
+  },
+  { additionalProperties: false },
+);
+
+export const WebhookCreateInputSchema = Type.Object(
+  {
+    kind: WebhookKindSchema,
+    name: Type.String({ minLength: 1 }),
+    url: Type.String({ minLength: 1 }),
+    signSecret: Type.Optional(Type.String()),
+    enabled: Type.Optional(Type.Boolean()),
+    options: Type.Optional(WebhookOptionsSchema),
+  },
+  { additionalProperties: false },
+);
+
+/**
+ * `url` and `signSecret` are optional so saving an unrelated field never requires
+ * the secret to travel back down to the renderer. An explicit empty string clears
+ * the secret; omitting it keeps the stored one.
+ */
+export const WebhookUpdatePatchSchema = Type.Object(
+  {
+    name: Type.Optional(Type.String({ minLength: 1 })),
+    url: Type.Optional(Type.String({ minLength: 1 })),
+    signSecret: Type.Optional(Type.String()),
+    enabled: Type.Optional(Type.Boolean()),
+    options: Type.Optional(WebhookOptionsSchema),
+  },
+  { additionalProperties: false, minProperties: 1 },
+);
+
+export const WebhookIdRequestSchema = Type.Object(
+  { id: Type.String({ minLength: 1 }) },
+  { additionalProperties: false },
+);
+
+/**
+ * An update is `{ id, patch }` rather than a flattened `{ id, ...patch }`.
+ *
+ * The flattened form is what shipped first, and it was broken for every call:
+ * the handler validated the whole payload against the *patch* schema, which has
+ * `additionalProperties: false` and therefore rejected `id`. Nesting the patch
+ * means the patch schema is reused verbatim, so the two shapes cannot drift apart
+ * again — a flat envelope duplicates the field list and nothing checks it.
+ */
+export const WebhookUpdateRequestSchema = Type.Object(
+  {
+    id: Type.String({ minLength: 1 }),
+    patch: WebhookUpdatePatchSchema,
+  },
+  { additionalProperties: false },
+);
+
+export const WebhookSetEnabledRequestSchema = Type.Object(
+  { id: Type.String({ minLength: 1 }), enabled: Type.Boolean() },
+  { additionalProperties: false },
+);
+
+/**
+ * The test message comes *from the renderer* so the main process needs no copy
+ * table: it runs scheduled work with no window, and a locale-dependent string
+ * table on this side would be one more thing to keep in sync.
+ */
+export const WebhookTestRequestSchema = Type.Object(
+  {
+    id: Type.String({ minLength: 1 }),
+    message: Type.Object(
+      {
+        title: Type.Optional(Type.String()),
+        text: Type.String({ minLength: 1 }),
+        level: Type.Optional(WebhookMessageLevelSchema),
+        attachments: Type.Optional(Type.Array(WebhookAttachmentSchema)),
+      },
+      { additionalProperties: false },
+    ),
+  },
+  { additionalProperties: false },
+);
+
+export type WebhookCreateInputDto = Static<typeof WebhookCreateInputSchema>;
+export type WebhookUpdatePatchDto = Static<typeof WebhookUpdatePatchSchema>;
+export type WebhookUpdateRequestDto = Static<typeof WebhookUpdateRequestSchema>;
+export type WebhookIdRequestDto = Static<typeof WebhookIdRequestSchema>;
+export type WebhookSetEnabledRequestDto = Static<typeof WebhookSetEnabledRequestSchema>;
+export type WebhookTestRequestDto = Static<typeof WebhookTestRequestSchema>;
+
+export type NotificationDefaultsDto = Static<typeof NotificationDefaultsSchema>;
+export type NotificationDefaultsPatchDto = Static<typeof NotificationDefaultsPatchSchema>;
+export type NotificationSubscriptionDto = Static<typeof NotificationSubscriptionSchema>;
