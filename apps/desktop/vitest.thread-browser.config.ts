@@ -77,6 +77,7 @@ export default defineConfig({
       "test/thread-virtuoso.browser.test.tsx",
       "test/automation-form.browser.test.tsx",
       "test/notifications-settings.browser.test.tsx",
+      "test/model-picker.browser.test.tsx",
     ],
   },
 });
