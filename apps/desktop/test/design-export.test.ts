@@ -4,7 +4,8 @@ import { createDesignHandlers } from "../src/main/design/handlers.ts";
 import type { DesignExporter } from "../src/main/design/design-exporter.ts";
 import { DesignStore } from "../src/main/design/design-store.ts";
 import { manifestPathOf } from "../src/main/design/manifest.ts";
-import { encodeRasterImage } from "../src/main/design/raster-port.ts";
+import { rasterCaptureParams } from "../src/main/design/raster-port.ts";
+import { DESIGN_IMAGE_PAYLOAD_LIMIT, isDesignImageBytes } from "@wordless/protocol";
 import { FakeDesignFs } from "./design-test-fs.ts";
 
 /**
@@ -38,6 +39,10 @@ interface Recorded {
   directory: string | null;
   written: string[];
   copied: string[];
+  /** 保存对话框被请求的名字(`chooseSaveFile` 的入参)。 */
+  savedAs: string | null;
+  /** 保存对话框返回什么。null = 用户取消。 */
+  savePath: string | null;
 }
 
 function exporterInto(recorded: Recorded, directory: string | null = "/out"): DesignExporter {
@@ -52,6 +57,10 @@ function exporterInto(recorded: Recorded, directory: string | null = "/out"): De
     async copyFile(_from, to) {
       recorded.copied.push(to);
     },
+    async chooseSaveFile(input) {
+      recorded.savedAs = input.suggestedName;
+      return recorded.savePath;
+    },
   };
 }
 
@@ -63,7 +72,12 @@ interface RasterRequestLike {
   pixelRatio: number;
 }
 
-function handlersWith(fs: FakeDesignFs, exporter: DesignExporter, seen: RasterRequestLike[] = []) {
+function handlersWith(
+  fs: FakeDesignFs,
+  exporter: DesignExporter,
+  seen: RasterRequestLike[] = [],
+  clipboard?: { writeImage(bytes: Uint8Array): Promise<boolean> },
+) {
   // 光栅池注入假 port:这里考的是"请求长什么样""键与文件名怎么对上",不是 Electron 能不能截图。
   const pool = {
     async run(requests: RasterRequestLike[]) {
@@ -83,6 +97,7 @@ function handlersWith(fs: FakeDesignFs, exporter: DesignExporter, seen: RasterRe
     {} as never,
     undefined,
     exporter,
+    clipboard,
   );
 }
 
@@ -196,19 +211,130 @@ test("导出的渲染图走 PNG,画布的位图走 JPEG", () => {
     抽成纯函数正是因为真实现 import 了 Electron,`node --test` 加载不了 —— 不抽出来的话,
     「导出给的是 PNG」这件事就没有测试守着。
   */
-  const calls: string[] = [];
-  const image = {
-    toPNG: () => {
-      calls.push("png");
-      return new Uint8Array([1]);
-    },
-    toJPEG: (quality: number) => {
-      calls.push(`jpeg:${quality}`);
-      return new Uint8Array([2]);
+  const png = rasterCaptureParams({ width: 390, height: 844, pixelRatio: 2, format: "png" });
+  const canvas = rasterCaptureParams({ width: 390, height: 844, pixelRatio: 2 });
+
+  assert.equal(png.format, "png", "导出要无损");
+  assert.equal(png.quality, undefined, "PNG 没有质量参数");
+  assert.equal(canvas.format, "jpeg", "画布贴的位图要小");
+  assert.equal(canvas.quality, 90);
+
+  // 倍率是 `clip.scale`,**不是窗口尺寸** —— 改窗口尺寸会让页面按新视口重排。
+  assert.equal(png.clip.scale, 2);
+  assert.deepEqual([png.clip.width, png.clip.height], [390, 844], "窗口还是帧的声明尺寸");
+});
+// ─────────────────── 合成图:保存与复制(第 ③ 步)───────────────────
+
+function recorded(): Recorded {
+  return { directory: null, written: [], copied: [], savedAs: null, savePath: "/out/design.png" };
+}
+
+test("保存合成图:问到落点、写下去,并把路径交回去", async () => {
+  // 界面要能说出东西去哪了 —— 否则用户不知道文件在哪儿。
+  const log = recorded();
+  const handlers = handlersWith(fixture(), exporterInto(log));
+
+  const result = await handlers.saveMockupImage({
+    fileName: "community-recycle-app",
+    extension: "png",
+    bytes: new Uint8Array([1, 2, 3]),
+  });
+
+  assert.deepEqual(result, { ok: true, path: "/out/design.png" });
+  assert.equal(log.savedAs, "community-recycle-app.png", "建议名要带扩展名,否则用户在摘要里看不到它是什么文件");
+  assert.deepEqual(log.written, ["/out/design.png"]);
+});
+
+test("取消不是错误:返回 cancelled,而且什么都没写", async () => {
+  const log = recorded();
+  log.savePath = null; // 用户按了取消
+  const handlers = handlersWith(fixture(), exporterInto(log));
+
+  const result = await handlers.saveMockupImage({
+    fileName: "design",
+    extension: "png",
+    bytes: new Uint8Array([1]),
+  });
+
+  assert.deepEqual(result, { ok: false, reason: "cancelled" });
+  assert.deepEqual(log.written, [], "取消之后不该留下任何文件");
+});
+
+test("写盘失败要说清楚原因,而不是笼统的 failed", async () => {
+  const log = recorded();
+  const exporter: DesignExporter = {
+    ...exporterInto(log),
+    async writeFile() {
+      throw new Error("EACCES: permission denied");
     },
   };
+  const handlers = handlersWith(fixture(), exporter);
 
-  assert.deepEqual(encodeRasterImage(image, "png", 0.82), new Uint8Array([1]));
-  assert.deepEqual(encodeRasterImage(image, undefined, 0.82), new Uint8Array([2]));
-  assert.deepEqual(calls, ["png", "jpeg:0.82"]);
+  const result = await handlers.saveMockupImage({
+    fileName: "design",
+    extension: "pdf",
+    bytes: new Uint8Array([1]),
+  });
+
+  assert.equal(result.ok, false);
+  assert.equal(result.ok === false ? result.reason : null, "failed");
+  assert.match(result.ok === false ? (result.detail ?? "") : "", /EACCES/);
+});
+
+test("没有接宿主能力时照实说,而不是假成功", async () => {
+  const handlers = createDesignHandlers(new DesignStore({ fs: fixture() }), {} as never, {} as never);
+
+  const result = await handlers.saveMockupImage({
+    fileName: "design",
+    extension: "png",
+    bytes: new Uint8Array([1]),
+  });
+
+  assert.equal(result.ok, false);
+  assert.equal(result.ok === false ? result.reason : null, "failed");
+});
+
+test("复制合成图:交给剪贴板,并把它的结果原样交回", async () => {
+  const seen: Uint8Array[] = [];
+  const handlers = handlersWith(fixture(), exporterInto(recorded()), [], {
+    async writeImage(bytes) {
+      seen.push(bytes);
+      return true;
+    },
+  });
+
+  assert.equal(await handlers.copyMockupImage({ bytes: new Uint8Array([7, 8]) }), true);
+  assert.deepEqual([...seen[0]!], [7, 8]);
+});
+
+test("剪贴板被占用时返回 false —— 调用方据此提示,而不是崩", async () => {
+  const handlers = handlersWith(fixture(), exporterInto(recorded()), [], {
+    async writeImage() {
+      return false;
+    },
+  });
+
+  assert.equal(await handlers.copyMockupImage({ bytes: new Uint8Array([1]) }), false);
+});
+
+test("没有剪贴板能力时返回 false,而不是抛", async () => {
+  const handlers = handlersWith(fixture(), exporterInto(recorded()));
+
+  assert.equal(await handlers.copyMockupImage({ bytes: new Uint8Array([1]) }), false);
+});
+
+test("字节守卫:非空 Uint8Array 通过,别的都拒", () => {
+  // 这一层是"渲染层 → 主进程"的方向,所以必须查。但**不逐字节 walk**:
+  // `instanceof` + 上限是 O(1) 的,给的是同样的保证。
+  assert.equal(isDesignImageBytes(new Uint8Array([1])), true);
+  assert.equal(isDesignImageBytes(new Uint8Array(0)), false, "空数组不是一张图");
+  assert.equal(isDesignImageBytes([1, 2, 3]), false, "普通数组不是字节");
+  assert.equal(isDesignImageBytes(null), false);
+  assert.equal(isDesignImageBytes("bytes"), false);
+  assert.equal(isDesignImageBytes({ byteLength: 3 }), false, "长得像不算");
+  assert.equal(
+    isDesignImageBytes(new Uint8Array(DESIGN_IMAGE_PAYLOAD_LIMIT + 1)),
+    false,
+    "超过上限的不是我们产出的东西",
+  );
 });

@@ -18,7 +18,14 @@ export interface StyleTokens {
   radius: Record<string, string>;
 }
 
-const THEME_BLOCK = /@theme\s*\{([\s\S]*?)\}/;
+/**
+ * 块匹配要同时认 `@theme {` 与 `@theme static {`。
+ *
+ * `static` 是我们自己要求的写法(见 `scaffold.ts`:不 static 的话 Tailwind 只发出被用到的
+ * 变量,帧里手写 `var()` 会取不到值)。漏认它不会报错 —— 解析器会退到"扫全文",结果照样
+ * 能读出令牌,于是这个 bug 会一直藏着。所以下面单独钉了一条测试。
+ */
+const THEME_BLOCK = /@theme(?:\s+static)?\s*\{([\s\S]*?)\}/;
 const DECLARATION = /--(color|radius)-([a-z0-9-]+)\s*:\s*([^;]+)/gi;
 
 export function parseThemeTokens(css: string): StyleTokens {

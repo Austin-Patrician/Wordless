@@ -371,6 +371,15 @@ export interface WorkbenchEntryDefinition {
   workbenchId: WorkbenchId;
   availability: EntryAvailability;
   modelRequirements: ModelRequirements;
+  /**
+   * 不摆在新建页的可选项里,但仍**能被解析**。
+   *
+   * 需要这个区分是因为"有没有这个入口"与"这个入口的 profile 存不存在"是两件事:媒体工作台
+   * (`createMediaProject`)按 id 取这个 entry 的 profile 来建会话,而它不该作为"今天想做什么"的
+   * 一类出现在新建页。直接删掉这个 entry 会让那条路拿不到 profile,存下来的会话也会指向一个
+   * 解析不出来的 `entryId`。
+   */
+  internal?: boolean;
 }
 
 export interface WorkspaceRecord {
@@ -1613,6 +1622,22 @@ export type UserPromptPart =
       name: string;
       kind: "file" | "directory";
     }
+  /**
+   * 用户在画布的色彩系统面板上点选的**主题令牌**。
+   *
+   * 与 `workspace-reference` 分开,是因为它要送进模型的东西不同:文件引用说明"看这个文件",
+   * 而令牌引用要说明"用户指的是**这个**令牌" —— 用户看到的是一块颜色,他说不出 `--color-primary`
+   * 这个名字,而 `path` 已经在设计画像里告诉过模型了(令牌都在 `theme.css`)。
+   *
+   * `name` 是**完整变量名**(带 `--color-` 前缀),`value` 是文件里的原值 —— 两个都给,模型不必
+   * 先去读文件才能知道用户指的是哪一个。
+   */
+  | {
+      type: "theme-token-reference";
+      path: string;
+      name: string;
+      value: string;
+    }
   | {
       type: "artifact-reference";
       artifactId: string;
@@ -1950,6 +1975,15 @@ export interface MessageWorkspaceReferenceBlock {
   kind: "file" | "directory";
 }
 
+/** 用户消息里的主题令牌引用。渲染成"色点 + 变量名"。 */
+export interface MessageThemeTokenBlock {
+  type: "theme-token";
+  id: string;
+  path: string;
+  name: string;
+  value: string;
+}
+
 export interface MessageArtifactBlock {
   type: "artifact";
   artifactId: string;
@@ -1967,6 +2001,7 @@ export type MessageBlock =
   | MessageAttachmentBlock
   | MessageSkillReferenceBlock
   | MessageWorkspaceReferenceBlock
+  | MessageThemeTokenBlock
   | MessageArtifactBlock;
 
 export interface ConversationUsage {

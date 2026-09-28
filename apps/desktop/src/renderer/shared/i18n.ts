@@ -646,6 +646,7 @@ export const messages = {
     continuePlanning: "继续规划",
     refinePlan: "完善计划",
     subagentRoles: "Subagent 角色模型",
+    roleModelUnavailable: "已不可用",
     roleModel: "角色模型",
     inheritsSessionModel: "未单独设置时使用当前会话模型",
     shortcuts: "快捷键",
@@ -997,6 +998,7 @@ export const messages = {
     designMineEmptyHelp: "从下面挑一套风格,它会按那套样式建好第一个画面。",
     designStylesTitle: "内置风格",
     designStylesHelp: "每套风格带一份 color 令牌与一份给 agent 的规范。选中之后就按它来做。",
+    designStylesCountAll: "{count} 套",
     designLibraryLoading: "正在读取…",
     designNameTitle: "用「{style}」新建设计",
     designNameField: "设计名称",
@@ -1004,6 +1006,46 @@ export const messages = {
     designNameCreate: "创建",
     designCreateFailed: "创建失败,请重试。",
     designBuildFailed: "设计已建好,但样式没有编译成功。画面会暂时是空白的。",
+    mockupTitle: "导出渲染图",
+    mockupSubtitle: "把选中的几帧合成一张图;设置只影响这张图,不改设计稿。",
+    mockupClose: "关闭",
+    mockupColorHex: "色号",
+    mockupRailTitle: "画框",
+    mockupRailAddAll: "全部加入",
+    mockupRailNoFrames: "这份设计还没有画框。",
+    mockupRailAllAdded: "画框都加进去了。",
+    mockupRailNoPreview: "暂无缩览",
+    mockupSelectedRemove: "移出渲染区",
+    mockupOptionRadius: "圆角",
+    mockupOptionBorder: "外壳厚度",
+    mockupOptionBorderColor: "外壳颜色",
+    mockupOptionBackground: "背景",
+    mockupOptionTransparent: "透明底",
+    mockupOptionShadow: "投影",
+    mockupOptionBrand: "Wordless 水印",
+    mockupOptionScale: "导出倍率",
+    mockupOptionPerPage: "每页张数",
+    mockupOptionReset: "恢复默认",
+    mockupStatusCapturing: "正在渲染…",
+    mockupStatusPages: "{count} 页",
+    mockupStatusFailed: "{count} 帧没渲染出来",
+    mockupFormatPng: "PNG",
+    mockupFormatLongImage: "长图",
+    mockupFormatPdf: "PDF",
+    mockupCopy: "复制",
+    mockupCopyRunning: "复制中…",
+    mockupCopyDone: "已复制到剪贴板。",
+    mockupCopyFailed: "复制失败。",
+    mockupSave: "保存",
+    mockupSaveRunning: "保存中…",
+    mockupSaveDone: "已保存到 {path}",
+    mockupSaveFailed: "保存失败。",
+    mockupEmptyTitle: "还没有画框进渲染区",
+    mockupEmptyDesc: "从左侧挑几个画框加进来,它们会按加入顺序排成一行。",
+    mockupShotRetry: "重试",
+    mockupViewActual: "实际大小",
+    mockupViewZoomIn: "放大",
+    mockupViewZoomOut: "缩小",
     designPanelTitle: "设计画布",
     designGenerating: "正在生成设计…",
     designUntitled: "未命名设计",
@@ -1020,56 +1062,247 @@ export const messages = {
     designFrameEnterHint: "双击进入 100%",
     designFrameMetaFailed: "没能改这一帧:帧文件可能已经不在了,或者它没有 @frame 声明。",
     designFrameRenameHint: "双击标题重命名",
-    designFrameTooSmall: "面板放不下整帧,全屏后可交互",
-    designFrameUntitled: "未命名画面",
-    designFrameCreateFailed: "新建画面失败。",
-    designFrameDeleteFailed: "删除画面失败。",
-    designFrameDelete: "删除画面",
-    designFrameAskAgent: "交给 agent 改这一帧",
+    designFrameTooSmall: "面板放不下整帧,全屏后可交互",
+
+
+    designFrameUntitled: "未命名画面",
+
+
+    designFrameCreateFailed: "新建画面失败。",
+
+
+    designFrameDeleteFailed: "删除画面失败。",
+
+
+    designFrameDelete: "删除画面",
+
+
+    designFrameAskAgent: "交给 agent 改这一帧",
+
+
     designStyleDialogTitle: "设计体系",
-    designStylePick: "选中",
-    designStyleCancel: "取消",
-    designStyleApplyNamed: "应用「{name}」",
-    designStyleConfirmTitle: "按「{name}」重设整份设计稿？",
-    designStyleConfirmBody: "现有 {count} 个画框将由 Wordless 按新体系全量重设，耗时较长。",
-    designStyleReskinMessage: "主题已换为「{name}」。请按新体系全量重设这份设计稿的全部 {count} 个画框：先读 {dir}/DESIGN.md（新规范）与 {dir}/theme.css（新令牌），只用它们定义的令牌，不要发明颜色或间距。“全量”指的是间距、层次、圆角、字号与字重都跟着新体系走，不是只换颜色。保留每一帧的内容、结构与 @frame 声明，不要改文案。一批改完之后用 design_inspect 与 design_screenshot 复核，最多三轮。",
-    designStyleDialogHint: "应用的是一套令牌与规范。已有画面不会自动变样——风格换了之后要由 agent 按新规范重设。",
-    designStyleApply: "应用",
-    designStyleClose: "关闭",
-    designStyleApplied: "已应用「{name}」。",
-    designStyleAppliedRestyle: "已应用「{name}」。已有 {count} 个画面需要 agent 按新规范重设。",
-    designStyleFailed: "应用风格失败。",
-    designExportFrames: "导出渲染图(各帧一张图)",
-    designRefresh: "刷新画布",
-    designRefreshed: "已跟上磁盘上的最新内容。",
-    designAlreadyCurrent: "已经是最新的了。",
-    designExportAssets: "下载素材(图 + 规范与素材文件)",
-    designExportBusy: "导出中…",
-    designExportDone: "已导出 {count} 个文件到 {directory}",
-    designExportEmpty: "没有可导出的东西。",
-    designExportFailed: "导出失败,请重试。",
-    designFrameDeleteConfirm: "删掉这一帧?文件会被删掉。",
-    designFrameDeleteCancel: "取消",
-    designFrameRename: "重命名",
-    designToolSelect: "选择",
-    designToolHand: "拖手",
-    designToolNewFrame: "新建画面",
-    designToolNotes: "备注",
-    designToolDesignSystem: "设计体系",
-    designToolComingSoon: "待做",
-    designZoomIn: "放大",
-    designZoomOut: "缩小",
-    designZoomReset: "重置为 100%",
-    designZoomFit: "适配内容",
-    designArrangeLeft: "左对齐",
-    designArrangeCenterH: "水平居中",
-    designArrangeRight: "右对齐",
-    designArrangeTop: "顶对齐",
-    designArrangeMiddle: "垂直居中",
-    designArrangeBottom: "底对齐",
-    designDistributeH: "水平等距",
+    designStylePick: "选中",
+
+
+    designStyleCancel: "取消",
+
+
+    designStyleApplyNamed: "应用「{name}」",
+
+
+    designStyleConfirmTitle: "按「{name}」重设整份设计稿？",
+
+
+    designStyleConfirmBody: "现有 {count} 个画框将由 Wordless 按新体系全量重设，耗时较长。",
+
+
+    designStyleReskinMessage: "主题已换为「{name}」。请按新体系全量重设这份设计稿的全部 {count} 个画框：先读 {dir}/DESIGN.md（新规范）与 {dir}/theme.css（新令牌），只用它们定义的令牌，不要发明颜色或间距。“全量”指的是间距、层次、圆角、字号与字重都跟着新体系走，不是只换颜色。保留每一帧的内容、结构与 @frame 声明，不要改文案。一批改完之后用 design_inspect 与 design_screenshot 复核，最多三轮。",
+
+
+    designStyleDialogHint: "应用的是一套令牌与规范。已有画面不会自动变样——风格换了之后要由 agent 按新规范重设。",
+
+
+    designStyleApply: "应用",
+
+
+    designStyleClose: "关闭",
+
+
+    designStyleApplied: "已应用「{name}」。",
+
+
+    designStyleAppliedRestyle: "已应用「{name}」。已有 {count} 个画面需要 agent 按新规范重设。",
+
+
+    designStyleFailed: "应用风格失败。",
+    designStyleLaunchTitle: "从一套风格开始",
+    designStyleLaunchAny: "由 agent 自己定",
+    designStyleLaunchAnyHint: "不指定风格:让 agent 按你的需求自由发挥。",
+    designStyleLaunchPick: "选用",
+    designStyleLaunchNeedWorkspace: "先选一个工作区,资料才有地方落",
+    designStyleLaunchSelected: "这次按「{name}」来做。",
+    designStyleLaunchFailed: "这套风格的资料没能落进工作区,请重试。",
+
+    designToolTheme: "色彩系统",
+    designStyleDetailPalette: "色彩系统",
+    designStyleDetailSpec: "规范里的几节",
+    designStyleDetailHint: "选它就用这套令牌与规范开一份新设计。",
+    designStyleDetailUse: "使用",
+    designStyleDetailLoading: "正在取示例…",
+    designThemeTitle: "这份设计的色彩系统",
+    designThemeHint: "来自 theme.css;点一个色块把它交给对话",
+    designThemeToggle: "选中 {token},把它交给对话",
+    designThemeEmpty: "读不到 theme.css。这份设计可能还没应用风格,或者文件不在当前工作区里。",
+    // 风格目录的展示文案:名字 / 一句话 / 分类。分类与风格都是 key → 文案,
+    // 目录里那三份是兜底值(见 style-copy.ts)。
+    designStyleUseForNew: "用「{name}」新建设计",
+    designStyleCardAction: "{action}「{name}」",
+    designStyleNamePreciseDark: "深色精密",
+    designStyleNameCalmLight: "明亮克制",
+    designStyleNameEditorial: "编辑排版",
+    designStyleNamePlayful: "圆角活泼",
+    designStyleNameLinear: "Linear",
+    designStyleNameDoodlePop: "Doodle Pop",
+    designStyleNameStripe: "Stripe",
+    designStyleNameSpotify: "Spotify",
+    designStyleNameMeadowBuddies: "Meadow Buddies",
+    designStyleNameNotion: "Notion",
+    designStyleNameVercel: "Vercel",
+    designStyleNameHeadspace: "Headspace",
+    designStyleNameGithub: "GitHub",
+    designStyleNameGeometricBold: "Geometric Bold",
+    designStyleNameApple: "Apple",
+    designStyleNameDiscord: "Discord",
+    designStyleNameClaymorphism: "Claymorphism",
+    designStyleNameAnthropic: "Anthropic",
+    designStyleNameNetflix: "Netflix",
+    designStyleNameAirbnb: "Airbnb",
+    designStyleNameDuolingo: "Duolingo",
+    designStyleNameFigma: "Figma",
+    designStyleNameGlassmorphism: "Glassmorphism",
+    designStyleNameOpenai: "OpenAI",
+    designStyleNameSlack: "Slack",
+    designStyleNameCoinbase: "Coinbase",
+    designStyleNameShopify: "Shopify",
+    designStyleNameMedium: "Medium",
+    designStyleNameRetro95: "Retro 95",
+    designStyleTaglinePreciseDark: "密集、克制,颜色只用来表达状态",
+    designStyleTaglineCalmLight: "留白承担层级,几乎不需要边框",
+    designStyleTaglineEditorial: "长文优先:宽行距、细横线、近直角",
+    designStyleTaglinePlayful: "柔和圆角与暖色,布局比需要的更宽松",
+    designStyleTaglineLinear: "暗色高密度，工程师的冷静秩序",
+    designStyleTaglineDoodlePop: "柠黄撞黑，波点贴纸游戏感",
+    designStyleTaglineStripe: "蓝紫金融质感，云淡阴影考究",
+    designStyleTaglineSpotify: "近黑舞台，一抹电光绿",
+    designStyleTaglineMeadowBuddies: "鼠尾草绿与杏黄，森林伙伴陪你运动",
+    designStyleTaglineNotion: "暖灰纸面，文字即界面",
+    designStyleTaglineVercel: "黑白极简，瑞士式精确",
+    designStyleTaglineHeadspace: "日出暖橙，圆到底的松弛感",
+    designStyleTaglineGithub: "暗夜代码栖息地，绿色行动",
+    designStyleTaglineGeometricBold: "包豪斯色块，硬边框，零阴影",
+    designStyleTaglineApple: "留白与大字，高级感的呼吸",
+    designStyleTaglineDiscord: "深色俱乐部，蓝紫活力",
+    designStyleTaglineClaymorphism: "糖果马卡龙，超大圆角，捏得动的立体感",
+    designStyleTaglineAnthropic: "书页米色，衬线与陶土",
+    designStyleTaglineNetflix: "影院黑，一颗红色按钮",
+    designStyleTaglineAirbnb: "珊瑚色的温暖待客之道",
+    designStyleTaglineDuolingo: "鲜绿游戏感，按钮会下沉",
+    designStyleTaglineFigma: "工具白，蓝色选中紫色灵感",
+    designStyleTaglineGlassmorphism: "深夜场景之上，一层不着色的玻璃",
+    designStyleTaglineOpenai: "实验室白，青绿点睛",
+    designStyleTaglineSlack: "白底茄紫导航，糖果点缀",
+    designStyleTaglineCoinbase: "一蓝到底，数字优先",
+    designStyleTaglineShopify: "商家后台，商业绿行动色",
+    designStyleTaglineMedium: "杂志白，衬线正文黄高亮",
+    designStyleTaglineRetro95: "1995 桌面，斜面银灰零圆角",
+    designStyleCategoryProduct: "产品界面",
+    designStyleCategoryContent: "内容页面",
+    designStyleCategoryMarketing: "营销页面",
+    designStyleCategoryDev: "开发者工具",
+    designStyleCategoryFintech: "金融",
+    designStyleCategoryMedia: "媒体",
+    designStyleCategoryProductivity: "效率",
+    designStyleCategoryPlayful: "活泼",
+    designStyleCategoryConsumer: "消费产品",
+    designStyleCategoryAi: "AI",
+    designStyleCategoryCreative: "创意工具",
+    designStyleCategoryCommerce: "电商",
+    designStyleCategoryEditorial: "编辑排版",
+    designStyleCategoryRetro: "复古",
+    designStyleCategoryPremium: "高级质感",
+
+    designExportFrames: "导出渲染图(各帧一张图)",
+
+
+    designRefresh: "刷新画布",
+
+
+    designRefreshed: "已跟上磁盘上的最新内容。",
+
+
+    designAlreadyCurrent: "已经是最新的了。",
+
+
+    designExportAssets: "下载素材(图 + 规范与素材文件)",
+
+
+    designExportBusy: "导出中…",
+
+
+    designExportDone: "已导出 {count} 个文件到 {directory}",
+
+
+    designExportEmpty: "没有可导出的东西。",
+
+
+    designExportFailed: "导出失败,请重试。",
+
+
+    designFrameDeleteConfirm: "删掉这一帧?文件会被删掉。",
+
+
+    designFrameDeleteCancel: "取消",
+
+
+    designFrameRename: "重命名",
+
+
+    designToolSelect: "选择",
+
+
+    designToolHand: "拖手",
+
+
+    designToolNewFrame: "新建画面",
+
+
+    designToolNotes: "备注",
+
+
+    designToolDesignSystem: "设计体系",
+
+
+    designToolComingSoon: "待做",
+
+
+    designZoomIn: "放大",
+
+
+    designZoomOut: "缩小",
+
+
+    designZoomReset: "重置为 100%",
+
+
+    designZoomFit: "适配内容",
+
+
+    designArrangeLeft: "左对齐",
+
+
+    designArrangeCenterH: "水平居中",
+
+
+    designArrangeRight: "右对齐",
+
+
+    designArrangeTop: "顶对齐",
+
+
+    designArrangeMiddle: "垂直居中",
+
+
+    designArrangeBottom: "底对齐",
+
+
+    designDistributeH: "水平等距",
+
+
     designDistributeV: "垂直等距",
     entryUiDesign: "UI 设计",
+    modeEveryday: "日常工作",
+    modeCode: "写代码",
+    modeCreate: "创作",
     entryUiDesignDescription: "设计界面与产品体验。",
     entryImageGeneration: "图片生成",
     entryImageGenerationDescription: "生成视觉素材。",
@@ -2333,6 +2566,7 @@ export const messages = {
     continuePlanning: "Continue planning",
     refinePlan: "Refine plan",
     subagentRoles: "Subagent role models",
+    roleModelUnavailable: "unavailable",
     roleModel: "Role model",
     inheritsSessionModel: "Uses the current session model when unset",
     shortcuts: "Shortcuts",
@@ -2708,6 +2942,7 @@ export const messages = {
     designMineEmptyHelp: "Pick a style below and it will create the first screen in that style.",
     designStylesTitle: "Built-in styles",
     designStylesHelp: "Each style ships a set of colour tokens and a written spec for the agent. Pick one and it is applied from the first frame.",
+    designStylesCountAll: "{count} styles",
     designLibraryLoading: "Reading…",
     designNameTitle: "New design in {style}",
     designNameField: "Design name",
@@ -2715,6 +2950,46 @@ export const messages = {
     designNameCreate: "Create",
     designCreateFailed: "Could not create it. Try again.",
     designBuildFailed: "The design was created, but its styles did not compile. The canvas will look empty until that is fixed.",
+    mockupTitle: "Export a render",
+    mockupSubtitle: "Compose the selected frames into one image. These settings affect this image only, never the design.",
+    mockupClose: "Close",
+    mockupColorHex: "hex",
+    mockupRailTitle: "Frames",
+    mockupRailAddAll: "Add all",
+    mockupRailNoFrames: "This design has no frames yet.",
+    mockupRailAllAdded: "Every frame is in.",
+    mockupRailNoPreview: "No preview",
+    mockupSelectedRemove: "Remove from the render",
+    mockupOptionRadius: "Corner radius",
+    mockupOptionBorder: "Shell thickness",
+    mockupOptionBorderColor: "Shell colour",
+    mockupOptionBackground: "Background",
+    mockupOptionTransparent: "Transparent",
+    mockupOptionShadow: "Shadow",
+    mockupOptionBrand: "Wordless watermark",
+    mockupOptionScale: "Export scale",
+    mockupOptionPerPage: "Frames per page",
+    mockupOptionReset: "Reset",
+    mockupStatusCapturing: "Rendering…",
+    mockupStatusPages: "{count} page(s)",
+    mockupStatusFailed: "{count} frame(s) failed to render",
+    mockupFormatPng: "PNG",
+    mockupFormatLongImage: "Long image",
+    mockupFormatPdf: "PDF",
+    mockupCopy: "Copy",
+    mockupCopyRunning: "Copying…",
+    mockupCopyDone: "Copied to the clipboard.",
+    mockupCopyFailed: "Could not copy.",
+    mockupSave: "Save",
+    mockupSaveRunning: "Saving…",
+    mockupSaveDone: "Saved to {path}",
+    mockupSaveFailed: "Could not save.",
+    mockupEmptyTitle: "No frames in the render yet",
+    mockupEmptyDesc: "Pick frames on the left; they line up in the order you add them.",
+    mockupShotRetry: "Retry",
+    mockupViewActual: "Actual size",
+    mockupViewZoomIn: "Zoom in",
+    mockupViewZoomOut: "Zoom out",
     designPanelTitle: "Design canvas",
     designGenerating: "Generating the design…",
     designUntitled: "Untitled design",
@@ -2731,56 +3006,247 @@ export const messages = {
     designFrameEnterHint: "Double-click to enter at 100%",
     designFrameMetaFailed: "Could not change this frame: its file may be gone, or it has no @frame declaration.",
     designFrameRenameHint: "Double-click the title to rename",
-    designFrameTooSmall: "The frame does not fit — go fullscreen to interact",
-    designFrameUntitled: "Untitled screen",
-    designFrameCreateFailed: "Could not add a frame.",
-    designFrameDeleteFailed: "Could not delete the frame.",
-    designFrameDelete: "Delete frame",
-    designFrameAskAgent: "Ask the agent to change this frame",
+    designFrameTooSmall: "The frame does not fit — go fullscreen to interact",
+
+
+    designFrameUntitled: "Untitled screen",
+
+
+    designFrameCreateFailed: "Could not add a frame.",
+
+
+    designFrameDeleteFailed: "Could not delete the frame.",
+
+
+    designFrameDelete: "Delete frame",
+
+
+    designFrameAskAgent: "Ask the agent to change this frame",
+
+
     designStyleDialogTitle: "Design system",
-    designStylePick: "Pick",
-    designStyleCancel: "Cancel",
-    designStyleApplyNamed: "Apply {name}",
-    designStyleConfirmTitle: "Rework the whole design against {name}?",
-    designStyleConfirmBody: "All {count} frames will be reworked by Wordless against the new system. This takes a while.",
-    designStyleReskinMessage: "The theme is now {name}. Rework every one of the {count} frames in this design against the new system: read {dir}/DESIGN.md (the new spec) and {dir}/theme.css (the new tokens) first, and use only the tokens they define — do not invent colours or spacing. “Rework” means spacing, hierarchy, radii, type size and weight all follow the new system, not just a colour swap. Keep each frame’s content, structure and @frame declaration; do not rewrite the copy. Once a batch is done, check it with design_inspect and design_screenshot, for at most three cycles.",
-    designStyleDialogHint: "Applying a style swaps its tokens and spec. Existing frames do not change by themselves — they have to be reworked by the agent against the new spec.",
-    designStyleApply: "Apply",
-    designStyleClose: "Close",
-    designStyleApplied: "Applied {name}.",
-    designStyleAppliedRestyle: "Applied {name}. {count} frame(s) now need the agent to rework them against the new spec.",
-    designStyleFailed: "Could not apply the style.",
-    designExportFrames: "Export renders (one image per frame)",
-    designRefresh: "Refresh the canvas",
-    designRefreshed: "Brought up to date with what is on disk.",
-    designAlreadyCurrent: "Already up to date.",
-    designExportAssets: "Download materials (images + spec and asset files)",
-    designExportBusy: "Exporting…",
-    designExportDone: "Exported {count} file(s) to {directory}",
-    designExportEmpty: "There is nothing to export.",
-    designExportFailed: "Export failed. Try again.",
-    designFrameDeleteConfirm: "Delete this frame? Its file is removed.",
-    designFrameDeleteCancel: "Cancel",
-    designFrameRename: "Rename",
-    designToolSelect: "Select",
-    designToolHand: "Hand",
-    designToolNewFrame: "New frame",
-    designToolNotes: "Notes",
-    designToolDesignSystem: "Design system",
-    designToolComingSoon: "not built yet",
-    designZoomIn: "Zoom in",
-    designZoomOut: "Zoom out",
-    designZoomReset: "Reset to 100%",
-    designZoomFit: "Fit content",
-    designArrangeLeft: "Align left",
-    designArrangeCenterH: "Align horizontal centres",
-    designArrangeRight: "Align right",
-    designArrangeTop: "Align top",
-    designArrangeMiddle: "Align vertical centres",
-    designArrangeBottom: "Align bottom",
-    designDistributeH: "Distribute horizontally",
+    designStylePick: "Pick",
+
+
+    designStyleCancel: "Cancel",
+
+
+    designStyleApplyNamed: "Apply {name}",
+
+
+    designStyleConfirmTitle: "Rework the whole design against {name}?",
+
+
+    designStyleConfirmBody: "All {count} frames will be reworked by Wordless against the new system. This takes a while.",
+
+
+    designStyleReskinMessage: "The theme is now {name}. Rework every one of the {count} frames in this design against the new system: read {dir}/DESIGN.md (the new spec) and {dir}/theme.css (the new tokens) first, and use only the tokens they define — do not invent colours or spacing. “Rework” means spacing, hierarchy, radii, type size and weight all follow the new system, not just a colour swap. Keep each frame’s content, structure and @frame declaration; do not rewrite the copy. Once a batch is done, check it with design_inspect and design_screenshot, for at most three cycles.",
+
+
+    designStyleDialogHint: "Applying a style swaps its tokens and spec. Existing frames do not change by themselves — they have to be reworked by the agent against the new spec.",
+
+
+    designStyleApply: "Apply",
+
+
+    designStyleClose: "Close",
+
+
+    designStyleApplied: "Applied {name}.",
+
+
+    designStyleAppliedRestyle: "Applied {name}. {count} frame(s) now need the agent to rework them against the new spec.",
+
+
+    designStyleFailed: "Could not apply the style.",
+    designStyleLaunchTitle: "Start from a style",
+    designStyleLaunchAny: "Let the agent decide",
+    designStyleLaunchAnyHint: "No style picked — the agent follows your brief on its own.",
+    designStyleLaunchPick: "Use",
+    designStyleLaunchNeedWorkspace: "Pick a workspace first — the style files need somewhere to land",
+    designStyleLaunchSelected: "Starting in the {name} style.",
+    designStyleLaunchFailed: "The style files could not be written to the workspace. Please try again.",
+
+    designToolTheme: "Colour system",
+    designStyleDetailPalette: "Colour system",
+    designStyleDetailSpec: "In the written spec",
+    designStyleDetailHint: "Picking it starts a new design on these tokens and this spec.",
+    designStyleDetailUse: "Use",
+    designStyleDetailLoading: "Loading the example…",
+    designThemeTitle: "This design’s colour system",
+    designThemeHint: "from theme.css — click a swatch to hand it to the chat",
+    designThemeToggle: "Pick {token} and hand it to the chat",
+    designThemeEmpty: "theme.css could not be read. This design may not have a style applied yet, or the file is outside the current workspace.",
+    // Display copy for the style catalog: name / tagline / category. The keys come
+    // from the catalog; the values there are only fallbacks (see style-copy.ts).
+    designStyleUseForNew: "Start a new design with {name}",
+    designStyleCardAction: "{action} {name}",
+    designStyleNamePreciseDark: "Precise Dark",
+    designStyleNameCalmLight: "Calm Light",
+    designStyleNameEditorial: "Editorial",
+    designStyleNamePlayful: "Playful",
+    designStyleNameLinear: "Linear",
+    designStyleNameDoodlePop: "Doodle Pop",
+    designStyleNameStripe: "Stripe",
+    designStyleNameSpotify: "Spotify",
+    designStyleNameMeadowBuddies: "Meadow Buddies",
+    designStyleNameNotion: "Notion",
+    designStyleNameVercel: "Vercel",
+    designStyleNameHeadspace: "Headspace",
+    designStyleNameGithub: "GitHub",
+    designStyleNameGeometricBold: "Geometric Bold",
+    designStyleNameApple: "Apple",
+    designStyleNameDiscord: "Discord",
+    designStyleNameClaymorphism: "Claymorphism",
+    designStyleNameAnthropic: "Anthropic",
+    designStyleNameNetflix: "Netflix",
+    designStyleNameAirbnb: "Airbnb",
+    designStyleNameDuolingo: "Duolingo",
+    designStyleNameFigma: "Figma",
+    designStyleNameGlassmorphism: "Glassmorphism",
+    designStyleNameOpenai: "OpenAI",
+    designStyleNameSlack: "Slack",
+    designStyleNameCoinbase: "Coinbase",
+    designStyleNameShopify: "Shopify",
+    designStyleNameMedium: "Medium",
+    designStyleNameRetro95: "Retro 95",
+    designStyleTaglinePreciseDark: "Dense and restrained; colour only signals state",
+    designStyleTaglineCalmLight: "Whitespace carries the hierarchy; borders rarely earn their keep",
+    designStyleTaglineEditorial: "Long-form first: wide leading, hairline rules, near-square corners",
+    designStyleTaglinePlayful: "Soft radii and warm colour, with more air than strictly needed",
+    designStyleTaglineLinear: "Dark, dense, engineered calm",
+    designStyleTaglineDoodlePop: "Lime × black polka-dot sticker pop",
+    designStyleTaglineStripe: "Blurple fintech polish, refined shadows",
+    designStyleTaglineSpotify: "Near-black stage, one electric green",
+    designStyleTaglineMeadowBuddies: "Little steps, woodland friends",
+    designStyleTaglineNotion: "Warm-gray paper, text is the UI",
+    designStyleTaglineVercel: "Black-on-white Swiss precision",
+    designStyleTaglineHeadspace: "Sunrise warmth, rounded everything",
+    designStyleTaglineGithub: "Dimmed code habitat, green actions",
+    designStyleTaglineGeometricBold: "Bauhaus blocks, hard edges, no shadows",
+    designStyleTaglineApple: "Big type, big air, premium calm",
+    designStyleTaglineDiscord: "Cozy dark clubhouse, blurple energy",
+    designStyleTaglineClaymorphism: "Candy pastels, fat corners, squishy 3D depth",
+    designStyleTaglineAnthropic: "Book-cloth cream, serif and clay",
+    designStyleTaglineNetflix: "Cinematic black, one red button",
+    designStyleTaglineAirbnb: "Coral-warm hospitality",
+    designStyleTaglineDuolingo: "Vivid green, buttons that press down",
+    designStyleTaglineFigma: "Tool white, blue select, purple spark",
+    designStyleTaglineGlassmorphism: "Colourless glass over a deep night scene",
+    designStyleTaglineOpenai: "Lab white with a teal signal",
+    designStyleTaglineSlack: "White + aubergine rail, candy accents",
+    designStyleTaglineCoinbase: "One decisive blue, numbers first",
+    designStyleTaglineShopify: "Merchant back office, commerce green",
+    designStyleTaglineMedium: "Magazine white, serif prose",
+    designStyleTaglineRetro95: "1995 desktop, beveled silver, zero radius",
+    designStyleCategoryProduct: "Product",
+    designStyleCategoryContent: "Content",
+    designStyleCategoryMarketing: "Marketing",
+    designStyleCategoryDev: "Dev tools",
+    designStyleCategoryFintech: "Fintech",
+    designStyleCategoryMedia: "Media",
+    designStyleCategoryProductivity: "Productivity",
+    designStyleCategoryPlayful: "Playful",
+    designStyleCategoryConsumer: "Consumer",
+    designStyleCategoryAi: "AI",
+    designStyleCategoryCreative: "Creative",
+    designStyleCategoryCommerce: "Commerce",
+    designStyleCategoryEditorial: "Editorial",
+    designStyleCategoryRetro: "Retro",
+    designStyleCategoryPremium: "Premium",
+
+    designExportFrames: "Export renders (one image per frame)",
+
+
+    designRefresh: "Refresh the canvas",
+
+
+    designRefreshed: "Brought up to date with what is on disk.",
+
+
+    designAlreadyCurrent: "Already up to date.",
+
+
+    designExportAssets: "Download materials (images + spec and asset files)",
+
+
+    designExportBusy: "Exporting…",
+
+
+    designExportDone: "Exported {count} file(s) to {directory}",
+
+
+    designExportEmpty: "There is nothing to export.",
+
+
+    designExportFailed: "Export failed. Try again.",
+
+
+    designFrameDeleteConfirm: "Delete this frame? Its file is removed.",
+
+
+    designFrameDeleteCancel: "Cancel",
+
+
+    designFrameRename: "Rename",
+
+
+    designToolSelect: "Select",
+
+
+    designToolHand: "Hand",
+
+
+    designToolNewFrame: "New frame",
+
+
+    designToolNotes: "Notes",
+
+
+    designToolDesignSystem: "Design system",
+
+
+    designToolComingSoon: "not built yet",
+
+
+    designZoomIn: "Zoom in",
+
+
+    designZoomOut: "Zoom out",
+
+
+    designZoomReset: "Reset to 100%",
+
+
+    designZoomFit: "Fit content",
+
+
+    designArrangeLeft: "Align left",
+
+
+    designArrangeCenterH: "Align horizontal centres",
+
+
+    designArrangeRight: "Align right",
+
+
+    designArrangeTop: "Align top",
+
+
+    designArrangeMiddle: "Align vertical centres",
+
+
+    designArrangeBottom: "Align bottom",
+
+
+    designDistributeH: "Distribute horizontally",
+
+
     designDistributeV: "Distribute vertically",
     entryUiDesign: "UI design",
+    modeEveryday: "Everyday work",
+    modeCode: "Code",
+    modeCreate: "Create",
     entryUiDesignDescription: "Design interfaces and product experiences.",
     entryImageGeneration: "Image generation",
     entryImageGenerationDescription: "Generate visual assets.",

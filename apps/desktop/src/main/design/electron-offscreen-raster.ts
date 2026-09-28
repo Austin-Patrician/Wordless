@@ -1,5 +1,5 @@
-import { BrowserWindow, type NativeImage } from "electron";
-import { encodeRasterImage } from "./raster-port.ts";
+import { BrowserWindow } from "electron";
+import { imagePixelSize, rasterCaptureParams } from "./raster-port.ts";
 import type {
   OffscreenEvaluatePort,
   OffscreenEvaluateRequest,
@@ -10,29 +10,32 @@ import type {
 } from "./raster-port.ts";
 
 /**
- * 用 Electron 内置离屏渲染光栅化设计帧。
+ * 光栅化设计帧:一个离屏窗口装一帧,截一张图。
  *
- * 这是 P3 相对参考实现最大的性能杠杆:参考实现要宿主提供一个离屏截图服务,而 Electron
- * 自带 —— `webPreferences.offscreen` + `paint` 事件直接给出 `NativeImage`。
+ * 窗口仍然用 `webPreferences.offscreen`(不占屏幕、不抢焦点),但**取图不再走 `paint`
+ * 事件** —— 那条路的位图被钉在 1 倍,而且实测过 `stopPainting()` 会让下一次复用的截图变成
+ * 一张**空位图**(见 `release()`)。现在走 CDP 的 `Page.captureScreenshot`:倍率确定、
+ * 编码格式可选(PNG 给导出、JPEG 给画布),也不再需要出帧/停帧那套状态机。
  *
- * 三个关键性质(官方文档):
+ * ## 设备像素比:走 CDP 的 `clip.scale`
  *
- * 1. **事件驱动,不是轮询** —— "when there is nothing happening on a webpage, no frames
- *    are generated"。空闲帧零成本。
- * 2. **只传脏矩形** —— 增量更新。
- * 3. `useSharedTexture` 可走 GPU 共享纹理,但**需要原生模块**,所以这里走默认的 CPU
- *    共享位图。GPU 路径留作后续开关,不在这一阶段承诺。
+ * 这里曾经写着"按 1 倍光栅,因为离屏渲染没有 per-window 设备像素比"。实测下来那不是
+ * "做不到",而是**一开始就选错了取图方式**:
  *
- * ## 设备像素比:当前按 1 倍光栅
+ * | 取图方式 | 390×844 的页面得到 | 能否指定倍率 |
+ * |---|---|---|
+ * | 离屏 `paint` 位图 | 390×844 | ❌ 与 DPR 无关,永远 1 倍 |
+ * | `webContents.capturePage()` | 780×1688 | ❌ 跟着**显示器**走(Retina 就是 2 倍) |
+ * | **CDP `Page.captureScreenshot` + `clip.scale`** | 1→390×844 · 2→780×1688 · 3→1170×2532 | ✅ **确定性** |
  *
- * `RasterRequest.pixelRatio` 会被接收但不生效。原因是 Electron 的离屏渲染**没有直接的
- * per-window 设备像素比**:`webContents.setZoomFactor` 会**重排布局**,而设计稿在固定
- * 声明尺寸下不能重排(390 宽的帧被当成 780 宽渲染,版面就错了)。
+ * `clip.scale` 的字节数随像素数增长(6KB→15KB→28KB)= **真的重新光栅,不是放大**。
+ * `Emulation.setDeviceMetricsOverride` 也不改布局(`innerWidth` 始终 390),但导出用不着它 ——
+ * `clip.scale` 更直接。
  *
- * 正确的路径是 CDP 的 `Emulation.setDeviceMetricsOverride({ deviceScaleFactor })`,它只改
- * 设备度量、不改布局。我没有在不运行 Electron 的情况下验证过它,所以**没有把它写进来** ——
- * 写一个未经验证的路径比暂时按 1 倍更糟。表现是 Retina 上 100% 缩放时位图略软;
- * 帧在画布上被放大时更明显。
+ * **窗口尺寸仍然是帧的声明尺寸,不乘倍率。** 倍数只能来自 `clip.scale`:改窗口尺寸会让页面
+ * 按新视口**重排**,导出的图比页面大一圈、周边留白(`handlers.ts` 里踩过)。
+ *
+ * 于是 `RasterRequest.pixelRatio`(画布的缩放档位)真的生效了:2 倍档位贴的就是 2 倍图。
  *
  * ## 复用
  *
@@ -41,8 +44,8 @@ import type {
  * 并发数决定。
  */
 
-/** JPEG 质量。UI 截图里有大片纯色与文字,质量低了文字边缘会糊。 */
-const JPEG_QUALITY = 90;
+/** CDP 协议版本。与 `browser-cdp.ts` 用同一版。 */
+const CDP_PROTOCOL_VERSION = "1.3";
 
 /** 加载完成之后再多等一会儿,让字体、图片、布局落定。 */
 const SETTLE_MS = 60;
@@ -78,18 +81,16 @@ export class ElectronOffscreenRaster implements RasterPort, OffscreenEvaluatePor
     signal.addEventListener("abort", onAbort, { once: true });
 
     try {
-      const image = await this.loadAndPaint(window, request, signal);
-      if (image === null) return { ok: false, key: request.key, code: "load-failed" };
-      const bytes = encodeRasterImage(image, request.format, JPEG_QUALITY);
-      if (bytes.byteLength === 0) return { ok: false, key: request.key, code: "capture-failed" };
-      const size = image.getSize();
-      return {
-        ok: true,
-        key: request.key,
-        bytes: Uint8Array.from(bytes) as Uint8Array<ArrayBuffer>,
-        width: size.width,
-        height: size.height,
-      };
+      if (!(await this.loadFrame(window, request, signal))) {
+        return { ok: false, key: request.key, code: "load-failed" };
+      }
+      const bytes = await this.captureScreenshot(window, request, signal);
+      if (bytes === null) return { ok: false, key: request.key, code: "capture-failed" };
+      // 尺寸**读回来**,不靠 width × scale 算:算出来的值一旦与编码器差一个像素,
+      // 画布上就会半像素错位(位图被贴进一个尺寸不符的槽)。
+      const size = imagePixelSize(bytes);
+      if (size === null) return { ok: false, key: request.key, code: "capture-failed" };
+      return { ok: true, key: request.key, bytes, width: size.width, height: size.height };
     } finally {
       signal.removeEventListener("abort", onAbort);
       if (!handedBack) {
@@ -191,26 +192,58 @@ export class ElectronOffscreenRaster implements RasterPort, OffscreenEvaluatePor
     return window;
   }
 
-  private async loadAndPaint(
-    window: BrowserWindow,
-    request: RasterRequest,
-    signal: AbortSignal,
-  ): Promise<NativeImage | null> {
+  /** 把页面装进这个窗口,并等它排完版。 */
+  private async loadFrame(window: BrowserWindow, request: RasterRequest, signal: AbortSignal): Promise<boolean> {
     const contents = window.webContents;
-    if (contents.isDestroyed()) return null;
+    if (contents.isDestroyed()) return false;
 
+    // **窗口尺寸就是帧的声明尺寸,不乘倍率。** 倍率走 CDP 的 `clip.scale`;改窗口尺寸会让
+    // 页面按新视口重排,导出的图比页面大一圈(见类文档)。
     window.setContentSize(Math.round(request.width), Math.round(request.height));
 
     const loaded = waitForLoad(contents);
     await contents.loadURL(request.url).catch(() => undefined);
     const loadedOk = await loaded;
-    if (!loadedOk || signal.aborted) return null;
+    if (!loadedOk || signal.aborted) return false;
 
-    // 加载完成不等于画完:字体、图片、布局还要落定。等一小会儿再取下一帧。
+    // 加载完成不等于画完:字体、图片、布局还要落定。CDP 的截图取的是"当前帧"。
     await delay(SETTLE_MS);
-    if (signal.aborted) return null;
+    return !signal.aborted;
+  }
 
-    return await waitForPaint(contents, signal);
+  /**
+   * 取一帧,按 `pixelRatio` 出图。
+   *
+   * 失败一律返回 null(由调用方归成 `capture-failed`),而不是抛:一次截图的失败不该让
+   * 池里的那一批整体炸掉。
+   */
+  private async captureScreenshot(
+    window: BrowserWindow,
+    request: RasterRequest,
+    signal: AbortSignal,
+  ): Promise<Uint8Array<ArrayBuffer> | null> {
+    const inspector = window.webContents.debugger;
+    try {
+      if (!inspector.isAttached()) inspector.attach(CDP_PROTOCOL_VERSION);
+    } catch {
+      // 有别的调试器挂着(理论上不该发生 —— 这些窗口是我们自己的)。照实失败。
+      return null;
+    }
+
+    const params = rasterCaptureParams(request);
+    try {
+      const result = (await inspector.sendCommand("Page.captureScreenshot", {
+        format: params.format,
+        ...(params.quality === undefined ? {} : { quality: params.quality }),
+        clip: params.clip,
+        // 只要视口那一块:设计帧本来就是一个固定尺寸的画板。
+        captureBeyondViewport: false,
+      })) as { data: string };
+      if (signal.aborted) return null;
+      return new Uint8Array(Buffer.from(result.data, "base64")) as Uint8Array<ArrayBuffer>;
+    } catch {
+      return null;
+    }
   }
 
   private release(window: BrowserWindow): void {
@@ -220,25 +253,13 @@ export class ElectronOffscreenRaster implements RasterPort, OffscreenEvaluatePor
     }
 
     /**
-     * **这里刻意不调 `stopPainting()`。**
+    /**
+     * 归还就是放回空闲列表 —— **不做任何"暂停"动作**。
      *
-     * 原来的理由是"页面若有动画,继续画下去只是白白占 CPU"。但代价是致命的:
-     * `stopPainting()` 会让**下一次**复用该窗口的截图画出一张**空位图**,而空位图在
-     * 调用方那里只能表示成 `capture-failed` —— 而 `release()` 每次都会停,于是**每一次**
-     * 复用窗口的截图都失败。
-     *
-     * 实测(同一窗口、同一页面、每次重新 load 之后取一帧):
-     *
-     * ```
-     * ① 首次              jpegBytes=3610
-     * ② 再取(未停)        jpegBytes=3610
-     * ③ stopPainting 后复用 jpegBytes=0     ← 空图
-     * ④ 再复用            jpegBytes=3610
-     * ```
-     *
-     * 设计帧是静态文档,离屏渲染又是事件驱动的("nothing happening → no frames"),所以那点
-     * CPU 节省本来就是理论上的;而一张空图换来的是画布整片占位卡、agent 拿不到像素、
-     * 转而反复跑布局探针。**宁可多出几帧,也不要一张空图。**
+     * 这里曾经调 `stopPainting()`(理由是"页面有动画的话白占 CPU"),而它会让**下一次**
+     * 复用该窗口的截图变成一张**空位图**:实测 ① 3610 → ② 3610 → ③ 停过之后 **0** → ④ 3610。
+     * 因为 `release()` 每次都会停,于是**每一次**复用窗口的截图都失败 —— 画布整片占位卡、
+     * agent 拿不到像素。取图改走 CDP 之后,出帧/停帧这套状态机整个不需要了。
      *
      * 窗口在 `dispose()` 与 `destroyWindow()` 里照常销毁 —— 该省的地方省在那里。
      */
@@ -248,10 +269,11 @@ export class ElectronOffscreenRaster implements RasterPort, OffscreenEvaluatePor
   private destroyWindow(window: BrowserWindow): void {
     this.live = Math.max(0, this.live - 1);
     if (window.isDestroyed()) return;
+    // 调试器随窗口一起消失;显式解开是为了在销毁前就把通道放掉。
     try {
-      window.webContents.stopPainting();
+      if (window.webContents.debugger.isAttached()) window.webContents.debugger.detach();
     } catch {
-      // 已经停了就算了。
+      // 窗口已经开始销毁了,那就算了。
     }
     window.destroy();
   }
@@ -268,47 +290,6 @@ function waitForLoad(contents: Electron.WebContents): Promise<boolean> {
     const onFail = () => done(false);
     contents.once("did-finish-load", onFinish);
     contents.once("did-fail-load", onFail);
-  });
-}
-
-/**
- * 等下一帧**有效**的位图。
- *
- * 必须在加载完成**之后**挂监听:离屏视图在导航开始时就会出一帧(白底),那是空页面,
- * 拿它当结果会得到一张白图。
- *
- * **空位图不算一帧。** `paint` 事件把位图交给我们就叫"到达",但"到达"不等于"有效" ——
- * 空图会让调用方把它记成一次失败(`toJPEG` 返回 0 字节 → `capture-failed`),或者更糟,
- * 被当成一张真图贴到画布上。所以这里跳过空图继续等,由调用方的超时来兜底。
- */
-function waitForPaint(contents: Electron.WebContents, signal: AbortSignal): Promise<NativeImage | null> {
-  return new Promise<NativeImage | null>((resolve) => {
-    let settled = false;
-    const finish = (value: NativeImage | null) => {
-      if (settled) return;
-      settled = true;
-      contents.off("paint", onPaint);
-      contents.off("destroyed", onDestroyed);
-      signal.removeEventListener("abort", onAbort);
-      resolve(value);
-    };
-    const onPaint = (_event: unknown, _dirty: unknown, image: NativeImage) => {
-      if (image.isEmpty()) return; // 空图:继续等下一帧。
-      finish(image);
-    };
-    const onDestroyed = () => finish(null);
-    const onAbort = () => finish(null);
-
-    contents.on("paint", onPaint);
-    contents.once("destroyed", onDestroyed);
-    signal.addEventListener("abort", onAbort, { once: true });
-    // 让已经暂停出帧的视图重新开始,否则这一帧永远不来。
-    try {
-      contents.startPainting();
-      contents.invalidate();
-    } catch {
-      finish(null);
-    }
   });
 }
 

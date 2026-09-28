@@ -1,5 +1,9 @@
-import { memo, useMemo } from "react";
+import { memo, useEffect, useMemo, useRef, useState } from "react";
 import type { DesignStyleSummaryDto } from "@wordless/protocol";
+import type { DesktopBridge } from "../../../bridge/desktop-bridge";
+import { usePreferences } from "../../shared/preferences";
+import { designStyleActionLabel, designStyleCopy } from "./style-copy.ts";
+import { StyleDemo, useDesignStyleDetail } from "./StyleDemo.tsx";
 import { parseThemeTokens, resolveTokens, withAlpha } from "./style-tokens.ts";
 
 /**
@@ -9,10 +13,13 @@ import { parseThemeTokens, resolveTokens, withAlpha } from "./style-tokens.ts";
  * 列表行。所有颜色与圆角都取自它的 `theme.css`(单一真源),Tailwind 只负责布局,动态值
  * 走 inline style(运行期拼出来的类名 Tailwind 扫不到)。
  *
- * 为什么不用真实渲染的 demo:一份 demo 是一个 iframe 加一份完整文档,一屏几十张连排光解析
- * 就能把滚动拖住。参考实现的做法是"静态只铺色板,悬停到哪张才换真 demo"—— 这里先只做前半
- * 步,色板已经足以让人分辨"哪套更圆、更亮、更密",而**分辨率这件事本来就不该靠一屏缩略图
- * 来决定**。
+ * 卡上是**真示例页**:缩略图只是它到货之前的占位。
+ *
+ * 缩略图是"**同一张**界面换令牌",差异全部来自风格本身 —— 它能分辨"哪套更圆、更亮、更密",却
+ * 回答不了这套到底长什么样,而后者才是用户选不选得出来的依据。所以这一轮把示例页放了上来。
+ *
+ * 代价由窗口化兜住:整面墙只有**可见的那几张**真的挂了 iframe,而不是 29 张(参考实现不窗口化,
+ * 所以它只能"悬停到哪张才换那一张")。
  *
  * `memo` 是使用前提:这是几十个带 inline style 的节点,挂在画廊墙上,外层任何一次状态变化
  * (悬停哪张、尺寸变化)都会把它们全部重建。props 只有稳定引用的 `style` 与常量 `className`,
@@ -27,21 +34,52 @@ export type DesignStyleCardData = DesignStyleSummaryDto;
 
 export const DesignStyleCard = memo(function DesignStyleCard({
   actionLabel,
+  bridge,
   style,
   picked,
   onPick,
 }: {
   /** 动作名。画廊是"用这套新建设计",设计体系对话框是"应用这套" —— 同一张卡片,两种意图。 */
   actionLabel?: string;
+  /** 取示例页用。不给就只画缩略图(测试与不关心预览的地方不必提供)。 */
+  bridge?: DesktopBridge;
   style: DesignStyleCardData;
   picked: boolean;
   onPick: (style: DesignStyleCardData) => void;
 }) {
   const tokens = useMemo(() => resolveTokens(parseThemeTokens(style.themeCss)), [style.themeCss]);
+  const { t } = usePreferences();
+  // 名字/一句话/分类在 DTO 里是兜底值与 key,给人看的那份按当前语言从 i18n 取。
+  const copy = designStyleCopy(style, t);
+  /*
+    一挂上来就取示例,不等悬停:"哪套更圆、更亮、更密"缩略图能答,"这套长什么样"只有示例能答,
+    要用户在二十几张卡之间挨个悬停一遍才算看过,等于没给。
+
+    但**进视口才取**:墙是窗口化的所以无所谓,而横向胶片里 29 张卡是同时挂着的 —— 一次取 29 份
+    示例(每份 20–30KB)纯属浪费,而且会同时建起 29 个文档。
+  */
+  const cardRef = useRef<HTMLButtonElement | null>(null);
+  const [inView, setInView] = useState(false);
+  useEffect(() => {
+    const node = cardRef.current;
+    if (node === null || inView) return;
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((entry) => entry.isIntersecting)) setInView(true);
+      },
+      { rootMargin: "200px" },
+    );
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, [inView]);
+
+  const { detail } = useDesignStyleDetail(bridge, style.id, inView && style.hasDemo);
+  const demoHtml = detail?.demoHtml ?? null;
 
   return (
     <button
-      aria-label={actionLabel === undefined ? `用「${style.name}」新建设计` : `${actionLabel}「${style.name}」`}
+      aria-label={designStyleActionLabel(copy, actionLabel, t)}
+      ref={cardRef}
       aria-pressed={picked}
       className={`flex aspect-[4/3] w-full flex-col gap-2 overflow-hidden rounded-xl border p-2.5 text-left outline-none transition-colors ${
         picked
@@ -49,10 +87,10 @@ export const DesignStyleCard = memo(function DesignStyleCard({
           : "border-[#e2e4e6] bg-white hover:border-[#c9ccc8] dark:border-[#3b3e41] dark:bg-[#202225] dark:hover:border-[#4a4e52]"
       }`}
       onClick={() => onPick(style)}
-      title={style.tagline}
+      title={copy.tagline}
       type="button"
     >
-      <Miniature tokens={tokens} />
+      {demoHtml === null ? <Miniature tokens={tokens} /> : <StyleDemo className="min-h-0 flex-1 rounded-md" html={demoHtml} />}
       <div className="flex min-w-0 items-center gap-1.5 px-0.5">
         <span
           aria-hidden="true"
@@ -61,15 +99,15 @@ export const DesignStyleCard = memo(function DesignStyleCard({
           }`}
         />
         <span className="min-w-0 truncate text-[12px] font-semibold text-[#3e3e39] dark:text-foreground">
-          {style.name}
+          {copy.name}
         </span>
         <span className="flex-1" />
         <span className="shrink-0 rounded-full bg-[#f2f3f2] px-1.5 py-px text-[10px] text-[#6b7075] dark:bg-[#292b2e] dark:text-[#a5abb0]">
-          {style.category}
+          {copy.category}
         </span>
       </div>
       <div className="min-w-0 truncate px-0.5 text-[11px] leading-tight text-[#8a8f94] dark:text-[#9fa5ab]">
-        {style.tagline}
+        {copy.tagline}
       </div>
     </button>
   );
@@ -78,10 +116,11 @@ export const DesignStyleCard = memo(function DesignStyleCard({
 type Tokens = ReturnType<typeof resolveTokens>;
 
 /**
- * 缩略图:一张通用产品界面。
+ * 缩略图:一张通用产品界面,**示例页到货之前的占位**。
  *
- * 画的是**同一张**界面,只是换令牌 —— 于是差异全部来自风格本身,而不是来自我给它配了不同的
- * 内容。这也是为什么它叫"缩略图"而不是"示例页"。
+ * 画的是**同一张**界面,只是换令牌 —— 所以它能分辨"哪套更圆、更亮、更密",却回答不了"这套长
+ * 什么样"(那是 `demoHtml` 的活)。留着它是因为取示例要一次 IPC:到货之前那块位置得有东西,
+ * 而"先闪一张再换一张"比一直显示它更糟。没有示例的风格也靠它撑住(夹具与未来可能的缺例条目)。
  */
 const Miniature = memo(function Miniature({ tokens }: { tokens: Tokens }) {
   const { radius } = tokens;

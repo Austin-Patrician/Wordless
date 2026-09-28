@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  composerPartsHaveContent,
   composerTaskPromptParts,
   countSkillTokenOccurrences,
   filterComposerInsertableTasks,
@@ -33,6 +34,21 @@ test("preserves duplicate skill references while joining adjacent text segments"
     { type: "skill-reference", skillId: "skill-a", name: "A", source: "wordless" },
     { type: "text", text: " finish" },
   ]);
+});
+
+test("只挂了一个附件也算「有内容」—— 占位符必须让开", () => {
+  /*
+    这里曾经是"数几个手写的字段"(text / skillIds / workspaceReferenceCount),于是新加一种引用
+    类型就漏一次 —— 症状是占位符不消失,和 chip 叠在一起。按 part 判断之后,任何不是空文本的
+    part 都算内容。
+  */
+  assert.equal(composerPartsHaveContent([{ type: "theme-token-reference", path: "a.wdesign/theme.css", name: "--color-primary", value: "#4f46e5" }]), true);
+  assert.equal(composerPartsHaveContent([{ type: "workspace-reference", path: "a.wdesign/frames/i.html", name: "Index", kind: "file" }]), true);
+  assert.equal(composerPartsHaveContent([{ type: "skill-reference", skillId: "s1", name: "Skill", source: "built-in" }]), true);
+  // 纯空白不算写过东西;真的空了才是空。
+  assert.equal(composerPartsHaveContent([{ type: "text", text: "   " }]), false);
+  assert.equal(composerPartsHaveContent([]), false);
+  assert.equal(composerPartsHaveContent([{ type: "text", text: "hi" }]), true);
 });
 
 test("keeps workspace references as structured parts between text", () => {

@@ -85,6 +85,10 @@ export default defineConfig({
       "test/design-canvas.browser.test.tsx",
       "test/design-workspace.browser.test.tsx",
       "test/design-layout-probe.browser.test.tsx",
+      "test/mockup-render.browser.test.tsx",
+      "test/mockup-dialog.browser.test.tsx",
+      "test/design-library.browser.test.tsx",
+      "test/composer-attachments.browser.test.tsx",
     ],
   },
 });

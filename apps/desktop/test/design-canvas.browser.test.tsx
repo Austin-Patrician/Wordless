@@ -19,6 +19,13 @@ import { DesignCanvas } from "../src/renderer/features/design/DesignCanvas";
 const CLIENT = {
   // 设计体系对话框挂载时会拉一次风格目录;缺了这个方法,effect 里会同步抛错。
   listDesignStyles: async () => [],
+  // 色彩系统面板按工作区相对路径读 theme.css。
+  readSessionWorkspaceTextFile: async () => ({
+    content: "@theme { --color-primary: #4f46e5; --color-accent: #0ea5e9; }",
+    name: "theme.css",
+    path: "meadow.wdesign/theme.css",
+    status: "available" as const,
+  }),
   rasterizeDesignFrames: async () => [],
   // 活体层在挂载与卸载时都会调用它。缺了这个方法,回调里会同步抛错。
   setDesignLiveFrame: async () => true,
@@ -87,7 +94,9 @@ describe("design canvas", () => {
       exporting?: boolean;
       onRefresh?: () => void;
       refreshing?: boolean;
+      attachedThemeTokens?: readonly string[];
       manifest?: DesignManifestDto;
+      onToggleThemeToken?: (token: { name: string; value: string }) => void;
     } = {},
   ): Promise<void> {
     await act(async () => {
@@ -95,7 +104,12 @@ describe("design canvas", () => {
         <DesignCanvas
           activity={overrides.activity ?? new Map()}
           client={overrides.client ?? CLIENT}
+          attachedThemeTokens={overrides.attachedThemeTokens ?? []}
+          designDir="meadow.wdesign"
           designPath="/w/meadow.wdesign"
+          sessionId="s1"
+          themeRevision={0}
+          onToggleThemeToken={overrides.onToggleThemeToken ?? (() => {})}
           enteredFrameId={overrides.enteredFrameId ?? null}
           onEnterFrame={overrides.onEnterFrame ?? (() => {})}
           manifest={overrides.manifest ?? manifest()}
@@ -120,6 +134,49 @@ describe("design canvas", () => {
   function frameNodes(): HTMLElement[] {
     return Array.from(container.querySelectorAll<HTMLElement>(".react-flow__node"));
   }
+
+  it("色彩系统:点一个色块把它交给对话", async () => {
+    /*
+      面板只读文件、只把"用户指的是哪一个令牌"交出去 —— 改令牌永远是 agent 的事。所以这里断言
+      的是**点了哪个令牌**(名字与值),而不是"文件被改了"。
+    */
+    const onToggleThemeToken = vi.fn();
+    await render({ onToggleThemeToken });
+
+    const paletteButton = Array.from(container.querySelectorAll("button")).find(
+      (candidate) => (candidate.getAttribute("aria-label") ?? "") === "designToolTheme",
+    );
+    await act(async () => {
+      paletteButton?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+    });
+
+    // 令牌来自当前这份设计的 theme.css(色块用值本身画,所以标题里是变量名与值)。
+    const swatch = container.querySelector<HTMLElement>('button[title="--color-primary: #4f46e5"]');
+    expect(swatch).not.toBeNull();
+    expect(swatch?.getAttribute("aria-pressed")).toBe("false");
+
+    await act(async () => {
+      swatch?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+    });
+
+    expect(onToggleThemeToken).toHaveBeenCalledWith({ name: "--color-primary", value: "#4f46e5" });
+  });
+
+  it("色彩系统:已经交给对话的令牌显示为选中", async () => {
+    // 选中态**只读**上层给的集合(真源在输入框的 chip 上):用户在输入框里删掉一个 chip,这里
+    // 必须跟着不再选中,所以面板不自己存一份。
+    await render({ attachedThemeTokens: ["--color-accent"] });
+
+    const paletteButton = Array.from(container.querySelectorAll("button")).find(
+      (candidate) => (candidate.getAttribute("aria-label") ?? "") === "designToolTheme",
+    );
+    await act(async () => {
+      paletteButton?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+    });
+
+    expect(container.querySelector('button[title="--color-accent: #0ea5e9"]')?.getAttribute("aria-pressed")).toBe("true");
+    expect(container.querySelector('button[title="--color-primary: #4f46e5"]')?.getAttribute("aria-pressed")).toBe("false");
+  });
 
   it("把清单里的每一帧都渲染成节点", async () => {
     await render();
@@ -591,6 +648,9 @@ describe("design canvas", () => {
       ...CLIENT,
       applyDesignStyle,
       listDesignStyles: async () => [
+        // DTO 里的 name / tagline 只是兜底值,给人看的那份来自 i18n。这个文件里的 t 直接
+        // 返回 key,而卡片的文案是模板拼出来的(不含 key 本身),所以下面按卡片自己的
+        // 标记属性找它,不按文案找。
         { category: "c", id: "precise-dark", name: "深色精密", tagline: "t", themeCss: "@theme {}", vibe: "dark" },
       ],
     } as unknown as DesktopBridge;
@@ -602,9 +662,8 @@ describe("design canvas", () => {
     await act(async () => {
       stylesButton?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
     });
-    const card = Array.from(container.querySelectorAll("button")).find(
-      (candidate) => (candidate.getAttribute("aria-label") ?? "").includes("深色精密"),
-    );
+    // 风格卡是这里唯一带 aria-pressed 的按钮(DesignStyleCard 用它表达"已选中")。
+    const card = container.querySelector('button[aria-pressed="false"]');
     await act(async () => {
       card?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
     });
@@ -636,6 +695,9 @@ describe("design canvas", () => {
       ...CLIENT,
       applyDesignStyle,
       listDesignStyles: async () => [
+        // DTO 里的 name / tagline 只是兜底值,给人看的那份来自 i18n。这个文件里的 t 直接
+        // 返回 key,而卡片的文案是模板拼出来的(不含 key 本身),所以下面按卡片自己的
+        // 标记属性找它,不按文案找。
         { category: "c", id: "precise-dark", name: "深色精密", tagline: "t", themeCss: "@theme {}", vibe: "dark" },
       ],
     } as unknown as DesktopBridge;
@@ -649,9 +711,8 @@ describe("design canvas", () => {
     });
 
     // ① 点卡片只选中:按钮会改名,但**还没有**应用。
-    const card = Array.from(container.querySelectorAll("button")).find(
-      (candidate) => (candidate.getAttribute("aria-label") ?? "").includes("深色精密"),
-    );
+    // 风格卡是这里唯一带 aria-pressed 的按钮(DesignStyleCard 用它表达"已选中")。
+    const card = container.querySelector('button[aria-pressed="false"]');
     expect(card).toBeDefined();
     await act(async () => {
       card?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));

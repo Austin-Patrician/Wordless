@@ -5,11 +5,28 @@
  * 这个形状来自 `DESIGN.md` 那个概念的原始约定:纯 markdown、没有 schema、没有工具 ——
  * 模型读得最好,而"该怎么写"这件事本来就不该被压成结构化字段。
  *
+ * 29 套 = 本文件里的 4 套自撰 + `style-catalog-upstream.ts` 里由脚本生成的上游 25 套
+ * (见该文件头与 `apps/desktop/scripts/sync-design-styles.mjs`)。
+ *
  * 这些是**内置**的,不是远程清单:
  *
  * - 新建设计不该依赖网络。参考实现的数据只来自远端仓库,于是"一套都没有"是个真实状态,
  *   而它的注册表不得不为此多出一个 status 来区分"还在拉"和"拉失败了"。
- * - 内置的是**风格方向**,不是任何具体产品:名字说的是它长什么样,不是它像谁。
+ * - 上游那 25 套是**改编并入**的(不再跟进上游仓库的运行时清单),出处与许可见
+ *   `THIRD_PARTY_NOTICES.md` 与 `resources/third-party-notices/`。
+ *
+ * ## `category` 是 key,不是展示串
+ *
+ * 它过去是"产品界面"这样的中文展示串,一屏三张卡时够用。29 套之后分类是用户扫视的入口,
+ * 于是它改成 key(`dev` / `playful` / …),展示文案在 i18n 的 `designStyleCategory*`。
+ * 这样加一种语言不必回头改目录,而目录里也不会再出现"半中文半英文"的分类。
+ *
+ * ## 字段的语言边界
+ *
+ * `name` 与 `tagline` 在目录里是**中文兜底值**,不是展示文案:展示用哪一份由渲染层按 locale
+ * 从 i18n 取(`designStyleName*` / `designStyleTagline*`),查不到才回落到这里的值。目录是
+ * 主进程侧的数据(IPC 契约要求 `name` 非空,agent 侧看的是 `DESIGN.md` 本身),而文案属于
+ * 界面 —— 这条边界与 `WORKBENCH_LABEL_KEYS` 同一取舍。
  *
  * ## 为什么在主进程侧而不是能力包里
  *
@@ -20,17 +37,48 @@
  * 等 P7 的 `design_style_*` 工具也要用它时,它应当上移到一个双方都能加载的共享包(不是
  * 内联到某一侧)。现在上移只会把一个问题换成另一个。
  *
- * 本文件不 import React、不 import Electron,也不 import 任何东西。
+ * 本文件不 import React、不 import Electron。
  */
 
+import {
+  CALM_LIGHT_DEMO,
+  EDITORIAL_DEMO,
+  PLAYFUL_DEMO,
+  PRECISE_DARK_DEMO,
+} from "./style-catalog-demos.ts";
+import { UPSTREAM_DESIGN_STYLES } from "./style-catalog-upstream.ts";
+
 export type DesignStyleVibe = "light" | "dark";
+
+/**
+ * 风格分类。**是 key,展示文案在 i18n**(`designStyleCategory*`)。
+ *
+ * 前三个是自撰那 4 套用的,其余 12 个沿用上游清单的分类 key —— 沿用而不是重编,是因为
+ * 上游的分类本来就按"这套长什么样、给谁用"分,没有品牌信息需要抹掉。
+ */
+export type DesignStyleCategory =
+  | "product"
+  | "content"
+  | "marketing"
+  | "dev"
+  | "fintech"
+  | "media"
+  | "productivity"
+  | "playful"
+  | "consumer"
+  | "ai"
+  | "creative"
+  | "commerce"
+  | "editorial"
+  | "retro"
+  | "premium";
 
 export interface DesignStyle {
   /** 稳定 id,写进 `design.json` 的 `style`。 */
   id: string;
   /** 显示名。 */
   name: string;
-  category: string;
+  category: DesignStyleCategory;
   vibe: DesignStyleVibe;
   /** 一句话说明它长什么样,卡片上显示。 */
   tagline: string;
@@ -38,9 +86,17 @@ export interface DesignStyle {
   themeCss: string;
   /** 完整的 `DESIGN.md`。 */
   designMd: string;
+  /**
+   * 完整的 `demo.html`:这套风格**长什么样**的整页示例。
+   *
+   * 令牌与规范说的是"写进你设计里的东西",这一份回答的是用户真正的问题 —— 二十几套里该选哪
+   * 个。它自包含(令牌内联成 `:root`,无脚本、无外链),所以放进 `sandbox` 的 iframe 就能渲染,
+   * 不需要网络。
+   */
+  demoHtml: string;
 }
 
-const PRECISE_DARK_CSS = `@theme {
+const PRECISE_DARK_CSS = `@theme static {
 	--color-primary: #6366f1;
 	--color-primary-foreground: #ffffff;
 	--color-surface: #0b0c0e;
@@ -94,7 +150,7 @@ a consistent inset; nothing is centred except empty states.
 - Do not put a border and a shadow on the same element.
 `;
 
-const CALM_LIGHT_CSS = `@theme {
+const CALM_LIGHT_CSS = `@theme static {
 	--color-primary: #4f46e5;
 	--color-primary-foreground: #ffffff;
 	--color-surface: #ffffff;
@@ -146,7 +202,7 @@ maxes out around 1100px and is centred; anything wider loses the calm.
 - Do not use \`primary\` for decoration or for section headings.
 `;
 
-const EDITORIAL_CSS = `@theme {
+const EDITORIAL_CSS = `@theme static {
 	--color-primary: #1f2937;
 	--color-primary-foreground: #ffffff;
 	--color-surface: #fdfcf9;
@@ -200,7 +256,7 @@ beside it. Vertical rhythm is generous: 32px between paragraphs, 64px between se
 - Do not centre body text.
 `;
 
-const PLAYFUL_CSS = `@theme {
+const PLAYFUL_CSS = `@theme static {
 	--color-primary: #7c3aed;
 	--color-primary-foreground: #ffffff;
 	--color-surface: #fef9ff;
@@ -255,51 +311,64 @@ corner radius of \`xl\` and a soft shadow to lift them off the tinted page.
 
 /**
  * 目录。顺序就是画廊里的顺序 —— 从最克制到最活泼,那种排列本身就在说明"风格是连续谱"。
+ *
+ * 自撰这 4 套在前(它们是"风格方向"那一类),上游 25 套按清单的 `order` 接在后面。
  */
 export const DESIGN_STYLES: readonly DesignStyle[] = [
   {
     id: "precise-dark",
     name: "深色精密",
-    category: "产品界面",
+    category: "product",
     vibe: "dark",
     tagline: "密集、克制,颜色只用来表达状态",
     themeCss: PRECISE_DARK_CSS,
     designMd: PRECISE_DARK_MD,
+    demoHtml: PRECISE_DARK_DEMO,
   },
   {
     id: "calm-light",
     name: "明亮克制",
-    category: "产品界面",
+    category: "product",
     vibe: "light",
     tagline: "留白承担层级,几乎不需要边框",
     themeCss: CALM_LIGHT_CSS,
     designMd: CALM_LIGHT_MD,
+    demoHtml: CALM_LIGHT_DEMO,
   },
   {
     id: "editorial",
     name: "编辑排版",
-    category: "内容页面",
+    category: "content",
     vibe: "light",
     tagline: "长文优先:宽行距、细横线、近直角",
     themeCss: EDITORIAL_CSS,
     designMd: EDITORIAL_MD,
+    demoHtml: EDITORIAL_DEMO,
   },
   {
     id: "playful",
     name: "圆角活泼",
-    category: "营销页面",
+    category: "marketing",
     vibe: "light",
     tagline: "柔和圆角与暖色,布局比需要的更宽松",
     themeCss: PLAYFUL_CSS,
     designMd: PLAYFUL_MD,
+    demoHtml: PLAYFUL_DEMO,
   },
+  ...UPSTREAM_DESIGN_STYLES,
 ];
 
 export function designStyleById(id: string): DesignStyle | undefined {
   return DESIGN_STYLES.find((style) => style.id === id);
 }
 
-/** 画廊卡片需要的字段。不带上 `themeCss` / `designMd` —— 那两个是几 KB 的文本。 */
+/**
+ * 画廊卡片需要的字段。
+ *
+ * **不带上 `demoHtml` / `designMd`** —— 那是几十 KB 的整页示例与规范,而列表每次进页都要拉。
+ * 卡片只带 `hasDemo` 这个事实,真正的正文由 `styleDetail` 按 id 现取(见 §14.18)。
+ * `themeCss` 是例外:卡片上的缩略图要用它自己的令牌现画,那是单一真源。
+ */
 export function designStyleSummary(style: DesignStyle): {
   id: string;
   name: string;
@@ -308,6 +377,8 @@ export function designStyleSummary(style: DesignStyle): {
   tagline: string;
   /** 供卡片画缩略图用:从 `theme.css` 里抽出来的令牌。 */
   themeCss: string;
+  /** 有没有整页示例。有才值得去取 —— 卡片据此决定要不要在悬停时拉一份。 */
+  hasDemo: boolean;
 } {
   return {
     id: style.id,
@@ -316,5 +387,6 @@ export function designStyleSummary(style: DesignStyle): {
     vibe: style.vibe,
     tagline: style.tagline,
     themeCss: style.themeCss,
+    hasDemo: style.demoHtml.length > 0,
   };
 }

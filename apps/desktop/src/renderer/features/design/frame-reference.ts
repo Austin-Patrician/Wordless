@@ -1,5 +1,5 @@
 import type { DesignFrameDto } from "@wordless/protocol";
-import type { InlineWorkspaceReferenceToken } from "../thread/InlineSkillComposer";
+import type { InlineComposerAttachment } from "../thread/InlineSkillComposer";
 
 /**
  * 把画布上的一帧变成对话里的一个引用。
@@ -50,10 +50,42 @@ export function frameReference(input: {
   designPath: string;
   frame: DesignFrameDto;
   workspaceRoot: string | null;
-}): InlineWorkspaceReferenceToken | null {
+}): InlineComposerAttachment | null {
   const { designPath, frame, workspaceRoot } = input;
   if (workspaceRoot === null) return null;
   const relative = workspaceRelativePath(`${normalize(designPath)}/${frame.file}`, workspaceRoot);
   if (relative === null || relative === "") return null;
   return { kind: "file", name: frame.title, path: relative };
+}
+
+/**
+ * 点一个令牌色块时该"挂上"还是"摘掉"。
+ *
+ * 抽出来是因为它是这个交互的全部语义,而它住在画布上、状态却在输入框里(附件列表)—— 两边都
+ * 不适合承放这段判断。
+ */
+export function themeTokenSelection(
+  attachedTokens: readonly string[],
+  name: string,
+): "attach" | "detach" {
+  return attachedTokens.includes(name) ? "detach" : "attach";
+}
+
+/**
+ * 一个**主题令牌**的引用。
+ *
+ * 路径仍然指向 `theme.css`(那是改它的地方),但名字与值都取令牌本身 —— 用户看到一块颜色,他
+ * 说不出 `--color-primary` 这个名字,而这句话只能由这里替他说。文件那一半信息设计画像已经给过
+ * 模型("令牌都在 theme.css"),单独挂文件是重复的。
+ */
+export function themeReference(input: {
+  designPath: string;
+  token: { name: string; value: string };
+  workspaceRoot: string | null;
+}): InlineComposerAttachment | null {
+  const { designPath, token, workspaceRoot } = input;
+  if (workspaceRoot === null) return null;
+  const relative = workspaceRelativePath(`${normalize(designPath)}/theme.css`, workspaceRoot);
+  if (relative === null || relative === "") return null;
+  return { kind: "theme-token", name: token.name, path: relative, value: token.value };
 }

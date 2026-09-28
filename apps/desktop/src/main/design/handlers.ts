@@ -1,5 +1,6 @@
 import type {
   CreateDesignResultDto,
+  DesignSaveImageResultDto,
   DesignBuildOutcomeDto,
   DesignFrameMetaDto,
   DesignFrameMoveDto,
@@ -8,6 +9,8 @@ import type {
   DesignRasterResultDto,
   DesignRefreshResultDto,
   DesignSummaryDto,
+  DesignStyleDetailDto,
+  InstallDesignStyleResourcesDto,
   DesignStyleSummaryDto,
 } from "@wordless/protocol";
 import type {
@@ -19,10 +22,11 @@ import type { DesignExporter } from "./design-exporter.ts";
 import { joinPath } from "./scaffold.ts";
 import type { DesignStore, DesignSummary, OpenedDesign } from "./design-store.ts";
 import { designFrameUrl } from "./design-url.ts";
-import { DESIGN_STYLES, designStyleSummary } from "./style-catalog.ts";
+import { DESIGN_STYLES, designStyleById, designStyleSummary } from "./style-catalog.ts";
 import { FALLBACK_FRAME_SIZE } from "./manifest.ts";
 import type { RasterPool } from "./raster-pool.ts";
 import type { BuildRecipe } from "./build-recipes.ts";
+import type { DesignClipboard } from "./design-clipboard.ts";
 import type { BuildRunner, DesignBuildResult } from "./design-builder.ts";
 import type { DesignViewHost } from "./design-view-host.ts";
 
@@ -88,8 +92,28 @@ export interface DesignHandlers {
   setLiveFrame(input: { path: string; frameId: string | null; bounds: DesignLiveBoundsDto | null }): Promise<boolean>;
   /** 内置风格目录。给画廊画卡片用。 */
   listStyles(): Promise<DesignStyleSummaryDto[]>;
+  /** 一套风格的正文(示例页 + 规范)。按 id 现取 —— 列里不带这两份大文本。 */
+  styleDetail(input: { id: string }): Promise<DesignStyleDetailDto | null>;
+  /** 把一套风格的资料落进工作区,供这一次会话当参考。 */
+  installStyleResources(input: {
+    root: string;
+    styleId: string;
+  }): Promise<InstallDesignStyleResourcesDto | null>;
   /** 按选中的风格建一个设计包。 */
   createDesign(input: { root: string; name: string; styleId: string | null }): Promise<CreateDesignResultDto | null>;
+  /**
+   * 存一张合成图。
+   *
+   * **字节从渲染层来**(合成发生在 canvas 上),所以这一侧只负责"问到落点、写下去"。
+   * 取消不是错误 —— 界面不该为此报红。
+   */
+  saveMockupImage(input: {
+    fileName: string;
+    extension: "png" | "pdf";
+    bytes: Uint8Array<ArrayBuffer>;
+  }): Promise<DesignSaveImageResultDto>;
+  /** 把一张合成图放进剪贴板。剪贴板被占用时返回 false。 */
+  copyMockupImage(input: { bytes: Uint8Array<ArrayBuffer> }): Promise<boolean>;
 }
 
 /**
@@ -101,8 +125,10 @@ export function createDesignHandlers(
   pool: RasterPool,
   host: DesignViewHost,
   builds?: { runner: BuildRunner; recipes: readonly BuildRecipe[] },
-  /** 导出那套宿主能力(目录对话框 + 写文件)。不注入就没有导出。 */
+  /** 导出那套宿主能力(目录/文件对话框 + 写文件)。不注入就没有导出。 */
   exporter?: DesignExporter,
+  /** 剪贴板。不注入就没有"复制"。 */
+  clipboard?: DesignClipboard,
 ): DesignHandlers {
   return {
     async listDesigns(input: { root: string }): Promise<DesignSummaryDto[]> {
@@ -289,6 +315,22 @@ export function createDesignHandlers(
       return DESIGN_STYLES.map(designStyleSummary);
     },
 
+    async installStyleResources(input: {
+      root: string;
+      styleId: string;
+    }): Promise<InstallDesignStyleResourcesDto | null> {
+      return await store.installStyleResources(input);
+    },
+
+    async styleDetail(input: { id: string }): Promise<DesignStyleDetailDto | null> {
+      const style = designStyleById(input.id);
+      // 认不出来的 id 返回 null,而不是抛:风格目录会随版本变化,而一条过期的引用不该把
+      // 详情页变成一次报错。
+      return style === undefined
+        ? null
+        : { demoHtml: style.demoHtml, designMd: style.designMd };
+    },
+
     async createDesign(input: {
       root: string;
       name: string;
@@ -312,6 +354,34 @@ export function createDesignHandlers(
         // 只带 code 与 detail:stdout/stderr 可能有几十 KB,而 IPC 载荷不该拿它当传输通道。
         build: toBuildOutcomeDto(created.build),
       };
+    },
+
+    async saveMockupImage(input: {
+      fileName: string;
+      extension: "png" | "pdf";
+      bytes: Uint8Array<ArrayBuffer>;
+    }): Promise<DesignSaveImageResultDto> {
+      // 没接宿主能力就照实说 —— 而不是返回一个假的成功。
+      if (exporter === undefined) return { ok: false, reason: "failed", detail: "saving is unavailable" };
+
+      const target = await exporter.chooseSaveFile({
+        suggestedName: `${input.fileName}.${input.extension}`,
+        extension: input.extension,
+      });
+      // 取消不是错误:界面不该为此报红。
+      if (target === null) return { ok: false, reason: "cancelled" };
+
+      try {
+        await exporter.writeFile(target, input.bytes);
+        return { ok: true, path: target };
+      } catch (error) {
+        return { ok: false, reason: "failed", detail: error instanceof Error ? error.message : String(error) };
+      }
+    },
+
+    async copyMockupImage(input: { bytes: Uint8Array<ArrayBuffer> }): Promise<boolean> {
+      if (clipboard === undefined) return false;
+      return await clipboard.writeImage(input.bytes);
     },
 
     async setLiveFrame(input: {

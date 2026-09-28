@@ -20,6 +20,7 @@
     "verify:packaged-icon": "node scripts/verify-packaged-icon.mjs",
     "prepare:officecli": "node scripts/prepare-officecli-assets.mjs",
     "update:officecli": "node scripts/update-officecli-lock.mjs",
+    "sync:design-styles": "node scripts/sync-design-styles.mjs",
     "build:desktop": "npm run prepare:officecli && npm run build:renderer && npm run build:electron",
     "dev:electron": "npm run prepare:officecli && node scripts/build-electron.mjs && node scripts/dev-electron.mjs",
     "test:host": "node --test test/*.test.ts",

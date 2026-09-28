@@ -24,6 +24,7 @@ import { DesignFrameContextMenu } from "./DesignFrameContextMenu.tsx";
 import { DesignFrameDrawLayer } from "./DesignFrameDrawLayer.tsx";
 import { designChromeScale, frameEntryViewport } from "./design-view.ts";
 import { DesignStyleDialog } from "./DesignStyleDialog.tsx";
+import { DesignThemePalette } from "./DesignThemePalette.tsx";
 import { DesignViewportProvider } from "./design-viewport-context.tsx";
 import { DesignFrameNode, type DesignFrameNodeData } from "./DesignFrameNode.tsx";
 import { useDesignTextures } from "./use-design-textures.ts";
@@ -97,6 +98,24 @@ export interface DesignCanvasProps {
   /** 手动刷新:让画布跟上磁盘(心跳只在 agent 在跑时开)。 */
   onRefresh: () => void;
   refreshing: boolean;
+  /**
+   * 色彩系统面板上已经选中的令牌(`--color-*`)。
+   *
+   * 由上层持有 —— 因为**真正的状态在输入框的那些 chip 上**:用户可以在输入框里删掉一个 chip,
+   * 面板必须跟着不再显示选中。面板自己再存一份就会漂。
+   */
+  attachedThemeTokens: readonly string[];
+  /** 点一个令牌:没挂就挂上,已挂就摘掉。 */
+  onToggleThemeToken: (token: { name: string; value: string }) => void;
+  /**
+   * 当前设计在**工作区相对**路径下的位置。色彩系统面板要按它读 `theme.css`,取不出来(设计包
+   * 不在工作区内、或没有工作区)时为 null。
+   */
+  designDir: string | null;
+  /** 会话 id:`readSessionWorkspaceTextFile` 按会话授权。 */
+  sessionId: string;
+  /** 画布每从磁盘重读一次就 +1,色彩系统面板按它重读 `theme.css`。 */
+  themeRevision: number;
   /** frameId → agent 正在干什么。空 Map 表示什么都没在跑。 */
   activity: ReadonlyMap<string, FrameActivity>;
   /**
@@ -137,6 +156,7 @@ export function DesignCanvas(props: DesignCanvasProps) {
 function DesignCanvasInner({
   client,
   designPath,
+  designDir,
   manifest,
   activity,
   enteredFrameId,
@@ -145,7 +165,11 @@ function DesignCanvasInner({
   onDeleteFrame,
   onAttachFrame,
   onApplyStyle,
+  attachedThemeTokens,
   onExport,
+  onToggleThemeToken,
+  sessionId,
+  themeRevision,
   exporting,
   onRefresh,
   refreshing,
@@ -173,6 +197,8 @@ function DesignCanvasInner({
   const [selectedIds, setSelectedIds] = useState<readonly string[]>([]);
   /** 设计体系对话框开着吗。它盖在画布上,所以由画布自己持有这个状态。 */
   const [stylesOpen, setStylesOpen] = useState(false);
+  /** 色彩系统面板:与体系对话框互不打扰,可以只开一个 —— 面板已开时点按钮就收起。 */
+  const [paletteOpen, setPaletteOpen] = useState(false);
 
   /**
    * 容器的尺寸。面板可以被拉宽、可以全屏,而"整帧放不放得下"直接取决于它 —— 于是它是
@@ -429,11 +455,24 @@ function DesignCanvasInner({
         <DesignCanvasActions busy={exporting} onExport={onExport} onRefresh={onRefresh} refreshing={refreshing} />
         <DesignControlBar
           onOpenStyles={() => setStylesOpen(true)}
+          onTogglePalette={() => setPaletteOpen((open) => !open)}
+          paletteOpen={paletteOpen}
           onToolChange={setTool}
           stylesOpen={stylesOpen}
           tool={tool}
         />
       </ReactFlow>
+      {paletteOpen ? (
+        <DesignThemePalette
+          attachedTokens={attachedThemeTokens}
+          bridge={client}
+          onClose={() => setPaletteOpen(false)}
+          onToggleToken={onToggleThemeToken}
+          revision={String(themeRevision)}
+          sessionId={sessionId}
+          themePath={designDir === null ? null : `${designDir}/theme.css`}
+        />
+      ) : null}
       {stylesOpen ? (
         <DesignStyleDialog
           bridge={client}

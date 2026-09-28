@@ -1,4 +1,5 @@
 import { Switch } from "@wordless/ui-kit";
+import { roleModelSelect, storedRoleModel } from "./role-model-options";
 import { Layers3, Puzzle, UsersRound } from "lucide-react";
 import { useState } from "react";
 import { usePreferences } from "../../shared/preferences";
@@ -102,12 +103,19 @@ export function ExtensionsSettings() {
                 <p className="mt-1 text-[11px] text-muted-foreground">{t("inheritsSessionModel")}</p>
                 <div className="mt-3 grid gap-2 sm:grid-cols-2">
                   {roles.map((role) => {
-                    const roleModels = configuration?.settings.roleModels;
-                    const selected = typeof roleModels === "object" && roleModels !== null && !Array.isArray(roleModels) && typeof (roleModels as Record<string, unknown>)[role.id] === "object" && (roleModels as Record<string, unknown>)[role.id] !== null
-                      ? (roleModels as Record<string, { connectionId?: unknown; modelId?: unknown }>)[role.id]
-                      : undefined;
-                    const selectedValue = selected && typeof selected.connectionId === "string" && typeof selected.modelId === "string" ? `${selected.connectionId}/${selected.modelId}` : "";
-                    return <label className="min-w-0" key={role.id}><span className="mb-1 block text-[10px] uppercase text-muted-foreground">{role.label} / {t("roleModel")}</span><select className="h-8 w-full min-w-0 border border-border bg-background px-2 text-[11px] outline-none focus:border-[#879b65]" disabled={saving === extension.id} onChange={(event) => void setRoleModel(role.id, event.target.value)} value={selectedValue}><option value="">{t("inheritsSessionModel")}</option>{enabledModels.map((model) => <option key={`${model.providerId}/${model.modelId}`} value={`${model.providerId}/${model.modelId}`}>{model.displayName}</option>)}</select></label>;
+                    /**
+                     * 选项必须包含**存下来的那一条**,哪怕它现在已经选不到。
+                     *
+                     * 只列当前启用的模型时,一个指向已删除连接的旧引用会让 `value` 匹配不到
+                     * 任何 `<option>` —— 浏览器把下拉框显示成**空白**,读起来就是"继承会话
+                     * 模型",而运行时仍然按那条旧引用走,于是 delegate_task 报
+                     * "The selected model is not enabled"。见 role-model-options.ts。
+                     */
+                    const select = roleModelSelect({
+                      stored: storedRoleModel(configuration?.settings, role.id),
+                      enabled: enabledModels.map((model) => ({ value: `${model.providerId}/${model.modelId}`, label: model.displayName })),
+                    });
+                    return <label className="min-w-0" key={role.id}><span className="mb-1 block text-[10px] uppercase text-muted-foreground">{role.label} / {t("roleModel")}</span><select className="h-8 w-full min-w-0 border border-border bg-background px-2 text-[11px] outline-none focus:border-[#879b65]" disabled={saving === extension.id} onChange={(event) => void setRoleModel(role.id, event.target.value)} value={select.value}><option value="">{t("inheritsSessionModel")}</option>{select.options.map((option) => <option key={option.value} value={option.value}>{option.unavailable ? `${option.label} — ${t("roleModelUnavailable")}` : option.label}</option>)}</select></label>;
                   })}
                 </div>
               </div> : null}

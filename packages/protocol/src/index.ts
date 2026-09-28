@@ -2850,6 +2850,12 @@ export const DesignStyleSummarySchema = Type.Object(
   {
     id: Type.String({ minLength: 1 }),
     name: Type.String({ minLength: 1 }),
+    /**
+     * 分类 **key**(`dev` / `playful` / …),不是展示串。
+     *
+     * 展示文案在渲染层 i18n 的 `designStyleCategory*`(见 `features/design/style-copy.ts`)——
+     * 一条 DTO 不该决定某个语言下它该显示成什么。
+     */
     category: Type.String(),
     vibe: Type.Union([Type.Literal("light"), Type.Literal("dark")]),
     tagline: Type.String(),
@@ -2860,6 +2866,55 @@ export const DesignStyleSummarySchema = Type.Object(
      * 就不可能与它漂开。
      */
     themeCss: Type.String(),
+    /**
+     * 有没有整页示例。
+     *
+     * **示例正文不在这里**:一份 20-30KB,而列表每次进页都要拉。这里只带"有没有"这个事实,
+     * 正文由 `styleDetail` 按 id 现取 —— 摘要就该是摘要。
+     */
+    hasDemo: Type.Boolean(),
+  },
+  { additionalProperties: false },
+);
+
+/**
+ * 取一套风格的正文(示例页 + 规范)。按 id 现取。
+ *
+ * 为什么不塞进列表:一份示例 20-30KB、一份规范 2-6KB,而用户真正打开详情的次数远少于把风格墙
+ * 拉起来的次数。列表里只留 `hasDemo` 这个事实。
+ */
+export const DesignStyleDetailRequestSchema = Type.Object(
+  { id: Type.String({ minLength: 1 }) },
+  { additionalProperties: false },
+);
+
+export const DesignStyleDetailSchema = Type.Object(
+  {
+    /** 自包含的整页示例:令牌内联,无脚本无外链,直接进 `sandbox` 的 iframe。 */
+    demoHtml: Type.String(),
+    /** 完整的 `DESIGN.md`。详情里只用它列"规范写了哪几节";agent 侧读的也是同一份。 */
+    designMd: Type.String(),
+  },
+  { additionalProperties: false },
+);
+
+/**
+ * 把一套内置风格的资料落进工作区。
+ *
+ * `root` 是**工作区根**,不是设计包 —— 挑风格的时候包还不存在(包由 agent 的 `design_create` 建)。
+ * 落进去的是参考资料(theme.css + DESIGN.md),不是一份设计。
+ */
+export const InstallDesignStyleResourcesRequestSchema = Type.Object(
+  { root: Type.String({ minLength: 1 }), styleId: Type.String({ minLength: 1 }) },
+  { additionalProperties: false },
+);
+
+export const InstallDesignStyleResourcesSchema = Type.Object(
+  {
+    /** 落点,**工作区相对**路径 —— 渲染层照它拼引用。 */
+    dir: Type.String({ minLength: 1 }),
+    /** 实际写下的文件名。 */
+    files: Type.Array(Type.String({ minLength: 1 })),
   },
   { additionalProperties: false },
 );
@@ -2939,12 +2994,65 @@ export type CreateDesignFrameRequestDto = Static<typeof CreateDesignFrameRequest
 export type DeleteDesignFrameRequestDto = Static<typeof DeleteDesignFrameRequestSchema>;
 export type ApplyDesignStyleRequestDto = Static<typeof ApplyDesignStyleRequestSchema>;
 export type ApplyDesignStyleResultDto = Static<typeof ApplyDesignStyleResultSchema>;
+/**
+ * 导出合成图的一次保存。
+ *
+ * 合成发生在**渲染层**(canvas 在那儿),所以字节是**渲染层 → 主进程**的方向 —— 这正是
+ * 需要校验的那一侧。标量用 schema,**字节用一个 O(1) 的守卫**:逐字节 walk 多 MB 的数组是
+ * 白花成本,而 `instanceof` + 上限给的是同样的保证(与 `DesignRasterResultDto` 刻意没有
+ * schema 是同一条理由,只是方向相反)。
+ */
+export const DESIGN_IMAGE_PAYLOAD_LIMIT = 64 * 1024 * 1024;
+
+export const DesignSaveImageRequestSchema = Type.Object(
+  {
+    /** 建议的文件名(不含扩展名)。真正的落点由保存对话框决定。 */
+    fileName: Type.String({ minLength: 1, maxLength: 120 }),
+    extension: Type.Union([Type.Literal("png"), Type.Literal("pdf")]),
+  },
+  { additionalProperties: false },
+);
+
+export const DesignSaveImageResultSchema = Type.Union([
+  Type.Object(
+    {
+      ok: Type.Literal(true),
+      /** 文件落在哪 —— 界面要把它说出来,否则用户不知道东西去哪了。 */
+      path: Type.String({ minLength: 1 }),
+    },
+    { additionalProperties: false },
+  ),
+  Type.Object(
+    {
+      ok: Type.Literal(false),
+      reason: Type.Union([
+        /** 用户在对话框里取消了。**不是错误**,界面上不该报红。 */
+        Type.Literal("cancelled"),
+        /** 写盘失败(权限、磁盘满)。 */
+        Type.Literal("failed"),
+      ]),
+      detail: Type.Optional(Type.String()),
+    },
+    { additionalProperties: false },
+  ),
+]);
+
+export function isDesignImageBytes(value: unknown): value is Uint8Array<ArrayBuffer> {
+  return value instanceof Uint8Array && value.byteLength > 0 && value.byteLength <= DESIGN_IMAGE_PAYLOAD_LIMIT;
+}
+
+export type DesignSaveImageRequestDto = Static<typeof DesignSaveImageRequestSchema>;
+export type DesignSaveImageResultDto = Static<typeof DesignSaveImageResultSchema>;
 export type DesignExportRequestDto = Static<typeof DesignExportRequestSchema>;
 export type DesignExportResultDto = Static<typeof DesignExportResultSchema>;
 export type DesignUpdateFrameMetaRequestDto = Static<typeof DesignUpdateFrameMetaRequestSchema>;
 export type DesignRasterFrameDto = Static<typeof DesignRasterFrameSchema>;
 export type DesignLiveBoundsDto = Static<typeof DesignLiveBoundsSchema>;
 export type DesignStyleSummaryDto = Static<typeof DesignStyleSummarySchema>;
+export type DesignStyleDetailRequestDto = Static<typeof DesignStyleDetailRequestSchema>;
+export type DesignStyleDetailDto = Static<typeof DesignStyleDetailSchema>;
+export type InstallDesignStyleResourcesRequestDto = Static<typeof InstallDesignStyleResourcesRequestSchema>;
+export type InstallDesignStyleResourcesDto = Static<typeof InstallDesignStyleResourcesSchema>;
 export type CreateDesignRequestDto = Static<typeof CreateDesignRequestSchema>;
 export type DesignLiveFrameRequestDto = Static<typeof DesignLiveFrameRequestSchema>;
 export type DesignRasterRequestDto = Static<typeof DesignRasterRequestSchema>;

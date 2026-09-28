@@ -21,11 +21,15 @@ import { TAILWIND_RECIPE_ID } from "./build-recipes.ts";
  * Tailwind v4 的 `@theme` 写法,于是帧里可以直接用 `bg-primary`、`text-surface-foreground`
  * 这样的工具类。这是**给用户的文件**,所以中英文宿主都要能读 —— 用英文写。
  * 改这里就是给整份设计换肤。
+ *
+ * `static` 不是可有可无的:默认的 `@theme` **只发出被用到的**变量,帧里的类只要没用到
+ * 某个令牌,产物里就没有它 —— 于是手写 `var(--color-primary)` 会静默取不到值。加了 static
+ * 之后全部声明都会发出,代价只是产物大一点点。内置风格与生成器也都用 static,别改回去。
  */
 export const DEFAULT_THEME_CSS = `/* Colour system for this design document: Tailwind v4 @theme tokens.
  * Every frame uses them as utilities (bg-primary, text-surface-foreground, …).
  * Edit here to reskin the whole design. */
-@theme {
+@theme static {
 	--color-primary: #4f46e5;
 	--color-primary-foreground: #ffffff;
 	--color-surface: #f8fafc;

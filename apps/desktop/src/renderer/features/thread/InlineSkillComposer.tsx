@@ -38,7 +38,15 @@ import { forwardRef, useEffect, useImperativeHandle, useRef, useState, type JSX,
 import type { SkillSource, UserPromptPart } from "@wordless/domain";
 import { FileTypeIcon } from "../../shared/FileTypeIcon";
 import { skillIconText } from "../../shared/skill-icon";
-import { countSkillTokenOccurrences, mentionQueryAtEnd, normalizeUserPromptParts, stripTrailingMentionStart, uniqueSkillIdsInDocumentOrder, type ComposerMentionKind } from "./inline-skill-composer-model";
+import {
+  composerPartsHaveContent,
+  countSkillTokenOccurrences,
+  mentionQueryAtEnd,
+  normalizeUserPromptParts,
+  stripTrailingMentionStart,
+  uniqueSkillIdsInDocumentOrder,
+  type ComposerMentionKind,
+} from "./inline-skill-composer-model";
 
 export type InlineSkillToken = {
   id: string;
@@ -46,11 +54,17 @@ export type InlineSkillToken = {
   source: SkillSource;
 };
 
-export type InlineWorkspaceReferenceToken = {
-  path: string;
-  name: string;
-  kind: "file" | "directory";
-};
+/**
+ * 输入框里那种**可编辑的引用块**。
+ *
+ * 两种臂共用这一个类型,因为它们落进输入框、被删掉、变成 prompt part 的路径完全一样 —— 差别只有
+ * 两处:渲染(文件图标 vs 色点)与序列化后的内容。写成判别联合而不是"加一个可选字段",是因为
+ * `value` 只对令牌有意义:可选字段会让"文件却带着 value"这种状态可以被表达出来。
+ */
+export type InlineComposerAttachment =
+  | { kind: "file" | "directory"; path: string; name: string }
+  /** 画布色彩系统面板上点选的令牌。`name` 是完整变量名(`--color-primary`)。 */
+  | { kind: "theme-token"; path: string; name: string; value: string };
 
 
 export type InlineSkillComposerValue = {
@@ -72,7 +86,14 @@ export type InlineSkillComposerHandle = {
   getValue(): InlineSkillComposerValue;
   insertParts(parts: readonly UserPromptPart[]): void;
   insertSkill(skill: InlineSkillToken, options?: { atEnd?: boolean }): void;
-  insertWorkspaceReference(reference: InlineWorkspaceReferenceToken): void;
+  insertWorkspaceReference(reference: InlineComposerAttachment): void;
+  /**
+   * 摘掉一个附件。
+   *
+   * 存在的理由:附件也可能从**外面**被取消 —— 画布的色彩系统面板上再点一次就是取消,而"挂着
+   * 什么"的真源在输入框里。少了它,面板上的取消就只能是个空操作。
+   */
+  removeAttachment(attachment: InlineComposerAttachment): void;
   setValue(parts: readonly UserPromptPart[], options?: { focus?: boolean }): void;
   stripMention(kind: ComposerMentionKind): void;
 };
@@ -104,6 +125,11 @@ type SerializedSkillTokenNode = Spread<
 
 type SerializedWorkspaceReferenceNode = Spread<
   { path: string; name: string; kind: "file" | "directory" },
+  SerializedLexicalNode
+>;
+
+type SerializedThemeTokenNode = Spread<
+  { path: string; name: string; value: string },
   SerializedLexicalNode
 >;
 
@@ -223,6 +249,40 @@ function $isWorkspaceReferenceNode(node: LexicalNode | null | undefined): node i
   return node instanceof WorkspaceReferenceNode;
 }
 
+/**
+ * 主题令牌。与文件引用是兄弟节点,不是它的一个 flag —— 序列化出去是**另一种 part**,渲染出来
+ * 是色点而不是文件图标。
+ */
+class ThemeTokenNode extends DecoratorNode<JSX.Element> {
+  __path: string;
+  __name: string;
+  __value: string;
+
+  static getType(): string { return "wordless-theme-token"; }
+  static clone(node: ThemeTokenNode): ThemeTokenNode { return new ThemeTokenNode(node.__path, node.__name, node.__value, node.__key); }
+  static importJSON(serializedNode: SerializedThemeTokenNode): ThemeTokenNode { return $createThemeTokenNode(serializedNode.path, serializedNode.name, serializedNode.value); }
+  constructor(path: string, name: string, value: string, key?: NodeKey) { super(key); this.__path = path; this.__name = name; this.__value = value; }
+  createDOM(): HTMLElement { return document.createElement("span"); }
+  decorate(): JSX.Element { return <ThemeTokenChip nodeKey={this.__key} name={this.__name} path={this.__path} value={this.__value} />; }
+  exportJSON(): SerializedThemeTokenNode { return { ...super.exportJSON(), path: this.__path, name: this.__name, value: this.__value, type: "wordless-theme-token", version: 1 }; }
+  getPath(): string { return this.getLatest().__path; }
+  getName(): string { return this.getLatest().__name; }
+  getValue(): string { return this.getLatest().__value; }
+  getTextContent(): string { return ""; }
+  isInline(): true { return true; }
+  isIsolated(): true { return true; }
+  isKeyboardSelectable(): true { return true; }
+  updateDOM(): false { return false; }
+}
+
+function $createThemeTokenNode(path: string, name: string, value: string): ThemeTokenNode {
+  return $applyNodeReplacement(new ThemeTokenNode(path, name, value));
+}
+
+function $isThemeTokenNode(node: LexicalNode | null | undefined): node is ThemeTokenNode {
+  return node instanceof ThemeTokenNode;
+}
+
 class PastedContentNode extends DecoratorNode<JSX.Element> {
   __text: string;
   __chars: number;
@@ -301,6 +361,10 @@ function $collectEditorParts(): { parts: UserPromptPart[]; tokenIds: string[] } 
     }
     if ($isWorkspaceReferenceNode(node)) {
       parts.push({ type: "workspace-reference", path: node.getPath(), name: node.getName(), kind: node.getKind() });
+      return;
+    }
+    if ($isThemeTokenNode(node)) {
+      parts.push({ type: "theme-token-reference", path: node.getPath(), name: node.getName(), value: node.getValue() });
       return;
     }
     if ($isPastedContentNode(node)) {
@@ -384,16 +448,47 @@ function $selectAfterInsertedNode(node: LexicalNode): void {
   else node.selectNext();
 }
 
+/**
+ * 附件类 part → chip 节点。
+ *
+ * **两个地方要用它**:平铺插入(`$nodesFromPromptParts`)和整体重设(`$setRootFromParts`)。这两处
+ * 一开始各写了一份 if/else,于是新增 `theme-token-reference` 时只补了一处 —— 另一处**静默丢掉**
+ * 那个 part(表现是"重开会话后令牌 chip 没了"),而类型系统不管 if/else。抽成一个 + 下面那个
+ * `default` 的穷尽检查,再新增 part 类型就是编译错误,而不是某一个入口悄悄少一个 chip。
+ *
+ * 返回 `null` 表示"这个类型不是输入框里的 chip"。
+ */
+function $createAttachmentChipNode(part: UserPromptPart): LexicalNode | null {
+  switch (part.type) {
+    case "skill-reference":
+      return $createSkillTokenNode(part.skillId, part.name, part.source);
+    case "workspace-reference":
+      return $createWorkspaceReferenceNode(part.path, part.name, part.kind);
+    case "theme-token-reference":
+      return $createThemeTokenNode(part.path, part.name, part.value);
+    case "text":
+      // 文本由调用方按自己的方式处理(要按换行拆段),不是一个 chip。
+      return null;
+    case "artifact-reference":
+      // artifact 选择走的是另一条通道(`pendingArtifactSelection`),不是输入框里挂的 chip。
+      return null;
+    default: {
+      // 走到这里意味着 `UserPromptPart` 多了没处理的一种 —— 让它在编译期就报出来。
+      const unhandled: never = part;
+      throw new Error(`Unhandled prompt part: ${JSON.stringify(unhandled)}`);
+    }
+  }
+}
+
 function $nodesFromPromptParts(parts: readonly UserPromptPart[]): LexicalNode[] {
   const nodes: LexicalNode[] = [];
   for (const part of parts) {
     if (part.type === "text") {
       if (part.text) nodes.push($createTextNode(part.text));
-    } else if (part.type === "skill-reference") {
-      nodes.push($createSkillTokenNode(part.skillId, part.name, part.source));
-    } else if (part.type === "workspace-reference") {
-      nodes.push($createWorkspaceReferenceNode(part.path, part.name, part.kind));
+      continue;
     }
+    const chip = $createAttachmentChipNode(part);
+    if (chip !== null) nodes.push(chip);
   }
   return nodes;
 }
@@ -413,11 +508,10 @@ function $setRootFromParts(parts: readonly UserPromptPart[]): void {
         }
         if (line) paragraph.append($createTextNode(line));
       });
-    } else if (part.type === "skill-reference") {
-      paragraph.append($createSkillTokenNode(part.skillId, part.name, part.source));
-    } else if (part.type === "workspace-reference") {
-      paragraph.append($createWorkspaceReferenceNode(part.path, part.name, part.kind));
+      continue;
     }
+    const chip = $createAttachmentChipNode(part);
+    if (chip !== null) paragraph.append(chip);
   }
 }
 
@@ -463,6 +557,36 @@ function WorkspaceReferenceToken({ nodeKey, name, path, kind }: { nodeKey: NodeK
           type="button"
         >
           <span aria-hidden className="grid h-4 w-4 place-items-center transition-opacity duration-100 group-hover:opacity-0 group-focus-within:opacity-0"><FileTypeIcon className="h-3 w-3 [&_svg]:h-3 [&_svg]:w-3" kind={kind} name={name} /></span>
+          <X aria-hidden className="absolute h-3 w-3 opacity-0 transition-opacity duration-100 group-hover:opacity-100 group-focus-within:opacity-100" />
+        </button>
+        <span className="min-w-0 truncate">{name}</span>
+      </span>
+    </span>
+  );
+}
+
+/**
+ * 令牌 chip:色点 + 变量名。色点用**值本身**画,于是"用户指的是哪块颜色"在输入框里就能核对 ——
+ * 这正是这个附件存在的理由。
+ */
+function ThemeTokenChip({ nodeKey, name, path, value }: { nodeKey: NodeKey; name: string; path: string; value: string }) {
+  const [editor] = useLexicalComposerContext();
+  return (
+    <span className="inline-flex h-7 select-none items-center pl-1 pr-1.5 align-bottom" contentEditable={false}>
+      <span
+        className="group inline-flex h-6 max-w-[250px] items-center gap-1 rounded-[5px] border border-[#cbbfe0] bg-[#f6f2fd] px-1.5 font-sans text-[12px] font-medium leading-4 text-[#4b3a6b] shadow-[inset_0_1px_0_rgba(255,255,255,0.8)] transition-colors duration-150 hover:border-[#b6a4d6] hover:bg-[#efe8fb] dark:border-[#4b4170] dark:bg-[#282343] dark:text-[#d7cdf2] dark:hover:border-[#5c5187] dark:hover:bg-[#312b52]"
+        title={`${name}: ${value} · ${path}`}
+      >
+        <button
+          aria-label={`Remove ${name}`}
+          className="relative grid h-4 w-4 shrink-0 place-items-center rounded-[4px] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[#8f7cc0]"
+          onClick={() => removeToken(editor, nodeKey)}
+          onMouseDown={(event) => event.preventDefault()}
+          type="button"
+        >
+          <span aria-hidden className="grid h-4 w-4 place-items-center transition-opacity duration-100 group-hover:opacity-0 group-focus-within:opacity-0">
+            <span className="block h-3 w-3 rounded-[3px] border border-black/10 dark:border-white/15" style={{ background: value }} />
+          </span>
           <X aria-hidden className="absolute h-3 w-3 opacity-0 transition-opacity duration-100 group-hover:opacity-100 group-focus-within:opacity-100" />
         </button>
         <span className="min-w-0 truncate">{name}</span>
@@ -613,7 +737,7 @@ function PastePlugin({ disabled, readOnly }: { disabled: boolean; readOnly: bool
 
 const initialConfig = {
   namespace: "wordless-inline-skill-composer",
-  nodes: [SkillTokenNode, WorkspaceReferenceNode, PastedContentNode],
+  nodes: [SkillTokenNode, WorkspaceReferenceNode, ThemeTokenNode, PastedContentNode],
   onError(error: Error): void {
     throw error;
   },
@@ -726,6 +850,24 @@ export const InlineSkillComposer = forwardRef<InlineSkillComposerHandle, InlineS
       });
       editor.focus();
     },
+    removeAttachment(attachment) {
+      const editor = editorRef.current;
+      if (!editor || disabled || readOnly) return;
+      editor.update(() => {
+        const matches = (node: LexicalNode): boolean => {
+          if (attachment.kind === "theme-token") {
+            return $isThemeTokenNode(node) && node.getName() === attachment.name && node.getPath() === attachment.path;
+          }
+          return $isWorkspaceReferenceNode(node) && node.getName() === attachment.name && node.getPath() === attachment.path;
+        };
+        const targets: LexicalNode[] = [];
+        for (const node of $getRoot().getChildren()) {
+          if (matches(node)) targets.push(node);
+          else if ($isElementNode(node)) node.getChildren().forEach((child) => (matches(child) ? targets.push(child) : undefined));
+        }
+        for (const node of targets) node.remove();
+      });
+    },
     insertWorkspaceReference(reference) {
       const editor = editorRef.current;
       if (!editor || disabled || readOnly) return;
@@ -734,7 +876,11 @@ export const InlineSkillComposer = forwardRef<InlineSkillComposerHandle, InlineS
         $stripMentionAtCursor("workspace");
         const selection = $getSelection();
         if ($isRangeSelection(selection)) {
-          const token = $createWorkspaceReferenceNode(reference.path, reference.name, reference.kind);
+          // 两种附件在这里分岔:文件/目录走文件图标那一条,令牌走色点那一条。
+          const token =
+            reference.kind === "theme-token"
+              ? $createThemeTokenNode(reference.path, reference.name, reference.value)
+              : $createWorkspaceReferenceNode(reference.path, reference.name, reference.kind);
           selection.insertNodes([token]);
           $selectAfterInsertedNode(token);
         }
@@ -744,9 +890,7 @@ export const InlineSkillComposer = forwardRef<InlineSkillComposerHandle, InlineS
     setValue(parts, options) {
       const editor = editorRef.current;
       if (!editor || disabled || readOnly) return;
-      const nextHasContent = parts.some(
-        (part) => part.type !== "text" || part.text.length > 0,
-      );
+      const nextHasContent = composerPartsHaveContent(parts);
       hasContentRef.current = nextHasContent;
       setHasContent(nextHasContent);
       editor.update(() => {
@@ -796,7 +940,7 @@ export const InlineSkillComposer = forwardRef<InlineSkillComposerHandle, InlineS
         ignoreSelectionChange
         onChange={(nextEditorState) => {
           const value = editorValue(nextEditorState);
-          const nextHasContent = value.text.length > 0 || value.skillIds.length > 0 || value.workspaceReferenceCount > 0;
+          const nextHasContent = composerPartsHaveContent(value.parts);
           if (nextHasContent !== hasContentRef.current) {
             hasContentRef.current = nextHasContent;
             setHasContent(nextHasContent);

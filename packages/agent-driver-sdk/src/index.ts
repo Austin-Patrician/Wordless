@@ -152,6 +152,8 @@ const WORKSPACE_REFERENCE_START = "<wordless-workspace-reference>";
 const WORKSPACE_REFERENCE_END = "</wordless-workspace-reference>";
 const ARTIFACT_REFERENCE_START = "<wordless-artifact-reference>";
 const ARTIFACT_REFERENCE_END = "</wordless-artifact-reference>";
+const THEME_TOKEN_REFERENCE_START = "<wordless-theme-token-reference>";
+const THEME_TOKEN_REFERENCE_END = "</wordless-theme-token-reference>";
 
 type SerializedSkillReference = {
   version: 1;
@@ -167,6 +169,21 @@ type SerializedWorkspaceReference = {
   path: string;
   name: string;
   kind: "file" | "directory";
+};
+
+/**
+ * 用户点选的主题令牌。
+ *
+ * 只带事实(哪个文件、哪个变量、什么值),**不写"该怎么做"** —— 那段解释属于设计画像:这个
+ * 序列化器是所有 driver 共用的,把某一种产物(设计稿的令牌)的规矩写进通用层,下一个人会以为
+ * 它对谁都成立。
+ */
+type SerializedThemeTokenReference = {
+  version: 1;
+  id: string;
+  path: string;
+  name: string;
+  value: string;
 };
 
 type SerializedArtifactReference = {
@@ -198,6 +215,16 @@ export function formatPromptWithSkillReferences(
           kind: part.kind,
         };
         return `${WORKSPACE_REFERENCE_START}${encodeURIComponent(JSON.stringify(reference))}${WORKSPACE_REFERENCE_END}`;
+      }
+      if (part.type === "theme-token-reference") {
+        const reference: SerializedThemeTokenReference = {
+          version: 1,
+          id: `${part.path}:${part.name}:${index}`,
+          path: part.path,
+          name: part.name,
+          value: part.value,
+        };
+        return `${THEME_TOKEN_REFERENCE_START}${encodeURIComponent(JSON.stringify(reference))}${THEME_TOKEN_REFERENCE_END}`;
       }
       if (part.type === "artifact-reference") {
         const reference: SerializedArtifactReference = {
@@ -436,6 +463,69 @@ export function formatPromptWorkspaceReferencesForModel(text: string): string {
   });
 }
 
+/**
+ * 令牌引用在模型那边的样子。
+ *
+ * 与工作区引用同一个道理:送出去的是**编码过的 JSON**(那是给程序读的),模型读到的必须是一段
+ * 说人话的文字 —— 不然后面那串 `%7B%22…` 会原样进上下文。
+ */
+export function formatPromptThemeTokenReferencesForModel(text: string): string {
+  const pattern = new RegExp(
+    `${THEME_TOKEN_REFERENCE_START}([^<]*)${THEME_TOKEN_REFERENCE_END}`,
+    "g",
+  );
+  return text.replace(pattern, (marker, encoded: string) => {
+    const reference = parseThemeTokenReference(encoded);
+    if (!reference) return marker;
+    return [
+      "<wordless_theme_token_reference>",
+      `name=${JSON.stringify(reference.name)}`,
+      `value=${JSON.stringify(reference.value)}`,
+      `path=${JSON.stringify(reference.path)}`,
+      "The user picked this colour token on the design canvas. It is defined in the file above; changing it there restyles every frame that shares it.",
+      "</wordless_theme_token_reference>",
+    ].join("\n");
+  });
+}
+
+function parseThemeTokenReference(encoded: string): SerializedThemeTokenReference | null {
+  try {
+    const parsed = JSON.parse(decodeURIComponent(encoded)) as SerializedThemeTokenReference;
+    if (parsed?.version !== 1) return null;
+    if (typeof parsed.name !== "string" || typeof parsed.value !== "string" || typeof parsed.path !== "string") {
+      return null;
+    }
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+function projectPromptThemeTokenReferences(text: string): MessageBlock[] {
+  const blocks: MessageBlock[] = [];
+  const pattern = new RegExp(
+    `${THEME_TOKEN_REFERENCE_START}([^<]*)${THEME_TOKEN_REFERENCE_END}`,
+    "g",
+  );
+  let cursor = 0;
+  for (const match of text.matchAll(pattern)) {
+    const reference = parseThemeTokenReference(match[1] ?? "");
+    if (!reference) continue;
+    const index = match.index ?? 0;
+    if (index > cursor) blocks.push({ type: "text", text: text.slice(cursor, index) });
+    blocks.push({
+      type: "theme-token",
+      id: reference.id,
+      path: reference.path,
+      name: reference.name,
+      value: reference.value,
+    });
+    cursor = index + match[0].length;
+  }
+  if (cursor < text.length) blocks.push({ type: "text", text: text.slice(cursor) });
+  return blocks;
+}
+
 function projectPromptWorkspaceReferences(text: string): MessageBlock[] {
   const blocks: MessageBlock[] = [];
   const pattern = new RegExp(
@@ -612,9 +702,13 @@ export function projectUserMessageContent(content: unknown): MessageBlock[] {
       for (const block of projectPromptWorkspaceReferences(
         artifactBlock.text,
       )) {
-        if (block.type === "text")
-          blocks.push(...projectPromptSkillReferences(block.text));
-        else blocks.push(block);
+        if (block.type === "text") {
+          for (const tokenBlock of projectPromptThemeTokenReferences(block.text)) {
+            if (tokenBlock.type === "text")
+              blocks.push(...projectPromptSkillReferences(tokenBlock.text));
+            else blocks.push(tokenBlock);
+          }
+        } else blocks.push(block);
       }
     }
     blocks.push(...parsed.attachments);

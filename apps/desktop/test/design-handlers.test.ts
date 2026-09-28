@@ -1,7 +1,14 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { Value } from "typebox/value";
-import { DesignListRequestSchema, DesignOpenRequestSchema, DesignOpenedSchema, DesignSummarySchema } from "@wordless/protocol";
+import {
+  DesignListRequestSchema,
+  DesignOpenRequestSchema,
+  DesignOpenedSchema,
+  DesignStyleDetailRequestSchema,
+  InstallDesignStyleResourcesRequestSchema,
+  DesignSummarySchema,
+} from "@wordless/protocol";
 import { createDesignHandlers } from "../src/main/design/handlers.ts";
 import { DesignStore } from "../src/main/design/design-store.ts";
 import { manifestPathOf } from "../src/main/design/manifest.ts";
@@ -99,6 +106,53 @@ test("清单与帧一起送达,画布不需要再读一次磁盘", async () => {
   assert.equal(opened.repaired, true);
 });
 
+test("风格目录:列表只带摘要,正文按 id 现取", async () => {
+  /*
+    列表里带 `hasDemo` 这个事实,不带示例与规范正文 —— 一份 20-30KB,而列表每次进页都要拉。
+    正文由 `styleDetail` 按 id 现取。
+  */
+  const list = await handlers(fixture()).listStyles();
+  assert.ok(list.length > 0);
+  for (const summary of list) {
+    assert.equal("demoHtml" in summary, false, "列表不该带示例正文");
+    assert.equal("designMd" in summary, false, "列表不该带规范正文");
+    assert.equal(typeof summary.hasDemo, "boolean");
+  }
+  assert.ok(list.some((summary) => summary.hasDemo), "至少有一套带示例");
+
+  const first = list.find((summary) => summary.hasDemo)!;
+  const detail = await handlers(fixture()).styleDetail({ id: first.id });
+  assert.ok(detail);
+  assert.ok(detail.demoHtml.startsWith("<!doctype html>"));
+  assert.ok(detail.designMd.trim().length > 0);
+});
+
+test("风格目录:不认识的 id 返回 null,而不是抛", async () => {
+  // 风格目录会随版本变化,而一条过期的引用不该把详情页变成一次报错。
+  assert.equal(await handlers(fixture()).styleDetail({ id: "no-such-style" }), null);
+});
+
+test("把一套风格的资料落进工作区:两份文件都在,且认不出的 id 返回 null", async () => {
+  /*
+    这一步是"挑风格开新会话"的落盘半边:落的是**资料**(theme.css + DESIGN.md),不是设计包 ——
+    包由 agent 的 design_create 建(参考实现踩过"预先 scaffold 一份、agent 又另建一份"的坑)。
+  */
+  const fs = fixture();
+  const store = new DesignStore({ fs });
+  const installed = await store.installStyleResources({ root: ROOT, styleId: "linear" });
+  assert.ok(installed);
+  // 落点与文件名由主进程给,渲染层照它拼引用。
+  assert.equal(installed.dir, "design-resources/linear");
+  assert.deepEqual(installed.files, ["theme.css", "DESIGN.md"]);
+
+  const theme = await fs.readText(`${ROOT}/design-resources/linear/theme.css`);
+  const spec = await fs.readText(`${ROOT}/design-resources/linear/DESIGN.md`);
+  assert.ok(theme.includes("@theme static {"), "写下去的是那份 theme.css");
+  assert.ok(spec.startsWith("# "), "写下去的是那份 DESIGN.md");
+
+  assert.equal(await store.installStyleResources({ root: ROOT, styleId: "no-such-style" }), null);
+});
+
 test("请求 schema 拒绝多余的字段", () => {
   // DTO 全部 `additionalProperties: false`,所以渲染层传错形状会在边界被挡住,
   // 而不是悄悄用一个默认值继续。
@@ -107,4 +161,9 @@ test("请求 schema 拒绝多余的字段", () => {
   assert.equal(Value.Check(DesignListRequestSchema, {}), false);
   assert.equal(Value.Check(DesignOpenRequestSchema, { path: DESIGN }), true);
   assert.equal(Value.Check(DesignOpenRequestSchema, { path: DESIGN, mode: "built" }), false);
+  assert.equal(Value.Check(DesignStyleDetailRequestSchema, { id: "linear" }), true);
+  assert.equal(Value.Check(DesignStyleDetailRequestSchema, {}), false);
+  assert.equal(Value.Check(InstallDesignStyleResourcesRequestSchema, { root: ROOT, styleId: "linear" }), true);
+  assert.equal(Value.Check(InstallDesignStyleResourcesRequestSchema, { styleId: "linear" }), false);
+  assert.equal(Value.Check(InstallDesignStyleResourcesRequestSchema, { root: ROOT }), false);
 });

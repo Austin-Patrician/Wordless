@@ -1,7 +1,12 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { DesignFrameDto } from "@wordless/protocol";
-import { frameReference, workspaceRelativePath } from "../src/renderer/features/design/frame-reference.ts";
+import {
+  frameReference,
+  themeReference,
+  themeTokenSelection,
+  workspaceRelativePath,
+} from "../src/renderer/features/design/frame-reference.ts";
 
 /**
  * 画布上的一帧 → 对话里的一个引用。
@@ -44,4 +49,32 @@ test("设计包不在工作区内时给不出引用,而不是给一条 agent 打
   assert.equal(frameReference({ designPath: "/other/meadow.wdesign", frame: frame("index"), workspaceRoot: "/w" }), null);
   // 没有工作区的会话(设计包在会话私有根里)同理:基准不存在,换算无从谈起。
   assert.equal(frameReference({ designPath: "/w/meadow.wdesign", frame: frame("index"), workspaceRoot: null }), null);
+});
+
+test("色彩系统面板挂的是**令牌**,不是整份 theme.css", () => {
+  /*
+    用户看到一块颜色,他说不出 `--color-primary` 这个名字 —— 而面板唯一能替他说的事就是这个。
+    路径仍指向 theme.css(那是改它的地方),名字与值取令牌本身。
+  */
+  assert.deepEqual(
+    themeReference({
+      designPath: "/w/meadow.wdesign",
+      token: { name: "--color-primary", value: "#6366f1" },
+      workspaceRoot: "/w",
+    }),
+    { kind: "theme-token", name: "--color-primary", path: "meadow.wdesign/theme.css", value: "#6366f1" },
+  );
+});
+
+test("点一个令牌:没挂就挂上,已挂就摘掉", () => {
+  // 这段判断是交互的全部语义 —— 画布上点一下到底是"选了"还是"取消了",只看输入框里挂着什么。
+  assert.equal(themeTokenSelection([], "--color-primary"), "attach");
+  assert.equal(themeTokenSelection(["--color-accent"], "--color-primary"), "attach");
+  assert.equal(themeTokenSelection(["--color-primary"], "--color-primary"), "detach");
+});
+
+test("令牌引用同样遵循「取不出来就不给」:不在工作区内、没有工作区都返回 null", () => {
+  const token = { name: "--color-primary", value: "#6366f1" };
+  assert.equal(themeReference({ designPath: "/other/meadow.wdesign", token, workspaceRoot: "/w" }), null);
+  assert.equal(themeReference({ designPath: "/w/meadow.wdesign", token, workspaceRoot: null }), null);
 });

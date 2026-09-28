@@ -122,6 +122,13 @@ export interface DesignStoreOptions {
  * 内容扫进画布,也不会被算进源指纹 —— 否则一次构建会把自己判成"源变了",然后无限重建。
  */
 const BUILD_DIRECTORY = ".build";
+/**
+ * 风格参考资料在**工作区**里的落点(与 open-vetta 同名,理由也一样)。
+ *
+ * 放工作区根而不是设计包里:它是资料、不是设计的一部分 —— 而且挑风格的时候设计包还不存在
+ * (包由 agent 的 `design_create` 建,见 §14.19 那条"不预先 scaffold")。
+ */
+export const STYLE_RESOURCES_DIRECTORY = "design-resources";
 const BUILD_STATUS_FILE = "status.json";
 
 /**
@@ -266,6 +273,36 @@ export class DesignStore {
       .map((file) => ({ path: file.path, relPath: file.relPath.replaceAll("\\", "/") }))
       .filter((file) => wanted(file.relPath))
       .sort((left, right) => left.relPath.localeCompare(right.relPath));
+  }
+
+  /**
+   * 把一套内置风格的资料落进工作区,供**这一次会话**当参考。
+   *
+   * 为什么是落文件而不是把规范内联进提示词(§14.20):agent 要的是能 `Read`、能**拷进**设计包的
+   * 东西("应用一套风格"在我们这边的定义就是拷这两份文件),而且文件扛得住上下文压缩 —— 被压掉
+   * 的会是提示词里那句话,不是盘上的资料。
+   *
+   * **不建设计包**:包由 agent 的 `design_create` 建。参考实现踩过这个坑 —— 先 scaffold 一份再让
+   * agent 开工,agent 照旧另建一份,用户拿到两份设计文档。
+   *
+   * 覆盖式写入(同名文件直接替换):这是内置风格的副本,agent 该改的是设计包里自己那份。
+   * 认不出来的 id 返回 null,与 `applyStyle` 一致。
+   */
+  async installStyleResources(input: {
+    root: string;
+    styleId: string;
+  }): Promise<{ dir: string; files: string[] } | null> {
+    const style = designStyleById(input.styleId);
+    if (style === undefined) return null;
+    const relativeDir = `${STYLE_RESOURCES_DIRECTORY}/${style.id}`;
+    const directory = joinPath(input.root, relativeDir);
+    await this.fs.ensureDirectory(directory);
+    const contents: { name: string; content: string }[] = [
+      { name: "theme.css", content: style.themeCss },
+      { name: "DESIGN.md", content: style.designMd },
+    ];
+    for (const file of contents) await this.fs.writeText(joinPath(directory, file.name), file.content);
+    return { dir: relativeDir, files: contents.map((file) => file.name) };
   }
 
   /**

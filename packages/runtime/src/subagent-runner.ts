@@ -269,6 +269,26 @@ function appendConversationDelta(
   return { ...message, blocks };
 }
 
+/**
+ * 角色模型不可用时的报错。
+ *
+ * 指名三件事:**哪个角色**、**它指向什么**、**去哪儿改**。这三件事缺任何一件,用户就只能
+ * 靠猜 —— 而"设置界面看起来没配过"会让猜的方向完全错。
+ */
+function describeUnavailableRoleModel(
+  task: SubagentTask,
+  reference: ModelReference,
+  cause: unknown,
+): string {
+  const role = task.kind === "builtin-subagent" ? `"${task.role}"` : "this task";
+  const detail = cause instanceof Error ? cause.message : String(cause);
+  return (
+    `The subagent role ${role} is set to use ${reference.connectionId}/${reference.modelId}, ` +
+    `which is not available (${detail}). Clear that role's model in Settings -> Extensions -> ` +
+    `Subagent so it inherits this session's model.`
+  );
+}
+
 function recoverableSubagentError(message: string, output: string): boolean {
   if (output.length > 0) return true;
   return /(?:stream|finish_reason|terminated|timeout|timed out|rate.?limit|temporar|network|connection|token generation|internal error)/i.test(
@@ -314,11 +334,31 @@ export function resolveDelegatedTaskModel(
     model = resolveModel(reference);
     capabilities = resolveCapabilities(reference);
   } catch (cause) {
-    if (!memberModel) throw cause;
+    /**
+     * 角色里配的模型用不了 —— 连接还在但那个模型没被启用,或者模型已经被删掉。
+     *
+     * **回落,而不是让整条委派停摆。**
+     *
+     * 原来普通委派在这里直接抛错(专家成员才回落)。后果是:一个失效的角色配置会让
+     * `delegate_task` **永久不可用**,而用户很可能根本不知道这条配置存在 —— 设置界面里
+     * 那个下拉框的选项只来自**当前启用的模型**,存下来的引用选不到时 `value` 匹配不到任何
+     * `<option>`,浏览器就把它显示成**空白**,读起来正是"继承会话模型"。真实的踩坑记录:
+     * 用户以为自己没配过,只拿到一句 "The selected model is not enabled"。
+     *
+     * 回落让功能继续可用;`fallbackReason` 让这次降级**可见**(它会随
+     * `modelResolution` 一起交回去),设置界面也会把那条失效的引用标成「已不可用」。
+     * **降级 + 告知,好过停摆 + 无解。**
+     */
     fallbackReason = "unavailable";
     reference = parentModel;
-    model = resolveModel(reference);
-    capabilities = resolveCapabilities(reference);
+    try {
+      model = resolveModel(reference);
+      capabilities = resolveCapabilities(reference);
+    } catch {
+      // 连会话模型都用不了:这时候才值得报错,而且要把两件事都说了 —— 角色的配置指向什么,
+      // 以及为什么回落也失败。
+      throw new Error(describeUnavailableRoleModel(task, requested, cause));
+    }
   }
   if (capabilities.supportsToolUse === false) {
     if (!memberModel || fallbackReason)

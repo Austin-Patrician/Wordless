@@ -49,7 +49,8 @@ export interface StyleGridWindow {
  * `scrolledPast` 是宫格顶部已经滚出视口上沿的距离(还没滚到时为 0)。
  *
  * 返回的区间**一定覆盖 `[start, end)` 的完整行** —— 否则一行的末尾会缺一块,看起来像加载
- * 失败而不是窗口化。
+ * 失败而不是窗口化。`start` 还会被收进**最后一行之内**:列表变短(筛选)之后,滚动时算出的
+ * 行号可能已经越界,不收的话窗口会落到列表外面,表现为"筛选后一张都不剩"。
  */
 export function styleGridWindow(input: {
   scrolledPast: number;
@@ -59,13 +60,48 @@ export function styleGridWindow(input: {
 }): StyleGridWindow {
   const { columns, rowHeight } = input.metrics;
   if (rowHeight <= 0 || columns <= 0) return { start: 0, end: input.total };
+  if (input.total <= 0) return { start: 0, end: 0 };
 
-  const startRow = Math.max(0, Math.floor(Math.max(0, input.scrolledPast) / rowHeight) - OVERSCAN);
+  const lastRow = Math.ceil(input.total / columns) - 1;
+  const startRow = Math.min(
+    Math.max(0, Math.floor(Math.max(0, input.scrolledPast) / rowHeight) - OVERSCAN),
+    lastRow,
+  );
   const visibleRows = Math.ceil(Math.max(0, input.viewportHeight) / rowHeight) + OVERSCAN * 2;
-  const start = Math.min(startRow * columns, input.total);
+  const start = startRow * columns;
   const end = Math.min(input.total, (startRow + visibleRows) * columns);
   // 起止落在同一行时也要给出一整行,否则调用方会渲染出半个空行。
   return { start, end: Math.max(end, Math.min(input.total, start + columns)) };
+}
+
+/**
+ * 渲染用的窗口:把滚动时算出的窗口按**当前**的几何与总数再收一次。
+ *
+ * 分开成两个函数是因为它俩的输入不同:`styleGridWindow` 只在滚动/尺寸变化时跑,而这一次
+ * 每次渲染都要跑,输入是别处存下来的 `range`。而 `range` 会过期 —— 筛选之后总数变了,窗口
+ * 却没重算,于是:
+ *
+ *     29 张滚到第 8 行(range {21,30})→ 筛成 3 张 → 按旧窗口切片只剩第 3 张,上下留白都是 0
+ *
+ * 用户看到的是"筛完只剩一张"。所以这里的两条纪律与 `styleGridWindow` 一致:`start` 必须落在
+ * **最后一行之内**、且至少给出一整行。行高还没量出来时整份铺上 —— 这一帧算不出窗口,宁可多画
+ * 也不能留白一屏。
+ */
+export function styleGridRenderWindow(input: {
+  range: StyleGridWindow;
+  metrics: StyleGridMetrics;
+  total: number;
+}): StyleGridWindow {
+  const { columns, rowHeight } = input.metrics;
+  if (rowHeight <= 0 || columns <= 0) return { start: 0, end: input.total };
+  if (input.total <= 0) return { start: 0, end: 0 };
+
+  const lastRowStart = Math.max(0, Math.ceil(input.total / columns) - 1) * columns;
+  const start = Math.min(input.range.start, lastRowStart);
+  // 过期的 `end` 要先按总数收回来,再保证至少一整行:不收回来的话窗口会声称自己够到 30,
+  // 而列表只有 7 条 —— 留白按 30 算,渲染只出 1 张,两者对不上。
+  const end = Math.max(Math.min(input.range.end, input.total), Math.min(input.total, start + columns));
+  return { start, end };
 }
 
 /** 撑开空行时要补的上下留白(像素)。用 padding 而不是占位元素 —— 插占位会把卡片挤错列。 */

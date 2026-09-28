@@ -15,11 +15,14 @@ export interface RasterRequest {
   width: number;
   height: number;
   /**
-   * 期望的设备像素比。
+   * 期望的设备像素比 —— **真的会生效**,位图按 `width × pixelRatio` 出。
    *
-   * 真实现当前**按 1 倍光栅**(见 `ElectronOffscreenRaster` 的说明):Electron 的离屏
-   * 渲染没有直接的 per-window 设备像素比,而 `setZoomFactor` 会重排布局 —— 设计稿在
-   * 固定尺寸下不能重排。这个字段保留在契约里,好让真实现换成 CDP 设备度量时不用改调用方。
+   * 曾经它是"接收但不用"的:离屏渲染的 `paint` 位图被钉在 1 倍,而 `setZoomFactor` 会
+   * 重排布局(设计稿在固定尺寸下不能重排)。实测之后改走 CDP 的
+   * `Page.captureScreenshot` + `clip.scale`,倍率是**确定性**的 —— 见
+   * `ElectronOffscreenRaster` 的说明。
+   *
+   * 值就是缩放档位(`frameId@bucket` 里的那个 bucket),所以画布在 2 倍档位下贴的是 2 倍图。
    */
   pixelRatio: number;
   /**
@@ -33,20 +36,89 @@ export interface RasterRequest {
 }
 
 /**
- * 位图按哪种格式编码。
+ * 一次截图交给 CDP 的参数。
  *
  * 抽出来是因为它是这一层里**唯一可断言、又真的会被用错**的判断:画布要小(JPEG),导出要准
- * (PNG)。而真实现(`ElectronOffscreenRaster`)import 了 Electron,`node --test` 加载不了 ——
- * 不抽出来的话,"导出给的是 PNG"这件事就没有测试守着了。
+ * (PNG);而倍率走 `clip.scale`,**不是窗口尺寸** —— 改窗口尺寸会让页面按新视口**重排**,
+ * 导出的图比页面大一圈、周边留白(`handlers.ts` 里踩过这个坑)。
  *
- * 形参写成结构类型而不是 `NativeImage`,于是测试可以递一个假的进来。
+ * 真实现 import 了 Electron,`node --test` 加载不了 —— 不抽出来的话,"导出给的是 PNG"
+ * 与"倍率走 clip 而不是窗口"这两件事就没有测试守着。
  */
-export function encodeRasterImage(
-  image: { toPNG(): Uint8Array; toJPEG(quality: number): Uint8Array },
-  format: "jpeg" | "png" | undefined,
-  jpegQuality: number,
-): Uint8Array {
-  return format === "png" ? image.toPNG() : image.toJPEG(jpegQuality);
+export function rasterCaptureParams(request: {
+  width: number;
+  height: number;
+  pixelRatio: number;
+  format?: "jpeg" | "png";
+}): {
+  format: "jpeg" | "png";
+  quality: number | undefined;
+  clip: { x: number; y: number; width: number; height: number; scale: number };
+} {
+  const format = request.format === "png" ? "png" : "jpeg";
+  return {
+    format,
+    // PNG 没有质量参数;传了也只是被忽略,不如不传。
+    quality: format === "jpeg" ? JPEG_QUALITY : undefined,
+    clip: {
+      x: 0,
+      y: 0,
+      width: Math.max(1, Math.round(request.width)),
+      height: Math.max(1, Math.round(request.height)),
+      // 倍率必须有限且为正:0 会出一张空图,NaN 出一张尺寸不可知的图。
+      scale: Number.isFinite(request.pixelRatio) && request.pixelRatio > 0 ? request.pixelRatio : 1,
+    },
+  };
+}
+
+/** 画布贴的位图默认质量。UI 截图里有大片纯色与文字,质量低了文字边缘会糊。 */
+const JPEG_QUALITY = 90;
+
+/**
+ * 从编码后的字节里读出真实像素尺寸。
+ *
+ * **不靠 `width × scale` 算**,而是读回来:那是权威值,而算出来的值一旦与编码器差一个像素,
+ * 画布上就会半像素错位(位图被贴进一个尺寸不符的槽)。
+ *
+ * 认不出格式就返回 null —— 调用方据此报失败,而不是拿一个猜的尺寸继续。
+ */
+export function imagePixelSize(bytes: Uint8Array): { width: number; height: number } | null {
+  // PNG:8 字节签名,IHDR 的宽高在 16..24。
+  if (
+    bytes.length >= 24 &&
+    bytes[0] === 0x89 && bytes[1] === 0x50 && bytes[2] === 0x4e && bytes[3] === 0x47 &&
+    bytes[12] === 0x49 && bytes[13] === 0x48 && bytes[14] === 0x44 && bytes[15] === 0x52
+  ) {
+    const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+    return { width: view.getUint32(16), height: view.getUint32(20) };
+  }
+
+  // JPEG:扫段找 SOF(0xC0..0xCF,排除 0xC4/0xC8/0xCC)。
+  if (bytes.length >= 4 && bytes[0] === 0xff && bytes[1] === 0xd8) {
+    let offset = 2;
+    while (offset + 9 < bytes.length) {
+      if (bytes[offset] !== 0xff) {
+        offset += 1;
+        continue;
+      }
+      const marker = bytes[offset + 1] ?? 0;
+      if (marker >= 0xc0 && marker <= 0xcf && marker !== 0xc4 && marker !== 0xc8 && marker !== 0xcc) {
+        return {
+          width: ((bytes[offset + 7] ?? 0) << 8) | (bytes[offset + 8] ?? 0),
+          height: ((bytes[offset + 5] ?? 0) << 8) | (bytes[offset + 6] ?? 0),
+        };
+      }
+      if (marker === 0xd8 || (marker >= 0xd0 && marker <= 0xd9)) {
+        offset += 2;
+        continue;
+      }
+      const length = ((bytes[offset + 2] ?? 0) << 8) | (bytes[offset + 3] ?? 0);
+      if (length < 2) return null;
+      offset += 2 + length;
+    }
+  }
+
+  return null;
 }
 
 export type RasterErrorCode =

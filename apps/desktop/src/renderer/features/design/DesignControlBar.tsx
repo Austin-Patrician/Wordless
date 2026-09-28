@@ -16,6 +16,7 @@ import {
   MousePointer2,
   Palette,
   Plus,
+  SwatchBook,
   Space,
   StickyNote,
   StretchHorizontal,
@@ -38,14 +39,20 @@ export type DesignTool = "select" | "hand" | "frame";
 
 export function DesignControlBar({
   onOpenStyles,
+  onTogglePalette,
+  paletteOpen,
   stylesOpen,
   tool,
   onToolChange,
 }: {
   tool: DesignTool;
   onToolChange: (tool: DesignTool) => void;
-  /** 打开设计体系对话框。 */
+  /** 打开设计体系对话框(换一套体系)。 */
   onOpenStyles: () => void;
+  /** 开关色彩系统面板(看当前这份设计的令牌)。 */
+  onTogglePalette: () => void;
+  /** 面板开着时按钮高亮。 */
+  paletteOpen: boolean;
   /** 对话框开着时按钮高亮。 */
   stylesOpen: boolean;
 }) {
@@ -96,6 +103,16 @@ export function DesignControlBar({
           icon={<Palette className="size-4" />}
           label={t("designToolDesignSystem")}
           onClick={onOpenStyles}
+        />
+        {/*
+          色彩系统:这份设计**现在**用什么色。和上面那个(换一套体系)分开,是因为它们是两个
+          动作 —— 一个写令牌,一个只是看。参考实现里也是一个面板管"看当前",一个对话框管"换"。
+        */}
+        <DockButton
+          active={paletteOpen}
+          icon={<SwatchBook className="size-4" />}
+          label={t("designToolTheme")}
+          onClick={onTogglePalette}
         />
         <Divider />
         <ZoomControls />

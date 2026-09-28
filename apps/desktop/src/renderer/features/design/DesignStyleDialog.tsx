@@ -5,6 +5,7 @@ import type { DesktopBridge } from "../../../bridge/desktop-bridge";
 import { usePreferences } from "../../shared/preferences";
 import { useBrowserOcclusion } from "../browser/use-occlusion";
 import { DesignStyleCard } from "./DesignStyleCard.tsx";
+import { designStyleCopy } from "./style-copy.ts";
 
 /**
  * 设计体系:把一套内置风格应用到**当前这份设计**上。
@@ -47,6 +48,8 @@ export function DesignStyleDialog({
   const [picked, setPicked] = useState<DesignStyleSummaryDto | null>(null);
   const [confirming, setConfirming] = useState(false);
   const [busy, setBusy] = useState(false);
+  // 用户看到的/这条消息里说的名字都取当前语言那一份 —— DTO 里的 `name` 只是兜底。
+  const pickedCopy = picked === null ? null : designStyleCopy(picked, t);
 
   useBrowserOcclusion(true, "dialog");
 
@@ -82,7 +85,12 @@ export function DesignStyleDialog({
       .applyDesignStyle({ path: designPath, styleId: style.id })
       .then((result) => {
         if (result === null) return;
-        onApplied({ framesNeedRestyle: result.framesNeedRestyle, opened: result.opened, styleName: style.name });
+        // 名字进的是回执与重设指令,所以要用当前语言那一份,不是目录里的兜底值。
+        onApplied({
+          framesNeedRestyle: result.framesNeedRestyle,
+          opened: result.opened,
+          styleName: designStyleCopy(style, t).name,
+        });
         onClose();
       })
       .catch(() => undefined)
@@ -101,9 +109,15 @@ export function DesignStyleDialog({
 
   return (
     <div className="absolute inset-0 z-50 grid place-items-center bg-black/25 p-4" onMouseDown={() => !busy && onClose()}>
-      {/* 里层吃掉 mousedown:点对话框本身不该关掉它。 */}
+      {/*
+        里层吃掉 mousedown:点对话框本身不该关掉它。
+
+        720px + 自适应列(而不是原来的 560px / 2 列):29 套在 2 列下是 15 行,一屏只看得到 4 张。
+        参考实现的模板 Dialog 也是这个形状(768px + auto-fill)。**不按分类筛选**是有意的,理由见
+        设计页那面墙的注释(§14.17):缩略图本身就是索引。
+      */}
       <div
-        className="flex max-h-full w-full max-w-[560px] flex-col overflow-hidden rounded-xl border border-[#e2e4e6] bg-white shadow-[0_16px_48px_rgba(0,0,0,0.20)] dark:border-border dark:bg-card"
+        className="flex max-h-full w-full max-w-[720px] flex-col overflow-hidden rounded-xl border border-[#e2e4e6] bg-white shadow-[0_16px_48px_rgba(0,0,0,0.20)] dark:border-border dark:bg-card"
         onMouseDown={(event) => event.stopPropagation()}
       >
         <header className="flex h-11 shrink-0 items-center justify-between border-b border-[#e4e4df] px-3 dark:border-border">
@@ -124,10 +138,11 @@ export function DesignStyleDialog({
 
         <div className="min-h-0 flex-1 overflow-y-auto p-3">
           {styles === null ? null : (
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid gap-3" style={{ gridTemplateColumns: "repeat(auto-fill, minmax(200px, 1fr))" }}>
               {styles.map((style) => (
                 <DesignStyleCard
                   actionLabel={t("designStylePick")}
+                  bridge={bridge}
                   key={style.id}
                   onPick={() => (!busy ? setPicked(style) : undefined)}
                   picked={picked?.id === style.id}
@@ -152,7 +167,7 @@ export function DesignStyleDialog({
             onClick={confirm}
             type="button"
           >
-            {picked === null ? t("designStyleApply") : t("designStyleApplyNamed").replace("{name}", picked.name)}
+            {picked === null ? t("designStyleApply") : t("designStyleApplyNamed").replace("{name}", pickedCopy?.name ?? picked.name)}
           </button>
         </footer>
       </div>
@@ -171,7 +186,7 @@ export function DesignStyleDialog({
             onMouseDown={(event) => event.stopPropagation()}
           >
             <h2 className="text-[13px] font-semibold text-[#20201f] dark:text-foreground">
-              {t("designStyleConfirmTitle").replace("{name}", picked.name)}
+              {t("designStyleConfirmTitle").replace("{name}", pickedCopy?.name ?? picked.name)}
             </h2>
             <p className="mt-2 text-[12px] leading-5 text-[#6b7075] dark:text-muted-foreground">
               {t("designStyleConfirmBody").replace("{count}", String(frameCount))}

@@ -1,0 +1,22 @@
+Vetta design templates
+https://github.com/openvetta/vetta-design-templates
+MIT License
+
+The built-in design styles that ship as Wordless's style wall — their `theme.css`
+token files and `DESIGN.md` specifications — are adapted from the Vetta design
+templates catalog (`.vetta/design-templates.json`). That catalog is in turn
+adapted from `awesome-design-md` by VoltAgent:
+
+  https://github.com/VoltAgent/awesome-design-md
+  Copyright (c) VoltAgent and contributors
+  MIT License
+
+Per-style provenance is kept in the header comment of each `theme.css` file.
+
+Wordless vendors the `theme.css` and `DESIGN.md` resources only. The upstream
+`demo.html` worked examples are not shipped: style thumbnails are drawn from the
+tokens in `theme.css`, so no per-style document is bundled.
+
+The generated snapshot and the exact transformations applied to the upstream
+text are recorded in `src/main/design/style-catalog-upstream.ts` and its
+generator, `scripts/sync-design-styles.mjs`.

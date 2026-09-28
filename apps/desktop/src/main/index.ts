@@ -20,6 +20,7 @@ import { registerAttachmentProtocol } from "./protocols/attachment";
 import { registerDesignProtocol, registerDesignScheme } from "./protocols/design";
 import { createDesignHandlers } from "./design/handlers";
 import { NodeDesignExporter } from "./design/design-exporter";
+import { ElectronDesignClipboard } from "./design/design-clipboard";
 import { RasterPool } from "./design/raster-pool";
 import { ElectronOffscreenRaster } from "./design/electron-offscreen-raster";
 import { WebContentsViewDesignHost } from "./design/design-view-host";
@@ -195,15 +196,35 @@ app.whenReady().then(async () => {
    * 目录对话框要挂在窗口上(未挂载时 macOS 上会弹不出来),而窗口是**这个文件**才有的 ——
    * 所以 `handlers.ts` 拿到的是注入的端口,它自己不 import Electron。
    */
-  const designExporter = new NodeDesignExporter(async () => {
-    const result = await dialog.showOpenDialog(mainWindow!, {
-      properties: ["openDirectory", "createDirectory"],
-      title: "导出到哪个文件夹",
-    });
-    return result.canceled || result.filePaths[0] === undefined ? null : result.filePaths[0];
-  });
+  const designExporter = new NodeDesignExporter(
+    async () => {
+      const result = await dialog.showOpenDialog(mainWindow!, {
+        properties: ["openDirectory", "createDirectory"],
+        title: "导出到哪个文件夹",
+      });
+      return result.canceled || result.filePaths[0] === undefined ? null : result.filePaths[0];
+    },
+    async (input) => {
+      // 保存对话框同样要挂在窗口上,否则 macOS 上弹不出来。
+      const result = await dialog.showSaveDialog(mainWindow!, {
+        defaultPath: input.suggestedName,
+        filters:
+          input.extension === "pdf"
+            ? [{ name: "PDF", extensions: ["pdf"] }]
+            : [{ name: "PNG", extensions: ["png"] }],
+      });
+      return result.canceled || result.filePath === undefined || result.filePath === "" ? null : result.filePath;
+    },
+  );
   registerDesignIpc({
-    handlers: createDesignHandlers(designStore, rasterPool, designViewHost, designBuilds, designExporter),
+    handlers: createDesignHandlers(
+      designStore,
+      rasterPool,
+      designViewHost,
+      designBuilds,
+      designExporter,
+      new ElectronDesignClipboard(),
+    ),
   });
   const officeResourcesPath = app.isPackaged ? process.resourcesPath : path.resolve(__dirname, "../../resources");
   office = new OfficeCliService({ artifactsRoot: presentationArtifactsRoot, resourcesPath: officeResourcesPath });

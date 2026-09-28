@@ -46,6 +46,8 @@ import type {
   JsonObject,
 } from "@wordless/agent-extension-sdk";
 import type {
+  DesignSaveImageRequestDto,
+  DesignSaveImageResultDto,
   AccountSnapshot,
   AnalysisSessionSnapshot,
   AppSnapshot,
@@ -102,6 +104,10 @@ import type {
   CreateDesignRequestDto,
   CreateDesignResultDto,
   DesignLiveFrameRequestDto,
+  DesignStyleDetailDto,
+  DesignStyleDetailRequestDto,
+  InstallDesignStyleResourcesDto,
+  InstallDesignStyleResourcesRequestDto,
   DesignStyleSummaryDto,
   DesignMoveFramesRequestDto,
   DesignRasterRequestDto,
@@ -128,7 +134,7 @@ import type {
 } from "@wordless/protocol";
 import type { ToolApprovalMode } from "@wordless/domain";
 
-export const DESKTOP_BRIDGE_VERSION = 52;
+export const DESKTOP_BRIDGE_VERSION = 54;
 
 export interface DesktopBridge {
   readonly version: typeof DESKTOP_BRIDGE_VERSION;
@@ -384,8 +390,20 @@ export interface DesktopBridge {
   setDesignLiveFrame(input: DesignLiveFrameRequestDto): Promise<boolean>;
   /** The built-in style catalog. Ships with the app — creating a design must not need the network. */
   listDesignStyles(): Promise<DesignStyleSummaryDto[]>;
+  /** 一套风格的正文(示例页 + 规范)。按 id 现取,列表里只有 `hasDemo`。 */
+  getDesignStyleDetail(input: DesignStyleDetailRequestDto): Promise<DesignStyleDetailDto | null>;
+  /**
+   * 把一套风格的资料(theme.css + DESIGN.md)落进工作区,供这一次会话当参考。
+   *
+   * 落的是**资料**不是设计包:包由 agent 的 `design_create` 建。
+   */
+  installDesignStyleResources(input: InstallDesignStyleResourcesRequestDto): Promise<InstallDesignStyleResourcesDto | null>;
   /** Creates a design package with the chosen style applied from its first frame. */
   createDesign(input: CreateDesignRequestDto): Promise<CreateDesignResultDto | null>;
+  /** 存一张合成图。取消返回 `{ ok: false, reason: "cancelled" }` —— 那不是错误。 */
+  saveDesignImage(input: DesignSaveImageRequestDto, bytes: Uint8Array<ArrayBuffer>): Promise<DesignSaveImageResultDto>;
+  /** 把一张合成图放进剪贴板。剪贴板被占用时返回 false。 */
+  copyDesignImage(bytes: Uint8Array<ArrayBuffer>): Promise<boolean>;
   deleteWebhookEndpoint(id: string): Promise<void>;
   /** Sends through a stored endpoint; the text is supplied by the renderer. */
   testWebhookEndpoint(id: string, message: WebhookMessage): Promise<WebhookSendResult>;
@@ -803,7 +821,11 @@ export const requiredMethods: Array<Exclude<keyof DesktopBridge, "version">> = [
     "rasterizeDesignFrames",
     "setDesignLiveFrame",
     "listDesignStyles",
+    "getDesignStyleDetail",
+    "installDesignStyleResources",
     "createDesign",
+    "saveDesignImage",
+    "copyDesignImage",
     "deleteWebhookEndpoint",
     "testWebhookEndpoint",
   "setBrowserPanelSession",

@@ -1,10 +1,19 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Frame as FrameIcon, LoaderCircle, PenTool, Plus } from "lucide-react";
 import type { DesignStyleSummaryDto, DesignSummaryDto } from "@wordless/protocol";
+import type { DesktopBridge } from "../../../bridge/desktop-bridge";
 import { usePreferences } from "../../shared/preferences";
 import { useRuntime, useRuntimeClient } from "../../shared/runtime";
 import { DesignStyleCard, type DesignStyleCardData } from "./DesignStyleCard.tsx";
-import { STYLE_GRID_MAX_COLUMNS, styleGridMetrics, styleGridPadding, styleGridWindow } from "./style-grid.ts";
+import { DesignStyleDetailDialog } from "./DesignStyleDetailDialog.tsx";
+import { designStyleCopy } from "./style-copy.ts";
+import {
+  STYLE_GRID_MAX_COLUMNS,
+  styleGridMetrics,
+  styleGridPadding,
+  styleGridRenderWindow,
+  styleGridWindow,
+} from "./style-grid.ts";
 
 /**
  * 设计画廊。
@@ -39,6 +48,8 @@ export function DesignLibraryView() {
   const [designs, setDesigns] = useState<DesignSummaryDto[] | null>(null);
   const [styles, setStyles] = useState<DesignStyleSummaryDto[] | null>(null);
   const [pendingStyle, setPendingStyle] = useState<DesignStyleCardData | null>(null);
+  /** 正在看详情的风格。点卡片先进详情(示例 + 色板 + 规范目录),从详情里才进命名流程。 */
+  const [detailStyle, setDetailStyle] = useState<DesignStyleCardData | null>(null);
   const [name, setName] = useState("");
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -117,14 +128,26 @@ export function DesignLibraryView() {
 
         <MyDesigns designs={designs} />
         <StyleWall
-          onPick={(style) => {
-            setPendingStyle(style);
-            setName("");
-          }}
+          bridge={client}
+          onPick={setDetailStyle}
           pendingStyle={pendingStyle}
           styles={styles}
         />
       </div>
+
+      {detailStyle !== null ? (
+        <DesignStyleDetailDialog
+          bridge={client}
+          onClose={() => setDetailStyle(null)}
+          onUse={(style) => {
+            // 从详情进命名流程:详情收起,名字对话框出来。
+            setDetailStyle(null);
+            setPendingStyle(style);
+            setName("");
+          }}
+          style={detailStyle}
+        />
+      ) : null}
 
       {pendingStyle !== null ? (
         <StyleNameDialog
@@ -178,12 +201,19 @@ function MyDesigns({ designs }: { designs: DesignSummaryDto[] | null }) {
   );
 }
 
-/** 风格墙。窗口化的几何全在 `style-grid.ts`。 */
+/**
+ * 风格墙。窗口化的几何全在 `style-grid.ts`。
+ *
+ * **没有分类筛选**,这是有意的:风格墙是视觉选择器,缩略图本身就是索引 —— 哪套更圆、更亮、更密
+ * 一眼可辨,而"某套属于哪一类"不是用户会问的问题。29 套铺开就是三四屏,一口气看得完(§14.17)。
+ */
 function StyleWall({
+  bridge,
   onPick,
   pendingStyle,
   styles,
 }: {
+  bridge: DesktopBridge;
   onPick: (style: DesignStyleCardData) => void;
   pendingStyle: DesignStyleCardData | null;
   styles: DesignStyleSummaryDto[] | null;
@@ -244,16 +274,27 @@ function StyleWall({
     };
   }, [metrics, total]);
 
-  // 还没量出行高时先整份铺上:这一帧算不出窗口,宁可多画也不能留白一屏。
-  const windowed = metrics.rowHeight > 0;
-  const start = windowed ? Math.min(range.start, Math.max(0, total - 1)) : 0;
-  const end = windowed ? Math.max(range.end, Math.min(total, start + metrics.columns)) : total;
-  const visible = (styles ?? []).slice(start, end);
-  const padding = styleGridPadding({ window: { start, end }, metrics, total });
+  /**
+   * 渲染窗口。`range` 是滚动时算出来存下的,它可能已经过期(尺寸变了、列表变了),所以这里经过
+   * `styleGridRenderWindow` 按当前总数收一次 —— 这两行 clamp 原来写在组件里,现在归纯函数管,
+   * 因为"窗口落在哪"本来就是算术,而它错起来是"渲染出空的一位或半行"。
+   */
+  // 不要叫 window:上面那个滚动 effect 里用的是真的 `window`。
+  const renderWindow = styleGridRenderWindow({ range, metrics, total });
+  const visible = (styles ?? []).slice(renderWindow.start, renderWindow.end);
+  const padding = styleGridPadding({ window: renderWindow, metrics, total });
 
   return (
     <div className="mt-10" ref={wall} style={{ paddingTop: padding.top, paddingBottom: padding.bottom }}>
-      <h2 className="text-[13px] font-semibold text-[#3e3e39] dark:text-foreground">{t("designStylesTitle")}</h2>
+      <div className="flex items-center gap-2">
+        <h2 className="text-[13px] font-semibold text-[#3e3e39] dark:text-foreground">{t("designStylesTitle")}</h2>
+        {total > 0 ? (
+          // 计数进标题:29 套这件事得先说出来,否则用户以为墙上就这些。
+          <span className="shrink-0 rounded-full bg-[#f2f3f2] px-2 py-px text-[10px] tabular-nums text-[#6b7075] dark:bg-[#292b2e] dark:text-[#a5abb0]">
+            {t("designStylesCountAll").replace("{count}", String(total))}
+          </span>
+        ) : null}
+      </div>
       <p className="mt-1.5 text-[11px] leading-5 text-[#8a8f94] dark:text-[#9fa5ab]">{t("designStylesHelp")}</p>
       {styles === null ? (
         <div className="mt-3 flex items-center gap-2 text-[12px] text-[#8a8f94]">
@@ -264,6 +305,7 @@ function StyleWall({
         <div className="mt-3 grid gap-3" style={{ gridTemplateColumns: `repeat(${metrics.columns}, minmax(0, 1fr))` }}>
           {visible.map((style) => (
             <DesignStyleCard
+              bridge={bridge}
               key={style.id}
               onPick={onPick}
               picked={pendingStyle?.id === style.id}
@@ -293,6 +335,7 @@ function StyleNameDialog({
   style: DesignStyleCardData;
 }) {
   const { t } = usePreferences();
+  const copy = designStyleCopy(style, t);
   return (
     <div className="fixed inset-0 z-[70] grid place-items-center bg-black/20 p-4" onClick={onCancel} role="presentation">
       <div
@@ -300,7 +343,7 @@ function StyleNameDialog({
         onClick={(event) => event.stopPropagation()}
       >
         <p className="text-[13px] font-semibold text-[#3e3e39] dark:text-foreground">
-          {t("designNameTitle").replace("{style}", style.name)}
+          {t("designNameTitle").replace("{style}", copy.name)}
         </p>
         <input
           aria-label={t("designNameField")}

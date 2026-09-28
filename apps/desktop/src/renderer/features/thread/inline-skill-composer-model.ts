@@ -127,10 +127,26 @@ export function countSkillTokenOccurrences(skillIds: readonly string[]): Record<
   return counts;
 }
 
+/**
+ * 输入框里"有没有东西"。
+ *
+ * 由 part 列表推出来,而不是数几个手写的字段(`text` / `skillIds` / `workspaceReferenceCount`)——
+ * 后者每加一种引用类型就得记得往判断里补一笔,而漏掉的症状是**占位符不消失、和 chip 叠在一起**
+ * (实测:插入色彩令牌后,"继续输入任务或追问" 仍压在 chip 上)。按 part 判断就没有这个需要:
+ * 任何不是空文本的 part 都算内容。
+ *
+ * 忽略纯空白文本:只打了空格不算写过东西。
+ */
+export function composerPartsHaveContent(parts: readonly UserPromptPart[]): boolean {
+  return parts.some((part) => part.type !== "text" || part.text.trim().length > 0);
+}
+
 export function normalizeUserPromptParts(parts: readonly UserPromptPart[]): UserPromptPart[] {
   const normalized: UserPromptPart[] = [];
   for (const part of parts) {
-    if (part.type === "skill-reference" || part.type === "workspace-reference" || part.type === "artifact-reference") {
+    // 反过来判:文本要合并,其余一律原样保留 —— 列一串类型的话,新增一种引用类型就会在这里
+    // 悄悄消失(它没有 `text` 字段,下面那句会把它当空文本丢掉)。
+    if (part.type !== "text") {
       normalized.push(part);
       continue;
     }

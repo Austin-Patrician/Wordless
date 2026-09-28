@@ -10,6 +10,7 @@ import type {
   WebhookTestRequestDto,
   DesignListRequestDto,
   CreateDesignRequestDto,
+  DesignSaveImageRequestDto,
   DesignLiveFrameRequestDto,
   DesignMoveFramesRequestDto,
   DesignRasterRequestDto,
@@ -20,6 +21,8 @@ import type {
   DeleteDesignFrameRequestDto,
   DesignRefreshRequestDto,
   DesignUpdateFrameMetaRequestDto,
+  DesignStyleDetailRequestDto,
+  InstallDesignStyleResourcesRequestDto,
   WebhookUpdateRequestDto,
 } from "@wordless/protocol";
 
@@ -184,7 +187,15 @@ const wordlessBridge: DesktopBridge = {
   setDesignLiveFrame: (input) =>
     ipcRenderer.invoke("wordless:design:live-frame", input satisfies DesignLiveFrameRequestDto),
   listDesignStyles: () => ipcRenderer.invoke("wordless:design:styles"),
+  getDesignStyleDetail: (input) =>
+    ipcRenderer.invoke("wordless:design:style-detail", input satisfies DesignStyleDetailRequestDto),
+  installDesignStyleResources: (input) =>
+    ipcRenderer.invoke("wordless:design:style-resources", input satisfies InstallDesignStyleResourcesRequestDto),
   createDesign: (input) => ipcRenderer.invoke("wordless:design:create", input satisfies CreateDesignRequestDto),
+  // 字节作为**独立的实参**:schema 只校验标量,几 MB 的数组由主进程侧的 O(1) 守卫校验。
+  saveDesignImage: (input, bytes) =>
+    ipcRenderer.invoke("wordless:design:save-image", input satisfies DesignSaveImageRequestDto, bytes),
+  copyDesignImage: (bytes) => ipcRenderer.invoke("wordless:design:copy-image", bytes),
   testWebhookEndpoint: (id, message) =>
     ipcRenderer.invoke("wordless:notifications:test", { id, message } satisfies WebhookTestRequestDto),
   setBrowserPanelSession: (sessionId) =>

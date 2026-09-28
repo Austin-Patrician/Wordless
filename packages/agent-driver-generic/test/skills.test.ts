@@ -1,7 +1,7 @@
 import { InMemorySessionStorage, Session } from "@wordless/agent";
 import { NodeExecutionEnv } from "@wordless/agent/node";
 import { createModels, fauxAssistantMessage, fauxProvider, type FauxResponseFactory } from "@wordless/ai";
-import { formatPromptArtifactReferencesForModel, formatPromptWithSkillReferences, formatPromptWorkspaceReferencesForModel, projectUserMessageContent, selectedSkillIdsFromPromptParts, stripPromptSkillReferences, type AgentDriverEvent, type AgentDriverSessionContext, type AgentRuntimeSkill } from "@wordless/agent-driver-sdk";
+import { formatPromptArtifactReferencesForModel, formatPromptThemeTokenReferencesForModel, formatPromptWithSkillReferences, formatPromptWorkspaceReferencesForModel, projectUserMessageContent, selectedSkillIdsFromPromptParts, stripPromptSkillReferences, type AgentDriverEvent, type AgentDriverSessionContext, type AgentRuntimeSkill } from "@wordless/agent-driver-sdk";
 import type { SessionRecord } from "@wordless/domain";
 import { describe, expect, it } from "vitest";
 import { createAgentHarnessDriver } from "../src/index.ts";
@@ -127,6 +127,44 @@ describe("selected skills", () => {
     expect(projectUserMessageContent(content)).toEqual([
       { type: "text", text: "Review this change." },
       { type: "attachment", id: "README.md:0", name: "README.md", mediaType: "text/plain" },
+    ]);
+  });
+
+  it("hands a picked theme token to the model as a readable reference, not raw JSON", async () => {
+    /*
+      三层各有各的形状:送出去的是编码过的 JSON(给程序读),模型读到的必须是一段人话(否则
+      `%7B%22…` 会原样进上下文),存到会话里再投影回一个可渲染的引用块。
+    */
+    const parts = [
+      { type: "text" as const, text: "Make the primary button use this." },
+      {
+        type: "theme-token-reference" as const,
+        path: "meadow.wdesign/theme.css",
+        name: "--color-primary",
+        value: "#4f46e5",
+      },
+    ];
+    const prompt = formatPromptWithSkillReferences(parts);
+    expect(prompt).toContain("wordless-theme-token-reference");
+
+    const forModel = formatPromptThemeTokenReferencesForModel(prompt);
+    expect(forModel).toContain("<wordless_theme_token_reference>");
+    expect(forModel).toContain('name="--color-primary"');
+    expect(forModel).toContain('value="#4f46e5"');
+    expect(forModel).toContain('path="meadow.wdesign/theme.css"');
+    // 编码过的 JSON 不能漏进模型上下文。
+    expect(forModel).not.toContain("%7B");
+    expect(forModel).not.toContain("wordless-theme-token-reference");
+
+    expect(projectUserMessageContent(prompt)).toEqual([
+      { type: "text", text: "Make the primary button use this." },
+      {
+        type: "theme-token",
+        id: "meadow.wdesign/theme.css:--color-primary:1",
+        path: "meadow.wdesign/theme.css",
+        name: "--color-primary",
+        value: "#4f46e5",
+      },
     ]);
   });
 

@@ -11,6 +11,8 @@ import { useRuntime, useRuntimeClient } from "../../shared/runtime";
 import { Composer, EMPTY_INLINE_SKILL_COMPOSER_VALUE } from "../thread/Composer";
 import { AccessPicker } from "../thread/AccessPicker";
 import { createPendingThreadTurn, createUserMessageSubmission, type PendingThreadTurn } from "../thread/pending-thread-turn";
+import { DesignStyleLaunchStrip } from "../design/DesignStyleLaunchStrip";
+import { designStyleStartParts } from "../design/style-start";
 import { ModelPicker, thinkingLevelForModelSelection } from "./ModelPicker";
 import { WorkspacePicker } from "./WorkspacePicker";
 import { AgentEntryIcon } from "./AgentEntryIcon";
@@ -29,14 +31,26 @@ type WelcomeViewProps = {
   initialExpertPrompt?: string;
 };
 
-const modeOptions: { icon: string; id: WorkbenchMode; label: string }[] = [
-  { id: "everyday", label: "Everyday work", icon: everydayWorkIcon },
-  { id: "code", label: "Code", icon: codeDevelopmentIcon },
-  { id: "create", label: "Create", icon: uiDesignIcon },
+/**
+ * 三个模式。标签走 i18n —— 它们原本是硬编码的英文,而这是中文优先的应用。
+ *
+ * 标签用「创作」而不是「界面设计」:这一栏装的是**模式**,不是某一个 entry。现在它底下只有
+ * `ui-design` 一个(图片生成改成了内部 entry),但哪天再添一个,标签不必跟着改。
+ */
+const modeOptions: { icon: string; id: WorkbenchMode; labelKey: "modeEveryday" | "modeCode" | "modeCreate" }[] = [
+  { id: "everyday", labelKey: "modeEveryday", icon: everydayWorkIcon },
+  { id: "code", labelKey: "modeCode", icon: codeDevelopmentIcon },
+  { id: "create", labelKey: "modeCreate", icon: uiDesignIcon },
 ];
 
+/**
+ * 新建页该提供的那一类里的第一个。
+ *
+ * 跳过 `internal`:`image-generation` 这类 entry 还要能被解析(媒体工作台按 id 取它),但不该
+ * 在这里露头 —— 否则换一次顺序,新建页的默认项就可能变成它。
+ */
 function defaultEntry(entries: WorkbenchEntryDefinition[], mode: WorkbenchMode): WorkbenchEntryDefinition | undefined {
-  return entries.find((entry) => entry.mode === mode);
+  return entries.find((entry) => entry.mode === mode && !entry.internal);
 }
 
 function PresentationLaunchControls({
@@ -111,6 +125,8 @@ export function WelcomeView({ initialExpertPrompt, initialExpertSelection, onOpe
   const [connectorIds, setConnectorIds] = useState<string[]>([]);
   const [interactionMode, setInteractionMode] = useState<AgentInteractionModeId>("default");
   const [toolApprovalMode, setToolApprovalMode] = useState<ToolApprovalMode>("manual");
+  /** 这一栏选中的内置风格。`null` = 由 agent 自己定(默认,行为与从前一致)。 */
+  const [designStyleId, setDesignStyleId] = useState<string | null>(null);
   const [presentationMode, setPresentationMode] = useState<PresentationGenerationMode>("guided");
   const [presentationTemplateId, setPresentationTemplateId] = useState("auto");
   const [presentationTemplates, setPresentationTemplates] = useState<PresentationTemplate[]>([]);
@@ -121,7 +137,10 @@ export function WelcomeView({ initialExpertPrompt, initialExpertSelection, onOpe
   const initialDraft = initialExpertPrompt ? { ...EMPTY_INLINE_SKILL_COMPOSER_VALUE, parts: [{ type: "text" as const, text: initialExpertPrompt }], text: initialExpertPrompt } : undefined;
 
   const entries = snapshot?.entries ?? [];
-  const modeEntries = useMemo(() => entries.filter((entry) => entry.mode === mode), [entries, mode]);
+  const modeEntries = useMemo(
+    () => entries.filter((entry) => entry.mode === mode && !entry.internal),
+    [entries, mode],
+  );
   const entry = entries.find((candidate) => candidate.id === entryId) ?? defaultEntry(entries, mode);
   const selectedWorkspace = snapshot?.workspaces.find((workspace) => workspace.id === workspaceId);
   const selectedWorkspaceAvailable = workspaceId === null || selectedWorkspace?.availability === "available";
@@ -179,9 +198,24 @@ export function WelcomeView({ initialExpertPrompt, initialExpertSelection, onOpe
     setSubmitting(true);
     setSubmissionError(null);
     const submission = createUserMessageSubmission();
-    const pendingTurn = createPendingThreadTurn(parts, submission, attachments);
     try {
-      const session = await client.createAndPrompt({ mode, entryId: entry.id, workspaceId, accessLevel, model, thinkingLevel, connectorIds, interactionMode, toolApprovalMode, ...(expertSelection ? { expertSelection } : {}), ...(entry.workbenchId === "presentation" ? { presentation: { generationMode: presentationMode, templateId: presentationTemplateId === "auto" ? null : presentationTemplateId } } : {}) }, parts, submission, attachments);
+      /*
+        挑了一套风格:先把它的资料(theme.css + DESIGN.md)落进**工作区**,再把这两份资料作为引用
+        带进第一条消息。落盘失败就**不建会话** —— 否则用户会拿到一个"看起来按那套风格开的"、其实
+        没有资料的会话,而原因在几屏之外。
+      */
+      const styleId = entry.workbenchId === "ui-preview" ? designStyleId : null;
+      const installed =
+        styleId === null || selectedWorkspace === undefined
+          ? null
+          : await client.installDesignStyleResources({ root: selectedWorkspace.rootPath, styleId });
+      if (styleId !== null && installed === null) {
+        setSubmissionError(t("designStyleLaunchFailed"));
+        return;
+      }
+      const messageParts = installed === null ? parts : [...parts, ...designStyleStartParts(installed)];
+      const pendingTurn = createPendingThreadTurn(messageParts, submission, attachments);
+      const session = await client.createAndPrompt({ mode, entryId: entry.id, workspaceId, accessLevel, model, thinkingLevel, connectorIds, interactionMode, toolApprovalMode, ...(expertSelection ? { expertSelection } : {}), ...(entry.workbenchId === "presentation" ? { presentation: { generationMode: presentationMode, templateId: presentationTemplateId === "auto" ? null : presentationTemplateId } } : {}) }, messageParts, submission, attachments);
       onSessionCreated(session.id, pendingTurn);
       void refresh();
     } catch (cause) {
@@ -223,38 +257,54 @@ export function WelcomeView({ initialExpertPrompt, initialExpertSelection, onOpe
                 type="button"
               >
                 <img alt="" className={cn("h-3.5 w-3.5 shrink-0 object-contain", (option.id === "everyday" || option.id === "code") && "dark:invert")} draggable={false} src={option.icon} />
-                <span className="truncate">{option.label}</span>
+                <span className="truncate">{t(option.labelKey)}</span>
               </button>
             ))}
           </div>
         </div>
 
         <div className="mt-10">
-          <div className="mb-3 flex flex-wrap gap-2">
-            {modeEntries.map((candidate) => {
-              const selected = entry?.id === candidate.id;
-              return (
-                <button
-                  className={cn(
-                    "flex max-w-full items-center gap-1.5 rounded-lg border px-3 py-2 text-[12px] font-semibold transition-colors",
-                    selected ? "border-[#b9ce80] bg-[#eef4dc] text-[#354210] dark:border-[#739127] dark:bg-[#303a1c] dark:text-[#e8f5c6]" : "border-[#e4e4e0] bg-white text-[#44443f] hover:bg-[#f5f5f2] dark:border-border dark:bg-[#1c1d18] dark:text-foreground dark:hover:bg-[#25271f]",
-                    candidate.availability === "unavailable" ? "cursor-not-allowed opacity-45" : "",
-                  )}
-                  disabled={candidate.availability === "unavailable"}
-                  key={candidate.id}
-                  onClick={() => {
-                    setEntryId(candidate.id);
-                    setModel(null);
-                  }}
-                  title={candidate.availability === "unavailable" ? t("unavailable") : undefined}
-                  type="button"
-                >
-                  <AgentEntryIcon iconKey={candidate.iconKey} />
-                  <span className="truncate">{t(candidate.labelKey as Parameters<typeof t>[0])}</span>
-                </button>
-              );
-            })}
-          </div>
+          {/*
+            只有**一个**可选项时不摆这一行:一个按钮的"选择器"长得像可以选,其实没得选,而它占掉的
+            是这一屏最值钱的位置(风格胶片与输入框之间)。
+            判断按数据走而不是按模式写死(`mode === "create"` 这样):哪天这个模式下再添一个 entry
+            或撤掉一个,这一行自己回来了,不必改这里。
+          */}
+          {modeEntries.length > 1 ? (
+            <div className="mb-3 flex flex-wrap gap-2">
+              {modeEntries.map((candidate) => {
+                const selected = entry?.id === candidate.id;
+                return (
+                  <button
+                    className={cn(
+                      "flex max-w-full items-center gap-1.5 rounded-lg border px-3 py-2 text-[12px] font-semibold transition-colors",
+                      selected ? "border-[#b9ce80] bg-[#eef4dc] text-[#354210] dark:border-[#739127] dark:bg-[#303a1c] dark:text-[#e8f5c6]" : "border-[#e4e4e0] bg-white text-[#44443f] hover:bg-[#f5f5f2] dark:border-border dark:bg-[#1c1d18] dark:text-foreground dark:hover:bg-[#25271f]",
+                      candidate.availability === "unavailable" ? "cursor-not-allowed opacity-45" : "",
+                    )}
+                    disabled={candidate.availability === "unavailable"}
+                    key={candidate.id}
+                    onClick={() => {
+                      setEntryId(candidate.id);
+                      setModel(null);
+                    }}
+                    title={candidate.availability === "unavailable" ? t("unavailable") : undefined}
+                    type="button"
+                  >
+                    <AgentEntryIcon iconKey={candidate.iconKey} />
+                    <span className="truncate">{t(candidate.labelKey as Parameters<typeof t>[0])}</span>
+                  </button>
+                );
+              })}
+            </div>
+          ) : null}
+          {entry?.workbenchId === "ui-preview" ? (
+            <DesignStyleLaunchStrip
+              bridge={client}
+              onSelect={setDesignStyleId}
+              selected={designStyleId}
+              workspaceReady={selectedWorkspace !== undefined}
+            />
+          ) : null}
           {entry?.workbenchId === "presentation" ? <PresentationLaunchControls generationMode={presentationMode} onGenerationModeChange={setPresentationMode} onTemplateChange={setPresentationTemplateId} templateId={presentationTemplateId} templates={presentationTemplates} /> : null}
           <div className="relative rounded-t-[14px] bg-[#f1f1ef] dark:bg-[#252620]">
             <Composer

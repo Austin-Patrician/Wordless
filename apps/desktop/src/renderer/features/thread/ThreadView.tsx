@@ -53,7 +53,13 @@ import type {
 import {
   type ContextCompactionRecord,
   type ExpertPortrait as ExpertPortraitDefinition,
+  type MessageArtifactBlock,
+  type MessageBlock,
+  type MessageSkillReferenceBlock,
+  type MessageTextBlock,
+  type MessageThemeTokenBlock,
   type MessageToolBlock,
+  type MessageWorkspaceReferenceBlock,
   type ModelReference,
   type ToolApprovalMode,
   type UserPromptPart,
@@ -74,7 +80,7 @@ import { groupResearchDelegationBlocks } from "../workbench/research-delegation"
 import { Composer } from "./Composer";
 import type {
   InlineSkillComposerValue,
-  InlineWorkspaceReferenceToken,
+  InlineComposerAttachment,
 } from "./InlineSkillComposer";
 import { ConversationDensityRail } from "./ConversationDensityRail";
 import {
@@ -137,8 +143,10 @@ type ThreadViewProps = {
     draft: InlineSkillComposerValue,
   ) => void;
   onMessageNavigationConsumed?: (requestId: number) => void;
-  pendingWorkspaceReferences: InlineWorkspaceReferenceToken[];
-  onPendingWorkspaceReferencesConsumed: () => void;
+  pendingComposerAttachments: InlineComposerAttachment[];
+  pendingComposerRemovals: InlineComposerAttachment[];
+  onPendingComposerAttachmentsConsumed: () => void;
+  onPendingComposerRemovalsConsumed: () => void;
   onOpenModels: () => void;
   onOpenSkillImport: () => void;
   onOpenSkills: () => void;
@@ -2935,14 +2943,45 @@ function MessageBody({
         workbenchId={workbenchId}
       />
     ) : null;
+/**
+ * 用户气泡里该渲染的块。
+ *
+ * 不顺手的写法有两种,都被否掉了:一行 `.filter((b) => b.type !== "attachment")` 更短,但它会把
+ * **助手独有**的块(推理、工具调用)也算进来;而列一串"要渲染"的类型,则会在新增引用类型时**静默
+ * 少一个块** —— 消息是存下来的,那意味着旧会话里的引用就此看不见。
+ *
+ * 折中是逐个类型表态:`switch` 里漏一个就编译不过(`never` 那句),而返回类型谓词让下面那段
+ * JSX 保持原有的收窄。
+ */
+function isBubbleContentBlock(
+  block: MessageBlock,
+): block is
+  | MessageTextBlock
+  | MessageSkillReferenceBlock
+  | MessageWorkspaceReferenceBlock
+  | MessageThemeTokenBlock
+  | MessageArtifactBlock {
+  switch (block.type) {
+    case "text":
+    case "skill-reference":
+    case "workspace-reference":
+    case "theme-token":
+    case "artifact":
+      return true;
+    case "attachment":
+    // 助手独有:用户消息里不会出现,出现了也不该进气泡。
+    case "reasoning":
+    case "tool":
+      return false;
+    default: {
+      const unhandled: never = block;
+      throw new Error(`Unhandled message block: ${JSON.stringify(unhandled)}`);
+    }
+  }
+}
+
   if (message.role === "user") {
-    const contentBlocks = message.blocks.filter(
-      (block) =>
-        block.type === "text" ||
-        block.type === "skill-reference" ||
-        block.type === "workspace-reference" ||
-        block.type === "artifact",
-    );
+    const contentBlocks = message.blocks.filter(isBubbleContentBlock);
     const attachments = message.blocks.filter(
       (block) => block.type === "attachment",
     );
@@ -2974,6 +3013,20 @@ function MessageBody({
                         className="h-3 w-3 shrink-0 [&_svg]:h-3 [&_svg]:w-3"
                         kind={block.kind}
                         name={block.name}
+                      />
+                      <span className="min-w-0 truncate">{block.name}</span>
+                    </span>
+                  ) : block.type === "theme-token" ? (
+                    // 令牌引用:色点 + 变量名。色点用**值本身**画 —— 用户当时指的就是那块颜色。
+                    <span
+                      className="mx-1.5 inline-flex h-6 max-w-[230px] select-none items-center gap-1 rounded-[5px] border border-[#cbbfe0] bg-[#f6f2fd] px-1.5 align-bottom text-[13px] font-normal leading-4 text-[#4b3a6b] shadow-[inset_0_1px_0_rgba(255,255,255,0.65)] dark:border-[#4b4170] dark:bg-[#282343] dark:text-[#d7cdf2]"
+                      key={block.id}
+                      title={`${block.name}: ${block.value} · ${block.path}`}
+                    >
+                      <span
+                        aria-hidden
+                        className="size-3 shrink-0 rounded-[3px] border border-black/10 dark:border-white/15"
+                        style={{ background: block.value }}
                       />
                       <span className="min-w-0 truncate">{block.name}</span>
                     </span>
@@ -3900,8 +3953,10 @@ export function ThreadView({
   onOpenResearchTask,
   onOpenSkillImport,
   onOpenSkills,
-  pendingWorkspaceReferences,
-  onPendingWorkspaceReferencesConsumed,
+  pendingComposerAttachments,
+  pendingComposerRemovals,
+  onPendingComposerAttachmentsConsumed,
+  onPendingComposerRemovalsConsumed,
   sessionId,
 }: ThreadViewProps) {
   const client = useRuntimeClient();
@@ -4560,9 +4615,13 @@ export function ThreadView({
                     onSend={send}
                     artifactSelection={artifactSelection}
                     onArtifactSelectionConsumed={onArtifactSelectionConsumed}
-                    pendingWorkspaceReferences={pendingWorkspaceReferences}
-                    onPendingWorkspaceReferencesConsumed={
-                      onPendingWorkspaceReferencesConsumed
+                    pendingComposerAttachments={pendingComposerAttachments}
+                    pendingComposerRemovals={pendingComposerRemovals}
+                    onPendingComposerAttachmentsConsumed={
+                      onPendingComposerAttachmentsConsumed
+                    }
+                    onPendingComposerRemovalsConsumed={
+                      onPendingComposerRemovalsConsumed
                     }
                     searchWorkspaceReferences={
                       session.workspaceId

@@ -61,7 +61,7 @@ import {
   InlineSkillComposer,
   type InlineSkillComposerHandle,
   type InlineSkillComposerValue,
-  type InlineWorkspaceReferenceToken,
+  type InlineComposerAttachment,
 } from "./InlineSkillComposer";
 import { ProviderIcon } from "../settings/provider-icons";
 import type { ArtifactSelection, WorkspaceFileEntry } from "@wordless/protocol";
@@ -121,8 +121,11 @@ type ComposerProps = {
   workspaceLabel?: string;
   searchWorkspaceReferences?: (query: string) => Promise<WorkspaceFileEntry[]>;
   workspaceSearchScope?: string;
-  pendingWorkspaceReferences?: InlineWorkspaceReferenceToken[];
-  onPendingWorkspaceReferencesConsumed?: () => void;
+  pendingComposerAttachments?: InlineComposerAttachment[];
+  /** 外部要求摘掉的附件(画布上再点一次就是取消)。与插入对称,同样消费即清。 */
+  pendingComposerRemovals?: InlineComposerAttachment[];
+  onPendingComposerAttachmentsConsumed?: () => void;
+  onPendingComposerRemovalsConsumed?: () => void;
   artifactSelection?: ArtifactSelection | null;
   onArtifactSelectionConsumed?: () => void;
   userMessageHistory?: Array<{ id: string; parts: UserPromptPart[] }>;
@@ -638,8 +641,10 @@ export function Composer({
   workspaceLabel,
   searchWorkspaceReferences,
   workspaceSearchScope = "default",
-  pendingWorkspaceReferences = [],
-  onPendingWorkspaceReferencesConsumed,
+  pendingComposerAttachments = [],
+  pendingComposerRemovals = [],
+  onPendingComposerRemovalsConsumed,
+  onPendingComposerAttachmentsConsumed,
   artifactSelection,
   onArtifactSelectionConsumed,
   userMessageHistory = [],
@@ -998,14 +1003,20 @@ export function Composer({
   }, [taskPickerOpen]);
 
   useEffect(() => {
-    if (pendingWorkspaceReferences.length === 0 || disabled) return;
-    for (const reference of pendingWorkspaceReferences)
-      inputRef.current?.insertWorkspaceReference(reference);
-    onPendingWorkspaceReferencesConsumed?.();
+    if (pendingComposerRemovals.length === 0 || disabled) return;
+    for (const attachment of pendingComposerRemovals) inputRef.current?.removeAttachment(attachment);
+    onPendingComposerRemovalsConsumed?.();
+  }, [disabled, onPendingComposerRemovalsConsumed, pendingComposerRemovals]);
+
+  useEffect(() => {
+    if (pendingComposerAttachments.length === 0 || disabled) return;
+    for (const attachment of pendingComposerAttachments)
+      inputRef.current?.insertWorkspaceReference(attachment);
+    onPendingComposerAttachmentsConsumed?.();
   }, [
     disabled,
-    onPendingWorkspaceReferencesConsumed,
-    pendingWorkspaceReferences,
+    onPendingComposerAttachmentsConsumed,
+    pendingComposerAttachments,
   ]);
 
   useEffect(() => {

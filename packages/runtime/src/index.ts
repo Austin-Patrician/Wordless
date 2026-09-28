@@ -625,6 +625,8 @@ export const BUILTIN_ENTRIES: WorkbenchEntryDefinition[] = [
     labelKey: "entryImageGeneration",
     descriptionKey: "entryImageGenerationDescription",
     iconKey: "image",
+    // 不摆在新建页(用户要的):媒体工作台按 id 取它来建会话,所以定义得留着。
+    internal: true,
     profile: { id: "general", version: "1" },
     workbenchId: "media-canvas",
     availability: "available",

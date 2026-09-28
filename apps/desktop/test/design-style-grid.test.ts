@@ -5,6 +5,7 @@ import {
   STYLE_GRID_MAX_COLUMNS,
   styleGridMetrics,
   styleGridPadding,
+  styleGridRenderWindow,
   styleGridWindow,
 } from "../src/renderer/features/design/style-grid.ts";
 
@@ -57,6 +58,45 @@ test("窗口不会越过总数", () => {
   const window = styleGridWindow({ scrolledPast: 100_000, viewportHeight: 400, metrics, total: 4 });
   assert.ok(window.start <= 4);
   assert.equal(window.end, 4);
+});
+
+test("列表变短后滚过头:窗口落在最后一行,而不是落到列表外面", () => {
+  // 筛选把 29 张收成 3 张时,滚动位置还停在很深处。收不住的话 start 会越过列表末尾,
+  // 窗口变成空的 —— 用户看到的是"筛完一张都不剩"。
+  const metrics = { columns: 3, rowHeight: 100 };
+  const window = styleGridWindow({ scrolledPast: 100_000, viewportHeight: 400, metrics, total: 3 });
+  assert.equal(window.start, 0);
+  assert.equal(window.end, 3);
+
+  // 收进最后一行,而不是落在外面的空处:7 条 = 3 行,最后一行是第 6 条那一行。
+  const trailing = styleGridWindow({ scrolledPast: 100_000, viewportHeight: 400, metrics, total: 7 });
+  assert.equal(trailing.start, 6);
+  assert.equal(trailing.end, 7);
+});
+
+test("渲染窗口:过期的 range 按当前总数收回来,不能只剩一张", () => {
+  // range 是滚动时算出来存下的,筛选之后总数变了而它没变。按旧 range 直接切片的话,
+  // 29 → 3 会切出 slice(2,30) = 只有第 3 张,且上下留白都是 0 —— 看起来像筛选把结果吃掉了。
+  const metrics = { columns: 3, rowHeight: 100 };
+  const stale = { start: 21, end: 30 };
+
+  // 29 张 → 3 张:窗口收回第一行,三张全在。这是那个"筛完只剩一张"的 bug。
+  assert.deepEqual(styleGridRenderWindow({ range: stale, metrics, total: 3 }), { start: 0, end: 3 });
+  // 7 张:过期的 range 已经滚到了末尾,收回来就是最后一行 —— 这与在长列表底部看到的一致。
+  assert.deepEqual(styleGridRenderWindow({ range: stale, metrics, total: 7 }), { start: 6, end: 7 });
+  // 列表没变短时,原窗口原样透传。
+  const fresh = { start: 6, end: 18 };
+  assert.deepEqual(styleGridRenderWindow({ range: fresh, metrics, total: 30 }), fresh);
+});
+
+test("渲染窗口:空列表与未量出行高都不报错", () => {
+  const metrics = { columns: 3, rowHeight: 100 };
+  assert.deepEqual(styleGridRenderWindow({ range: { start: 9, end: 12 }, metrics, total: 0 }), { start: 0, end: 0 });
+  // 还没量出行高:整份铺上,宁可多画也不能留白一屏。
+  assert.deepEqual(styleGridRenderWindow({ range: { start: 0, end: 3 }, metrics: styleGridMetrics(0), total: 9 }), {
+    start: 0,
+    end: 9,
+  });
 });
 
 test("行高未知时整份渲染 —— 这一帧算不出窗口,宁可多画也不能留白", () => {

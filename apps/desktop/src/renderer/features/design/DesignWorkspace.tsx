@@ -1,11 +1,13 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Check, Frame as FrameIcon, LoaderCircle, TriangleAlert } from "lucide-react";
 import type { DesignOpenedDto, DesignSummaryDto } from "@wordless/protocol";
 import { usePreferences } from "../../shared/preferences";
 import { useRuntime, useRuntimeClient } from "../../shared/runtime";
 import { DesignCanvas } from "./DesignCanvas.tsx";
+import { MockupExportDialog } from "./mockup-export-dialog.tsx";
 import { mergeRefreshedManifest } from "./design-view.ts";
-import { frameReference, workspaceRelativePath } from "./frame-reference.ts";
+import type { InlineComposerAttachment } from "../thread/InlineSkillComposer";
+import { frameReference, themeReference, workspaceRelativePath } from "./frame-reference.ts";
 import { useDesignActivity } from "./use-design-activity.ts";
 
 /** 稳定的空数组:内联 `[]` 每次都换身份,会让活动态的订阅反复重建。 */
@@ -29,7 +31,10 @@ const REFRESH_INTERVAL_MS = 1_000;
  * 与其它产物一样跟着项目走,而不是存在应用数据目录里。
  */
 export function DesignWorkspace({
+  /** 画布上已经挂到输入框的令牌(`--color-*`),由输入框那侧持有。 */
+  attachedThemeTokens = [],
   onAttachFile,
+  onToggleThemeToken,
   onReskin,
   running = false,
   sessionId,
@@ -42,7 +47,7 @@ export function DesignWorkspace({
    * 由外壳注入(它才持有那条通道),画布这一侧不该知道输入框长什么样 —— 它只知道"这一帧
    * 是哪个文件、叫什么"。
    */
-  onAttachFile?: (reference: { path: string; name: string; kind: "file" | "directory" }) => void;
+  onAttachFile?: (reference: InlineComposerAttachment) => void;
   /**
    * 换完体系之后**开一轮对话**,让 agent 全量重设。
    *
@@ -50,7 +55,17 @@ export function DesignWorkspace({
    * 都是对话那一侧的东西,画布这一侧只该说清"设计在哪、换了哪一套、有几帧"。
    */
   onReskin?: (input: { designDir: string; frameCount: number; styleName: string }) => void;
+  /** 画布上已经挂到输入框的令牌名(`--color-*`)。面板的选中态读它。 */
+  attachedThemeTokens?: readonly string[];
+  /**
+   * 色彩系统面板上点一个令牌:没挂就挂上,已挂就摘掉。
+   *
+   * 这里传出去的是**已经算好的附件**(带路径):面板只知道令牌名与值,而"它属于哪个文件"只有
+   * 这一层知道(它才持有设计包路径与工作区根)。
+   */
+  onToggleThemeToken?: (reference: InlineComposerAttachment) => void;
 }) {
+  const themeTokens = attachedThemeTokens;
   const client = useRuntimeClient();
   const { snapshot } = useRuntime();
   const { t } = usePreferences();
@@ -74,6 +89,11 @@ export function DesignWorkspace({
 
   const [designs, setDesigns] = useState<DesignSummaryDto[] | null>(null);
   const [opened, setOpened] = useState<DesignOpenedDto | null>(null);
+  /**
+   * 「画布从磁盘上重读了一次」的计数。色彩系统面板按它重读 `theme.css` —— 让面板跟着**磁盘**走,
+   * 而不是跟着某次操作走:应用体系、agent 改令牌、用户点刷新,都会经过下面这条 `applyRefreshed`。
+   */
+  const [themeRevision, setThemeRevision] = useState(0);
   const [selectedFrameIds, setSelectedFrameIds] = useState<readonly string[]>([]);
   const [error, setError] = useState<string | null>(null);
   /**
@@ -84,6 +104,8 @@ export function DesignWorkspace({
    */
   const [notice, setNotice] = useState<string | null>(null);
   const [exporting, setExporting] = useState(false);
+  /** 合成图弹窗。与目录导出各自独立:一个是单文件分享图,一个是一批交付文件。 */
+  const [mockupOpen, setMockupOpen] = useState(false);
   /** 手动刷新在途 —— 期间按钮不响应,免得连点叠几次。 */
   const [refreshing, setRefreshing] = useState(false);
   /**
@@ -148,6 +170,7 @@ export function DesignWorkspace({
 
   /** 接上刷新回来的清单。**布局的那一半由 `mergeRefreshedManifest` 负责**(纯函数)。 */
   const applyRefreshed = useCallback((next: DesignOpenedDto) => {
+    setThemeRevision((revision) => revision + 1);
     setOpened((current) =>
       current === null ? next : { ...next, manifest: mergeRefreshedManifest(current.manifest, next.manifest) },
     );
@@ -446,6 +469,35 @@ export function DesignWorkspace({
   );
 
   /**
+   * 当前设计在**工作区相对**路径下的位置:色彩系统面板按它读 `theme.css`。
+   *
+   * 取不出来(设计包不在工作区内)就是 null,面板据此不给动作 —— 与 `frameReference` 同一条
+   * 纪律:宁可没有,也不给一个 agent 打不开的路径。
+   */
+  const designDir = useMemo(
+    () => (opened === null ? null : workspaceRelativePath(opened.summary.path, root)),
+    [opened, root],
+  );
+
+  /**
+   * 色彩系统面板上点一个令牌:没挂就挂上,已挂就摘掉。
+   *
+   * 面板不写文件,它只是把"用户指的是哪一个令牌"交给对话。换算成输入框附件的那一步在上层
+   * (`onAttachFile` / `onDetachFile`),这里只负责说清是哪一个令牌。
+   */
+  const toggleThemeToken = useCallback(
+    (token: { name: string; value: string }) => {
+      const current = openedRef.current;
+      if (current === null) return;
+      const reference = themeReference({ designPath: current.summary.path, token, workspaceRoot: root });
+      if (reference === null) return;
+      // 挂还是摘由上层定:它才知道输入框里现在挂着什么(见 WorkbenchShell)。
+      onToggleThemeToken?.(reference);
+    },
+    [onToggleThemeToken, root],
+  );
+
+  /**
    * 用户按的刷新。
    *
    * 与心跳走同一个入口,两处不同:
@@ -559,6 +611,22 @@ export function DesignWorkspace({
         <span className="ml-auto shrink-0 text-[11px] tabular-nums text-[#8a8f94]">
           {frameCount > 0 ? t("designFrameCount").replace("{count}", String(frameCount)) : ""}
         </span>
+        {opened === null ? null : (
+          /**
+           * 合成图的入口。
+           *
+           * 与工具栏上那两个(导出渲染图 / 下载素材)**不是同一件事**:那两个把每帧的原尺寸
+           * 渲染图写进一个文件夹,交付给设计师接着改;这个把选中的几帧合成一张带设备外壳的
+           * 分享图。所以它放在设计名这一行,而不是混进那组"把结果拿出来"的按钮里。
+           */
+          <button
+            className="shrink-0 rounded-[5px] border border-[#e2e4e6] px-2 py-0.5 text-[11px] text-[#55575b] hover:bg-[#f1f1ef] dark:border-[#3b3e41] dark:text-[#d2d5d8] dark:hover:bg-muted"
+            onClick={() => setMockupOpen(true)}
+            type="button"
+          >
+            {t("mockupTitle")}
+          </button>
+        )}
       </header>
 
       {notice !== null ? (
@@ -587,7 +655,13 @@ export function DesignWorkspace({
             onEnterFrame={setEnteredFrameId}
             onCreateFrameAt={createFrameAt}
             onApplyStyle={applyStyle}
+            attachedThemeTokens={themeTokens}
+            /** 合成图弹窗要用到设计包目录(读 theme.css 取色板)。 */
+            designDir={designDir}
             onAttachFrame={attachFrame}
+            onToggleThemeToken={toggleThemeToken}
+            sessionId={sessionId}
+            themeRevision={themeRevision}
             onDeleteFrame={deleteFrame}
             onExport={exportDesign}
             onRefresh={refresh}
@@ -626,6 +700,17 @@ export function DesignWorkspace({
           </Centered>
         )}
       </div>
+
+      {mockupOpen && opened !== null && designDir !== null ? (
+        <MockupExportDialog
+          bridge={client}
+          designDir={designDir}
+          designPath={opened.summary.path}
+          manifest={opened.manifest}
+          onClose={() => setMockupOpen(false)}
+          sessionId={sessionId}
+        />
+      ) : null}
     </section>
   );
 }

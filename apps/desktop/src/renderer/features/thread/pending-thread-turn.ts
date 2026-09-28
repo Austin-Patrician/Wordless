@@ -22,6 +22,9 @@ export function createPendingThreadTurn(
     if (part.type === "workspace-reference") {
       return { type: "workspace-reference", id: `${submission.messageId}:workspace:${index}`, path: part.path, name: part.name, kind: part.kind };
     }
+    if (part.type === "theme-token-reference") {
+      return { type: "theme-token", id: `${submission.messageId}:theme-token:${index}`, path: part.path, name: part.name, value: part.value };
+    }
     return { type: "artifact", artifactId: part.artifactId, kind: part.kind, name: part.name, revision: part.revision, surfaceId: part.surfaceId, locator: part.locator };
   });
   blocks.push(...attachments.map((attachment, index) => ({

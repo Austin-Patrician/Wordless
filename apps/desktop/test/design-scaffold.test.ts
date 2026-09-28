@@ -155,6 +155,20 @@ test("状态读取里,漏声明的帧被标成未声明", async () => {
   assert.equal(description?.frames[0]?.declaredSize, false);
 });
 
+test("脚手架给的默认令牌也用 @theme static", () => {
+  /*
+    不 static 的话 Tailwind 只发出**被用到**的变量:帧里的类没用到某个令牌,产物里就没有
+    它,于是帧里手写 `var(--color-primary)` 会静默取不到值。这一条与"每一套内置风格都用
+    @theme static"成对 —— 新建设计与内置风格走的是两条写 theme.css 的路。
+  */
+  const theme = scaffoldDesign({ root: ROOT, name: "meadow", title: "Home", frameWidth: 390, frameHeight: 844 }).files.find(
+    (file) => file.path.endsWith("/theme.css"),
+  );
+  assert.ok(theme !== undefined, "脚手架必须产出 theme.css");
+  assert.ok(theme.content.includes("@theme static {"), "默认令牌必须声明为 @theme static");
+  assert.ok(!/@theme\s*\{/.test(theme.content), "不能同时留一个不带 static 的 @theme");
+});
+
 test("按风格建包:令牌与规范一起落盘,清单记下风格 id", () => {
   // 风格在建包时就落盘,而不是事后追加 —— 否则第一帧必然是按默认审美写的。
   const scaffold = scaffoldDesign({
