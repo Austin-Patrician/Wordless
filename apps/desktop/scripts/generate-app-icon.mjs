@@ -5,15 +5,22 @@ import sharp from "sharp";
 
 const scriptDirectory = dirname(fileURLToPath(import.meta.url));
 const appRoot = resolve(scriptDirectory, "..");
-const sourcePath = resolve(appRoot, "src/icons/common-icons/wordless.jpeg");
+const sourcePath = resolve(appRoot, "src/icons/common-icons/wordless-brand.svg");
 const pngPath = resolve(appRoot, "src/icons/common-icons/wordless.png");
 const icoPath = resolve(appRoot, "build/icon.ico");
+/**
+ * Rasterize the vector source well above the largest target (256, plus the 1024
+ * preview) and let `resize` supersample down. Rendering the SVG at 1:1 would
+ * give librsvg just enough pixels to antialias once, and every 16px frame would
+ * be built from a magnified 512px bitmap instead.
+ */
+const sourceDensity = 192;
 const iconSizes = [16, 24, 32, 48, 64, 128, 256];
 const previewSize = 1024;
 
 async function renderIcon(size) {
-  return sharp(sourcePath, { failOn: "error" })
-    .resize(size, size, { fit: "cover" })
+  return sharp(sourcePath, { density: sourceDensity, failOn: "error" })
+    .resize(size, size)
     .png({ compressionLevel: 9 })
     .toBuffer();
 }

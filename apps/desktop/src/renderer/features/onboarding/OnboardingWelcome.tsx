@@ -2,7 +2,7 @@ import { Button } from "@wordless/ui-kit";
 import { ArrowRight, Check } from "lucide-react";
 import type { Locale, ThemeMode } from "../../shared/models";
 import { usePreferences } from "../../shared/preferences";
-import wordlessIcon from "../../../icons/common-icons/wordless.jpeg";
+import wordlessIcon from "../../../icons/common-icons/wordless-brand.svg";
 
 const LOCALE_OPTIONS: ReadonlyArray<{ value: Locale; label: string; hint: string }> = [
   { value: "zh-CN", label: "简体中文", hint: "Chinese" },
@@ -63,7 +63,7 @@ export function OnboardingWelcome({ onStart, onSkip }: { onStart: () => void; on
     <div className="fixed inset-0 z-[140] grid place-items-center overflow-y-auto bg-[var(--wordless-overlay-surface)] px-6 py-10">
       <div className="w-full max-w-[560px]">
         <div className="flex items-center gap-2.5">
-          <img alt="" className="h-8 w-8 shrink-0 rounded-[9px] object-cover" draggable={false} src={wordlessIcon} />
+          <img alt="" className="h-8 w-8 shrink-0 rounded-[20%] object-cover ring-1 ring-black/10 dark:ring-white/15" draggable={false} src={wordlessIcon} />
           <span className="text-[15px] font-bold tracking-[-0.03em] text-[#232320] dark:text-foreground">wordless</span>
         </div>
 

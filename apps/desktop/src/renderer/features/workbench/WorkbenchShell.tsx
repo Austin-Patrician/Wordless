@@ -1,5 +1,5 @@
 import { Button } from "@wordless/ui-kit";
-import { AlertTriangle, ChevronLeft, Frame, Globe, Languages, ListTodo, LoaderCircle, PackageOpen, Search, Settings } from "lucide-react";
+import { AlertTriangle, ChevronLeft, Globe, Languages, ListTodo, LoaderCircle, PackageOpen, Search, Settings } from "lucide-react";
 import { useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
 import { SessionContextPanel } from "../artifacts/SessionContextPanel";
 import { SettingsDialog, type SettingsPage } from "../settings/SettingsDialog";
@@ -13,7 +13,14 @@ import { useGlobalShortcuts } from "../../shared/shortcuts/use-global-shortcuts"
 import { useRuntime } from "../../shared/runtime";
 import { BrowserPanel } from "../browser/BrowserPanel";
 import { workbenchContextPanelRegistry } from "./context-panel-registry";
-import type { ContextPanelView, FileChangeSelection, ResearchTaskSelection } from "./context-panel-types";
+import type { ContextPanelTab, ContextPanelView, FileChangeSelection, ResearchTaskSelection } from "./context-panel-types";
+import {
+  CONTEXT_PANEL_EXCLUSIVE_WORKBENCH_IDS,
+  mainColumnFills,
+  sharedContextPanelViews,
+} from "./context-panel-tabs";
+import { fillReskinText, reskinPromptParts } from "../design/reskin-prompt.ts";
+import { createUserMessageSubmission } from "../thread/pending-thread-turn";
 import { TranslationPanelSlot, TranslationProvider } from "../translation/TranslationPanelSlot";
 import { WelcomeView } from "./WelcomeView";
 import { Sidebar } from "./Sidebar";
@@ -27,7 +34,7 @@ import { DesignLibraryView } from "../design/DesignLibraryView";
 import { MediaLibrary } from "../media/MediaLibrary";
 import { AutomationView } from "../automation/AutomationView";
 import { AppBackgroundLayer } from "../appearance/AppBackgroundLayer";
-import wordlessIcon from "../../../icons/common-icons/wordless.jpeg";
+import wordlessIcon from "../../../icons/common-icons/wordless-brand.svg";
 import { DesktopChrome } from "./DesktopChrome";
 import { useOnboarding } from "../onboarding/OnboardingFlow";
 import { foregroundSessionId } from "./foreground-session";
@@ -50,18 +57,30 @@ function subscribeToHostEvents(
 }
 
 const THREAD_COLUMN_MIN_WIDTH = 640;
+/**
+ * 画布为主时对话列的宽度。
+ *
+ * 这一屏的主体是画布,所以对话列**定宽**而不是 `flex-1` —— 剩下的全部宽度归画布(见
+ * `context-panel-tabs.ts` 的铺满型工作台)。
+ *
+ * 420 是**起点而不是结论**:它放得下一轮对话与输入框,同时给 1280 宽的窗口留下 800+ 给画布。
+ * 390×844 的手机帧在 1:1 下要 844 高、390 宽 —— 宽度够了,高度靠全屏解决(见活体规则)。
+ */
+const DESIGN_THREAD_WIDTH = 420;
+/** 拖动对话列的下限:再窄,消息和输入框就没法读了。 */
+const DESIGN_THREAD_MIN_WIDTH = 320;
 const SIDEBAR_COLLAPSED_WIDTH = 58;
 const SIDEBAR_EXPANDED_WIDTH = 238;
 const CONTEXT_PANEL_MIN_WIDTH = 240;
-// Workbenches whose context panel has room for a browser tab. Conversation
-// because the agent may open a page unprompted, code and ui-preview because
-// that is where a page under development gets verified.
-const browserPanelWorkbenchIds = new Set<string>(["conversation", "code", "ui-preview"]);
+// 面板上追加哪些共享页签(翻译 / 浏览器)由 `context-panel-tabs.ts` 判定 —— 它是纯函数,
+// 于是"哪些工作台铺满整块面板"这件事可以被断言,而不是一堆 JSX 里的展开表达式。
 
 export function WorkbenchShell() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsPage, setSettingsPage] = useState<SettingsPage>("general");
   const [leftOpen, setLeftOpen] = useState(true);
+  /** 画布为主时对话列的宽度。拖那条边界改的是**它**,不是画布。 */
+  const [designThreadWidth, setDesignThreadWidth] = useState(DESIGN_THREAD_WIDTH);
   const [rightOpen, setRightOpen] = useState(false);
   const [rightFullscreen, setRightFullscreen] = useState(false);
   const [mediaFullscreen, setMediaFullscreen] = useState(false);
@@ -315,6 +334,28 @@ export function WorkbenchShell() {
     });
   }, [client, pendingInitialTurn]);
 
+  /**
+   * 进了需要整块宽度的会话(设计画布)就把左栏收起来,并把面板调出来。
+   *
+   * 收不收由 `resolveSessionOpenTarget` 决定 —— 那是"进入一个会话时界面该是什么形状"的
+   * 那一张表,而不是散在这里的一个 `if`。
+   *
+   * **这是一次性动作,不是持续约束。** `collapsedForRef` 让同一个会话只收一次:没有它,
+   * 这个 effect 会因为运行时快照每来一个事件就重跑一次,于是用户刚展开左栏就被收回去 ——
+   * 那比默认展开更糟(§14.11 同一条纪律:要的是默认,不是永远)。
+   */
+  const collapsedForSessionRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (selectedSessionId === null || collapsedForSessionRef.current === selectedSessionId) return;
+    const session = snapshot?.sessions.find((candidate) => candidate.id === selectedSessionId);
+    if (session === undefined) return;
+    const target = resolveSessionOpenTarget(session.workbenchId);
+    if (!target.collapseLeftSidebar) return;
+    collapsedForSessionRef.current = selectedSessionId;
+    setLeftOpen(false);
+    setRightOpen(true);
+  }, [selectedSessionId, snapshot?.sessions]);
+
   useEffect(() => {
     const definition = workbenchContextPanelRegistry.resolve(selectedWorkbenchId);
     setContextView(definition.tabs[0]?.id ?? "overview");
@@ -425,22 +466,57 @@ export function WorkbenchShell() {
 
   const contextPanelDefinition = workbenchContextPanelRegistry.resolve(activeSession?.workbenchId);
   const ContextPanelContent = contextPanelDefinition.component;
-  // The translation tab is appended centrally: translating a selection is a
-  // global capability, not something each workbench registers.
-  const contextPanelTabs = [
+  /**
+   * 这块面板是不是**这一屏的主体**。
+   *
+   * 它同时决定两件事,而这两件事本来就是同一个判断:页签只来自注册表(不再追加翻译与
+   * 浏览器),以及布局上把 flex 角色反过来 —— 对话定宽、画布吃剩下的。
+   */
+  const exclusivePanel = CONTEXT_PANEL_EXCLUSIVE_WORKBENCH_IDS.has(selectedWorkbenchId ?? "");
+  /**
+   * "画布为主"的布局**只在画布真的开着时**成立。
+   *
+   * 这里踩过:上一版只看 `exclusivePanel`,于是把对话列无条件设成固定宽 —— 用户把画布折叠
+   * 起来之后,对话仍然是 420 宽,右边留一整片空背景,看起来像"折叠没生效、还留了个画布占位"。
+   *
+   * 折叠 = 没有画布了 = 对话回到 `flex-1`。同一件事不该有两种说法。
+   */
+  const canvasFirst = !mainColumnFills({ exclusive: exclusivePanel, panelFullscreen: rightFullscreen, panelOpen: rightOpen });
+  const sharedTabs: Record<"translation" | "browser", ContextPanelTab> = {
+    translation: { id: "translation", label: t("translationPanelTitle"), icon: Languages },
+    browser: { id: "browser", label: t("browserPanelTitle"), icon: Globe },
+  };
+  const contextPanelTabs: ContextPanelTab[] = [
     ...contextPanelDefinition.tabs.map(({ labelKey, ...tab }) => ({ ...tab, label: t(labelKey) })),
-    { id: "translation" as const, label: t("translationPanelTitle"), icon: Languages },
-    // The browser is offered where a previewable surface is expected; on
-    // presentation/workbook/analysis the panel is already spoken for.
-    ...(browserPanelWorkbenchIds.has(selectedWorkbenchId ?? "") ? [{ id: "browser" as const, label: t("browserPanelTitle"), icon: Globe }] : []),
-    // 设计画布与对话**并排**,而不是取代它:会话是对话,画布是这一轮工作的产物。取代意味着
-    // agent 干活时你看不见它在干什么,而且画布上没有任何回去的入口。
-    ...(selectedWorkbenchId === "ui-preview" ? [{ id: "design" as const, label: t("designPanelTitle"), icon: Frame }] : []),
+    ...sharedContextPanelViews(selectedWorkbenchId).map((view) => sharedTabs[view as "translation" | "browser"]),
   ];
   const revealTranslationPanel = () => {
     setContextView("translation");
     setRightOpen(true);
   };
+  /**
+   * 换完设计体系之后,替用户把那一轮对话开起来。
+   *
+   * 直接走 `promptSession` 而不是往输入框里塞字:这是用户按了确认按钮的**动作**,不是给他起草
+   * 一句话。消息的内容在 `reskin-prompt.ts` 里拼 —— 那是这个功能真正起作用的地方。
+   *
+   * 消息由运行时落库、并作为事件回到对话流,所以它会出现;这里不额外造待发气泡(那要把
+   * ThreadView 的待发队列也接过来,而多一处状态就多一处会对不上的地方)。
+   */
+  const startReskin = async (
+    sessionId: string,
+    input: { designDir: string; frameCount: number; styleName: string },
+  ): Promise<void> => {
+    if (!client) return;
+    const parts = reskinPromptParts({
+      designDir: input.designDir,
+      frameCount: input.frameCount,
+      styleName: input.styleName,
+      text: fillReskinText(t("designStyleReskinMessage"), input),
+    });
+    await client.promptSession(sessionId, parts, createUserMessageSubmission());
+  };
+
   const addWorkspaceReference = (reference: InlineWorkspaceReferenceToken) => {
     setPendingWorkspaceReferences((current) => current.some((item) => item.path === reference.path) ? current : [...current, reference]);
     setRightOpen(true);
@@ -449,8 +525,17 @@ export function WorkbenchShell() {
     <SessionContextPanel
       collapsed={!rightOpen}
       fullscreen={rightFullscreen}
+      layout={exclusivePanel ? "fill" : "fixed"}
+      /*
+        「设计画布」这一行不展示。它只有一个页签、名字也不再说出任何东西 —— 而它占掉的是画布
+        的高度。**只对铺满型工作台这么做**:别的工作台那行还有内容可读(比如对话的「产物」),
+        而它们的面板里也确实可能有多个页签要切。
+      */
+      showTabStrip={!exclusivePanel}
       leftSidebarWidth={leftOpen ? SIDEBAR_EXPANDED_WIDTH : SIDEBAR_COLLAPSED_WIDTH}
-      minimumMainWidth={THREAD_COLUMN_MIN_WIDTH}
+      mainWidth={designThreadWidth}
+      minimumMainWidth={canvasFirst ? DESIGN_THREAD_MIN_WIDTH : THREAD_COLUMN_MIN_WIDTH}
+      onMainWidthChange={setDesignThreadWidth}
       onFullscreen={() => setRightFullscreen((value) => !value)}
       onViewChange={setContextView}
       onToggle={() => {
@@ -458,13 +543,29 @@ export function WorkbenchShell() {
         setRightOpen(false);
       }}
       contentClassName={selectedWorkbenchId === "analysis" || selectedWorkbenchId === "conversation" || contextView === "browser" || contextView === "design" ? "overflow-hidden" : undefined}
-      showFooter={selectedWorkbenchId !== "analysis" && selectedWorkbenchId !== "conversation"}
+      showFooter={
+        selectedWorkbenchId !== "analysis" &&
+        selectedWorkbenchId !== "conversation" &&
+        // 画布的页脚只是把那个页签名再写一遍 —— 与上面隐藏页签行同一个理由。
+        !exclusivePanel
+      }
       showMenu={selectedWorkbenchId !== "analysis" && selectedWorkbenchId !== "conversation"}
       tabs={contextPanelTabs}
       renderContent={(view) => view === "browser"
         ? <BrowserPanel sessionId={activeSession?.id ?? null} />
         : view === "design" && activeSession
-        ? <DesignWorkspace running={runningSessionIds.has(activeSession.id)} sessionId={activeSession.id} />
+        ? (
+            /*
+              把既有的工作区引用通道接进画布:帧就是文件,所以"引用这一帧"与"引用这个文件"
+              是同一件事,不该另立一种引用类型(见 `frame-reference.ts`)。
+            */
+            <DesignWorkspace
+              onAttachFile={addWorkspaceReference}
+              onReskin={(input) => void startReskin(activeSession.id, input)}
+              running={runningSessionIds.has(activeSession.id)}
+              sessionId={activeSession.id}
+            />
+          )
         : view === "translation"
         ? <TranslationPanelSlot />
         : activeSession
@@ -483,10 +584,24 @@ export function WorkbenchShell() {
       <div className="flex h-[calc(100dvh-var(--wordless-chrome-height))] overflow-hidden">
         {mainView === "media" && selectedSessionId && activeSession?.workbenchId === "media-canvas" && mediaFullscreen ? <MediaCanvas fullscreen leftOpen sessionId={selectedSessionId} onBackToLibrary={() => { setMediaFullscreen(false); setSelectedSessionId(null); }} onOpenModels={() => openSettings("models")} onToggleFullscreen={() => setMediaFullscreen(false)} onToggleLeft={() => setLeftOpen((value) => !value)} /> : <>
         <div className={showSessionTools && rightFullscreen ? "hidden" : undefined}><Sidebar mainView={mainView} onOpenTasks={openTasks} collapsed={!leftOpen} onNewThread={newThread} onOpenAutomation={openAutomation} onOpenExperts={openExperts} onOpenMedia={openMedia} onOpenSession={(sessionId) => { const session = snapshot.sessions.find((candidate) => candidate.id === sessionId); setPendingWorkspaceReferences([]); setPendingArtifactSelection(null); setSelectedSessionId(sessionId); setMainView(resolveSessionOpenTarget(session?.workbenchId).mainView); setRightFullscreen(false); setMediaFullscreen(false); }} onOpenSettings={(page) => openSettings(page)} onOpenDesign={() => { setMainView("design"); setSelectedSessionId(null); }} onOpenSkills={openSkills} onSessionDeleted={(sessionId) => { deletedSessionIdsRef.current.add(sessionId); sessionDraftsRef.current.delete(sessionId); if (selectedSessionId === sessionId) newThread(); }} onToggle={() => setLeftOpen((value) => !value)} runningSessionIds={runningSessionIds} selectedSessionId={selectedSessionId} /></div>
-        <section className={showSessionTools && rightFullscreen ? "hidden" : "relative flex min-w-0 flex-1 flex-col overflow-hidden bg-[var(--wordless-shell-workspace)] lg:min-w-[640px]"} style={{ "--thread-content-max-width": rightOpen ? "820px" : "clamp(820px, 78%, 1180px)" } as CSSProperties}>
+        {/*
+          铺满型工作台(设计画布)下这一列的 flex 角色是**反过来的**:对话定宽,画布吃掉剩下的。
+          DOM 顺序不变 —— 左侧仍是对话、右侧仍是画布,只是谁伸缩换了。
+        */}
+        <section
+          className={
+            showSessionTools && rightFullscreen
+              ? "hidden"
+              : `relative flex min-w-0 flex-col overflow-hidden bg-[var(--wordless-shell-workspace)] ${canvasFirst ? "shrink-0" : "flex-1 lg:min-w-[640px]"}`
+          }
+          style={{
+            ...(canvasFirst ? { flex: "0 0 auto", width: designThreadWidth } : {}),
+            "--thread-content-max-width": rightOpen ? "820px" : "clamp(820px, 78%, 1180px)",
+          } as CSSProperties}
+        >
           {showSessionTools ? <header className="flex h-[62px] shrink-0 items-center justify-between px-4 sm:px-5">
             <div className="flex min-w-0 items-center gap-2">
-              <div className="flex items-center gap-2 lg:hidden"><img alt="" className="h-7 w-7 shrink-0 rounded-[8px] object-cover" draggable={false} src={wordlessIcon} /><span className="text-sm font-bold tracking-[-0.04em]">wordless</span></div>
+              <div className="flex items-center gap-2 lg:hidden"><img alt="" className="h-7 w-7 shrink-0 rounded-[20%] object-cover ring-1 ring-black/10 dark:ring-white/15" draggable={false} src={wordlessIcon} /><span className="text-sm font-bold tracking-[-0.04em]">wordless</span></div>
               <div className="hidden min-w-0 items-center gap-2 lg:flex">
                 {!leftOpen ? <Button aria-label="Expand sidebar" onClick={() => setLeftOpen(true)} size="icon" type="button" variant="ghost"><ChevronLeft className="h-4 w-4 rotate-180" /></Button> : null}
                 <span className="truncate text-[13px] font-semibold text-[#20201f] dark:text-foreground">{activeSession.title}</span>

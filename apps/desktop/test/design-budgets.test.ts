@@ -6,12 +6,23 @@ import {
   texturePixelRatio,
 } from "../src/renderer/features/design/budgets.ts";
 
-test("活体阈值是包含关系,非有限缩放不给活体", () => {
-  const threshold = DESIGN_CANVAS_BUDGETS.liveZoomThreshold;
-  assert.equal(allowsLiveSurface(threshold), true);
-  assert.equal(allowsLiveSurface(threshold + 0.01), true);
-  assert.equal(allowsLiveSurface(threshold - 0.01), false);
-  // 缩小看全局时不该有活体 —— 这条同时是正确性要求,不只是性能取舍。
+test("活体只在 1:1 出现(带容差),非有限缩放不给活体", () => {
+  // **这是正确性,不是性能取舍。** 宿主只做 `setBounds`、不做缩放补偿,所以非 1:1 时原生
+  // 视图的视口不等于帧的声明尺寸 —— 页面会重排,画布上看到的是错的版面。
+  // 取"明显在内"与"明显在外"两侧,而不是正好压在边界上:`1 - 0.02` 在浮点里是
+  // 0.98000000000000001…,`abs(...) <= 0.02` 会答 false —— 那不是规则的意图,只是浮点。
+  const tolerance = DESIGN_CANVAS_BUDGETS.liveZoomTolerance;
+  assert.equal(allowsLiveSurface(1), true);
+  assert.equal(allowsLiveSurface(1 + tolerance * 0.5), true);
+  assert.equal(allowsLiveSurface(1 - tolerance * 0.5), true);
+  assert.equal(allowsLiveSurface(1 + tolerance * 2), false);
+  assert.equal(allowsLiveSurface(1 - tolerance * 2), false);
+
+  // 曾经这里是「≥ 0.75」,于是 0.9 被判为够格 —— 而它渲染出来的是重排后的版面。
+  // 这条测试以前恰恰在**保护**那个缺陷。
+  assert.equal(allowsLiveSurface(0.9), false);
+  assert.equal(allowsLiveSurface(0.75), false);
+  // 缩小看全局时不该有活体。
   assert.equal(allowsLiveSurface(0.25), false);
   // NaN 若被判为"够格",会带着一个坏相机去 attach 原生视图。
   assert.equal(allowsLiveSurface(Number.NaN), false);

@@ -76,14 +76,27 @@ function escapeForHtmlComment(payload: string): string {
 }
 
 /**
- * 把标题写回声明注释,其余源码原样保留。
- *
- * 标题的**声明**在帧文件里(清单里那份只是上次同步的快照),所以改标题要写回源码 ——
- * 只改清单的话,下一次 agent 动这一行就被改回去了。
- *
- * 找不到声明时返回 null:调用方据此报错,而不是往源码里瞎塞一行。
+ * 帧声明的补丁。**没给的字段保持原值** —— 改尺寸不该把标题抹掉,反之亦然。
  */
-export function withFrameTitle(source: string, title: string): string | null {
+export interface FrameMetaPatch {
+  width?: number;
+  height?: number;
+  title?: string;
+}
+
+/**
+ * 把声明写回帧源码,其余源码原样保留。
+ *
+ * 标题与尺寸的**声明**在帧文件里(清单里那份只是上次同步的快照),所以改它们要写回源码 ——
+ * 只改清单的话,下一次对账就被帧文件改回去了。这条归属是 §6.1 定的:位置归清单(拖拽走那条
+ * 路),标题与尺寸归帧文件(走这里)。
+ *
+ * 这是画布上"能编辑"与"只能看"的分界线:没有它,用户改不了任何一帧的名字或尺寸,
+ * 而标题是画布上唯一的标签。
+ *
+ * 找不到声明时返回 null:调用方据此报错,而不是往源码里瞎塞一行(位置猜错了会写坏文件)。
+ */
+export function withFrameMeta(source: string, patch: FrameMetaPatch): string | null {
   const match = FRAME_COMMENT.exec(source);
   const body = match?.[1];
   if (match === null || body === undefined || match.index === undefined) return null;
@@ -98,8 +111,12 @@ export function withFrameTitle(source: string, title: string): string | null {
     // 坏声明也照样重写:把标题写进去正好把它修好。
   }
 
-  const next = { ...parsed, title: sanitizeFrameTitle(title) };
-  // 与 `frameComment` 用同一个转义:改标题同样不能把注释写坏。
+  const next: Record<string, unknown> = { ...parsed };
+  if (patch.title !== undefined) next.title = sanitizeFrameTitle(patch.title);
+  if (patch.width !== undefined) next.width = Math.round(patch.width);
+  if (patch.height !== undefined) next.height = Math.round(patch.height);
+
+  // 与 `frameComment` 用同一个转义:改声明同样不能把注释写坏。
   const replacement = `<!-- @frame ${escapeForHtmlComment(JSON.stringify(next))} -->`;
   return `${source.slice(0, match.index)}${replacement}${source.slice(match.index + match[0].length)}`;
 }

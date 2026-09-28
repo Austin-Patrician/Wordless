@@ -318,3 +318,133 @@ test("移动不存在的帧是无操作", async () => {
   // 空移动列表同样无操作。
   assert.equal(await store.moveFrames(DESIGN, []), false);
 });
+
+test("改标题写回帧源码,而不是清单 —— 标题的声明在文件里", async () => {
+  const fs = fixture();
+  const store = new DesignStore({ fs });
+  // 清单里的 `frames` 是空的:帧由 `openDesign` 与磁盘对账之后才出现。
+  await store.openDesign(DESIGN);
+
+  assert.equal(await store.updateFrameMeta(DESIGN, "index", { title: "首页 v2" }), true);
+
+  // 清单里那份只是上次同步的快照 —— 只改清单的话,下一次对账就被帧文件改回去了。
+  const source = fs.text(`${DESIGN}/frames/index.html`) ?? "";
+  assert.match(source, /"title":"首页 v2"/);
+  // 其余源码一个字节都不动。
+  assert.match(source, /<html><body>hi<\/body><\/html>/);
+});
+
+test("改尺寸只动宽高,标题原样保留", async () => {
+  const fs = fixture();
+  const store = new DesignStore({ fs });
+  await store.openDesign(DESIGN);
+
+  assert.equal(await store.updateFrameMeta(DESIGN, "login", { width: 1440, height: 900 }), true);
+
+  const source = fs.text(`${DESIGN}/frames/login.html`) ?? "";
+  assert.match(source, /"width":1440/);
+  assert.match(source, /"height":900/);
+  // 补丁里没给的字段保持原值 —— 改尺寸把标题抹掉是这类接口最容易犯的错。
+  assert.match(source, /"title":"登录"/);
+});
+
+test("帧里没有 @frame 声明时拒绝,而且不往源码里塞一行", async () => {
+  const fs = fixture();
+  fs.putFile(`${DESIGN}/frames/bare.html`, "<!doctype html><html><body>hi</body></html>");
+  const store = new DesignStore({ fs });
+  await store.openDesign(DESIGN);
+
+  // 往猜出来的位置插一行注释会写坏文件,而漏声明的帧本来就会从 design_status 报出来。
+  assert.equal(await store.updateFrameMeta(DESIGN, "bare", { title: "x" }), false);
+  assert.equal(fs.text(`${DESIGN}/frames/bare.html`), "<!doctype html><html><body>hi</body></html>");
+});
+
+test("帧不存在、或内容没变时不写盘", async () => {
+  const fs = fixture();
+  const store = new DesignStore({ fs });
+  await store.openDesign(DESIGN);
+  const before = fs.text(`${DESIGN}/frames/index.html`);
+
+  assert.equal(await store.updateFrameMeta(DESIGN, "nope", { title: "x" }), false);
+  /*
+    标题本来就是"首页":没有变化就不该白写一次盘(也不会让画布误以为源变了)。
+    **但它不是失败** —— 这里踩过:返回 false 会让界面报"改不了这一帧",而用户要的状态其实
+    已经成立了。一次无效果的改名,与"把已经亮着的灯打开"是同一件事。
+  */
+  assert.equal(await store.updateFrameMeta(DESIGN, "index", { title: "首页" }), true);
+  assert.equal(fs.text(`${DESIGN}/frames/index.html`), before);
+});
+test("新建帧:写文件、对账进清单,并落到最右帧的右边", async () => {
+  const fs = fixture();
+  const store = new DesignStore({ fs });
+  await store.openDesign(DESIGN);
+
+  const opened = await store.createFrame({ designPath: DESIGN, title: "画面" });
+
+  // 一帧就是一个文件 —— 没有注册步骤。
+  const source = fs.text(`${DESIGN}/frames/frame-2.html`) ?? "";
+  assert.match(source, /@frame/);
+  assert.match(source, /"width":390/);
+  // 标题带序号:画布上唯一的标签就是它,两帧同名等于没有标签。
+  assert.match(source, /"title":"画面 2"/);
+  // 对账之后它就在清单里,而且落到了最右帧的右边(index 与 login 各 390 宽,FRAME_GAP = 80)。
+  // 按 id 比而不是按顺序:清单顺序是「帧文件名排序」的产物,不是这条测试要考的东西。
+  const placed = new Map(opened?.manifest.frames.map((frame) => [frame.id, frame.x]));
+  assert.deepEqual([placed.get("index"), placed.get("login"), placed.get("frame-2")], [0, 470, 940]);
+});
+
+test("新建帧:磁盘上已有的 id 也算占用 —— 那是 agent 刚写进去、还没对账的帧", async () => {
+  const fs = fixture();
+  // 清单里没有它,但文件在。
+  fs.putFile(`${DESIGN}/frames/frame-2.html`, frameSource({ height: 844, title: "手写的", width: 390 }));
+  const store = new DesignStore({ fs });
+  await store.openDesign(DESIGN);
+
+  const opened = await store.createFrame({ designPath: DESIGN });
+
+  // 只查清单的实现会覆盖掉那个真实文件。
+  assert.match(fs.text(`${DESIGN}/frames/frame-2.html`) ?? "", /"title":"手写的"/);
+  assert.ok(opened?.manifest.frames.some((frame) => frame.id === "frame-3"));
+});
+
+test("新建帧:不是设计包时返回 null,不写任何文件", async () => {
+  const fs = new FakeDesignFs();
+  const store = new DesignStore({ fs });
+  assert.equal(await store.createFrame({ designPath: "/w/nope.wdesign" }), null);
+  assert.equal(fs.has("/w/nope.wdesign/frames/frame-2.html"), false);
+});
+
+test("新建帧:用户画出来的落点优先于自动布局", async () => {
+  const fs = fixture();
+  const store = new DesignStore({ fs });
+  await store.openDesign(DESIGN);
+
+  // 画在左下角一个奇怪的位置上 —— 那正是用户在画布上做的决定。
+  const opened = await store.createFrame({ designPath: DESIGN, x: -300, y: 1200, width: 200, height: 300 });
+
+  const placed = opened?.manifest.frames.find((frame) => frame.id === "frame-2");
+  assert.deepEqual([placed?.x, placed?.y, placed?.width, placed?.height], [-300, 1200, 200, 300]);
+  // 而且源码里的声明就是这两个尺寸 —— 位图与活体都按它算。
+  assert.match(fs.text(`${DESIGN}/frames/frame-2.html`) ?? "", /"width":200/);
+});
+
+test("删除帧:只删文件,清单由对账更新", async () => {
+  const fs = fixture();
+  const store = new DesignStore({ fs });
+  await store.openDesign(DESIGN);
+
+  const opened = await store.deleteFrame(DESIGN, "login");
+
+  assert.equal(fs.has(`${DESIGN}/frames/login.html`), false);
+  assert.deepEqual(opened?.manifest.frames.map((frame) => frame.id), ["index"]);
+});
+
+test("删除帧:帧不存在时不写任何东西", async () => {
+  const fs = fixture();
+  const store = new DesignStore({ fs });
+  await store.openDesign(DESIGN);
+  const before = fs.text(`${DESIGN}/frames/index.html`);
+
+  assert.equal(await store.deleteFrame(DESIGN, "nope"), null);
+  assert.equal(fs.text(`${DESIGN}/frames/index.html`), before);
+});

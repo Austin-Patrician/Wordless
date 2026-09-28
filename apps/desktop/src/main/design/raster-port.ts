@@ -22,6 +22,31 @@ export interface RasterRequest {
    * 固定尺寸下不能重排。这个字段保留在契约里,好让真实现换成 CDP 设备度量时不用改调用方。
    */
   pixelRatio: number;
+  /**
+   * 编码格式。默认 JPEG。
+   *
+   * 画布贴的位图要的是**小**:同样像素数下 JPEG 比 PNG 小一个量级,而它只是一层底图。
+   * 导出的渲染图要的是**准**:PNG 无损,而用户拿去用的时候不会希望文字边缘有 JPEG 的振铃。
+   * 同一个离屏窗口两种都出,差别只在最后那一次编码。
+   */
+  format?: "jpeg" | "png";
+}
+
+/**
+ * 位图按哪种格式编码。
+ *
+ * 抽出来是因为它是这一层里**唯一可断言、又真的会被用错**的判断:画布要小(JPEG),导出要准
+ * (PNG)。而真实现(`ElectronOffscreenRaster`)import 了 Electron,`node --test` 加载不了 ——
+ * 不抽出来的话,"导出给的是 PNG"这件事就没有测试守着了。
+ *
+ * 形参写成结构类型而不是 `NativeImage`,于是测试可以递一个假的进来。
+ */
+export function encodeRasterImage(
+  image: { toPNG(): Uint8Array; toJPEG(quality: number): Uint8Array },
+  format: "jpeg" | "png" | undefined,
+  jpegQuality: number,
+): Uint8Array {
+  return format === "png" ? image.toPNG() : image.toJPEG(jpegQuality);
 }
 
 export type RasterErrorCode =

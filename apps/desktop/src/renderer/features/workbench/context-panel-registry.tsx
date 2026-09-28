@@ -1,5 +1,5 @@
 import type { WorkbenchId } from "@wordless/domain";
-import { BookOpenCheck, LayoutDashboard, PackageOpen, PanelTop, Presentation } from "lucide-react";
+import { BookOpenCheck, Frame, LayoutDashboard, PackageOpen, PanelTop, Presentation } from "lucide-react";
 import { CodingContextPanel } from "../artifacts/CodingContextPanel";
 import { PresentationContextPanel } from "../artifacts/PresentationContextPanel";
 import { SpreadsheetContextPanel } from "../artifacts/SpreadsheetContextPanel";
@@ -42,6 +42,20 @@ class WorkbenchContextPanelRegistry {
 }
 
 export const workbenchContextPanelRegistry = new WorkbenchContextPanelRegistry([
+  {
+    /**
+     * UI 设计会话。
+     *
+     * **画布是这块面板唯一的页签,而且是它自己注册的**,不是由 `WorkbenchShell` 事后追加的。
+     * 这样"默认打开哪一个"也一并解决了 —— 切换到铺满型工作台时默认落在它自己的第一个页签上。
+     *
+     * 它要的是宽度:设计是无限画布,并排放两三个页签意味着画布只能用一半,而用户来看的就是
+     * 画布。参考实现的画布也是以最大宽度打开的。
+     */
+    workbenchId: "ui-preview",
+    component: UnsupportedContextPanel,
+    tabs: [{ id: "design", labelKey: "designPanelTitle", icon: Frame }],
+  },
   {
     workbenchId: "conversation",
     component: GeneralWorkArtifactsPanel,

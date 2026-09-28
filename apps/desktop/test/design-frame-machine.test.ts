@@ -59,7 +59,7 @@ test("聚焦且缩放够才进 live,缩放不够退回 ready", () => {
   const zoomedOut = reduceFrame(live, {
     type: "focus-changed",
     focused: true,
-    zoom: DESIGN_CANVAS_BUDGETS.liveZoomThreshold - 0.01,
+    zoom: DESIGN_CANVAS_BUDGETS.liveZoom - DESIGN_CANVAS_BUDGETS.liveZoomTolerance * 2,
   });
   assert.deepEqual(zoomedOut, { phase: "ready", textureKey: "tex-1" });
 

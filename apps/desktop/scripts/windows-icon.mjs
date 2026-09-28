@@ -40,7 +40,20 @@ export async function readWindowsIcon(path) {
   return assertWindowsIcon(await readFile(path), path);
 }
 
+/**
+ * Electron's default app icon, fingerprinted by the byte size of its four
+ * frames: three uncompressed DIB frames plus one PNG `256`. These are exact
+ * constants of the shipped `electron.exe`, not a heuristic.
+ *
+ * The previous rule ("no PNG frame of at least 50 kB") only worked because the
+ * brand icon used to be rendered from a 4096px JPEG, whose flat-photo `256`
+ * frame compressed to 127 kB. A flat vector brand compresses to well under
+ * 50 kB, so that rule reported a correctly branded exe as "still the default
+ * icon" and failed the Windows release.
+ */
+const ELECTRON_DEFAULT_ICON_FRAME_BYTES = new Set([1320, 5160, 11560, 18963]);
+
 export function isElectronDefaultExeIcon(icons) {
   if (icons.length === 0) return true;
-  return !icons.some((icon) => icon.png && icon.bytes >= 50_000);
+  return icons.length <= ELECTRON_DEFAULT_ICON_FRAME_BYTES.size && icons.every((icon) => ELECTRON_DEFAULT_ICON_FRAME_BYTES.has(icon.bytes));
 }

@@ -63,7 +63,7 @@ export type VisibilityIntent = "attach" | "detach";
  * re-attach the page disappears until the user switches tabs. Both inputs are
  * explicit here so that case is testable rather than emergent.
  *
- * 设计画布复用同一条规则:缩小到 `liveZoomThreshold` 以下、帧被移出视口、或位图还没
+ * 设计画布复用同一条规则:缩放离开 1:1、帧被移出视口、或位图还没
  * 到位时,活体视图都该 `detach` —— 而"移出视口"与"宽度穿过 0"是同一类瞬时状态。
  */
 export function resolveVisibility(input: {

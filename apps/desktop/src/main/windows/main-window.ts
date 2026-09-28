@@ -19,10 +19,10 @@ export function updateTitleBarOverlays(preferences: AppPreferences): void {
 export function createMainWindow(preloadPath: string, preferences: AppPreferences): BrowserWindow {
   const host = createDesktopHostInfo();
   const options = mainWindowOptions(preloadPath, preferences, isDark(preferences), host);
-  // The 4096px JPEG brand asset is intended for renderer content. Passing it
-  // as a macOS window icon makes AppKit allocate several 128MB CGImage buffers.
-  // The packaged app already has its bundle icon, so only Windows needs this
-  // runtime option.
+  // The renderer draws the brand from the SVG asset; this window icon is the
+  // native one the title bar and Alt-Tab use. macOS needs neither — passing an
+  // image there makes AppKit allocate large CGImage buffers, and the packaged
+  // bundle already carries its own icon.
   const mainWindow = new BrowserWindow({
     ...options,
     ...(process.platform === "win32" ? { icon: path.join(__dirname, "wordless.ico") } : {}),

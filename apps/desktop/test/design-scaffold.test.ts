@@ -1,7 +1,13 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { DesignStore } from "../src/main/design/design-store.ts";
-import { blankFrameSource, sanitizeDesignName, sanitizeFrameId, scaffoldDesign } from "../src/main/design/scaffold.ts";
+import {
+  blankFrameSource,
+  nextFrameId,
+  sanitizeDesignName,
+  sanitizeFrameId,
+  scaffoldDesign,
+} from "../src/main/design/scaffold.ts";
 import { manifestPathOf, parseManifest } from "../src/main/design/manifest.ts";
 import { parseFrameMeta } from "../src/main/design/frame-meta.ts";
 import { FakeDesignFs } from "./design-test-fs.ts";
@@ -209,4 +215,14 @@ test("风格 id 认不出来时退回默认令牌,而不是拒绝建包", async 
   const description = await store.describeDesign(created?.path ?? "");
   assert.equal(description?.style, null);
   assert.equal(description?.hasDesignDoc, false);
+});
+
+test("下一个帧 id 取最小的空位,从 2 起", () => {
+  // 首帧是 `index`(建包时那个),所以从 2 数起。
+  assert.deepEqual(nextFrameId(["index"]), { id: "frame-2", ordinal: 2 });
+  // 取空位而不是"最大值 +1":删掉 frame-2 之后再新建应该把它补回来 —— 帧 id 是人在文件名里
+  // 会读到的东西,不该一直往上涨。
+  assert.deepEqual(nextFrameId(["index", "frame-2", "frame-3"]), { id: "frame-4", ordinal: 4 });
+  assert.deepEqual(nextFrameId(["index", "frame-3"]), { id: "frame-2", ordinal: 2 });
+  assert.deepEqual(nextFrameId([]), { id: "frame-2", ordinal: 2 });
 });

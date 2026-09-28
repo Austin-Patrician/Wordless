@@ -19,6 +19,7 @@ import { registerAnalysisProtocol } from "./protocols/analysis";
 import { registerAttachmentProtocol } from "./protocols/attachment";
 import { registerDesignProtocol, registerDesignScheme } from "./protocols/design";
 import { createDesignHandlers } from "./design/handlers";
+import { NodeDesignExporter } from "./design/design-exporter";
 import { RasterPool } from "./design/raster-pool";
 import { ElectronOffscreenRaster } from "./design/electron-offscreen-raster";
 import { WebContentsViewDesignHost } from "./design/design-view-host";
@@ -65,7 +66,14 @@ declare const __WORDLESS_GOOGLE_CLIENT_SECRET__: string;
 declare const __WORDLESS_SKILLSMP_API_KEY__: string;
 
 app.setName("Wordless");
-app.setAppUserModelId("com.wordless.desktop");
+/**
+ * The taskbar identity. Windows groups taskbar buttons and resolves their icon
+ * through the AppUserModelID, so a dev run must not claim the shipped app's id:
+ * while it did, running `npm run dev:electron` gave the packaged app's button the
+ * dev binary's icon (the Electron default), and the two builds collided on one
+ * taskbar entry. Packaged builds keep the id the NSIS shortcut registers.
+ */
+app.setAppUserModelId(app.isPackaged ? "com.wordless.desktop" : "com.wordless.desktop.dev");
 const userData = prepareUserDataPath();
 app.setPath("userData", userData.path);
 
@@ -170,12 +178,32 @@ app.whenReady().then(async () => {
     timeoutMs: DESIGN_RASTER_BUDGETS.rasterTimeoutMs,
   });
   designViewHost = new WebContentsViewDesignHost(() => mainWindow);
+  /**
+   * 构建能力。**同一个对象同时给画廊的 IPC 与 agent 那条路。**
+   *
+   * 两边都要在建包与刷新时构建,各造一份的后果不是"多一个对象",而是"能不能构建"取决于
+   * 用户走的是哪条路 —— 而 agent 那条路从前根本没有构建,那是设计帧没有样式的直接原因。
+   */
+  const designBuilds = {
+    runner: new NodeBuildRunner(),
+    // 脚本与主进程产物同目录(两者都由 `scripts/build-electron.mjs` 产出)。
+    recipes: designBuildRecipes({ scriptPath: path.join(__dirname, "design-build.mjs") }),
+  };
+  /**
+   * 导出用的宿主能力。
+   *
+   * 目录对话框要挂在窗口上(未挂载时 macOS 上会弹不出来),而窗口是**这个文件**才有的 ——
+   * 所以 `handlers.ts` 拿到的是注入的端口,它自己不 import Electron。
+   */
+  const designExporter = new NodeDesignExporter(async () => {
+    const result = await dialog.showOpenDialog(mainWindow!, {
+      properties: ["openDirectory", "createDirectory"],
+      title: "导出到哪个文件夹",
+    });
+    return result.canceled || result.filePaths[0] === undefined ? null : result.filePaths[0];
+  });
   registerDesignIpc({
-    handlers: createDesignHandlers(designStore, rasterPool, designViewHost, {
-      runner: new NodeBuildRunner(),
-      // 脚本与主进程产物同目录(两者都由 `scripts/build-electron.mjs` 产出)。
-      recipes: designBuildRecipes({ scriptPath: path.join(__dirname, "design-build.mjs") }),
-    }),
+    handlers: createDesignHandlers(designStore, rasterPool, designViewHost, designBuilds, designExporter),
   });
   const officeResourcesPath = app.isPackaged ? process.resourcesPath : path.resolve(__dirname, "../../resources");
   office = new OfficeCliService({ artifactsRoot: presentationArtifactsRoot, resourcesPath: officeResourcesPath });
@@ -245,7 +273,7 @@ app.whenReady().then(async () => {
     // 设计工具与画布共用同一个 store 与离屏视图:注册表是共用状态,分开会各自持有半份。
     designRaster === undefined || designViewHost === undefined || designStore === undefined
       ? undefined
-      : { store: designStore, raster: designRaster, evaluator: designRaster },
+      : { store: designStore, raster: designRaster, evaluator: designRaster, builds: designBuilds },
   );
   await runtime.initialize();
   registerAttachmentProtocol(async (sessionId, previewPath) => await runtime!.resolveSessionAttachmentPreview(sessionId, previewPath));

@@ -1,4 +1,5 @@
 import { createContext, useContext, type ReactNode } from "react";
+import type { FrameActivity } from "./frame-activity.ts";
 
 /**
  * 画布视口的只读快照,供每个帧节点自取。
@@ -25,12 +26,30 @@ export interface DesignViewport {
   focusedFrameId: string | null;
   /** 浮层元素的反向缩放系数,见 `designChromeScale`。 */
   chromeScale: number;
+  /**
+   * frameId → agent 正在干什么(见 `frame-activity.ts`)。
+   *
+   * 走同一个 context 而不是塞进节点列表:活动态**与相机无关**,它是"哪一帧在被我改"。
+   * 塞进节点列表会让每一次工具调用都重建整张图,而那正是上面那段注释警告的反馈环。
+   * 代价是活动态一变、每个节点都重渲染一次 —— 帧只有几十个,而它一秒最多变几次。
+   */
+  activity: ReadonlyMap<string, FrameActivity>;
+  /**
+   * 画布容器在屏幕上的尺寸。
+   *
+   * 节点需要它来回答一个**用户看得见**的问题:"这一帧进了之后能不能交互"。原生视图放不下
+   * 就不能给(见 `frameFitsInViewport`),而放不下时画布上必须说得出原因 —— 否则用户双击
+   * 进入、页面却依然点不动,而界面上没有任何解释。
+   */
+  container: { width: number; height: number };
 }
 
 const DesignViewportContext = createContext<DesignViewport>({
   zoom: 1,
   focusedFrameId: null,
   chromeScale: 1,
+  activity: new Map(),
+  container: { height: 0, width: 0 },
 });
 
 export function DesignViewportProvider({

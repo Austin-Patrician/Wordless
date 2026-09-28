@@ -4,6 +4,12 @@ import {
   DesignListRequestSchema,
   DesignMoveFramesRequestSchema,
   DesignOpenRequestSchema,
+  ApplyDesignStyleRequestSchema,
+  CreateDesignFrameRequestSchema,
+  DesignExportRequestSchema,
+  DeleteDesignFrameRequestSchema,
+  DesignRefreshRequestSchema,
+  DesignUpdateFrameMetaRequestSchema,
   CreateDesignRequestSchema,
   DesignLiveFrameRequestSchema,
   DesignRasterRequestSchema,
@@ -19,7 +25,13 @@ import type { DesignHandlers } from "../design/handlers.ts";
 
 export const DESIGN_LIST_CHANNEL = "wordless:design:list";
 export const DESIGN_OPEN_CHANNEL = "wordless:design:open";
+export const DESIGN_REFRESH_CHANNEL = "wordless:design:refresh";
 export const DESIGN_MOVE_FRAMES_CHANNEL = "wordless:design:move-frames";
+export const DESIGN_CREATE_FRAME_CHANNEL = "wordless:design:create-frame";
+export const DESIGN_DELETE_FRAME_CHANNEL = "wordless:design:delete-frame";
+export const DESIGN_EXPORT_CHANNEL = "wordless:design:export";
+export const DESIGN_APPLY_STYLE_CHANNEL = "wordless:design:apply-style";
+export const DESIGN_UPDATE_FRAME_META_CHANNEL = "wordless:design:update-frame-meta";
 export const DESIGN_RASTERIZE_CHANNEL = "wordless:design:rasterize";
 export const DESIGN_LIVE_FRAME_CHANNEL = "wordless:design:live-frame";
 export const DESIGN_STYLES_CHANNEL = "wordless:design:styles";
@@ -40,9 +52,43 @@ export function registerDesignIpc(deps: DesignIpcDeps): void {
     return await deps.handlers.openDesign(payload as { path: string });
   });
 
+  ipcMain.handle(DESIGN_REFRESH_CHANNEL, async (_event, payload: unknown) => {
+    if (!Value.Check(DesignRefreshRequestSchema, payload)) throw new Error("Invalid request payload");
+    return await deps.handlers.refreshDesign(payload as { path: string; force?: boolean });
+  });
+
   ipcMain.handle(DESIGN_MOVE_FRAMES_CHANNEL, async (_event, payload: unknown) => {
     if (!Value.Check(DesignMoveFramesRequestSchema, payload)) throw new Error("Invalid request payload");
     return await deps.handlers.moveFrames(payload as { path: string; moves: { frameId: string; x: number; y: number }[] });
+  });
+
+  ipcMain.handle(DESIGN_CREATE_FRAME_CHANNEL, async (_event, payload: unknown) => {
+    if (!Value.Check(CreateDesignFrameRequestSchema, payload)) throw new Error("Invalid request payload");
+    return await deps.handlers.createFrame(
+      payload as { path: string; title?: string; width?: number; height?: number },
+    );
+  });
+
+  ipcMain.handle(DESIGN_DELETE_FRAME_CHANNEL, async (_event, payload: unknown) => {
+    if (!Value.Check(DeleteDesignFrameRequestSchema, payload)) throw new Error("Invalid request payload");
+    return await deps.handlers.deleteFrame(payload as { path: string; frameId: string });
+  });
+
+  ipcMain.handle(DESIGN_APPLY_STYLE_CHANNEL, async (_event, payload: unknown) => {
+    if (!Value.Check(ApplyDesignStyleRequestSchema, payload)) throw new Error("Invalid request payload");
+    return await deps.handlers.applyStyle(payload as { path: string; styleId: string });
+  });
+
+  ipcMain.handle(DESIGN_EXPORT_CHANNEL, async (_event, payload: unknown) => {
+    if (!Value.Check(DesignExportRequestSchema, payload)) throw new Error("Invalid request payload");
+    return await deps.handlers.exportDesign(payload as { path: string; what: "frames" | "assets" });
+  });
+
+  ipcMain.handle(DESIGN_UPDATE_FRAME_META_CHANNEL, async (_event, payload: unknown) => {
+    if (!Value.Check(DesignUpdateFrameMetaRequestSchema, payload)) throw new Error("Invalid request payload");
+    return await deps.handlers.updateFrameMeta(
+      payload as { path: string; frameId: string; meta: { title?: string; width?: number; height?: number } },
+    );
   });
 
   ipcMain.handle(DESIGN_RASTERIZE_CHANNEL, async (_event, payload: unknown) => {

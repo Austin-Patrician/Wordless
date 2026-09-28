@@ -32,12 +32,23 @@ function declaredSize(entry: FrameSizeInput): FrameSize | null {
   return width !== null && height !== null ? { width, height } : null;
 }
 
-/** 整份设计里出现最多的那个尺寸。 */
+/** 整份设计里出现最多的那个尺寸(只看帧自己的声明)。 */
 function dominantSize(entries: readonly FrameSizeInput[]): FrameSize | null {
+  return dominantOf(
+    entries.map((entry) => declaredSize(entry)).filter((size): size is FrameSize => size !== null),
+  );
+}
+
+/**
+ * 一组**已解析的**尺寸里的多数派。
+ *
+ * 与 `dominantSize` 是同一条规则,只是入口不同:`declaredSize` 那条从帧文件的声明里取,这条
+ * 直接收尺寸。**新建的空白帧要用它** —— 那份设计已经有帧了,新帧跟着多数派走,而不是跳回
+ * 品类尺寸或全局兜底。不然给一份手机设计加第二屏,会得到一个 1440×900 的桌面画板。
+ */
+export function dominantOf(sizes: readonly FrameSize[]): FrameSize | null {
   const counts = new Map<string, { size: FrameSize; count: number }>();
-  for (const entry of entries) {
-    const size = declaredSize(entry);
-    if (size === null) continue;
+  for (const size of sizes) {
     const key = `${size.width}x${size.height}`;
     const hit = counts.get(key);
     if (hit) hit.count += 1;

@@ -6,7 +6,7 @@ import {
   frameComment,
   parseFrameMeta,
   sanitizeFrameTitle,
-  withFrameTitle,
+  withFrameMeta,
 } from "../src/main/design/frame-meta.ts";
 
 test("读得出声明", () => {
@@ -65,7 +65,7 @@ test("生成与解析是一对往返", () => {
 
 test("改标题只动标题,其余源码原样", () => {
   const source = `<!doctype html>\n<!-- @frame { "width": 390, "height": 844, "title": "旧" } -->\n<link rel="stylesheet" href="../theme.css">\n`;
-  const next = withFrameTitle(source, "新标题");
+  const next = withFrameMeta(source, { title: "新标题" });
   assert.ok(next !== null);
   assert.equal(parseFrameMeta(next, "x").title, "新标题");
   assert.equal(parseFrameMeta(next, "x").width, 390);
@@ -74,7 +74,7 @@ test("改标题只动标题,其余源码原样", () => {
 });
 
 test("声明里没有标题时补上", () => {
-  const next = withFrameTitle(`<!-- @frame { "width": 390, "height": 844 } -->`, "标题");
+  const next = withFrameMeta(`<!-- @frame { "width": 390, "height": 844 } -->`, { title: "标题" });
   assert.deepEqual(next === null ? null : parseFrameMeta(next, "x"), {
     width: 390,
     height: 844,
@@ -83,14 +83,14 @@ test("声明里没有标题时补上", () => {
 });
 
 test("坏声明会被重写修好", () => {
-  const next = withFrameTitle(`<!-- @frame { broken } -->`, "标题");
+  const next = withFrameMeta(`<!-- @frame { broken } -->`, { title: "标题" });
   assert.ok(next !== null);
   assert.equal(parseFrameMeta(next, "x").title, "标题");
 });
 
 test("没有声明时返回 null,不往源码里瞎塞", () => {
   // 调用方据此报错,而不是猜一个位置插进去。
-  assert.equal(withFrameTitle("<html></html>", "标题"), null);
+  assert.equal(withFrameMeta("<html></html>", { title: "标题" }), null);
 });
 
 test("标题里的危险字符被清理", () => {
@@ -103,7 +103,7 @@ test("标题里的危险字符被清理", () => {
 
 test("清理后的标题仍能安全往返", () => {
   const messy = `标题 with "quotes" and \\ backslash`;
-  const next = withFrameTitle(`<!-- @frame { "width": 1, "height": 1 } -->`, messy);
+  const next = withFrameMeta(`<!-- @frame { "width": 1, "height": 1 } -->`, { title: messy });
   assert.ok(next !== null);
   assert.equal(parseFrameMeta(next, "x").title, sanitizeFrameTitle(messy));
 });

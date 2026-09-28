@@ -1,4 +1,5 @@
 import { BrowserWindow, type NativeImage } from "electron";
+import { encodeRasterImage } from "./raster-port.ts";
 import type {
   OffscreenEvaluatePort,
   OffscreenEvaluateRequest,
@@ -79,7 +80,7 @@ export class ElectronOffscreenRaster implements RasterPort, OffscreenEvaluatePor
     try {
       const image = await this.loadAndPaint(window, request, signal);
       if (image === null) return { ok: false, key: request.key, code: "load-failed" };
-      const bytes = image.toJPEG(JPEG_QUALITY);
+      const bytes = encodeRasterImage(image, request.format, JPEG_QUALITY);
       if (bytes.byteLength === 0) return { ok: false, key: request.key, code: "capture-failed" };
       const size = image.getSize();
       return {

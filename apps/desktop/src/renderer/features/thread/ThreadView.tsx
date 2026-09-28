@@ -120,7 +120,7 @@ import {
 import { getThreadSessionStore } from "./thread-session-store-registry";
 import type { ExpertMemberSessionStore } from "./expert-member-session-store";
 import { ThreadViewportStore } from "./thread-viewport-store";
-import wordlessIcon from "../../../icons/common-icons/wordless.jpeg";
+import wordlessIcon from "../../../icons/common-icons/wordless-brand.svg";
 import thinkingIcon from "../../../icons/common-icons/深度思考.svg";
 import { skillIconText } from "../../shared/skill-icon";
 import { FileTypeIcon } from "../../shared/FileTypeIcon";
@@ -2250,7 +2250,7 @@ function AssistantIdentityHeader({
       ) : (
         <img
           alt=""
-          className="h-7 w-7 shrink-0 rounded-[8px] object-cover"
+          className="h-7 w-7 shrink-0 rounded-[20%] object-cover ring-1 ring-black/10 dark:ring-white/15"
           draggable={false}
           src={wordlessIcon}
         />

@@ -26,10 +26,13 @@ import { parseThemeTokens, resolveTokens, withAlpha } from "./style-tokens.ts";
 export type DesignStyleCardData = DesignStyleSummaryDto;
 
 export const DesignStyleCard = memo(function DesignStyleCard({
+  actionLabel,
   style,
   picked,
   onPick,
 }: {
+  /** 动作名。画廊是"用这套新建设计",设计体系对话框是"应用这套" —— 同一张卡片,两种意图。 */
+  actionLabel?: string;
   style: DesignStyleCardData;
   picked: boolean;
   onPick: (style: DesignStyleCardData) => void;
@@ -38,7 +41,7 @@ export const DesignStyleCard = memo(function DesignStyleCard({
 
   return (
     <button
-      aria-label={`用「${style.name}」新建设计`}
+      aria-label={actionLabel === undefined ? `用「${style.name}」新建设计` : `${actionLabel}「${style.name}」`}
       aria-pressed={picked}
       className={`flex aspect-[4/3] w-full flex-col gap-2 overflow-hidden rounded-xl border p-2.5 text-left outline-none transition-colors ${
         picked

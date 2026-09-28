@@ -2640,6 +2640,52 @@ export const DesignOpenRequestSchema = Type.Object(
   { additionalProperties: false },
 );
 
+/**
+ * 样式表与源是否同步。
+ *
+ * `built` 模式的 `dist/theme.css` **只能由一次构建产出**(同步渲染根时会刻意跳过它),所以
+ * "样式新不新"是一个必须能回答的问题 —— 答不出来的后果不是"难看一点",是**一帧样式都不
+ * 生效**,而它在界面上与"设计还没做完"长得一模一样。
+ *
+ * - `never` 这份设计还没有过成功的构建(新包,或构建从未跑起来)
+ * - `fresh` 上次构建之后源没变过
+ * - `stale` 源变了、构建还没跟上(新增的工具类此刻**还不存在**)
+ * - `failed` 构建跑过但失败了,`detail` 是原因
+ */
+export const DesignStylesStatusSchema = Type.Object(
+  {
+    state: Type.Union([
+      Type.Literal("never"),
+      Type.Literal("fresh"),
+      Type.Literal("stale"),
+      Type.Literal("failed"),
+    ]),
+    detail: Type.Optional(Type.String()),
+  },
+  { additionalProperties: false },
+);
+
+/**
+ * 让一份设计回到当前磁盘状态。
+ *
+ * 这是画布的**心跳**:渲染层每秒问一次,主进程用源指纹做短路,所以常态只有两次读、
+ * 不起任何进程。它同时承载三件事 —— 新帧上画布、帧内容刷新、样式表重编 —— 因为这三件
+ * 事的前提是同一个事实:源变了吗。
+ */
+export const DesignRefreshRequestSchema = Type.Object(
+  {
+    path: Type.String({ minLength: 1 }),
+    /**
+     * 用户按的刷新:越过主进程的最短间隔。
+     *
+     * 不给的话,一次手动刷新可能刚好落在限流窗口里而**静默什么都不做** —— 一个点了没反应的
+     * 按钮比没有这个按钮更糟。(单飞仍然生效:构建正在跑时再叠一个不会让用户更快拿到结果。)
+     */
+    force: Type.Optional(Type.Boolean()),
+  },
+  { additionalProperties: false },
+);
+
 export const DesignFrameMoveSchema = Type.Object(
   { frameId: Type.String({ minLength: 1 }), x: Type.Number(), y: Type.Number() },
   { additionalProperties: false },
@@ -2647,6 +2693,124 @@ export const DesignFrameMoveSchema = Type.Object(
 
 export const DesignMoveFramesRequestSchema = Type.Object(
   { path: Type.String({ minLength: 1 }), moves: Type.Array(DesignFrameMoveSchema, { minItems: 1 }) },
+  { additionalProperties: false },
+);
+
+/**
+ * 新建一个空白帧。
+ *
+ * 只带"想建成什么样"的三样:标题与尺寸都给默认值(设计的 `defaultFrameSize`),而**落点不在这里**
+ * —— 新帧放到哪由主进程的对账规则决定(最右帧的右边、顶边对齐),在渲染层再算一遍就是第二份真相。
+ */
+export const CreateDesignFrameRequestSchema = Type.Object(
+  {
+    path: Type.String({ minLength: 1 }),
+    /** 标题前缀。主进程会补上序号 —— 画布上唯一的标签就是标题,两帧同名等于没有标签。 */
+    title: Type.Optional(Type.String({ maxLength: 120 })),
+    width: Type.Optional(Type.Number({ minimum: 1 })),
+    height: Type.Optional(Type.Number({ minimum: 1 })),
+    /** 用户**在画布上画出来**的落点。不给就走自动布局(最右帧的右边)。 */
+    x: Type.Optional(Type.Number()),
+    y: Type.Optional(Type.Number()),
+  },
+  { additionalProperties: false },
+);
+
+/**
+ * 导出。
+ *
+ * 两件事共用一个入口,因为它们**只差在语料**:渲染图是现场光栅出来的 PNG,素材是设计包里
+ * 已有的文件。而"用户挑一个目录、我们把东西放进去、把落点告诉他"这一整套是一样的。
+ */
+export const DesignExportRequestSchema = Type.Object(
+  {
+    path: Type.String({ minLength: 1 }),
+    /**
+     * `frames` = 只要各帧的渲染图;`assets` = 渲染图**加**规范与素材文件(整套交接)。
+     *
+     * **没有倍率参数。** 原来有一个 `scale`,而它是错的:倍数只能来自**设备像素比**,不是把
+     * 窗口放大 —— 放大窗口会让页面按新视口重排,导出的图比页面大一圈、周边留白(实测)。
+     * 而设备像素比在真实现里尚未生效,所以现在没有"2 倍导出"这件事可说 —— 留一个做不到的
+     * 参数,比没有它更糟。
+     */
+    what: Type.Union([Type.Literal("frames"), Type.Literal("assets")]),
+  },
+  { additionalProperties: false },
+);
+
+export const DesignExportResultSchema = Type.Union([
+  Type.Object(
+    {
+      ok: Type.Literal(true),
+      /** 文件落在哪 —— 界面要把它说出来,否则用户不知道东西去哪了。 */
+      directory: Type.String({ minLength: 1 }),
+      files: Type.Array(Type.String()),
+    },
+    { additionalProperties: false },
+  ),
+  Type.Object(
+    {
+      ok: Type.Literal(false),
+      reason: Type.Union([
+        /** 用户在对话框里取消了。**不是错误**,界面上不该报红。 */
+        Type.Literal("cancelled"),
+        /** 没有可导出的东西(设计一帧都没有、或者没有素材)。 */
+        Type.Literal("empty"),
+        /** 渲染/复制过程中出了问题。 */
+        Type.Literal("failed"),
+      ]),
+      detail: Type.Optional(Type.String()),
+    },
+    { additionalProperties: false },
+  ),
+]);
+
+/**
+ * 把一套内置风格应用到已有设计上。
+ *
+ * 结果里的 `framesNeedRestyle` 是这个功能的**关键信息**:设计不能靠替换令牌机械改风格,所以
+ * 应用之后已有帧要由 agent 按新规范重设 —— 用户必须知道这件事,否则他会以为画布没生效。
+ */
+export const ApplyDesignStyleRequestSchema = Type.Object(
+  { path: Type.String({ minLength: 1 }), styleId: Type.String({ minLength: 1 }) },
+  { additionalProperties: false },
+);
+
+export const ApplyDesignStyleResultSchema = Type.Object(
+  {
+    framesNeedRestyle: Type.Boolean(),
+    opened: DesignOpenedSchema,
+  },
+  { additionalProperties: false },
+);
+
+/** 删掉一帧。只删文件 —— 清单由对账更新,少一处可以写歪的地方。 */
+export const DeleteDesignFrameRequestSchema = Type.Object(
+  { path: Type.String({ minLength: 1 }), frameId: Type.String({ minLength: 1 }) },
+  { additionalProperties: false },
+);
+
+/**
+ * 改一帧的声明。**没给的字段保持原值。**
+ *
+ * 与上面的"移动"分开,因为它们落在**不同的地方**:位置进 `design.json`,而标题与尺寸写回
+ * 帧源码里的 `@frame` 注释 —— 那是它们真正的家,清单里那份只是上次同步的快照。
+ */
+export const DesignFrameMetaSchema = Type.Object(
+  {
+    title: Type.Optional(Type.String({ maxLength: 120 })),
+    width: Type.Optional(Type.Number({ minimum: 1 })),
+    height: Type.Optional(Type.Number({ minimum: 1 })),
+  },
+  { additionalProperties: false },
+);
+
+export const DesignUpdateFrameMetaRequestSchema = Type.Object(
+  {
+    path: Type.String({ minLength: 1 }),
+    frameId: Type.String({ minLength: 1 }),
+    meta: DesignFrameMetaSchema,
+  },
   { additionalProperties: false },
 );
 
@@ -2740,6 +2904,25 @@ export const CreateDesignResultSchema = Type.Object(
   { additionalProperties: false },
 );
 
+export const DesignRefreshResultSchema = Type.Object(
+  {
+    /** 源指纹。画布把它当作位图缓存的代号:变了就必须重新光栅。 */
+    revision: Type.String({ minLength: 1 }),
+    /** 源与上次应用过的指纹不一致(而不仅仅是"查过一遍")。 */
+    changed: Type.Boolean(),
+    /**
+     * 这一次真的做了同步/构建,所以 `opened` 是当前的真实状态。
+     *
+     * 被限流或已经在刷新时为 false —— 那不是失败,下一次轮询会补上。区分的理由是画布
+     * 要知道"该不该拿这个 `opened` 覆盖自己",而不是拿一个 `null` 去猜。
+     */
+    applied: Type.Boolean(),
+    opened: Type.Union([DesignOpenedSchema, Type.Null()]),
+    build: Type.Union([DesignBuildOutcomeSchema, Type.Null()]),
+  },
+  { additionalProperties: false },
+);
+
 export type DesignBuildOutcomeDto = Static<typeof DesignBuildOutcomeSchema>;
 export type CreateDesignResultDto = Static<typeof CreateDesignResultSchema>;
 export type DesignModeDto = Static<typeof DesignModeSchema>;
@@ -2751,12 +2934,23 @@ export type DesignOpenedDto = Static<typeof DesignOpenedSchema>;
 export type DesignListRequestDto = Static<typeof DesignListRequestSchema>;
 export type DesignOpenRequestDto = Static<typeof DesignOpenRequestSchema>;
 export type DesignFrameMoveDto = Static<typeof DesignFrameMoveSchema>;
+export type DesignFrameMetaDto = Static<typeof DesignFrameMetaSchema>;
+export type CreateDesignFrameRequestDto = Static<typeof CreateDesignFrameRequestSchema>;
+export type DeleteDesignFrameRequestDto = Static<typeof DeleteDesignFrameRequestSchema>;
+export type ApplyDesignStyleRequestDto = Static<typeof ApplyDesignStyleRequestSchema>;
+export type ApplyDesignStyleResultDto = Static<typeof ApplyDesignStyleResultSchema>;
+export type DesignExportRequestDto = Static<typeof DesignExportRequestSchema>;
+export type DesignExportResultDto = Static<typeof DesignExportResultSchema>;
+export type DesignUpdateFrameMetaRequestDto = Static<typeof DesignUpdateFrameMetaRequestSchema>;
 export type DesignRasterFrameDto = Static<typeof DesignRasterFrameSchema>;
 export type DesignLiveBoundsDto = Static<typeof DesignLiveBoundsSchema>;
 export type DesignStyleSummaryDto = Static<typeof DesignStyleSummarySchema>;
 export type CreateDesignRequestDto = Static<typeof CreateDesignRequestSchema>;
 export type DesignLiveFrameRequestDto = Static<typeof DesignLiveFrameRequestSchema>;
 export type DesignRasterRequestDto = Static<typeof DesignRasterRequestSchema>;
+export type DesignStylesStatusDto = Static<typeof DesignStylesStatusSchema>;
+export type DesignRefreshRequestDto = Static<typeof DesignRefreshRequestSchema>;
+export type DesignRefreshResultDto = Static<typeof DesignRefreshResultSchema>;
 
 /**
  * 光栅化的结果。

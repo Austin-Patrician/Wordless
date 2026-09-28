@@ -33,9 +33,11 @@
   display: block;
   width: 40px;
   height: 40px;
-  border: 1px solid #d7dacd;
-  border-radius: 9px;
-  object-fit: cover;
+  /* The ring traces the artwork's own squircle (rx 104/512), so it sits exactly
+     on its edge instead of framing it as a square round-rect. */
+  border: 1px solid rgb(0 0 0 / .1);
+  border-radius: 20%;
+  object-fit: contain;
   box-shadow: 0 3px 9px rgb(38 48 29 / .14);
 }
 
@@ -170,7 +172,7 @@
 :root[data-theme="dark"] .quick-model-setup { background: rgb(8 9 6 / .56); }
 :root[data-theme="dark"] .quick-model-setup__dialog { border-color: #4a4c43; background: #1b1d17; color: #f0f1eb; box-shadow: 0 34px 90px rgb(0 0 0 / .54); }
 :root[data-theme="dark"] .quick-model-setup__header p { color: #999c90; }
-:root[data-theme="dark"] .quick-model-setup__brand-icon { border-color: #4b4f42; box-shadow: 0 3px 10px rgb(0 0 0 / .3); }
+:root[data-theme="dark"] .quick-model-setup__brand-icon { border-color: rgb(255 255 255 / .15); box-shadow: 0 3px 10px rgb(0 0 0 / .3); }
 :root[data-theme="dark"] .quick-model-setup__close:hover { background: #2a2c25; color: #f0f1eb; }
 :root[data-theme="dark"] .quick-model-setup__orbit { border-color: rgb(170 185 134 / .24); box-shadow: 0 22px 34px rgb(0 0 0 / .2), inset 0 0 0 8px rgb(255 255 255 / .015); }
 :root[data-theme="dark"] .quick-model-setup__orbit span { border-color: rgb(170 185 134 / .1); }

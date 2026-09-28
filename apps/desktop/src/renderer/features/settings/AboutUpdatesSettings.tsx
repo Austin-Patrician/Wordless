@@ -6,7 +6,7 @@ import remarkGfm from "remark-gfm";
 import { useDesktopUpdate } from "../../platform/desktop-update";
 import { usePreferences } from "../../shared/preferences";
 import { useRuntime } from "../../shared/runtime";
-import wordlessIcon from "../../../icons/common-icons/wordless.jpeg";
+import wordlessIcon from "../../../icons/common-icons/wordless-brand.svg";
 import githubIcon from "../../../icons/common-icons/github.svg";
 
 const WECHAT_GROUP_QR_URL = "https://qr.wordless.20250230.xyz/wechat-group.png";
@@ -39,7 +39,7 @@ export function AboutUpdatesSettings() {
     <div className="min-h-0 flex-1 overflow-y-auto">
       <div className="mx-auto w-full max-w-[780px] px-6 pb-14 pt-8 sm:px-9">
         <section className="about-product-band">
-          <img alt="Wordless" className="h-16 w-16 shrink-0 rounded-[8px] object-cover shadow-sm" draggable={false} src={wordlessIcon} />
+          <img alt="Wordless" className="h-16 w-16 shrink-0 rounded-[20%] object-cover shadow-sm ring-1 ring-black/10 dark:ring-white/15" draggable={false} src={wordlessIcon} />
           <div className="min-w-0 flex-1">
             <h2 className="text-[24px] font-semibold leading-tight">{appInfo?.name ?? "Wordless"}</h2>
             <p className="mt-1 text-[12px] text-muted-foreground">Local-first desktop agent workspace</p>

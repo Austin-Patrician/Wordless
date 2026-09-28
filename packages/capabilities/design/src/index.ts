@@ -1,8 +1,11 @@
 import { Type } from "typebox";
 import type { AgentTool, AgentToolResult } from "@wordless/agent";
-import { designIssues, isBlocking, type DesignFacts, type DesignIssue } from "./issues.js";
-import type { DesignPort } from "./port.js";
+import { designIssues, isBlocking, type DesignIssue } from "./issues.js";
+import type { DesignFactsDto, DesignPort, DesignStylesFactsDto } from "./port.js";
+import { describeDesigns, resolveDesignTarget, unknownDesignMessage } from "./resolve-design.js";
 export { LAYOUT_PROBE_EXPRESSION } from "./probe-script.js";
+export { describeDesigns, resolveDesignTarget, unknownDesignMessage } from "./resolve-design.js";
+export type { DesignCreatedDto } from "./port.js";
 export { designIssues, isBlocking } from "./issues.js";
 export type { DesignFacts, DesignIssue, DesignIssueCode, FrameFacts } from "./issues.js";
 export type { DesignPort, LayoutFinding } from "./port.js";
@@ -39,6 +42,32 @@ function textResult(content: string, details: ToolDetails = {}): AgentToolResult
   return { content: [{ type: "text", text: content }], details };
 }
 
+/**
+ * "这是哪一份设计" —— `design_inspect` 与 `design_screenshot` 共用的第一步。
+ *
+ * 两者都只读,所以失败时要说的话是同一句:要么工作区里一份设计都没有(先去建),要么有好几
+ * 份而调用方没指名(报出候选)。共用它是为了这两处不漂开。
+ *
+ * 注意它和 `design_status` **不共用**同一条路径:`design_status` 恰好是那个"用来看有哪些
+ * 候选"的工具,所以它的歧义分支必须给出候选列表,而不是让调用方再去看别的什么。
+ */
+async function resolveTarget(
+  port: DesignPort,
+  explicit: string | undefined,
+): Promise<{ ok: true; path: string } | { ok: false; message: string }> {
+  const designs = await port.list();
+  const resolved = resolveDesignTarget({ explicit, designs });
+  if (resolved.ok) return { ok: true, path: resolved.path };
+  if (resolved.reason === "none") return { ok: false, message: NO_DESIGN_MESSAGE };
+  return {
+    ok: false,
+    message: [
+      `This workspace has ${designs.length} designs — pass \`path\`:`,
+      describeDesigns(resolved.candidates),
+    ].join("\n"),
+  };
+}
+
 const NO_DESIGN_MESSAGE =
   "There is no design package in this workspace. Call design_create first — a design is a directory named x.wdesign holding design.json and frames/.";
 
@@ -49,28 +78,31 @@ export function createDesignTools(port: DesignPort): AgentTool[] {
     description:
       "List the design packages in this workspace, or read one design's frames and problems. Call this before editing and after every change: the problems it reports are the deterministic half of the review, and anything it still reports means the work is not finished.",
     parameters: Type.Object({
-      path: Type.Optional(Type.String({ description: "Design package directory. Omit to list what exists." })),
+      path: Type.Optional(
+        Type.String({
+          description:
+            "Design package directory. Omit to use the only design in the workspace; if there are several, this reports them and asks you to name one.",
+        }),
+      ),
     }),
     async execute(_toolCallId: string, input: { path?: string }) {
-      let target = input.path;
-      if (target === undefined) {
-        const designs = await port.list();
-        if (designs.length === 0) return textResult(NO_DESIGN_MESSAGE, { designs: 0 });
-        if (designs.length > 1) {
-          // 有多份时**列出来让模型选**,而不是替它挑一份 —— 挑错了它会去改另一份设计。
-          const lines = designs.map((design) => `- ${design.path} (${design.frameCount} frames)`);
-          return textResult(
-            [`This workspace has ${designs.length} designs. Pass the one you mean:`, ...lines].join("\n"),
-            { designs: designs.length },
-          );
-        }
-        target = designs[0]?.path;
-        if (target === undefined) return textResult(NO_DESIGN_MESSAGE, { designs: 0 });
+      const designs = await port.list();
+      const resolved = resolveDesignTarget({ explicit: input.path, designs });
+      if (!resolved.ok) {
+        if (resolved.reason === "none") return textResult(NO_DESIGN_MESSAGE, { designs: 0 });
+        // 有多份时**列出来让模型选**,而不是替它挑一份 —— 挑错了它会去改另一份设计。
+        return textResult(
+          [
+            `This workspace has ${designs.length} designs. Pass the one you mean as \`path\`, or omit \`path\` to mean "the only one".`,
+            describeDesigns(resolved.candidates),
+          ].join("\n"),
+          { designs: designs.length },
+        );
       }
 
-      const facts = await port.read(target);
+      const facts = await port.read(resolved.path);
       if (facts === null) {
-        return textResult(`${target} is not a design package (no readable design.json).`, { path: target });
+        return textResult(unknownDesignMessage(resolved.path, designs), { path: resolved.path });
       }
 
       const issues = designIssues(facts);
@@ -102,14 +134,33 @@ export function createDesignTools(port: DesignPort): AgentTool[] {
         frameHeight: input.height,
       });
       if (created === null) return textResult("Could not create the design package.", { created: false });
-      return textResult(
-        [
-          `Created ${created.path}.`,
-          `Its first frame is frames/${created.frameId}.html with a @frame declaration for ${input.width}×${input.height}.`,
-          "Read theme.css before writing any styling, and keep the @frame declaration at the top of every frame file.",
-        ].join("\n"),
-        { created: true, path: created.path, frameId: created.frameId },
-      );
+      /**
+       * **每一处路径都带目录,而且相对工作区根。**
+       *
+       * 原来这里给的是绝对路径,紧接着说 "Read theme.css" —— 不带目录。模型照做了三次,三次
+       * 都是 ENOENT(它去读的是工作区根下那个 `theme.css`),然后它把 theme.css 与
+       * frames/index.html 写到了包外面。那一整次会话的产出就是这样丢的。
+       */
+      const dir = created.path.split(/[\\/]/).pop() ?? created.path;
+      const lines = [
+        // 重名先说:它改变了"这是哪一份设计"这个前提。
+        ...(created.rename === null
+          ? []
+          : [
+              `Note: \`${created.rename.requested}.wdesign\` already existed, so this is a SECOND, EMPTY design at \`${created.rename.actual}.wdesign\`. If you meant to continue the existing one, call design_status and work on that one instead.`,
+              "",
+            ]),
+        `Created ${created.path}.`,
+        "",
+        `Every path below is relative to the workspace root, and \`${dir}\` is part of it:`,
+        `- the manifest is \`${dir}/design.json\` — read it, never edit it`,
+        `- the tokens are \`${dir}/theme.css\` — read this before writing any styling`,
+        `- the first frame is \`${dir}/frames/${created.frameId}.html\`, with a @frame declaration for ${input.width}×${input.height}`,
+        "",
+        `Frames reference \`../theme.css\` and \`../assets/...\` — keep those exactly as they are; the same relative paths hold when the frame is rendered.`,
+        `Keep the @frame declaration at the top of every frame file.`,
+      ];
+      return textResult(lines.join("\n"), { created: true, path: created.path, frameId: created.frameId });
     },
   });
 
@@ -119,20 +170,25 @@ export function createDesignTools(port: DesignPort): AgentTool[] {
     description:
       "Run deterministic layout checks on one or more frames: content overflowing its box, text cut off without an ellipsis, nowrap text wider than its parent, row items wider than their row, painted surfaces clipped by a parent. Returns coordinate facts, not opinions. Run this once a batch of structural changes is in place (not after each edit); an empty result means none of these known failure shapes are present, not that the design looks right — use design_screenshot for that.",
     parameters: Type.Object({
-      path: Type.String({ description: "Design package directory." }),
+      path: Type.Optional(
+        Type.String({ description: "Design package directory. Omit to use the only design in the workspace." }),
+      ),
       frameIds: Type.Optional(
         Type.Array(Type.String(), { description: "Frames to check. Omit to check every frame." }),
       ),
     }),
-    async execute(_toolCallId: string, input: { path: string; frameIds?: string[] }) {
-      const facts = await port.read(input.path);
+    async execute(_toolCallId: string, input: { path?: string; frameIds?: string[] }) {
+      const target = await resolveTarget(port, input.path);
+      if (!target.ok) return textResult(target.message, { findings: 0 });
+
+      const facts = await port.read(target.path);
       if (facts === null) {
-        return textResult(`${input.path} is not a design package.`, { path: input.path });
+        return textResult(unknownDesignMessage(target.path, await port.list()), { path: target.path });
       }
       const frameIds = input.frameIds && input.frameIds.length > 0 ? input.frameIds : facts.frames.map((frame) => frame.id);
       if (frameIds.length === 0) return textResult("This design has no frames to check.", { findings: 0 });
 
-      const findings = await port.inspect(input.path, frameIds);
+      const findings = await port.inspect(target.path, frameIds);
       if (findings.length === 0) {
         return textResult(
           `Checked ${frameIds.length} frame(s): no layout problems from the known shapes. This is not the same as looking right — take a screenshot too.`,
@@ -155,13 +211,21 @@ export function createDesignTools(port: DesignPort): AgentTool[] {
     description:
       "Render a frame offscreen and return the actual pixels. Use this to check the design the way the person you are working with will see it — type, spacing, alignment, colour. You cannot judge those from markup. Take one after the layout checks pass, and again after fixing anything it shows.",
     parameters: Type.Object({
-      path: Type.String({ description: "Design package directory." }),
+      path: Type.Optional(
+        Type.String({ description: "Design package directory. Omit to use the only design in the workspace." }),
+      ),
       frameId: Type.String({ description: "Frame to render." }),
     }),
-    async execute(_toolCallId: string, input: { path: string; frameId: string }) {
-      const shot = await port.screenshot(input.path, input.frameId);
+    async execute(_toolCallId: string, input: { path?: string; frameId: string }) {
+      const target = await resolveTarget(port, input.path);
+      if (!target.ok) return textResult(target.message, { ok: false, frameId: input.frameId });
+
+      const shot = await port.screenshot(target.path, input.frameId);
       if (!shot.ok) {
-        return textResult(`Could not render ${input.frameId}: ${shot.reason}`, { ok: false, frameId: input.frameId });
+        return textResult(
+          `Could not render ${input.frameId}: ${shot.reason}. Call design_status to see the frames this design actually has.`,
+          { ok: false, frameId: input.frameId },
+        );
       }
       return {
         content: [
@@ -176,9 +240,32 @@ export function createDesignTools(port: DesignPort): AgentTool[] {
   return [status, create, inspect, screenshot];
 }
 
-function describeDesign(facts: DesignFacts, issues: readonly DesignIssue[]): string {
+/**
+ * 样式表的状态。**这一行是必须的。**
+ *
+ * 构建没跟上时帧会一条样式都不生效,而截图看起来只是"这个设计很朴素" —— agent 拿不到
+ * 任何理由,就会照着白页改颜色、改间距。说清楚是"样式表还没编出来",而不是"你写得不好",
+ * 是这条信息唯一的用处。
+ */
+function stylesLine(styles: DesignStylesFactsDto): string {
+  switch (styles.state) {
+    case "fresh":
+      return "Stylesheet: built and up to date with the frames.";
+    case "never":
+      return "Stylesheet: NOT BUILT YET — nothing in theme.css or the frames has any effect right now. It is compiled on the next refresh, so screenshot a frame (or call design_status again in a moment) before judging how it looks.";
+    case "stale":
+      return "Stylesheet: STALE — the frames changed after the last build, so utility classes you just added do not exist yet. The next refresh rebuilds it.";
+    case "failed":
+      return `Stylesheet: BUILD FAILED (${styles.detail ?? "no detail"}). Styles from the last good build are still in effect, so new classes will not appear. Report this instead of editing around it.`;
+    default:
+      return "Stylesheet: unknown state.";
+  }
+}
+
+function describeDesign(facts: DesignFactsDto, issues: readonly DesignIssue[]): string {
   const lines = [
     `${facts.path} (${facts.mode}${facts.style === null ? ", no style applied" : `, style ${facts.style}`})`,
+    stylesLine(facts.styles),
   ];
 
   if (facts.frames.length === 0) {

@@ -60,6 +60,8 @@ export function reconcileFrames(input: ReconcileInput): ReconcileResult {
 
   const frames: DesignFrameEntry[] = [];
   let changed = false;
+  /** 磁盘上有、清单里没有的帧。落点**留到两遍之后再算**,见下面那段注释。 */
+  const newcomers: DiskFrame[] = [];
 
   for (const disk of input.onDisk) {
     const size = sizes.get(disk.id);
@@ -69,9 +71,7 @@ export function reconcileFrames(input: ReconcileInput): ReconcileResult {
     const existing = known.get(disk.id);
 
     if (existing === undefined) {
-      // 新帧:用户拖拽新建的落点优先,否则自动放到最右帧的右边。
-      const placement = input.pendingPlacements?.get(disk.id) ?? autoPlacement(frames);
-      frames.push({ id: disk.id, file: disk.file, x: placement.x, y: placement.y, width, height, title });
+      newcomers.push(disk);
       changed = true;
       continue;
     }
@@ -89,6 +89,33 @@ export function reconcileFrames(input: ReconcileInput): ReconcileResult {
     } else {
       frames.push(existing);
     }
+  }
+
+  /**
+   * **新帧的落点必须在第二遍算。**
+   *
+   * `autoPlacement` 是"放到已经摆好的那些的右边",而 `onDisk` 是**按文件名排序**的。所以
+   * 在第一遍里边走边放,会看它前面处理过几帧 —— 一个名字排在已有帧**前面**的新帧(比如
+   * `frame-2.html` 排在 `index.html` 前面)会看到一张空画布,于是落到**原点、叠在别的帧上**。
+   * 那正是 `autoPlacement` 注释里警告的"看起来像没反应"。
+   *
+   * 分成两遍之后,"已经摆好的"永远是全部对上号的帧,与文件名怎么排无关。
+   */
+  for (const disk of newcomers) {
+    const size = sizes.get(disk.id);
+    const width = size?.width ?? disk.parsed.width ?? 0;
+    const height = size?.height ?? disk.parsed.height ?? 0;
+    // 用户拖拽新建的落点优先,否则自动放到最右帧的右边。
+    const placement = input.pendingPlacements?.get(disk.id) ?? autoPlacement(frames);
+    frames.push({
+      id: disk.id,
+      file: disk.file,
+      x: placement.x,
+      y: placement.y,
+      width,
+      height,
+      title: disk.parsed.title,
+    });
   }
 
   // 清单里有、磁盘上没有 → 被删掉的帧。

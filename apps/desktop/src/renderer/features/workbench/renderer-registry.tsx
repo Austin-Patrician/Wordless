@@ -31,6 +31,14 @@ import dataAnalysisIcon from "../../../icons/common-icons/数据分析.svg";
 import dataPublishIcon from "../../../icons/common-icons/data_publish.svg";
 import dataValidateIcon from "../../../icons/common-icons/data_validate.svg";
 import delegateTaskIcon from "../../../icons/common-icons/delegate_task.svg";
+import designCreateIcon from "../../../icons/common-icons/design_create.svg";
+import designExportIcon from "../../../icons/common-icons/design_export.svg";
+import designFramesIcon from "../../../icons/common-icons/design_frames.svg";
+import designInspectIcon from "../../../icons/common-icons/design_inspect.svg";
+import designScreenshotIcon from "../../../icons/common-icons/design_screenshot.svg";
+import designStatusIcon from "../../../icons/common-icons/design_status.svg";
+import designStyleApplyIcon from "../../../icons/common-icons/design_style_apply.svg";
+import designStyleListIcon from "../../../icons/common-icons/design_style_list.svg";
 import deepThinkingIcon from "../../../icons/common-icons/深度思考.svg";
 import editIcon from "../../../icons/common-icons/edit.svg";
 import findIcon from "../../../icons/common-icons/find.svg";
@@ -124,6 +132,20 @@ const standardToolIconSources: Record<string, StandardToolIconSource> = {
   data_validate: { path: dataValidateIcon, invertOnDark: true },
   delegate_task: { path: delegateTaskIcon },
   delegate_expert: { path: delegateTaskIcon },
+  // The design tools, matching the names declared in
+  // `packages/capabilities/design` plus the four `design_style_*` /
+  // `design_export` / `design_frames` tools the design canvas ADR still lists as
+  // pending. Mapping the pending ones now costs nothing — a tool that never runs
+  // never looks up its icon — and keeps the icon out of the `Wrench` fallback
+  // the moment it ships.
+  design_create: { path: designCreateIcon, invertOnDark: true },
+  design_export: { path: designExportIcon, invertOnDark: true },
+  design_frames: { path: designFramesIcon, invertOnDark: true },
+  design_inspect: { path: designInspectIcon, invertOnDark: true },
+  design_screenshot: { path: designScreenshotIcon, invertOnDark: true },
+  design_status: { path: designStatusIcon, invertOnDark: true },
+  design_style_apply: { path: designStyleApplyIcon, invertOnDark: true },
+  design_style_list: { path: designStyleListIcon, invertOnDark: true },
   edit: { path: editIcon, invertOnDark: true },
   find: { path: findIcon, invertOnDark: true },
   grep: { path: grepIcon, invertOnDark: true },

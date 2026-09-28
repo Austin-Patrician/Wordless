@@ -31,6 +31,8 @@ import { createProfileRegistry } from "@wordless/profile-sdk";
 import { WordlessRuntime } from "@wordless/runtime";
 import { WorkspaceSearchService } from "@wordless/platform-node";
 import { DESIGN_RASTER_BUDGETS } from "../design/raster-budgets";
+import type { BuildRecipe } from "../design/build-recipes";
+import type { BuildRunner } from "../design/design-builder";
 import { ElectronCredentialVault } from "../adapters/electron-credential-vault";
 import { OfficeCliService } from "../office/office-cli-service";
 import { DesktopDataAnalysisService } from "../data-analysis/data-analysis-service";
@@ -41,6 +43,14 @@ export interface DesignRuntimeDeps {
   store: DesignStore;
   raster: RasterPort;
   evaluator: OffscreenEvaluatePort;
+  /**
+   * 构建能力。**agent 那条路也要它。**
+   *
+   * 从前这里没有它,于是 `design_create` 建出来的包从来没被编译过 —— 而
+   * `built` 模式下 `dist/theme.css` 只能由构建产出,所以那些设计的每一帧都**一条样式都
+   * 不生效**。它同时用于"建包即构建"与"刷新时补齐样式"。
+   */
+  builds?: { runner: BuildRunner; recipes: readonly BuildRecipe[] };
 }
 
 export function createDesktopRuntime(userData: string, office: OfficeCliService, credentialVault = new ElectronCredentialVault(path.join(userData, "credentials.json")), dataAnalysis: DataAnalysisService = new DesktopDataAnalysisService({ metadataRoot: path.join(userData, "analysis-metadata"), resourcesRoot: app.isPackaged ? process.resourcesPath : path.resolve(__dirname, "../../resources") }), browser?: BrowserService, design?: DesignRuntimeDeps): WordlessRuntime {
@@ -60,6 +70,7 @@ export function createDesktopRuntime(userData: string, office: OfficeCliService,
             store: design.store,
             raster: design.raster,
             evaluator: design.evaluator,
+            builds: design.builds,
             poolOptions: {
               concurrency: DESIGN_RASTER_BUDGETS.rasterConcurrency,
               timeoutMs: DESIGN_RASTER_BUDGETS.rasterTimeoutMs,

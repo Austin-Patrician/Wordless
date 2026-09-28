@@ -9,7 +9,7 @@ import { usePreferences } from "../../shared/preferences";
 import { relativeTimeFrom as relativeTime } from "../../shared/relative-time";
 import { useRuntime, useRuntimeClient } from "../../shared/runtime";
 import folderIcon from "../../../icons/common-icons/floder.svg";
-import wordlessIcon from "../../../icons/common-icons/wordless.jpeg";
+import wordlessIcon from "../../../icons/common-icons/wordless-brand.svg";
 import { AgentEntryIcon } from "./AgentEntryIcon";
 import { SessionSearchDialog } from "./SessionSearchDialog";
 import { SidebarNavMorePanel } from "./SidebarNavMorePanel";
@@ -408,7 +408,7 @@ export function Sidebar({ collapsed, mainView, onNewThread, onOpenAutomation, on
     <aside className={`hidden h-full min-h-0 shrink-0 flex-col border-r border-border bg-[var(--wordless-shell-sidebar)] py-4 transition-[width] duration-200 lg:flex ${collapsed ? "w-[58px] px-2" : "w-[238px] px-3"}`}>
       <div className={`flex shrink-0 items-center ${collapsed ? "justify-center" : "justify-between px-2"}`}>
         <button className="flex min-w-0 items-center gap-2" onClick={onNewThread} type="button">
-          <img alt="" className="h-7 w-7 shrink-0 rounded-[8px] object-cover transition-transform hover:rotate-3" draggable={false} src={wordlessIcon} />
+          <img alt="" className="h-7 w-7 shrink-0 rounded-[20%] object-cover ring-1 ring-black/10 transition-transform hover:rotate-3 dark:ring-white/15" draggable={false} src={wordlessIcon} />
           {!collapsed ? <span className="truncate text-[15px] font-bold tracking-[-0.04em]">wordless</span> : null}
         </button>
         {!collapsed ? <div className="flex items-center gap-1"><Button aria-label={t("searchTasks")} onClick={() => setSessionSearchOpen(true)} size="icon" type="button" variant="ghost"><Search className="h-4 w-4" /></Button><Button aria-label={t("collapseSidebar")} onClick={onToggle} size="icon" type="button" variant="ghost"><ChevronLeft className="h-4 w-4" /></Button></div> : null}

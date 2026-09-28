@@ -106,6 +106,15 @@ import type {
   DesignMoveFramesRequestDto,
   DesignRasterRequestDto,
   DesignRasterResultDto,
+  ApplyDesignStyleRequestDto,
+  ApplyDesignStyleResultDto,
+  CreateDesignFrameRequestDto,
+  DesignExportRequestDto,
+  DesignExportResultDto,
+  DeleteDesignFrameRequestDto,
+  DesignRefreshRequestDto,
+  DesignRefreshResultDto,
+  DesignUpdateFrameMetaRequestDto,
   DesignOpenRequestDto,
   DesignOpenedDto,
   DesignSummaryDto,
@@ -276,6 +285,25 @@ export interface DesktopBridge {
   /** Null when the path is not a design package, rather than throwing. */
   openDesign(input: DesignOpenRequestDto): Promise<DesignOpenedDto | null>;
   /**
+   * Brings an open design back in line with what is on disk.
+   *
+   * The canvas polls this while the agent is running, because the frames it renders are a
+   * snapshot of a directory the agent is still writing to. Three things ride on the one
+   * answer — new frames appear, frame contents refresh, and the stylesheet is rebuilt when
+   * frames introduce classes the last build never saw (`built` mode: `dist/theme.css` only
+   * ever comes out of a build, so without this a frame renders with no CSS at all).
+   *
+   * `applied: false` is not a failure: nothing changed, or a refresh is already in flight
+   * and this one was throttled. `revision` is the fingerprint the renderer keys its bitmap
+   * cache by — when it moves, the bitmaps are stale and must be taken again.
+   *
+   * `force` is for the manual refresh button: it skips the host's minimum interval, so a click
+   * always does the work instead of possibly landing inside a throttle window and silently
+   * doing nothing. Concurrency is still bounded — a click while a build is running waits for it
+   * rather than racing a second one.
+   */
+  refreshDesign(input: DesignRefreshRequestDto): Promise<DesignRefreshResultDto>;
+  /**
    * Where the frames sit on the canvas.
    *
    * Layout only: it writes the manifest and never touches the frame sources, so a drag
@@ -283,6 +311,60 @@ export interface DesktopBridge {
    * frames and they must land as a single revision.
    */
   moveDesignFrames(input: DesignMoveFramesRequestDto): Promise<boolean>;
+  /**
+   * Adds a blank frame, and returns the manifest **after** reconciliation.
+   *
+   * Where it lands is deliberately not an argument: the host already decides that for any frame
+   * it finds on disk but not in the manifest (right of the rightmost, top-aligned), and a second
+   * placement rule in the renderer would be a second source of truth. Sizes fall back the same way
+   * a frame without its own `@frame` declaration does.
+   *
+   * Returns null when the path is not a design package, matching `openDesign`.
+   */
+  createDesignFrame(input: CreateDesignFrameRequestDto): Promise<DesignOpenedDto | null>;
+  /**
+   * Deletes a frame and returns the manifest after reconciliation.
+   *
+   * Only the frame's file is removed — the manifest picks the deletion up through the same
+   * one-way reconcile that adds new files, so there is no second place to get it wrong. This is
+   * the one canvas action that destroys work, so it is only ever reached from an explicit
+   * gesture (the frame's context menu), never from a stray keystroke.
+   */
+  deleteDesignFrame(input: DeleteDesignFrameRequestDto): Promise<DesignOpenedDto | null>;
+  /**
+   * Applies one of the built-in styles to an existing design.
+   *
+   * Writes `theme.css` and `DESIGN.md` (after backing the package's sources up into
+   * `.build/style-backup/`) and records the style id in the manifest.
+   *
+   * `framesNeedRestyle` is the part callers must not drop: a design cannot be re-skinned by
+   * swapping tokens — spacing, hierarchy and type follow from the style too, so existing frames
+   * have to be reworked against the new spec. Returns null for an unknown style id.
+   */
+  applyDesignStyle(input: ApplyDesignStyleRequestDto): Promise<ApplyDesignStyleResultDto | null>;
+  /**
+   * Exports the design's renders or its assets into a folder the user picks.
+   *
+   * Renders come out as PNG at `scale` (default 2): the canvas wants *small* bitmaps, but an
+   * exported file is something the user keeps, and lossless is the difference they will notice on
+   * type. `null` means this host has no exporter configured — same rule as `builds`, where an
+   * absent capability reports itself rather than faking a success.
+   */
+  exportDesign(input: DesignExportRequestDto): Promise<DesignExportResultDto | null>;
+  /**
+   * Renames a frame, or changes its declared size.
+   *
+   * **Not the same place as `moveDesignFrames`.** Position lives in `design.json`; a
+   * frame's title and size are declared in the frame source itself (the `@frame`
+   * comment), which is why this writes a file and the move does not. Splitting them
+   * keeps the ownership rule honest: editing the manifest would be silently reverted
+   * by the next reconcile.
+   *
+   * Returns false when the frame is gone, the file cannot be read, or the frame has no
+   * `@frame` declaration to write into — the last one deliberately, because inventing a
+   * place for that comment corrupts the file.
+   */
+  updateDesignFrameMeta(input: DesignUpdateFrameMetaRequestDto): Promise<boolean>;
   /**
    * Rasterizes frames offscreen and returns the bitmaps.
    *
@@ -711,7 +793,13 @@ export const requiredMethods: Array<Exclude<keyof DesktopBridge, "version">> = [
     "setNotificationDefaults",
     "listDesigns",
     "openDesign",
+    "refreshDesign",
     "moveDesignFrames",
+    "createDesignFrame",
+    "deleteDesignFrame",
+    "exportDesign",
+    "applyDesignStyle",
+    "updateDesignFrameMeta",
     "rasterizeDesignFrames",
     "setDesignLiveFrame",
     "listDesignStyles",

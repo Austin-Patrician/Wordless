@@ -19,6 +19,15 @@ export const DESIGN_CANVAS_BUDGETS = {
    * `setZoomFactor` 会重排布局),所以 1:1 之外本来也不该有活体。
    */
   maxLiveViews: 1,
+  /**
+   * 用户能把一帧缩到多小。
+   *
+   * 不是为了"防呆",是为了让**版面还有意义**:390 宽是手机帧,再小一倍就没法评审了,
+   * 而一个被误拖成 4×4 的帧在画布上几乎看不见,用户找不回它。也谈不上性能 ——
+   * 光栅化本来就有更小的下限。
+   */
+  frameMinWidth: 80,
+  frameMinHeight: 80,
   /** 位图缓存条数上限(LRU)。 */
   maxTextures: 64,
   /** 单张位图最长边(设备像素)。超过则等比缩小后再光栅化。 */
@@ -35,12 +44,24 @@ export const DESIGN_CANVAS_BUDGETS = {
   /** 位图总字节预算。超出则按 LRU 淘汰。 */
   textureByteBudget: 64 * 1024 * 1024,
   /**
-   * 低于此缩放不给活体:缩小看全局时位图足够。
+   * 活体只在 **1:1** 出现,这是容差。
    *
-   * 这不是性能妥协而是**正确性要求** —— 原生视图只能整数矩形定位且不能被 CSS 缩放,
-   * 在非 1:1 缩放下强行显示会得到重排后的错误版面。
+   * 这条以前是"缩放 ≥ 0.75",那是个**错的**门槛,而且错得不明显:宿主只把矩形交给原生视图
+   * (`setBounds`),**不做任何缩放补偿** —— 于是 0.75–1.0 之间,一个 390 宽的帧被塞进 312
+   * 宽的视口,页面**按小视口重排**,画布上看到的是错的版面。它既不像崩溃也不像空白,最容易
+   * 被当成"这个设计本来就长这样"。
+   *
+   * 只有 1:1 时原生视图的视口恰好等于帧的声明尺寸,版面才是设计稿的版面。差 2% 不该让活体
+   * 闪掉(缩放是浮点的),所以留一点容差。
    */
-  liveZoomThreshold: 0.75,
+  liveZoomTolerance: 0.02,
+  /**
+   * 1:1 —— 活体唯一正确的缩放。
+   *
+   * 单独写出来,是因为它同时是**进入一帧时的相机目标**(`frameEntryViewport`):进去看到的
+   * 版面,必须就是交互时看到的那个版面,两者不能各写一个数字。
+   */
+  liveZoom: 1,
   /** 视口外预光栅余量(屏幕像素),让快速平移不至于露白。 */
   rasterMarginPx: 400,
   /** 位图缩放档位。光栅化取「不超过当前 zoom 的最大档」。 */
@@ -54,7 +75,9 @@ export const DESIGN_CANVAS_BUDGETS = {
  * 调用点各写一遍,然后悄悄漂开。
  */
 export function allowsLiveSurface(zoom: number): boolean {
-  return Number.isFinite(zoom) && zoom >= DESIGN_CANVAS_BUDGETS.liveZoomThreshold;
+  return (
+    Number.isFinite(zoom) && Math.abs(zoom - DESIGN_CANVAS_BUDGETS.liveZoom) <= DESIGN_CANVAS_BUDGETS.liveZoomTolerance
+  );
 }
 
 /**

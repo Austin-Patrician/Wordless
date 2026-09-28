@@ -65,6 +65,26 @@ export function sanitizeFrameId(raw: string): string {
   return cleaned || "index";
 }
 
+/**
+ * 下一个可用的帧 id,以及它排在第几。
+ *
+ * 从 **2** 起:首帧是 `index`(建包时那个)。取"最小的空位"而不是"最大值 +1",于是删掉
+ * `frame-2` 之后再新建会把它补回来 —— 帧 id 是人会在文件名里读到的东西,不该一直往上涨。
+ *
+ * 返回序号是因为调用方要用它给标题编号:画布上唯一的标签就是标题,两帧都叫"未命名画面"
+ * 是没法认的。
+ *
+ * `taken` 要**同时**包含清单里的和 `frames/` 目录里的:清单是上次同步的快照,而磁盘上可能
+ * 已经有 agent 写进去、还没对账的帧 —— 只查清单会覆盖掉一个真实文件。
+ */
+export function nextFrameId(taken: Iterable<string>): { id: string; ordinal: number } {
+  const used = new Set(taken);
+  for (let ordinal = 2; ; ordinal += 1) {
+    const id = `frame-${ordinal}`;
+    if (!used.has(id)) return { id, ordinal };
+  }
+}
+
 /** 空帧的源码。声明在最前面,`@frame` 注释是它的尺寸与标题的唯一来源。 */
 export function blankFrameSource(input: { width: number; height: number; title: string }): string {
   return `<!doctype html>

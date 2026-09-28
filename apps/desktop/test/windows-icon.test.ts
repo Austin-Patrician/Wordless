@@ -37,3 +37,17 @@ test("detects the default Electron exe icon fingerprint", () => {
     false,
   );
 });
+
+test("accepts a flat vector brand icon that compresses far below the old 50 kB threshold", () => {
+  // The brand icon is drawn from an SVG, so its frames are a few hundred bytes
+  // each. This used to be reported as the Electron default.
+  assert.equal(
+    isElectronDefaultExeIcon([
+      { bytes: 562, png: true },
+      { bytes: 1165, png: true },
+      { bytes: 5833, png: true },
+      { bytes: 12864, png: true },
+    ]),
+    false,
+  );
+});

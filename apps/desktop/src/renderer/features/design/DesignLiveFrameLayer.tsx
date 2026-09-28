@@ -25,15 +25,17 @@ export function DesignLiveFrameLayer({
   containerRef,
   designPath,
   frames,
-  focusedFrameId,
+  enteredFrameId,
   hasTexture,
+  dragging,
 }: {
   bridge: DesktopBridge;
   containerRef: { readonly current: HTMLElement | null };
   designPath: string;
   frames: readonly DesignFrameDto[];
-  focusedFrameId: string | null;
+  enteredFrameId: string | null;
   hasTexture: boolean;
+  dragging: boolean;
 }) {
   const transform = useStore((state) => state.transform);
   const [occluded, setOccluded] = useState(() => browserOcclusion.occluded);
@@ -46,10 +48,20 @@ export function DesignLiveFrameLayer({
   const target = liveFrameTarget({
     frames,
     camera,
-    focusedFrameId,
-    containerRect: containerRect === null ? null : { left: containerRect.left, top: containerRect.top },
+    enteredFrameId,
+    // 尺寸一起给:活体**放不放得下**要按它判,而那是一条正确性条件(见 `live-frame.ts`)。
+    containerRect:
+      containerRect === null
+        ? null
+        : {
+            height: containerRect.height,
+            left: containerRect.left,
+            top: containerRect.top,
+            width: containerRect.width,
+          },
     occluded,
     hasTexture,
+    dragging,
   });
 
   // 目标变了才上报。`bounds` 在平移时每帧都变,所以下面的键包含它。

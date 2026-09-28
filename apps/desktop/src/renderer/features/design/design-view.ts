@@ -7,7 +7,8 @@ import {
   type Size,
 } from "./camera.ts";
 import { resolveFrameSurface, type FrameFailureReason, type FrameSurface } from "./frame-surface.ts";
-import type { DesignFrameDto } from "@wordless/protocol";
+import type { DesignFrameDto, DesignManifestDto } from "@wordless/protocol";
+import { DESIGN_CANVAS_BUDGETS } from "./budgets.ts";
 
 /**
  * 帧 → 屏幕投影。
@@ -103,6 +104,49 @@ function failureOf(
 /** 全部帧的包围盒,用于"适配视口"。空设计返回 null。 */
 export function designContentRect(frames: readonly DesignFrameDto[]): Rect | null {
   return unionRects(frames.map((frame) => ({ x: frame.x, y: frame.y, width: frame.width, height: frame.height })));
+}
+
+/**
+ * 把刷新回来的清单接上,但**不接管布局**。
+ *
+ * 两个来源各自拥有什么,在 §6.1 里定过:内容(有哪些帧、标题、尺寸)归帧文件,
+ * 布局(画布上的 `x`/`y`)归清单、而用户是在画布上拖的。
+ *
+ * 所以刷新只做两件事:新出现的帧按磁盘落点加进来,清单里已经删掉的帧消失。**已经在画布上
+ * 的帧保留它当前的 `x`/`y`** —— 直接用磁盘值覆盖会在用户正拖着帧的时候把它抢回去,而刷新
+ * 是每秒都在跑的。那不是一个理论上的竞态:拖一次帧要几秒,而心跳的间隔是 1 秒。
+ *
+ * 抽成纯函数是因为这里错了**看不出来**:帧会"自己跳回原位",而它发生在一个每秒运行的
+ * 定时器里,没人能稳定复现。
+ */
+export function mergeRefreshedManifest(current: DesignManifestDto, next: DesignManifestDto): DesignManifestDto {
+  const placed = new Map(current.frames.map((frame) => [frame.id, frame]));
+  return {
+    ...next,
+    frames: next.frames.map((frame) => {
+      const existing = placed.get(frame.id);
+      return existing === undefined ? frame : { ...frame, x: existing.x, y: existing.y };
+    }),
+  };
+}
+
+/**
+ * 双击"进入"一帧时的相机目标:居中 + **1:1**。
+ *
+ * 为什么必须是 1:1:原生视图**不能被 CSS 缩放** —— `setZoomFactor` 是页面缩放、会重排布局,
+ * 而设计稿在固定声明尺寸下不能重排(390 宽的帧当成 780 宽渲染,版面就错了)。所以"能真的点
+ * 进去、页面按设计的样子跑"这件事,只在 1:1 下成立(见 `budgets.ts` 的 `liveZoomTolerance`
+ * 与 `live-frame.ts`)。进入 = 把相机推到那个唯一的正确位置。
+ *
+ * 抽成纯函数是因为动画时长不能拿来断言(§14.1 ③):能断言的只有"目标是什么"。
+ */
+export function frameEntryViewport(frame: DesignFrameDto): { x: number; y: number; zoom: number } {
+  return {
+    x: frame.x + frame.width / 2,
+    y: frame.y + frame.height / 2,
+    // 与 `allowsLiveSurface` 用同一个数字:进去看到的版面,就是交互时看到的版面。
+    zoom: DESIGN_CANVAS_BUDGETS.liveZoom,
+  };
 }
 
 /**

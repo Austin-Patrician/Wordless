@@ -14,6 +14,12 @@ import type {
   DesignMoveFramesRequestDto,
   DesignRasterRequestDto,
   DesignOpenRequestDto,
+  ApplyDesignStyleRequestDto,
+  CreateDesignFrameRequestDto,
+  DesignExportRequestDto,
+  DeleteDesignFrameRequestDto,
+  DesignRefreshRequestDto,
+  DesignUpdateFrameMetaRequestDto,
   WebhookUpdateRequestDto,
 } from "@wordless/protocol";
 
@@ -160,6 +166,17 @@ const wordlessBridge: DesktopBridge = {
   setNotificationDefaults: (patch) => ipcRenderer.invoke("wordless:notifications:set-defaults", patch),
   listDesigns: (input) => ipcRenderer.invoke("wordless:design:list", input satisfies DesignListRequestDto),
   openDesign: (input) => ipcRenderer.invoke("wordless:design:open", input satisfies DesignOpenRequestDto),
+  refreshDesign: (input) =>
+    ipcRenderer.invoke("wordless:design:refresh", input satisfies DesignRefreshRequestDto),
+  createDesignFrame: (input) =>
+    ipcRenderer.invoke("wordless:design:create-frame", input satisfies CreateDesignFrameRequestDto),
+  deleteDesignFrame: (input) =>
+    ipcRenderer.invoke("wordless:design:delete-frame", input satisfies DeleteDesignFrameRequestDto),
+  applyDesignStyle: (input) =>
+    ipcRenderer.invoke("wordless:design:apply-style", input satisfies ApplyDesignStyleRequestDto),
+  exportDesign: (input) => ipcRenderer.invoke("wordless:design:export", input satisfies DesignExportRequestDto),
+  updateDesignFrameMeta: (input) =>
+    ipcRenderer.invoke("wordless:design:update-frame-meta", input satisfies DesignUpdateFrameMetaRequestDto),
   moveDesignFrames: (input) =>
     ipcRenderer.invoke("wordless:design:move-frames", input satisfies DesignMoveFramesRequestDto),
   rasterizeDesignFrames: (input) =>

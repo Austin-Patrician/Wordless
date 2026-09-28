@@ -68,7 +68,7 @@ test("活体需要同时满足:聚焦、缩放够、有位图", () => {
   // 缩放不够 → 位图。原生视图只能整数矩形定位且不能被 CSS 缩放,非 1:1 下强行显示
   // 会得到重排后的错误版面。
   assert.deepEqual(
-    resolveFrameSurface(input({ ...live, zoom: DESIGN_CANVAS_BUDGETS.liveZoomThreshold - 0.01 })),
+    resolveFrameSurface(input({ ...live, zoom: DESIGN_CANVAS_BUDGETS.liveZoom - DESIGN_CANVAS_BUDGETS.liveZoomTolerance * 2 })),
     { kind: "texture", textureKey: "t" },
   );
 });
