@@ -7,7 +7,7 @@ import type {
   BrowserTabState,
   BrowserViewBounds,
 } from "@wordless/protocol";
-import { normalizeBounds, resolveVisibility, sameBounds } from "./browser-bounds";
+import { normalizeBounds, resolveVisibility, sameBounds } from "../platform/view-bounds.ts";
 import type { BrowserHost } from "./browser-host";
 import { displayTabTitle, MAX_BROWSER_TABS, nextActiveTabId, shouldOpenInPanel, tabToEvict } from "./browser-tabs";
 import {

@@ -8,6 +8,12 @@ import type {
   WebhookIdRequestDto,
   WebhookSetEnabledRequestDto,
   WebhookTestRequestDto,
+  DesignListRequestDto,
+  CreateDesignRequestDto,
+  DesignLiveFrameRequestDto,
+  DesignMoveFramesRequestDto,
+  DesignRasterRequestDto,
+  DesignOpenRequestDto,
   WebhookUpdateRequestDto,
 } from "@wordless/protocol";
 
@@ -152,6 +158,16 @@ const wordlessBridge: DesktopBridge = {
     ipcRenderer.invoke("wordless:notifications:delete", { id } satisfies WebhookIdRequestDto),
   getNotificationDefaults: () => ipcRenderer.invoke("wordless:notifications:defaults"),
   setNotificationDefaults: (patch) => ipcRenderer.invoke("wordless:notifications:set-defaults", patch),
+  listDesigns: (input) => ipcRenderer.invoke("wordless:design:list", input satisfies DesignListRequestDto),
+  openDesign: (input) => ipcRenderer.invoke("wordless:design:open", input satisfies DesignOpenRequestDto),
+  moveDesignFrames: (input) =>
+    ipcRenderer.invoke("wordless:design:move-frames", input satisfies DesignMoveFramesRequestDto),
+  rasterizeDesignFrames: (input) =>
+    ipcRenderer.invoke("wordless:design:rasterize", input satisfies DesignRasterRequestDto),
+  setDesignLiveFrame: (input) =>
+    ipcRenderer.invoke("wordless:design:live-frame", input satisfies DesignLiveFrameRequestDto),
+  listDesignStyles: () => ipcRenderer.invoke("wordless:design:styles"),
+  createDesign: (input) => ipcRenderer.invoke("wordless:design:create", input satisfies CreateDesignRequestDto),
   testWebhookEndpoint: (id, message) =>
     ipcRenderer.invoke("wordless:notifications:test", { id, message } satisfies WebhookTestRequestDto),
   setBrowserPanelSession: (sessionId) =>

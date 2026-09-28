@@ -1,5 +1,5 @@
 import { Button } from "@wordless/ui-kit";
-import { AlertTriangle, ChevronLeft, Globe, Languages, ListTodo, LoaderCircle, PackageOpen, Search, Settings } from "lucide-react";
+import { AlertTriangle, ChevronLeft, Frame, Globe, Languages, ListTodo, LoaderCircle, PackageOpen, Search, Settings } from "lucide-react";
 import { useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
 import { SessionContextPanel } from "../artifacts/SessionContextPanel";
 import { SettingsDialog, type SettingsPage } from "../settings/SettingsDialog";
@@ -18,9 +18,12 @@ import { TranslationPanelSlot, TranslationProvider } from "../translation/Transl
 import { WelcomeView } from "./WelcomeView";
 import { Sidebar } from "./Sidebar";
 import type { WorkbenchMainView } from "./sidebar-nav";
+import { resolveSessionOpenTarget } from "./session-open-target";
 import { SkillsView } from "../skills/SkillsView";
 import { SkillImportDialog } from "../skills/SkillImportDialog";
 import { MediaCanvas } from "../media/MediaCanvas";
+import { DesignWorkspace } from "../design/DesignWorkspace";
+import { DesignLibraryView } from "../design/DesignLibraryView";
 import { MediaLibrary } from "../media/MediaLibrary";
 import { AutomationView } from "../automation/AutomationView";
 import { AppBackgroundLayer } from "../appearance/AppBackgroundLayer";
@@ -126,6 +129,20 @@ export function WorkbenchShell() {
     setSelectedSessionId(event.sessionId);
   }), [client, snapshot?.sessions]);
   const selectedWorkbenchId = snapshot?.sessions.find((session) => session.id === selectedSessionId)?.workbenchId;
+
+  /**
+   * 会话打开时顺手把它需要的辅助面板调出来(目前只有 UI 设计会话的画布)。
+   *
+   * 依赖只有"选中了哪个会话" —— 所以用户手动关掉之后它会保持关着,不会被这个效果一次次
+   * 弹开。要的是"默认并排",不是"永远并排"。
+   */
+  useEffect(() => {
+    if (selectedSessionId === null) return;
+    const target = resolveSessionOpenTarget(selectedWorkbenchId);
+    if (target.contextView === null) return;
+    setContextView(target.contextView);
+    setRightOpen(true);
+  }, [selectedSessionId, selectedWorkbenchId]);
 
   const updateSessionRunningState = useCallback((sessionId: string, running: boolean) => {
     if (!runningSessionStateInitializedRef.current)
@@ -416,6 +433,9 @@ export function WorkbenchShell() {
     // The browser is offered where a previewable surface is expected; on
     // presentation/workbook/analysis the panel is already spoken for.
     ...(browserPanelWorkbenchIds.has(selectedWorkbenchId ?? "") ? [{ id: "browser" as const, label: t("browserPanelTitle"), icon: Globe }] : []),
+    // 设计画布与对话**并排**,而不是取代它:会话是对话,画布是这一轮工作的产物。取代意味着
+    // agent 干活时你看不见它在干什么,而且画布上没有任何回去的入口。
+    ...(selectedWorkbenchId === "ui-preview" ? [{ id: "design" as const, label: t("designPanelTitle"), icon: Frame }] : []),
   ];
   const revealTranslationPanel = () => {
     setContextView("translation");
@@ -437,12 +457,14 @@ export function WorkbenchShell() {
         setRightFullscreen(false);
         setRightOpen(false);
       }}
-      contentClassName={selectedWorkbenchId === "analysis" || selectedWorkbenchId === "conversation" || contextView === "browser" ? "overflow-hidden" : undefined}
+      contentClassName={selectedWorkbenchId === "analysis" || selectedWorkbenchId === "conversation" || contextView === "browser" || contextView === "design" ? "overflow-hidden" : undefined}
       showFooter={selectedWorkbenchId !== "analysis" && selectedWorkbenchId !== "conversation"}
       showMenu={selectedWorkbenchId !== "analysis" && selectedWorkbenchId !== "conversation"}
       tabs={contextPanelTabs}
       renderContent={(view) => view === "browser"
         ? <BrowserPanel sessionId={activeSession?.id ?? null} />
+        : view === "design" && activeSession
+        ? <DesignWorkspace running={runningSessionIds.has(activeSession.id)} sessionId={activeSession.id} />
         : view === "translation"
         ? <TranslationPanelSlot />
         : activeSession
@@ -460,7 +482,7 @@ export function WorkbenchShell() {
       <DesktopChrome onNewThread={newThread} onOpenSettings={openSettings} />
       <div className="flex h-[calc(100dvh-var(--wordless-chrome-height))] overflow-hidden">
         {mainView === "media" && selectedSessionId && activeSession?.workbenchId === "media-canvas" && mediaFullscreen ? <MediaCanvas fullscreen leftOpen sessionId={selectedSessionId} onBackToLibrary={() => { setMediaFullscreen(false); setSelectedSessionId(null); }} onOpenModels={() => openSettings("models")} onToggleFullscreen={() => setMediaFullscreen(false)} onToggleLeft={() => setLeftOpen((value) => !value)} /> : <>
-        <div className={showSessionTools && rightFullscreen ? "hidden" : undefined}><Sidebar mainView={mainView} onOpenTasks={openTasks} collapsed={!leftOpen} onNewThread={newThread} onOpenAutomation={openAutomation} onOpenExperts={openExperts} onOpenMedia={openMedia} onOpenSession={(sessionId) => { const session = snapshot.sessions.find((candidate) => candidate.id === sessionId); setPendingWorkspaceReferences([]); setPendingArtifactSelection(null); setSelectedSessionId(sessionId); setMainView(session?.workbenchId === "media-canvas" ? "media" : "thread"); setRightFullscreen(false); setMediaFullscreen(false); }} onOpenSettings={(page) => openSettings(page)} onOpenSkills={openSkills} onSessionDeleted={(sessionId) => { deletedSessionIdsRef.current.add(sessionId); sessionDraftsRef.current.delete(sessionId); if (selectedSessionId === sessionId) newThread(); }} onToggle={() => setLeftOpen((value) => !value)} runningSessionIds={runningSessionIds} selectedSessionId={selectedSessionId} /></div>
+        <div className={showSessionTools && rightFullscreen ? "hidden" : undefined}><Sidebar mainView={mainView} onOpenTasks={openTasks} collapsed={!leftOpen} onNewThread={newThread} onOpenAutomation={openAutomation} onOpenExperts={openExperts} onOpenMedia={openMedia} onOpenSession={(sessionId) => { const session = snapshot.sessions.find((candidate) => candidate.id === sessionId); setPendingWorkspaceReferences([]); setPendingArtifactSelection(null); setSelectedSessionId(sessionId); setMainView(resolveSessionOpenTarget(session?.workbenchId).mainView); setRightFullscreen(false); setMediaFullscreen(false); }} onOpenSettings={(page) => openSettings(page)} onOpenDesign={() => { setMainView("design"); setSelectedSessionId(null); }} onOpenSkills={openSkills} onSessionDeleted={(sessionId) => { deletedSessionIdsRef.current.add(sessionId); sessionDraftsRef.current.delete(sessionId); if (selectedSessionId === sessionId) newThread(); }} onToggle={() => setLeftOpen((value) => !value)} runningSessionIds={runningSessionIds} selectedSessionId={selectedSessionId} /></div>
         <section className={showSessionTools && rightFullscreen ? "hidden" : "relative flex min-w-0 flex-1 flex-col overflow-hidden bg-[var(--wordless-shell-workspace)] lg:min-w-[640px]"} style={{ "--thread-content-max-width": rightOpen ? "820px" : "clamp(820px, 78%, 1180px)" } as CSSProperties}>
           {showSessionTools ? <header className="flex h-[62px] shrink-0 items-center justify-between px-4 sm:px-5">
             <div className="flex min-w-0 items-center gap-2">
@@ -477,7 +499,7 @@ export function WorkbenchShell() {
               <Button aria-label={t("settings")} data-tour="header-settings" onClick={() => openSettings()} size="icon" type="button" variant="ghost"><Settings className="h-4 w-4" /></Button>
             </div>
           </header> : null}
-          {mainView === "tasks" ? <TasksView leftOpen={leftOpen} onOpenSession={(sessionId) => { setSelectedSessionId(sessionId); setMainView("thread"); }} onToggleLeft={() => setLeftOpen((value) => !value)} /> : mainView === "automation" ? <AutomationView leftOpen={leftOpen} onOpenSession={(sessionId) => { setSelectedSessionId(sessionId); setMainView("thread"); }} onToggleLeft={() => setLeftOpen((value) => !value)} /> : mainView === "experts" ? <ExpertsView onSummon={({ initialPrompt, selection }) => { newThread(); setPendingExpertSelection(selection); setPendingExpertPrompt(initialPrompt); }} /> : mainView === "skills" ? <SkillsView onOpenImport={() => setSkillImportOpen(true)} /> : mainView === "media" ? selectedSessionId && activeSession?.workbenchId === "media-canvas" ? <MediaCanvas fullscreen={false} leftOpen={leftOpen} onBackToLibrary={() => { setMediaFullscreen(false); setSelectedSessionId(null); }} onOpenModels={() => openSettings("models")} onToggleFullscreen={() => setMediaFullscreen(false)} onToggleLeft={() => setLeftOpen((value) => !value)} sessionId={selectedSessionId} /> : <MediaLibrary onOpenProject={(sessionId) => { setMediaFullscreen(false); setSelectedSessionId(sessionId); setMainView("media"); }} /> : selectedSessionId ? <ThreadView artifactSelection={pendingArtifactSelection} composerDraft={sessionDraftsRef.current.get(selectedSessionId)} initialPendingTurn={pendingInitialTurn?.sessionId === selectedSessionId ? pendingInitialTurn.turn : null} messageNavigationTarget={messageNavigationTarget} onArtifactSelectionConsumed={() => setPendingArtifactSelection(null)} onComposerDraftChange={updateSessionDraft} onMessageNavigationConsumed={(requestId) => setMessageNavigationTarget((current) => current?.requestId === requestId ? null : current)} onOpenFileChange={(selection) => { setFileChangeSelection(selection); setContextView("changes"); setRightOpen(true); }} onOpenModels={() => openSettings("models")} onOpenResearchTask={(selection) => { setResearchTaskSelection(selection); setContextView("research"); setRightOpen(true); }} onOpenSkillImport={() => setSkillImportOpen(true)} onOpenSkills={openSkills} onPendingWorkspaceReferencesConsumed={() => setPendingWorkspaceReferences([])} pendingWorkspaceReferences={pendingWorkspaceReferences} sessionId={selectedSessionId} /> : <WelcomeView initialExpertPrompt={pendingExpertPrompt} initialExpertSelection={pendingExpertSelection} onOpenModels={() => openSettings("models")} onOpenSkillImport={() => setSkillImportOpen(true)} onOpenSkills={openSkills} onSessionCreated={(sessionId, pendingTurn) => { setPendingExpertSelection(undefined); setPendingExpertPrompt(undefined); setPendingWorkspaceReferences([]); setPendingArtifactSelection(null); setResearchTaskSelection(null); setPendingInitialTurn({ sessionId, turn: pendingTurn }); setSelectedSessionId(sessionId); }} />}
+          {mainView === "design" ? <DesignLibraryView /> : mainView === "tasks" ? <TasksView leftOpen={leftOpen} onOpenSession={(sessionId) => { setSelectedSessionId(sessionId); setMainView("thread"); }} onToggleLeft={() => setLeftOpen((value) => !value)} /> : mainView === "automation" ? <AutomationView leftOpen={leftOpen} onOpenSession={(sessionId) => { setSelectedSessionId(sessionId); setMainView("thread"); }} onToggleLeft={() => setLeftOpen((value) => !value)} /> : mainView === "experts" ? <ExpertsView onSummon={({ initialPrompt, selection }) => { newThread(); setPendingExpertSelection(selection); setPendingExpertPrompt(initialPrompt); }} /> : mainView === "skills" ? <SkillsView onOpenImport={() => setSkillImportOpen(true)} /> : mainView === "media" ? selectedSessionId && activeSession?.workbenchId === "media-canvas" ? <MediaCanvas fullscreen={false} leftOpen={leftOpen} onBackToLibrary={() => { setMediaFullscreen(false); setSelectedSessionId(null); }} onOpenModels={() => openSettings("models")} onToggleFullscreen={() => setMediaFullscreen(false)} onToggleLeft={() => setLeftOpen((value) => !value)} sessionId={selectedSessionId} /> : <MediaLibrary onOpenProject={(sessionId) => { setMediaFullscreen(false); setSelectedSessionId(sessionId); setMainView("media"); }} /> : selectedSessionId ? <ThreadView artifactSelection={pendingArtifactSelection} composerDraft={sessionDraftsRef.current.get(selectedSessionId)} initialPendingTurn={pendingInitialTurn?.sessionId === selectedSessionId ? pendingInitialTurn.turn : null} messageNavigationTarget={messageNavigationTarget} onArtifactSelectionConsumed={() => setPendingArtifactSelection(null)} onComposerDraftChange={updateSessionDraft} onMessageNavigationConsumed={(requestId) => setMessageNavigationTarget((current) => current?.requestId === requestId ? null : current)} onOpenFileChange={(selection) => { setFileChangeSelection(selection); setContextView("changes"); setRightOpen(true); }} onOpenModels={() => openSettings("models")} onOpenResearchTask={(selection) => { setResearchTaskSelection(selection); setContextView("research"); setRightOpen(true); }} onOpenSkillImport={() => setSkillImportOpen(true)} onOpenSkills={openSkills} onPendingWorkspaceReferencesConsumed={() => setPendingWorkspaceReferences([])} pendingWorkspaceReferences={pendingWorkspaceReferences} sessionId={selectedSessionId} /> : <WelcomeView initialExpertPrompt={pendingExpertPrompt} initialExpertSelection={pendingExpertSelection} onOpenModels={() => openSettings("models")} onOpenSkillImport={() => setSkillImportOpen(true)} onOpenSkills={openSkills} onSessionCreated={(sessionId, pendingTurn) => { setPendingExpertSelection(undefined); setPendingExpertPrompt(undefined); setPendingWorkspaceReferences([]); setPendingArtifactSelection(null); setResearchTaskSelection(null); setPendingInitialTurn({ sessionId, turn: pendingTurn }); setSelectedSessionId(sessionId); }} />}
         </section>
         {showSessionTools ? contextPanel : null}
         </>}
@@ -490,7 +512,7 @@ export function WorkbenchShell() {
           setPendingWorkspaceReferences([]);
           setPendingArtifactSelection(null);
           setSelectedSessionId(sessionId);
-          setMainView(session?.workbenchId === "media-canvas" ? "media" : "thread");
+          setMainView(resolveSessionOpenTarget(session?.workbenchId).mainView);
           setRightFullscreen(false);
           setMediaFullscreen(false);
           setSettingsOpen(false);

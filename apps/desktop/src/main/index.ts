@@ -17,6 +17,18 @@ import { registerMediaProtocol } from "./protocols/media";
 import { registerPresentationProtocol } from "./protocols/presentation";
 import { registerAnalysisProtocol } from "./protocols/analysis";
 import { registerAttachmentProtocol } from "./protocols/attachment";
+import { registerDesignProtocol, registerDesignScheme } from "./protocols/design";
+import { createDesignHandlers } from "./design/handlers";
+import { RasterPool } from "./design/raster-pool";
+import { ElectronOffscreenRaster } from "./design/electron-offscreen-raster";
+import { WebContentsViewDesignHost } from "./design/design-view-host";
+import { DESIGN_RASTER_BUDGETS } from "./design/raster-budgets";
+import { registerDesignIpc } from "./ipc/register-design-ipc";
+import { DesignStore } from "./design/design-store";
+import { designBuildRecipes } from "./design/build-recipes";
+import { NodeBuildRunner } from "./design/node-build-runner";
+import { NodeDesignFs } from "./design/design-fs";
+import { WorkspacePathService } from "@wordless/platform-node";
 import { OnboardingService } from "./onboarding/onboarding-service";
 import { createMainWindow, updateTitleBarOverlays } from "./windows/main-window";
 import { createDesktopHostInfo } from "./platform/desktop-platform";
@@ -59,6 +71,12 @@ app.setPath("userData", userData.path);
 
 let runtime: ReturnType<typeof createDesktopRuntime> | undefined;
 let office: OfficeCliService | undefined;
+/** 设计包读写。协议与 IPC 都经它拿注册表,所以必须是同一个实例。 */
+let designStore: DesignStore | undefined;
+/** 光栅化池。离屏窗口是真实渲染进程,退出时要一起关掉。 */
+let designRaster: ElectronOffscreenRaster | undefined;
+/** 活体视图宿主。至多一个,所以只需要一个实例。 */
+let designViewHost: WebContentsViewDesignHost | undefined;
 let account: GoogleAccountService | undefined;
 let cloudSync: CloudSyncService | undefined;
 let automation: AutomationService | undefined;
@@ -107,6 +125,10 @@ function updateTrayMenu(preferences: AppPreferences): void {
   );
 }
 
+// 必须在 `app.whenReady()` 之前:设计帧要解析相对 URL(`../theme.css`),
+// 那要求这个 scheme 被登记成标准 scheme。见 protocols/design.ts 的说明。
+registerDesignScheme();
+
 if (!hasSingleInstance) {
   app.quit();
 } else {
@@ -132,6 +154,29 @@ app.whenReady().then(async () => {
   registerPresentationProtocol(presentationArtifactsRoot);
   const dataAnalysis = new DesktopDataAnalysisService({ metadataRoot: path.join(userData.path, "analysis-metadata"), resourcesRoot: app.isPackaged ? process.resourcesPath : path.resolve(__dirname, "../../resources") });
   registerAnalysisProtocol(dataAnalysis);
+  // 设计画布的协议。设计包路径**不进 URL**,只进注册表 —— 于是"从 URL 构造一个逃出
+  // 设计包的路径"在结构上不可能(见 design-url.ts)。
+  const designPaths = new WorkspacePathService();
+  designStore = new DesignStore({ fs: new NodeDesignFs() });
+  registerDesignProtocol({
+    registry: designStore.registry,
+    isWithinRoot: (root, candidate) => designPaths.isWithinRoot(root, candidate),
+  });
+  // 离屏光栅化:窗口数跟池的并发数走 —— 两者不一致时池会等空闲窗口,不会出错但会变慢。
+  designRaster = new ElectronOffscreenRaster({ maxWindows: DESIGN_RASTER_BUDGETS.rasterConcurrency });
+  const rasterPool = new RasterPool({
+    port: designRaster,
+    concurrency: DESIGN_RASTER_BUDGETS.rasterConcurrency,
+    timeoutMs: DESIGN_RASTER_BUDGETS.rasterTimeoutMs,
+  });
+  designViewHost = new WebContentsViewDesignHost(() => mainWindow);
+  registerDesignIpc({
+    handlers: createDesignHandlers(designStore, rasterPool, designViewHost, {
+      runner: new NodeBuildRunner(),
+      // 脚本与主进程产物同目录(两者都由 `scripts/build-electron.mjs` 产出)。
+      recipes: designBuildRecipes({ scriptPath: path.join(__dirname, "design-build.mjs") }),
+    }),
+  });
   const officeResourcesPath = app.isPackaged ? process.resourcesPath : path.resolve(__dirname, "../../resources");
   office = new OfficeCliService({ artifactsRoot: presentationArtifactsRoot, resourcesPath: officeResourcesPath });
   const credentialVault = new ElectronCredentialVault(path.join(userData.path, "credentials.json"));
@@ -191,7 +236,17 @@ app.whenReady().then(async () => {
       if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send("wordless:browser:state", state);
     },
   });
-  runtime = createDesktopRuntime(userData.path, office, credentialVault, dataAnalysis, browser);
+  runtime = createDesktopRuntime(
+    userData.path,
+    office,
+    credentialVault,
+    dataAnalysis,
+    browser,
+    // 设计工具与画布共用同一个 store 与离屏视图:注册表是共用状态,分开会各自持有半份。
+    designRaster === undefined || designViewHost === undefined || designStore === undefined
+      ? undefined
+      : { store: designStore, raster: designRaster, evaluator: designRaster },
+  );
   await runtime.initialize();
   registerAttachmentProtocol(async (sessionId, previewPath) => await runtime!.resolveSessionAttachmentPreview(sessionId, previewPath));
   // Built before the automation service because that service is handed a way to
@@ -384,5 +439,8 @@ app.on("before-quit", (event) => {
   cloudSync?.dispose();
   runtime?.dispose();
   account?.dispose();
+  // 离屏窗口是真实渲染进程,不关掉会让进程残留。
+  designRaster?.dispose();
+  designViewHost?.dispose();
   void (office?.dispose() ?? Promise.resolve()).finally(() => app.quit());
 });

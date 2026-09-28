@@ -1,6 +1,6 @@
 import { WebContentsView, type BrowserWindow, type WebContents } from "electron";
 import type { BrowserViewBounds } from "@wordless/protocol";
-import { isDegenerateBounds, normalizeBounds, sameBounds } from "./browser-bounds";
+import { isDegenerateBounds, normalizeBounds, sameBounds } from "../platform/view-bounds.ts";
 
 export interface GuestHandle {
   readonly id: string;

@@ -40,7 +40,9 @@ import type {
   UserRequest,
   UserRequestResolution,
   WorkbenchId,
+  ArtifactKind,
 } from "@wordless/domain";
+import { ARTIFACT_KINDS } from "@wordless/domain";
 
 export type AgentDriverFeature =
   | "steer"
@@ -171,15 +173,7 @@ type SerializedArtifactReference = {
   version: 1;
   id: string;
   artifactId: string;
-  kind:
-    | "presentation"
-    | "document"
-    | "spreadsheet"
-    | "browser"
-    | "report"
-    | "dataset"
-    | "chart"
-    | "image";
+  kind: ArtifactKind;
   name: string;
   revision: number;
   surfaceId: string;
@@ -489,17 +483,10 @@ function parseArtifactReference(
       typeof record.locator !== "string"
     )
       return undefined;
-    if (
-      record.kind !== "presentation" &&
-      record.kind !== "document" &&
-      record.kind !== "spreadsheet" &&
-      record.kind !== "browser" &&
-      record.kind !== "report" &&
-      record.kind !== "dataset" &&
-      record.kind !== "chart" &&
-      record.kind !== "image"
-    )
+    // 与类型同源,不手抄一份 —— 手抄的那份漏掉新值时不会编译报错,只会静默丢弃。
+    if (typeof record.kind !== "string" || !(ARTIFACT_KINDS as readonly string[]).includes(record.kind)) {
       return undefined;
+    }
     if (
       record.locators !== undefined &&
       (!Array.isArray(record.locators) ||

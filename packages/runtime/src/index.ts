@@ -616,7 +616,7 @@ export const BUILTIN_ENTRIES: WorkbenchEntryDefinition[] = [
     iconKey: "palette",
     profile: { id: "ui", version: "1" },
     workbenchId: "ui-preview",
-    availability: "unavailable",
+    availability: "available",
     modelRequirements: { requiresVision: true, requiresToolUse: true },
   },
   {

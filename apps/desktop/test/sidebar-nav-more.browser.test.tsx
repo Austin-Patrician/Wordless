@@ -151,7 +151,7 @@ describe("sidebar navigation", () => {
     await renderSidebar();
     await openPanel();
 
-    expect(panelRowIds()).toEqual(["new", "media", "experts", "skills", "automation", "tasks"]);
+    expect(panelRowIds()).toEqual(["new", "media", "experts", "skills", "design", "automation", "tasks"]);
     expect(row("new").getAttribute("draggable")).toBe("false");
     expect(row("media").getAttribute("draggable")).toBe("true");
     expect(row("new").querySelector('[aria-label="移到「更多」"]')).toBeNull();
@@ -172,7 +172,7 @@ describe("sidebar navigation", () => {
     });
 
     expect(mocks.client.setPreferences).toHaveBeenLastCalledWith(
-      expect.objectContaining({ sidebar: expect.objectContaining({ layout: expect.objectContaining({ more: ["skills"] }) }) }),
+      expect.objectContaining({ sidebar: expect.objectContaining({ layout: expect.objectContaining({ more: ["skills", "design"] }) }) }),
     );
   });
 
@@ -216,7 +216,7 @@ describe("sidebar navigation", () => {
 
     expect(rail()).toEqual(["nav-new", "nav-media", "nav-experts", "nav-skills", "nav-tasks", "nav-more"]);
     expect(mocks.client.setPreferences).toHaveBeenLastCalledWith(
-      expect.objectContaining({ sidebar: { layout: { pinned: ["media", "experts", "skills", "tasks"], more: ["automation"] }, pinnedLimit: 5 } }),
+      expect.objectContaining({ sidebar: { layout: { pinned: ["media", "experts", "skills", "tasks"], more: ["design", "automation"] }, pinnedLimit: 5 } }),
     );
 
     await act(async () => {
@@ -225,7 +225,7 @@ describe("sidebar navigation", () => {
 
     expect(rail()).toEqual(["nav-new", "nav-media", "nav-experts", "nav-skills", "nav-more"]);
     expect(mocks.client.setPreferences).toHaveBeenLastCalledWith(
-      expect.objectContaining({ sidebar: { layout: { pinned: ["media", "experts", "skills"], more: ["tasks", "automation"] }, pinnedLimit: 5 } }),
+      expect.objectContaining({ sidebar: { layout: { pinned: ["media", "experts", "skills"], more: ["tasks", "design", "automation"] }, pinnedLimit: 5 } }),
     );
   });
 
@@ -297,7 +297,7 @@ describe("sidebar navigation", () => {
     });
 
     expect(mocks.client.setPreferences).toHaveBeenLastCalledWith(
-      expect.objectContaining({ sidebar: expect.objectContaining({ layout: expect.objectContaining({ pinned: ["media", "tasks", "experts", "skills"], more: ["automation"] }) }) }),
+      expect.objectContaining({ sidebar: expect.objectContaining({ layout: expect.objectContaining({ pinned: ["media", "tasks", "experts", "skills"], more: ["design", "automation"] }) }) }),
     );
     expect(rail()).toEqual(["nav-new", "nav-media", "nav-tasks", "nav-experts", "nav-skills", "nav-more"]);
   });
@@ -313,7 +313,7 @@ describe("sidebar navigation", () => {
     });
 
     expect(mocks.client.setPreferences).toHaveBeenLastCalledWith(
-      expect.objectContaining({ sidebar: { layout: { pinned: ["media", "experts"], more: ["skills", "automation", "tasks"] }, pinnedLimit: 3 } }),
+      expect.objectContaining({ sidebar: { layout: { pinned: ["media", "experts"], more: ["skills", "design", "automation", "tasks"] }, pinnedLimit: 3 } }),
     );
     expect(rail()).toEqual(["nav-new", "nav-media", "nav-experts", "nav-more"]);
   });

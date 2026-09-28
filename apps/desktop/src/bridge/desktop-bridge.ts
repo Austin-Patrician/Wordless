@@ -98,6 +98,17 @@ import type {
   WebhookMessage,
   WebhookMutationResult,
   NotificationDefaults,
+  DesignListRequestDto,
+  CreateDesignRequestDto,
+  CreateDesignResultDto,
+  DesignLiveFrameRequestDto,
+  DesignStyleSummaryDto,
+  DesignMoveFramesRequestDto,
+  DesignRasterRequestDto,
+  DesignRasterResultDto,
+  DesignOpenRequestDto,
+  DesignOpenedDto,
+  DesignSummaryDto,
   NotificationDefaultsPatchDto,
   NotificationDefaultsResult,
   WebhookProviderDescriptor,
@@ -108,7 +119,7 @@ import type {
 } from "@wordless/protocol";
 import type { ToolApprovalMode } from "@wordless/domain";
 
-export const DESKTOP_BRIDGE_VERSION = 47;
+export const DESKTOP_BRIDGE_VERSION = 52;
 
 export interface DesktopBridge {
   readonly version: typeof DESKTOP_BRIDGE_VERSION;
@@ -254,6 +265,45 @@ export interface DesktopBridge {
    */
   getNotificationDefaults(): Promise<NotificationDefaults>;
   setNotificationDefaults(patch: NotificationDefaultsPatchDto): Promise<NotificationDefaultsResult>;
+  /**
+   * Design packages under a workspace root.
+   *
+   * The renderer supplies the root because only it knows which workspace is open; the
+   * host never trusts a path from here for anything but enumeration — every served
+   * request goes through the design registry instead (see `design-url.ts`).
+   */
+  listDesigns(input: DesignListRequestDto): Promise<DesignSummaryDto[]>;
+  /** Null when the path is not a design package, rather than throwing. */
+  openDesign(input: DesignOpenRequestDto): Promise<DesignOpenedDto | null>;
+  /**
+   * Where the frames sit on the canvas.
+   *
+   * Layout only: it writes the manifest and never touches the frame sources, so a drag
+   * cannot alter a frame's markup. Batched because one multi-select drag moves several
+   * frames and they must land as a single revision.
+   */
+  moveDesignFrames(input: DesignMoveFramesRequestDto): Promise<boolean>;
+  /**
+   * Rasterizes frames offscreen and returns the bitmaps.
+   *
+   * The renderer asks for the frames it is about to show; the host owns the offscreen
+   * views. Results are matched by key, and a failure is reported per frame rather than
+   * failing the batch — one frame that will not render must not blank the canvas.
+   */
+  rasterizeDesignFrames(input: DesignRasterRequestDto): Promise<DesignRasterResultDto[]>;
+  /**
+   * Hands one frame to a native view, or gives it back to the bitmap layer.
+   *
+   * At most one frame is live at a time — native views cannot be CSS-scaled, so they
+   * are only correct at 1:1, and at 1:1 the user can only be editing one. The bounds
+   * are in **window** coordinates and come from the same transform that positions the
+   * bitmap, so the two cannot drift apart.
+   */
+  setDesignLiveFrame(input: DesignLiveFrameRequestDto): Promise<boolean>;
+  /** The built-in style catalog. Ships with the app — creating a design must not need the network. */
+  listDesignStyles(): Promise<DesignStyleSummaryDto[]>;
+  /** Creates a design package with the chosen style applied from its first frame. */
+  createDesign(input: CreateDesignRequestDto): Promise<CreateDesignResultDto | null>;
   deleteWebhookEndpoint(id: string): Promise<void>;
   /** Sends through a stored endpoint; the text is supplied by the renderer. */
   testWebhookEndpoint(id: string, message: WebhookMessage): Promise<WebhookSendResult>;
@@ -659,6 +709,13 @@ export const requiredMethods: Array<Exclude<keyof DesktopBridge, "version">> = [
     "setWebhookEndpointEnabled",
     "getNotificationDefaults",
     "setNotificationDefaults",
+    "listDesigns",
+    "openDesign",
+    "moveDesignFrames",
+    "rasterizeDesignFrames",
+    "setDesignLiveFrame",
+    "listDesignStyles",
+    "createDesign",
     "deleteWebhookEndpoint",
     "testWebhookEndpoint",
   "setBrowserPanelSession",

@@ -26,6 +26,7 @@ type SidebarProps = {
   onOpenAutomation: () => void;
   onOpenSettings: (page?: SettingsPage) => void;
   onOpenSkills: () => void;
+  onOpenDesign: () => void;
   onOpenExperts: () => void;
   onOpenSession: (sessionId: string) => void;
   onSessionDeleted: (sessionId: string) => void;
@@ -230,7 +231,7 @@ function SidebarSettingsPopover({ onOpenSettings }: { onOpenSettings: (page?: Se
   );
 }
 
-export function Sidebar({ collapsed, mainView, onNewThread, onOpenAutomation, onOpenExperts, onOpenMedia, onOpenSettings, onOpenSession, onSessionDeleted, onOpenSkills, onToggle, runningSessionIds, selectedSessionId, onOpenTasks }: SidebarProps & { onOpenTasks: () => void }) {
+export function Sidebar({ collapsed, mainView, onNewThread, onOpenAutomation, onOpenDesign, onOpenExperts, onOpenMedia, onOpenSettings, onOpenSession, onSessionDeleted, onOpenSkills, onToggle, runningSessionIds, selectedSessionId, onOpenTasks }: SidebarProps & { onOpenTasks: () => void }) {
   const client = useRuntimeClient();
   const { refresh, snapshot } = useRuntime();
   const { locale, setSidebar, sidebar, t } = usePreferences();
@@ -377,8 +378,8 @@ export function Sidebar({ collapsed, mainView, onNewThread, onOpenAutomation, on
   const moreNavRows = useMemo(() => toSidebarNavRows(resolvedNav.more, mainView, selectedSessionId, t), [mainView, resolvedNav.more, selectedSessionId, t]);
   const [navMoreOpen, setNavMoreOpen] = useState(false);
   const navClickHandlers = useMemo(
-    () => toSidebarNavClickHandlers({ newThread: onNewThread, openMedia: onOpenMedia, openAutomation: onOpenAutomation, openTasks: onOpenTasks, openExperts: onOpenExperts, openSkills: onOpenSkills }),
-    [onNewThread, onOpenAutomation, onOpenExperts, onOpenMedia, onOpenSkills, onOpenTasks],
+    () => toSidebarNavClickHandlers({ newThread: onNewThread, openDesign: onOpenDesign, openMedia: onOpenMedia, openAutomation: onOpenAutomation, openTasks: onOpenTasks, openExperts: onOpenExperts, openSkills: onOpenSkills }),
+    [onNewThread, onOpenAutomation, onOpenDesign, onOpenExperts, onOpenMedia, onOpenSkills, onOpenTasks],
   );
   const commitNavLayout = (next: ResolvedSidebarNavLayout, pinnedLimit: number = sidebar.pinnedLimit) => {
     const layout: SidebarNavLayout = toStoredSidebarNavLayout(next);

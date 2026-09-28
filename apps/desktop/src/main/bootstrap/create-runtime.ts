@@ -16,27 +16,58 @@ import { createHeadlessCodingTools } from "@wordless/coding-agent";
 import { createGenericAgentDriver } from "@wordless/agent-driver-generic";
 import { createDataAnalysisTools, type DataAnalysisService } from "@wordless/capability-data";
 import { createBrowserTools } from "@wordless/capability-browser";
+import { createDesignTools } from "@wordless/capability-design";
+import { createDesignCapabilityPort } from "../design/design-capability-port";
+import type { DesignStore } from "../design/design-store";
+import type { OffscreenEvaluatePort, RasterPort } from "../design/raster-port";
 import { createAgentDriverRegistry } from "@wordless/agent-driver-sdk";
 import { codingProfile } from "@wordless/profile-coding";
 import { generalProfile } from "@wordless/profile-general";
 import { pptProfile } from "@wordless/profile-ppt";
 import { excelProfile } from "@wordless/profile-excel";
 import { dataProfile } from "@wordless/profile-data";
+import { uiProfile } from "@wordless/profile-ui";
 import { createProfileRegistry } from "@wordless/profile-sdk";
 import { WordlessRuntime } from "@wordless/runtime";
 import { WorkspaceSearchService } from "@wordless/platform-node";
+import { DESIGN_RASTER_BUDGETS } from "../design/raster-budgets";
 import { ElectronCredentialVault } from "../adapters/electron-credential-vault";
 import { OfficeCliService } from "../office/office-cli-service";
 import { DesktopDataAnalysisService } from "../data-analysis/data-analysis-service";
 import { createBrowserPort } from "../browser/browser-port";
 import type { BrowserService } from "../browser/browser-service";
 
-export function createDesktopRuntime(userData: string, office: OfficeCliService, credentialVault = new ElectronCredentialVault(path.join(userData, "credentials.json")), dataAnalysis: DataAnalysisService = new DesktopDataAnalysisService({ metadataRoot: path.join(userData, "analysis-metadata"), resourcesRoot: app.isPackaged ? process.resourcesPath : path.resolve(__dirname, "../../resources") }), browser?: BrowserService): WordlessRuntime {
+export interface DesignRuntimeDeps {
+  store: DesignStore;
+  raster: RasterPort;
+  evaluator: OffscreenEvaluatePort;
+}
+
+export function createDesktopRuntime(userData: string, office: OfficeCliService, credentialVault = new ElectronCredentialVault(path.join(userData, "credentials.json")), dataAnalysis: DataAnalysisService = new DesktopDataAnalysisService({ metadataRoot: path.join(userData, "analysis-metadata"), resourcesRoot: app.isPackaged ? process.resourcesPath : path.resolve(__dirname, "../../resources") }), browser?: BrowserService, design?: DesignRuntimeDeps): WordlessRuntime {
   // Browser tools are built per session, following the data capability: the port
   // captures the session id, because sharing and action grants belong to the task
   // the user was working on rather than to the app as a whole.
   const browserToolsFor = (sessionId: string) =>
     browser ? createBrowserTools(createBrowserPort(browser, sessionId)) : [];
+  /**
+   * 设计工具按会话构建,与浏览器那套同一个理由:端口捕获工作区根,而"哪份设计"属于
+   * 用户当时在做的任务,不属于应用整体。
+   */
+  const designToolsFor = (workspaceRoot: string) =>
+    design
+      ? createDesignTools(
+          createDesignCapabilityPort({
+            store: design.store,
+            raster: design.raster,
+            evaluator: design.evaluator,
+            poolOptions: {
+              concurrency: DESIGN_RASTER_BUDGETS.rasterConcurrency,
+              timeoutMs: DESIGN_RASTER_BUDGETS.rasterTimeoutMs,
+            },
+            workspaceRoot,
+          }),
+        )
+      : [];
   const resourcesRoot = app.isPackaged ? process.resourcesPath : path.resolve(__dirname, "../../resources");
   const extensions = new AgentExtensionManager({
     path: path.join(userData, "agent-extensions.json"),
@@ -67,7 +98,7 @@ export function createDesktopRuntime(userData: string, office: OfficeCliService,
     },
     credentialVault,
     defaultWorkspaceRoot: path.join(app.getPath("documents"), "Wordless"),
-    profiles: createProfileRegistry([generalProfile, codingProfile, pptProfile, excelProfile, dataProfile]),
+    profiles: createProfileRegistry([generalProfile, codingProfile, pptProfile, excelProfile, dataProfile, uiProfile]),
     extensions,
     workspaceSearch,
     drivers: createAgentDriverRegistry([
@@ -76,6 +107,7 @@ export function createDesktopRuntime(userData: string, office: OfficeCliService,
         createTools: (context) => [
           ...createHeadlessCodingTools(context.env, context.workspaceSearch),
           ...browserToolsFor(context.resourceOwnerSessionId ?? context.record.id),
+          ...(context.profile.reference.id === "ui" ? designToolsFor(context.record.runtimeRootPath) : []),
           ...(context.profile.reference.id === "data" ? createDataAnalysisTools(dataAnalysis, {
             sessionId: context.resourceOwnerSessionId ?? context.record.id,
             workspaceRoot: context.record.runtimeRootPath,

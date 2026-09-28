@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { isDegenerateBounds, normalizeBounds, resolveVisibility, sameBounds } from "../src/main/browser/browser-bounds.ts";
+import { isDegenerateBounds, normalizeBounds, resolveVisibility, sameBounds } from "../src/main/platform/view-bounds.ts";
 
 test("rounds fractional device pixels instead of truncating them", () => {
   // Truncating 100.9 to 100 leaves a hairline of the page visible along the

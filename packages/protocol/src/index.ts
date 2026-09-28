@@ -2563,3 +2563,210 @@ export type WebhookTestRequestDto = Static<typeof WebhookTestRequestSchema>;
 export type NotificationDefaultsDto = Static<typeof NotificationDefaultsSchema>;
 export type NotificationDefaultsPatchDto = Static<typeof NotificationDefaultsPatchSchema>;
 export type NotificationSubscriptionDto = Static<typeof NotificationSubscriptionSchema>;
+
+/* ── 设计画布 ─────────────────────────────────────────────────────────────── */
+
+export const DesignModeSchema = Type.Union([Type.Literal("static"), Type.Literal("built")]);
+
+export const DesignCanvasSchema = Type.Object(
+  { x: Type.Number(), y: Type.Number(), zoom: Type.Number({ minimum: 0.05 }) },
+  { additionalProperties: false },
+);
+
+export const DesignSummarySchema = Type.Object(
+  {
+    id: Type.String({ minLength: 1 }),
+    path: Type.String({ minLength: 1 }),
+    name: Type.String({ minLength: 1 }),
+    mode: DesignModeSchema,
+    style: Type.Union([Type.String(), Type.Null()]),
+    frameCount: Type.Number({ minimum: 0 }),
+  },
+  { additionalProperties: false },
+);
+
+export const DesignFrameSchema = Type.Object(
+  {
+    id: Type.String({ minLength: 1 }),
+    file: Type.String({ minLength: 1 }),
+    x: Type.Number(),
+    y: Type.Number(),
+    width: Type.Number({ minimum: 1 }),
+    height: Type.Number({ minimum: 1 }),
+    title: Type.String(),
+  },
+  { additionalProperties: false },
+);
+
+export const DesignManifestSchema = Type.Object(
+  {
+    version: Type.Literal(1),
+    type: Type.Literal("wordless-design"),
+    canvas: DesignCanvasSchema,
+    mode: DesignModeSchema,
+    style: Type.Union([Type.String(), Type.Null()]),
+    defaultFrameSize: Type.Optional(
+      Type.Object({ width: Type.Number({ minimum: 1 }), height: Type.Number({ minimum: 1 }) }, { additionalProperties: false }),
+    ),
+    frames: Type.Array(DesignFrameSchema),
+  },
+  { additionalProperties: false },
+);
+
+export const DesignOpenedSchema = Type.Object(
+  {
+    summary: DesignSummarySchema,
+    manifest: DesignManifestSchema,
+    /** 解析或与磁盘对账时发生过修复,且已回写。 */
+    repaired: Type.Boolean(),
+    /**
+     * frameId → 帧 URL。
+     *
+     * 由主进程生成而不是渲染层拼:URL 里那个 id 是不透明标识,渲染层不该知道它的构造
+     * 规则,更不该有机会拼出一个指向别处的地址。
+     */
+    frameUrls: Type.Record(Type.String(), Type.String()),
+  },
+  { additionalProperties: false },
+);
+
+export const DesignListRequestSchema = Type.Object(
+  { root: Type.String({ minLength: 1 }) },
+  { additionalProperties: false },
+);
+
+export const DesignOpenRequestSchema = Type.Object(
+  { path: Type.String({ minLength: 1 }) },
+  { additionalProperties: false },
+);
+
+export const DesignFrameMoveSchema = Type.Object(
+  { frameId: Type.String({ minLength: 1 }), x: Type.Number(), y: Type.Number() },
+  { additionalProperties: false },
+);
+
+export const DesignMoveFramesRequestSchema = Type.Object(
+  { path: Type.String({ minLength: 1 }), moves: Type.Array(DesignFrameMoveSchema, { minItems: 1 }) },
+  { additionalProperties: false },
+);
+
+export const DesignRasterFrameSchema = Type.Object(
+  {
+    frameId: Type.String({ minLength: 1 }),
+    /** 位图缩放档位,来自 `DESIGN_CANVAS_BUDGETS.zoomBuckets`。 */
+    bucket: Type.Number({ minimum: 0.01 }),
+  },
+  { additionalProperties: false },
+);
+
+export const DesignRasterRequestSchema = Type.Object(
+  {
+    path: Type.String({ minLength: 1 }),
+    frames: Type.Array(DesignRasterFrameSchema, { minItems: 1, maxItems: 256 }),
+  },
+  { additionalProperties: false },
+);
+
+export const DesignLiveBoundsSchema = Type.Object(
+  { x: Type.Number(), y: Type.Number(), width: Type.Number({ minimum: 0 }), height: Type.Number({ minimum: 0 }) },
+  { additionalProperties: false },
+);
+
+export const DesignLiveFrameRequestSchema = Type.Object(
+  {
+    path: Type.String({ minLength: 1 }),
+    frameId: Type.Union([Type.String({ minLength: 1 }), Type.Null()]),
+    /** 窗口坐标下的矩形。帧被隐藏时为 null。 */
+    bounds: Type.Union([DesignLiveBoundsSchema, Type.Null()]),
+  },
+  { additionalProperties: false },
+);
+
+export const DesignStyleSummarySchema = Type.Object(
+  {
+    id: Type.String({ minLength: 1 }),
+    name: Type.String({ minLength: 1 }),
+    category: Type.String(),
+    vibe: Type.Union([Type.Literal("light"), Type.Literal("dark")]),
+    tagline: Type.String(),
+    /**
+     * 完整的 `theme.css`。
+     *
+     * 带过来是为了让画廊卡片**用该风格自己的令牌**画缩略图 —— 那是单一真源,卡片再抽一次
+     * 就不可能与它漂开。
+     */
+    themeCss: Type.String(),
+  },
+  { additionalProperties: false },
+);
+
+export const CreateDesignRequestSchema = Type.Object(
+  {
+    root: Type.String({ minLength: 1 }),
+    name: Type.String({ minLength: 1, maxLength: 120 }),
+    /** 选中的内置风格;不选就只建一个带默认令牌的空包。 */
+    styleId: Type.Union([Type.String({ minLength: 1 }), Type.Null()]),
+  },
+  { additionalProperties: false },
+);
+
+/**
+ * 建包后那次构建的结果。
+ *
+ * **失败必须能走到用户面前。** 构建失败时设计仍然建好了 —— 但那意味着画布上每一帧都是
+ * "还没有产物"的占位卡,而用户看到的是一个空白画布加一句"新建成功",无从知道原因。
+ */
+export const DesignBuildOutcomeSchema = Type.Union([
+  Type.Object({ ok: Type.Literal(true) }, { additionalProperties: false }),
+  Type.Object(
+    {
+      ok: Type.Literal(false),
+      /** 失败分类(`DesignBuildResult` 的 code)。 */
+      code: Type.String({ minLength: 1 }),
+      /** 给人看的一句话,来自构建器的 `detail`。 */
+      detail: Type.String(),
+    },
+    { additionalProperties: false },
+  ),
+]);
+
+export const CreateDesignResultSchema = Type.Object(
+  {
+    path: Type.String({ minLength: 1 }),
+    frameId: Type.String({ minLength: 1 }),
+    /** `null` = 这一侧没启用构建(而不是"构建没发生过")。 */
+    build: Type.Union([DesignBuildOutcomeSchema, Type.Null()]),
+  },
+  { additionalProperties: false },
+);
+
+export type DesignBuildOutcomeDto = Static<typeof DesignBuildOutcomeSchema>;
+export type CreateDesignResultDto = Static<typeof CreateDesignResultSchema>;
+export type DesignModeDto = Static<typeof DesignModeSchema>;
+export type DesignCanvasDto = Static<typeof DesignCanvasSchema>;
+export type DesignSummaryDto = Static<typeof DesignSummarySchema>;
+export type DesignFrameDto = Static<typeof DesignFrameSchema>;
+export type DesignManifestDto = Static<typeof DesignManifestSchema>;
+export type DesignOpenedDto = Static<typeof DesignOpenedSchema>;
+export type DesignListRequestDto = Static<typeof DesignListRequestSchema>;
+export type DesignOpenRequestDto = Static<typeof DesignOpenRequestSchema>;
+export type DesignFrameMoveDto = Static<typeof DesignFrameMoveSchema>;
+export type DesignRasterFrameDto = Static<typeof DesignRasterFrameSchema>;
+export type DesignLiveBoundsDto = Static<typeof DesignLiveBoundsSchema>;
+export type DesignStyleSummaryDto = Static<typeof DesignStyleSummarySchema>;
+export type CreateDesignRequestDto = Static<typeof CreateDesignRequestSchema>;
+export type DesignLiveFrameRequestDto = Static<typeof DesignLiveFrameRequestSchema>;
+export type DesignRasterRequestDto = Static<typeof DesignRasterRequestSchema>;
+
+/**
+ * 光栅化的结果。
+ *
+ * **刻意没有 schema**:载荷里是位图字节,每次 IPC 都按 schema 校验一遍几 MB 的数组是白花
+ * 成本,而它又完全由主进程自己产出 —— 请求需要校验(来自渲染层),响应不需要(来自我们)。
+ */
+export type DesignRasterResultDto =
+  // `Uint8Array<ArrayBuffer>` 而不是默认的 `Uint8Array`:`Blob` 的构造不接受可能是
+  // `SharedArrayBuffer` 背书的视图,而这个字节最终就是喂给 `Blob` 的。
+  | { ok: true; key: string; bytes: Uint8Array<ArrayBuffer>; width: number; height: number }
+  | { ok: false; key: string; code: "timeout" | "load-failed" | "capture-failed" | "cancelled" };
+export type DesignMoveFramesRequestDto = Static<typeof DesignMoveFramesRequestSchema>;

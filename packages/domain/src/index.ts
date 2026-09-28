@@ -15,15 +15,26 @@ export type WorkbenchId =
   | "ui-preview"
   | "media-canvas";
 
-export type ArtifactKind =
-  | "presentation"
-  | "document"
-  | "spreadsheet"
-  | "browser"
-  | "report"
-  | "dataset"
-  | "chart"
-  | "image";
+/**
+ * 产物类型。
+ *
+ * 写成数组再由它派生联合类型(与 `PROVIDER_MODEL_FETCHERS` 等同一范式),因为**运行时
+ * 也需要这份清单**:驱动 SDK 的反序列化要逐值校验,而手抄一份校验链的结果是——给类型
+ * 加了新值却忘了加校验,产物引用就被**静默丢弃**,而且没有编译错误。
+ */
+export const ARTIFACT_KINDS = [
+  "presentation",
+  "document",
+  "spreadsheet",
+  "browser",
+  "report",
+  "dataset",
+  "chart",
+  "image",
+  "design",
+] as const;
+
+export type ArtifactKind = (typeof ARTIFACT_KINDS)[number];
 
 export type WorkspaceKind = "managed" | "linked";
 

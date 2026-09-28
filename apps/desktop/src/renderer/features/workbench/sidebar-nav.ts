@@ -1,5 +1,5 @@
 import { SIDEBAR_PINNED_ANCHOR } from "@wordless/domain";
-import { CalendarClock, Command, Folder, Images, ListTodo, UserRoundSearch, type LucideIcon } from "lucide-react";
+import { CalendarClock, Command, Folder, Images, ListTodo, PenTool, UserRoundSearch, type LucideIcon } from "lucide-react";
 import type { MessageKey } from "../../shared/i18n";
 
 /**
@@ -7,14 +7,21 @@ import type { MessageKey } from "../../shared/i18n";
  * listed, so the union lives next to its catalog rather than in the shell that
  * happens to own the state.
  */
-export type WorkbenchMainView = "thread" | "skills" | "experts" | "media" | "automation" | "tasks";
+export type WorkbenchMainView =
+  | "thread"
+  | "skills"
+  | "experts"
+  | "media"
+  | "automation"
+  | "tasks"
+  | "design";
 
 /**
  * Ids in the order "More" lists entries the user never touched. This tuple is
  * the whole list: the rows and the click handlers are declared against it, so
  * adding an entry here is a compile error until both exist.
  */
-export const SIDEBAR_NAV_ITEM_IDS = ["new", "media", "automation", "tasks", "experts", "skills"] as const;
+export const SIDEBAR_NAV_ITEM_IDS = ["new", "design", "media", "automation", "tasks", "experts", "skills"] as const;
 
 export type SidebarNavItemId = (typeof SIDEBAR_NAV_ITEM_IDS)[number];
 
@@ -39,6 +46,7 @@ export interface SidebarNavItemDef {
 const SIDEBAR_NAV_ITEM_DEFS: Record<SidebarNavItemId, Omit<SidebarNavItemDef, "id">> = {
   // Locked to the first inline row; see SIDEBAR_PINNED_ANCHOR.
   new: { labelKey: "newThread", icon: Folder, view: null },
+  design: { labelKey: "designLibrary", icon: PenTool, view: "design" },
   media: { labelKey: "imageVideoGeneration", icon: Images, view: "media" },
   automation: { labelKey: "automations", icon: CalendarClock, view: "automation" },
   tasks: { labelKey: "tasks", icon: ListTodo, view: "tasks" },
@@ -75,6 +83,7 @@ export interface SidebarNavActions {
   openTasks: () => void;
   openExperts: () => void;
   openSkills: () => void;
+  openDesign: () => void;
 }
 
 export function toSidebarNavClickHandlers(actions: SidebarNavActions): Record<SidebarNavItemId, () => void> {
@@ -85,6 +94,7 @@ export function toSidebarNavClickHandlers(actions: SidebarNavActions): Record<Si
     tasks: actions.openTasks,
     experts: actions.openExperts,
     skills: actions.openSkills,
+    design: actions.openDesign,
   };
 }
 

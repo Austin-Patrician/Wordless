@@ -47,6 +47,8 @@ export default defineConfig({
       "highlight.js/lib/languages/typescript",
       "highlight.js/lib/languages/xml",
       "highlight.js/lib/languages/yaml",
+      "@xyflow/react",
+      "zustand",
       "lucide-react",
       "mermaid",
       "micromark-util-character",
@@ -78,6 +80,9 @@ export default defineConfig({
       "test/automation-form.browser.test.tsx",
       "test/notifications-settings.browser.test.tsx",
       "test/model-picker.browser.test.tsx",
+      "test/design-canvas.browser.test.tsx",
+      "test/design-workspace.browser.test.tsx",
+      "test/design-layout-probe.browser.test.tsx",
     ],
   },
 });
