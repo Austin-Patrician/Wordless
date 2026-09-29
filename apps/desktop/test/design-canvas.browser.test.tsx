@@ -90,13 +90,15 @@ describe("design canvas", () => {
       onDeleteFrame?: (frameId: string) => void;
       onAttachFrame?: (frameId: string) => void;
       onApplyStyle?: (result: { framesNeedRestyle: boolean; opened: DesignOpenedDto }) => void;
-      onExport?: (what: "frames" | "assets") => void;
+      onDownloadMaterials?: () => void;
+      onOpenMockup?: () => void;
       exporting?: boolean;
       onRefresh?: () => void;
       refreshing?: boolean;
       attachedThemeTokens?: readonly string[];
       manifest?: DesignManifestDto;
       onToggleThemeToken?: (token: { name: string; value: string }) => void;
+      onTextures?: (textures: ReadonlyMap<string, string>) => void;
     } = {},
   ): Promise<void> {
     await act(async () => {
@@ -121,19 +123,94 @@ describe("design canvas", () => {
           onDeleteFrame={overrides.onDeleteFrame ?? (() => {})}
           onAttachFrame={overrides.onAttachFrame ?? (() => {})}
           onApplyStyle={overrides.onApplyStyle ?? (() => {})}
-          onExport={overrides.onExport ?? (() => {})}
+          onDownloadMaterials={overrides.onDownloadMaterials ?? (() => {})}
+          onOpenMockup={overrides.onOpenMockup ?? (() => {})}
           exporting={overrides.exporting ?? false}
           onRefresh={overrides.onRefresh ?? (() => {})}
           refreshing={overrides.refreshing ?? false}
           onSelectionChange={onSelectionChange}
+          onTextures={overrides.onTextures}
         />,
       );
     });
   }
 
+  /**
+   * 给画布容器一个确定的尺寸。
+   *
+   * 浏览器测试里**没有样式表**:画布容器是 `h-full w-full`,于是它的高度是 0、宽度跟着测试容器
+   * 走。而菜单要按容器边界摆(翻边/贴边),所以要先给它一个尺寸,否则边界是 0,什么位置断言都
+   * 没有意义。
+   */
+  const canvasBox = (): HTMLElement => container.querySelector<HTMLElement>("[data-design-canvas]")!;
+
+  /**
+   * 给菜单装一份**最小**样式。
+   *
+   * 浏览器测试里没有样式表,而菜单的位置要看它**量出来**的尺寸:没有 `width: max-content` 时,
+   * 一个绝对定位、子元素都是块级的盒子会撑满容器 —— 量出来"600 宽",于是翻边与贴边全都测不出
+   * 真实行为。这里只补这条链路上真正依赖的几条声明。
+   */
+  const installMenuCss = (): void => {
+    const style = document.createElement("style");
+    style.textContent = [
+      "[data-frame-menu]{position:absolute;width:max-content;min-width:150px;white-space:nowrap;padding:4px}",
+      "[data-frame-menu] button{display:flex;width:100%;padding:0 8px;font-size:12px;line-height:16px}",
+    ].join("");
+    document.head.append(style);
+  };
+
+  const setCanvasSize = async (width: number, height: number): Promise<void> => {
+    // 直接给**画布容器**一个尺寸,而不是外层那个测试 div:`h-full w-full` 在没有样式表时是
+    // 不起作用的,给了外层也传不下来。
+    await act(async () => {
+      canvasBox().style.width = `${width}px`;
+      canvasBox().style.height = `${height}px`;
+    });
+    await vi.waitFor(() => expect(canvasBox().clientWidth).toBe(width));
+  };
+
   function frameNodes(): HTMLElement[] {
     return Array.from(container.querySelectorAll<HTMLElement>(".react-flow__node"));
   }
+
+  it("工具栏的「导出渲染图」打开合成图弹窗,不是直接落文件", async () => {
+    /*
+      这两个按钮的分工照参考实现:**导出渲染图**进弹窗(挑几帧、排版、选格式),
+      **下载素材**直接落文件(每帧一张原尺寸图 + 规范与素材文件)。
+
+      "直接落一堆图"那个入口去掉不会少任何东西:下载素材的产物是它的**超集**。所以这里同时
+      钉住"弹窗被打开"和"没有顺手把文件写出去"。
+    */
+    const opened = vi.fn();
+    const exported = vi.fn();
+    await render({ onOpenMockup: opened, onDownloadMaterials: exported });
+
+    const button = Array.from(container.querySelectorAll("button")).find(
+      (candidate) => (candidate.getAttribute("aria-label") ?? "") === "mockupTitle",
+    );
+    expect(button).toBeDefined();
+    await act(async () => {
+      button?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+    });
+
+    expect(opened).toHaveBeenCalledTimes(1);
+    expect(exported).not.toHaveBeenCalled();
+  });
+
+  it("工具栏的「下载素材」仍然直接落文件", async () => {
+    const exported = vi.fn();
+    await render({ onDownloadMaterials: exported });
+
+    const button = Array.from(container.querySelectorAll("button")).find(
+      (candidate) => (candidate.getAttribute("aria-label") ?? "") === "designExportAssets",
+    );
+    await act(async () => {
+      button?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+    });
+
+    expect(exported).toHaveBeenCalledTimes(1);
+  });
 
   it("色彩系统:点一个色块把它交给对话", async () => {
     /*
@@ -263,17 +340,17 @@ describe("design canvas", () => {
     expect(styles).toBeDefined();
     expect(styles?.getAttribute("aria-disabled")).not.toBe("true");
 
-    // 备注**照实禁用**:它是一整条通道(存储 + 图层 + 抽屉 + 锚点保鲜 + 工具 + handoff),
-    // 而这一轮不做它。禁用 + 标题写明原因,比一个点了没反应的按钮诚实。
-    for (const label of ["designToolNotes"]) {
-      const button = Array.from(container.querySelectorAll("button")).find((candidate) =>
-        (candidate.getAttribute("aria-label") ?? "").startsWith(label),
-      );
-      expect(button, label).toBeDefined();
-      expect(button?.getAttribute("aria-disabled")).toBe("true");
-      // 而且标题里说明了原因,不是一句干禁。
-      expect(button?.getAttribute("title")).toContain("designToolComingSoon");
-    }
+    /*
+      这里原来还有一个**禁用的「备注」占位**,而现在没有了 —— 决定变了。
+
+      当时留着它的理由是"照实禁用比藏起来诚实";但用户看到的是一个点不动、标题也弹不出来的
+      灰色图标,原话是"有个空白的菜单留在那里不知道干嘛用的"。备注这条通道已决定不做
+      (存储 + 图层 + 抽屉 + 锚点保鲜 + 工具 + handoff 是一整条链),占位就没有"以后会亮"的
+      那一天可等。所以:**dock 上每一个按钮都得是有用的**,禁用的那些必须自己说明理由
+      (比如"分布"少于三帧时禁用,但用途是明确的)。
+    */
+    expect(labels.some((label) => label.startsWith("designToolNotes"))).toBe(false);
+    expect(labels.some((label) => label.startsWith("designToolComingSoon"))).toBe(false);
   });
 
   it("画框工具:在画布上拖出一个矩形就建一帧,并且拖的时候看得到虚框", async () => {
@@ -350,6 +427,10 @@ describe("design canvas", () => {
     // 这条钉的是一个真实坏过的实现:菜单原来渲染在**节点内部**,而节点的祖先
     // (`.react-flow__viewport`)带着画布的缩放变换 —— 于是 `absolute` 的参照不是画布而是节点,
     // 位置整体偏掉,而且菜单会跟着缩放一起放大缩小。
+    // 浏览器测试里没有样式表,画布容器是零高度的 —— 菜单要按容器边界摆,所以先给它一个尺寸。
+    await setCanvasSize(600, 400);
+    installMenuCss();
+
     const node = frameNodes()[0] as HTMLElement;
     const target = node.querySelector<HTMLElement>("[data-frame-id]") ?? node;
     await act(async () => {
@@ -368,6 +449,43 @@ describe("design canvas", () => {
     const bounds = container.getBoundingClientRect();
     expect(menu?.style.left).toBe(`${210 - bounds.left}px`);
     expect(menu?.style.top).toBe(`${160 - bounds.top}px`);
+  });
+
+
+  it("靠近右边缘右键时菜单翻到指针左边 —— 而不是被挤窄换行", async () => {
+    /*
+      用户报的:frame 靠近边缘时右键,「交给 agent 改这一帧」会换行成两行。
+
+      根因是绝对定位元素不给宽度时的"收缩到适合"(宽度 ≤ 容器宽 - left),贴边的菜单于是被挤窄
+      而文字只好换行。修法是**保持宽度、翻到另一侧** —— 这条测试钉的就是"它真的翻了",因为
+      换行本身是 CSS 行为,在这个没有样式表的环境里测不到。
+    */
+    await render();
+    // 给容器一个确定的宽度,好让"右边放不下"这件事可复现。
+    await setCanvasSize(420, 320);
+    installMenuCss();
+
+    const node = frameNodes()[0] as HTMLElement;
+    const target = node.querySelector<HTMLElement>("[data-frame-id]") ?? node;
+    const bounds = container.getBoundingClientRect();
+    // 指针贴在容器右边(留 8px)。
+    const clientX = bounds.left + bounds.width - 8;
+    const clientY = bounds.top + 40;
+    await act(async () => {
+      target.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX, clientY }));
+    });
+
+    const menu = container.querySelector<HTMLElement>("[data-frame-menu]");
+    expect(menu).not.toBeNull();
+    const anchorX = clientX - bounds.left;
+    const left = Number.parseFloat(menu!.style.left);
+    const width = menu!.getBoundingClientRect().width;
+
+    expect(left).toBeLessThan(anchorX);
+    // 而且整个菜单仍然落在容器里(翻过去就是为了这个)。
+    expect(left + width).toBeLessThanOrEqual(bounds.width + 1);
+    // 文字不换行这件事由 CSS 保证,这里钉住那个类没被删掉。
+    expect(menu!.className).toContain("whitespace-nowrap");
   });
 
   it("右键菜单点别处就消失,不会一直挂着", async () => {
@@ -421,6 +539,81 @@ describe("design canvas", () => {
     }
   });
 
+  it("菜单里的「重命名」就地变成输入框,回车提交", async () => {
+    const onCommitFrameMeta = vi.fn();
+    await render({ onCommitFrameMeta });
+
+    const node = frameNodes()[0] as HTMLElement;
+    const target = node.querySelector<HTMLElement>("[data-frame-id]") ?? node;
+    await act(async () => {
+      target.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 120, clientY: 90 }));
+    });
+
+    const rename = Array.from(container.querySelectorAll("button")).find((button) =>
+      (button.textContent ?? "").includes("designFrameRename"),
+    );
+    expect(rename).toBeDefined();
+    await act(async () => {
+      rename?.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }));
+    });
+
+    // 就地变成输入框,初值是这一帧现在的标题(改名字,而不是从空白开始打)。
+    const input = container.querySelector<HTMLInputElement>("[data-frame-menu] input");
+    expect(input).not.toBeNull();
+    expect(input?.value).toBe("首页");
+
+    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
+    await act(async () => {
+      setter?.call(input, "首页 v3");
+      input?.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await act(async () => {
+      input?.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, key: "Enter" }));
+    });
+
+    expect(onCommitFrameMeta).toHaveBeenCalledWith("index", { title: "首页 v3" });
+    expect(container.querySelector("[data-frame-menu]")).toBeNull();
+  });
+
+  it("重命名输入框失去焦点不该让它消失 —— 那正是「点了没反应」", async () => {
+    /*
+      用户报的:点「重命名」没反应。
+
+      原因不是没切到输入框(那条上面钉住了),而是**切换那一刻菜单会按新尺寸重摆一次** ——
+      指针于是可能落到菜单外面,紧接着的 `mouseup` 落在画布上,输入框失焦。当时输入框带
+      `onBlur={onClose}`,于是它当场收掉,用户看到的就是"点了没反应"。
+
+      而"点别处就关"本来就有更准的实现:窗口级 `pointerdown`。所以这里钉住:**失焦不收起**。
+    */
+    await render();
+
+    const node = frameNodes()[0] as HTMLElement;
+    const target = node.querySelector<HTMLElement>("[data-frame-id]") ?? node;
+    await act(async () => {
+      target.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 120, clientY: 90 }));
+    });
+    await act(async () => {
+      Array.from(container.querySelectorAll("button"))
+        .find((button) => (button.textContent ?? "").includes("designFrameRename"))
+        ?.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }));
+    });
+
+    const input = container.querySelector<HTMLInputElement>("[data-frame-menu] input");
+    expect(input).not.toBeNull();
+    await act(async () => {
+      // React 的 onBlur 走 `focusout`(它会冒泡,而 blur 不会)。
+      input?.dispatchEvent(new FocusEvent("focusout", { bubbles: true }));
+    });
+
+    expect(container.querySelector("[data-frame-menu] input")).not.toBeNull();
+
+    // 而**点外面**仍然要关掉它 —— 这条行为由窗口级 pointerdown 负责。
+    await act(async () => {
+      canvasBox().dispatchEvent(new PointerEvent("pointerdown", { bubbles: true }));
+    });
+    expect(container.querySelector("[data-frame-menu]")).toBeNull();
+  });
+
   it("右键一帧给出重命名与删除", async () => {
     const onDeleteFrame = vi.fn();
     await render({ onDeleteFrame });
@@ -438,28 +631,85 @@ describe("design canvas", () => {
     expect(menu.map((button) => button.textContent)).toEqual(["designFrameRename", "designFrameDelete"]);
 
     /*
-      删除是这个画布上唯一会丢东西的动作,而菜单项就在指针底下、点错补不回来 —— 所以它**先
-      进入确认**,而不是直接删。这条钉的就是那一步:第一次点只是换成确认,第二次才真删。
+      删除是这个画布上唯一会丢东西的动作(帧文件直接被删,不进回收站),而菜单项就在指针底下、
+      点错补不回来 —— 所以点它只是**发起确认**:菜单收起来,画布中央出现一个确认框,只有那个
+      框里的「删除」才真的删。
     */
-    const pick = (): HTMLElement | undefined =>
-      Array.from(container.querySelectorAll("button")).find((button) =>
-        (button.textContent ?? "").includes("designFrameDelete"),
+    const pickDelete = (): HTMLElement | undefined =>
+      Array.from(container.querySelectorAll("button")).find(
+        (button) =>
+          (button.textContent ?? "").includes("designFrameDelete") &&
+          !(button.textContent ?? "").includes("designFrameDeleteCancel"),
       );
     await act(async () => {
-      pick()?.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }));
+      pickDelete()?.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }));
     });
+
     expect(onDeleteFrame).not.toHaveBeenCalled();
-    expect(container.textContent).toContain("designFrameDeleteConfirm");
-    // 取消:回到菜单,而不是删掉。
-    const cancel = Array.from(container.querySelectorAll("button")).find((button) =>
-      (button.textContent ?? "").includes("designFrameDeleteCancel"),
+    // 菜单收起来了,确认框出现了 —— 两张浮层不叠着。
+    expect(container.querySelector("[data-frame-menu]")).toBeNull();
+    const confirm = container.querySelector<HTMLElement>("[data-design-confirm]");
+    expect(confirm).not.toBeNull();
+    expect(confirm?.textContent).toContain("designFrameDeleteConfirm");
+    expect(confirm?.textContent).toContain("designFrameDeleteWarning");
+
+    // 取消:什么都不删,框也收掉。
+    const cancel = Array.from(container.querySelectorAll("button")).find(
+      (button) => (button.textContent ?? "") === "designFrameDeleteCancel",
     );
     expect(cancel).toBeDefined();
-
     await act(async () => {
-      pick()?.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }));
+      cancel?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+    });
+    expect(onDeleteFrame).not.toHaveBeenCalled();
+    expect(container.querySelector("[data-design-confirm]")).toBeNull();
+
+    // 再来一次,这回点确认 —— 才真的删。
+    await act(async () => {
+      (frameNodes()[0]!.querySelector<HTMLElement>("[data-frame-id]") ?? frameNodes()[0]!).dispatchEvent(
+        new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 120, clientY: 90 }),
+      );
+    });
+    await act(async () => {
+      pickDelete()?.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }));
+    });
+    const confirmButton = Array.from(container.querySelectorAll("button")).find(
+      (button) => (button.textContent ?? "") === "designFrameDelete",
+    );
+    await act(async () => {
+      confirmButton?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
     });
     expect(onDeleteFrame).toHaveBeenCalledWith("index");
+    expect(container.querySelector("[data-design-confirm]")).toBeNull();
+  });
+
+  it("确认框盖住的是画布,而且是整块居中的", async () => {
+    // "只盖画布"不是省事:旁边的对话区与这次确认无关,盖住它是一次"删一帧"不该有的代价。
+    await render();
+    await setCanvasSize(600, 400);
+
+    const node = frameNodes()[0] as HTMLElement;
+    const target = node.querySelector<HTMLElement>("[data-frame-id]") ?? node;
+    await act(async () => {
+      target.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 120, clientY: 90 }));
+    });
+    await act(async () => {
+      Array.from(container.querySelectorAll("button"))
+        .find((button) => (button.textContent ?? "").includes("designFrameDelete"))
+        ?.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }));
+    });
+
+    const confirm = container.querySelector<HTMLElement>("[data-design-confirm]");
+    expect(confirm).not.toBeNull();
+    // 它住在画布容器**里面**(而不是像普通模态那样挂到 body 上盖住整个窗口)。
+    expect(canvasBox().contains(confirm)).toBe(true);
+    /*
+      定位方式是 `absolute`(相对画布)而不是 `fixed`(相对窗口)。这一条只能断言类名 ——
+      没有样式表就算不出实际样式 —— 但它钉住的正是那个决定:**确认框只盖画布**,旁边的对话区
+      与这次确认无关。
+    */
+    expect(confirm!.className).toContain("absolute");
+    expect(confirm!.className).not.toContain("fixed");
   });
 
   it("没有多选时不出现对齐/分布栏", async () => {
@@ -568,6 +818,36 @@ describe("design canvas", () => {
     expect(badge.style.backgroundColor).not.toBe("");
     // 徽标说的是"哪一帧",不是"整个画布" —— 亮错帧看不出对错,所以只有 login 有。
     expect(badge.closest(".react-flow__node")?.textContent).toContain("登录");
+  });
+
+  it("把光栅好的位图交给外面 —— 导出渲染图的左栏要拿它当缩略图", async () => {
+    /*
+      导出弹窗的左栏列的是"还没进渲染区"的那几帧,也就是**这一趟不会去抓的**帧,所以它拿不到
+      抓图结果。位图本来就在画布手里,把它交出去是"不为了一列小图再离屏渲染一遍"的唯一办法
+      —— 而这整条链上最容易断的一环就是这里(不交出去 = 一列空占位,而且看起来完全正常)。
+    */
+    const textures: ReadonlyMap<string, string>[] = [];
+    const client = {
+      ...CLIENT,
+      rasterizeDesignFrames: async (input: { frames: { frameId: string; bucket: number }[] }) =>
+        input.frames.map((frame) => ({
+          ok: true as const,
+          key: `${frame.frameId}@${frame.bucket}`,
+          bytes: new Uint8Array([1, 2, 3]),
+          width: 390,
+          height: 844,
+        })),
+    } as unknown as DesktopBridge;
+
+    await render({ client, onTextures: (found) => textures.push(found) });
+    // 位图到货是一条 promise 链(请求 → 写缓存 → 记代次 → 交出去),`act` 只保证渲染落定。
+    await act(async () => {});
+
+    const last = textures.at(-1);
+    expect(last?.size).toBe(2);
+    expect([...(last?.keys() ?? [])].sort()).toEqual(["index", "login"]);
+    // 交出去的是**位图 URL**,`<img src>` 直接能吃。
+    expect([...(last?.values() ?? [])].every((url) => url.startsWith("blob:"))).toBe(true);
   });
 
   it("源指纹变了就重新光栅 —— 位图不会停在打开那一刻", async () => {

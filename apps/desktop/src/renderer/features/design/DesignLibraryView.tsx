@@ -6,6 +6,7 @@ import { usePreferences } from "../../shared/preferences";
 import { useRuntime, useRuntimeClient } from "../../shared/runtime";
 import { DesignStyleCard, type DesignStyleCardData } from "./DesignStyleCard.tsx";
 import { DesignStyleDetailDialog } from "./DesignStyleDetailDialog.tsx";
+import { designLibrarySources, type DesignLibrarySource } from "./design-library-sources.ts";
 import { designStyleCopy } from "./style-copy.ts";
 import {
   STYLE_GRID_MAX_COLUMNS,
@@ -33,19 +34,45 @@ import {
  * - **缩略图只用令牌画**,不挂真实渲染的 demo —— 一屏几十张,每张一个文档光解析就能把滚动
  *   拖住。
  */
-export function DesignLibraryView() {
+export function DesignLibraryView({
+  onOpenSession,
+}: {
+  /**
+   * 打开某个设计会话。会话来源的设计**只能**这么打开:它住在那个会话的私有根里,没有会话就
+   * 没有那份设计(见 `design-library-sources.ts`)。
+   *
+   * 不给就只是列出来、点不动 —— 与工作区来源的条目一样。
+   */
+  onOpenSession?: (sessionId: string) => void;
+}) {
   const client = useRuntimeClient();
   const { snapshot } = useRuntime();
   const { t } = usePreferences();
 
-  // 设计包住在工作区里,所以需要一个工作区根。取第一个可用的:画廊是"全部设计"的视图,
-  // 不属于某一次会话。
-  const root = useMemo(
-    () => snapshot?.workspaces.find((workspace) => workspace.availability === "available")?.rootPath ?? null,
-    [snapshot?.workspaces],
+  /**
+   * 该扫哪些根。**两种来源**:用户的工作区,以及没选工作区的设计会话(它们的包住在自己的
+   * 私有根里)。从前这里只取第一个可用工作区,于是后者产出的设计在画布上看得到、在这页里
+   * 却不存在。
+   */
+  const sources = useMemo(
+    () => designLibrarySources({ sessions: snapshot?.sessions, workspaces: snapshot?.workspaces }),
+    [snapshot?.sessions, snapshot?.workspaces],
   );
+  /**
+   * 重扫的**唯一**开关是这串 key,而不是 `sources` 这个数组。
+   *
+   * 快照每来一个事件(agent 一边输出就一直在来)都会换掉 `sessions` 的引用,于是 `sources` 每次
+   * 都是新数组;拿它当 effect 依赖,这页会在每一条流式事件上重扫全部根。字符串比出来的才是
+   * "根真的变了没有" —— 新建/删除会话、增删工作区。
+   */
+  const sourceKey = useMemo(() => sources.map((source) => source.key).join("|"), [sources]);
+  const sourcesRef = useRef(sources);
+  sourcesRef.current = sources;
 
-  const [designs, setDesigns] = useState<DesignSummaryDto[] | null>(null);
+  /** 新建设计要落在哪个工作区:第一个可用的 —— 与从前一致(没有工作区就没地方放,见 `create`)。 */
+  const createRoot = sources.find((source) => source.kind === "workspace")?.rootPath ?? null;
+
+  const [entries, setEntries] = useState<DesignLibraryEntry[] | null>(null);
   const [styles, setStyles] = useState<DesignStyleSummaryDto[] | null>(null);
   const [pendingStyle, setPendingStyle] = useState<DesignStyleCardData | null>(null);
   /** 正在看详情的风格。点卡片先进详情(示例 + 色板 + 规范目录),从详情里才进命名流程。 */
@@ -55,18 +82,29 @@ export function DesignLibraryView() {
   const [error, setError] = useState<string | null>(null);
 
   const reload = useCallback(async () => {
-    if (root === null) {
-      setDesigns([]);
-      return;
-    }
+    const current = sourcesRef.current;
     setError(null);
-    try {
-      setDesigns(await client.listDesigns({ root }));
-    } catch (reason) {
-      setDesigns([]);
-      setError(reason instanceof Error ? reason.message : String(reason));
+    const results = await Promise.all(
+      current.map(async (source) => {
+        try {
+          const designs = await client.listDesigns({ root: source.rootPath });
+          return designs.map((design): DesignLibraryEntry => ({ design, source }));
+        } catch (reason) {
+          // 一个根读不出来不该让整页看起来像坏了;但**全都**读不出来就值得说 —— 那才是真出了问题
+          // (一个根都没有不算:那只是还没有工作区、也还没有设计会话,空态会说明)。
+          return reason instanceof Error ? reason.message : String(reason);
+        }
+      }),
+    );
+    const next: DesignLibraryEntry[] = [];
+    const failures: string[] = [];
+    for (const result of results) {
+      if (Array.isArray(result)) next.push(...result);
+      else failures.push(result);
     }
-  }, [client, root]);
+    setEntries(next);
+    if (failures.length > 0 && failures.length === current.length) setError(failures[0]!);
+  }, [client, sourceKey]);
 
   useEffect(() => {
     void client
@@ -80,13 +118,21 @@ export function DesignLibraryView() {
   }, [reload]);
 
   const create = useCallback(async () => {
-    if (pendingStyle === null || root === null || creating) return;
+    if (pendingStyle === null || creating) return;
     const trimmed = name.trim();
     if (trimmed === "") return;
+    /**
+     * 没有工作区就没地方放包,而这里从前是**静默返回** —— 名字对话框会照常弹出来,点了确认
+     * 什么也不发生。说清为什么,比装作没这回事强。
+     */
+    if (createRoot === null) {
+      setError(t("designCreateNeedsWorkspace"));
+      return;
+    }
     setCreating(true);
     setError(null);
     try {
-      const created = await client.createDesign({ root, name: trimmed, styleId: pendingStyle.id });
+      const created = await client.createDesign({ root: createRoot, name: trimmed, styleId: pendingStyle.id });
       setPendingStyle(null);
       setName("");
       await reload();
@@ -109,7 +155,7 @@ export function DesignLibraryView() {
     } finally {
       setCreating(false);
     }
-  }, [client, creating, name, pendingStyle, reload, root, t]);
+  }, [client, createRoot, creating, name, pendingStyle, reload, t]);
 
   return (
     <section className="flex min-h-0 min-w-0 flex-1 flex-col overflow-y-auto bg-[#fbfbfa] dark:bg-[#181912]">
@@ -126,7 +172,7 @@ export function DesignLibraryView() {
           <p className="mt-3 rounded-lg bg-[#fff6f6] px-3 py-2 text-[11px] text-[#a44] dark:bg-[#2a1d1d]">{error}</p>
         ) : null}
 
-        <MyDesigns designs={designs} />
+        <MyDesigns entries={entries} onOpenSession={onOpenSession} />
         <StyleWall
           bridge={client}
           onPick={setDetailStyle}
@@ -163,17 +209,29 @@ export function DesignLibraryView() {
   );
 }
 
-function MyDesigns({ designs }: { designs: DesignSummaryDto[] | null }) {
+/** 一份设计 + 它住的那个根。**来源要跟着走**:列表要标出来,打开方式也由它决定。 */
+interface DesignLibraryEntry {
+  design: DesignSummaryDto;
+  source: DesignLibrarySource;
+}
+
+function MyDesigns({
+  entries,
+  onOpenSession,
+}: {
+  entries: DesignLibraryEntry[] | null;
+  onOpenSession?: (sessionId: string) => void;
+}) {
   const { t } = usePreferences();
   return (
     <div className="mt-8">
       <h2 className="text-[13px] font-semibold text-[#3e3e39] dark:text-foreground">{t("designMineTitle")}</h2>
-      {designs === null ? (
+      {entries === null ? (
         <div className="mt-3 flex items-center gap-2 text-[12px] text-[#8a8f94]">
           <LoaderCircle className="size-3.5 animate-spin motion-reduce:animate-none" />
           {t("designLibraryLoading")}
         </div>
-      ) : designs.length === 0 ? (
+      ) : entries.length === 0 ? (
         <div className="mt-3 rounded-xl border border-dashed border-[#e2e4e6] px-5 py-8 text-center dark:border-[#3b3e41]">
           <FrameIcon className="mx-auto size-4 text-[#b3b8bd]" />
           <p className="mt-2 text-[12px] text-[#8a8f94]">{t("designMineEmpty")}</p>
@@ -181,20 +239,46 @@ function MyDesigns({ designs }: { designs: DesignSummaryDto[] | null }) {
         </div>
       ) : (
         <div className="mt-3 grid gap-3" style={{ gridTemplateColumns: "repeat(auto-fill, minmax(200px, 1fr))" }}>
-          {designs.map((design) => (
-            <div
-              className="flex items-center gap-2 rounded-xl border border-[#e2e4e6] bg-white px-3 py-2.5 dark:border-[#3b3e41] dark:bg-[#202225]"
-              key={design.id}
-            >
-              <PenTool className="size-3.5 shrink-0 text-[#8a8f94]" />
-              <span className="min-w-0 flex-1 truncate text-[12px] font-medium text-[#3e3e39] dark:text-foreground">
-                {design.name}
-              </span>
-              <span className="shrink-0 text-[11px] tabular-nums text-[#a8adb2]">
-                {t("designFrameCount").replace("{count}", String(design.frameCount))}
-              </span>
-            </div>
-          ))}
+          {entries.map(({ design, source }) => {
+            // 会话来源的设计住在那个会话的私有根里 —— **打开它就是打开那个会话**,没有别的入口
+            // (设计包里没有"路径"这个概念给用户用)。工作区来源的没有会话可切,所以今天只列不点。
+            const openable = source.kind === "session" && onOpenSession !== undefined;
+            const body = (
+              <>
+                <PenTool className="size-3.5 shrink-0 text-[#8a8f94]" />
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate text-[12px] font-medium text-[#3e3e39] dark:text-foreground">
+                    {design.name}
+                  </span>
+                  <span className="mt-0.5 block truncate text-[10px] text-[#a8adb2]">
+                    {source.kind === "workspace" ? t("designSourceWorkspace") : t("designSourceSession")} ·{" "}
+                    {source.name}
+                  </span>
+                </span>
+                <span className="shrink-0 text-[11px] tabular-nums text-[#a8adb2]">
+                  {t("designFrameCount").replace("{count}", String(design.frameCount))}
+                </span>
+              </>
+            );
+            const shell =
+              "flex items-center gap-2 rounded-xl border border-[#e2e4e6] bg-white px-3 py-2.5 dark:border-[#3b3e41] dark:bg-[#202225]";
+            return openable ? (
+              <button
+                className={`${shell} text-left transition-colors hover:border-[#c9ccc8] hover:bg-[#f7f7f4] dark:hover:border-[#4a4e52] dark:hover:bg-[#26282b]`}
+                data-design-card={design.name}
+                key={`${source.key}:${design.id}`}
+                onClick={() => onOpenSession(source.sessionId)}
+                title={t("designOpenSession")}
+                type="button"
+              >
+                {body}
+              </button>
+            ) : (
+              <div className={shell} data-design-card={design.name} key={`${source.key}:${design.id}`}>
+                {body}
+              </div>
+            );
+          })}
         </div>
       )}
     </div>

@@ -26,17 +26,63 @@ export interface DesignExporter {
   copyFile(from: string, to: string): Promise<void>;
 }
 
+/**
+ * 这个落点需要**创建**的父目录;`null` = 一个都不用建。
+ *
+ * 为什么要有这一步:用户可以把文件保存在**盘符根下**(E 盘根目录里的一个 png),那是合法选择,
+ * 而"顺手递归建一遍父目录"会把盘符根当成要创建的东西 —— Windows 上对盘符根做 `mkdir`
+ * 直接报 `EPERM: operation not permitted, mkdir` —— 路径就是盘符根本身。
+ * 于是保存永远失败,而错误信息里那个路径看起来跟用户选的地方也不像。
+ *
+ * 两道判断都是同一个理由:**根目录和"没有目录"本来就在那儿**,要求系统创建它们不是无害的
+ * 冗余,而是会报错的调用。
+ */
+export function parentDirectoryToCreate(target: string): string | null {
+  const directory = path.dirname(target);
+  if (directory === path.parse(directory).root) return null;
+  if (directory === "." || directory === "") return null;
+  return directory;
+}
+
+/**
+ * 写文件那三件事,收成一个可注入的端口。
+ *
+ * 注入的理由只有一个,但很实在:**"盘符根不能建"这条规则在真机上才复现** —— Windows 上对
+ * `E:\` 做 `mkdir` 直接 EPERM,而测试跑在临时目录里,永远碰不到盘符根。有了这一层,假 fs 可以
+ * 照实地对盘符根抛错,那条失败就能被一个测试钉住(见 `design-export.test.ts`)。
+ */
+export interface ExportFs {
+  mkdir(directory: string): Promise<void>;
+  writeFile(target: string, bytes: Uint8Array): Promise<void>;
+  copyFile(from: string, to: string): Promise<void>;
+}
+
+const NODE_EXPORT_FS: ExportFs = {
+  async mkdir(directory: string): Promise<void> {
+    await mkdir(directory, { recursive: true });
+  },
+  async writeFile(target: string, bytes: Uint8Array): Promise<void> {
+    await writeFile(target, bytes);
+  },
+  async copyFile(from: string, to: string): Promise<void> {
+    await copyFile(from, to);
+  },
+};
+
 /** 真实现:Electron 的目录对话框 + node 的文件写入。 */
 export class NodeDesignExporter implements DesignExporter {
   private readonly pickDirectory: () => Promise<string | null>;
   private readonly pickFile: (input: { suggestedName: string; extension: "png" | "pdf" }) => Promise<string | null>;
+  private readonly fs: ExportFs;
 
   constructor(
     pickDirectory: () => Promise<string | null>,
     pickFile: (input: { suggestedName: string; extension: "png" | "pdf" }) => Promise<string | null>,
+    fs: ExportFs = NODE_EXPORT_FS,
   ) {
     this.pickDirectory = pickDirectory;
     this.pickFile = pickFile;
+    this.fs = fs;
   }
 
   async chooseDirectory(): Promise<string | null> {
@@ -48,12 +94,14 @@ export class NodeDesignExporter implements DesignExporter {
   }
 
   async writeFile(target: string, bytes: Uint8Array): Promise<void> {
-    await mkdir(path.dirname(target), { recursive: true });
-    await writeFile(target, bytes);
+    const directory = parentDirectoryToCreate(target);
+    if (directory !== null) await this.fs.mkdir(directory);
+    await this.fs.writeFile(target, bytes);
   }
 
   async copyFile(from: string, to: string): Promise<void> {
-    await mkdir(path.dirname(to), { recursive: true });
-    await copyFile(from, to);
+    const directory = parentDirectoryToCreate(to);
+    if (directory !== null) await this.fs.mkdir(directory);
+    await this.fs.copyFile(from, to);
   }
 }

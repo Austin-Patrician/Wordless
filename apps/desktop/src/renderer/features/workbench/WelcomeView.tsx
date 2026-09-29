@@ -12,7 +12,6 @@ import { Composer, EMPTY_INLINE_SKILL_COMPOSER_VALUE } from "../thread/Composer"
 import { AccessPicker } from "../thread/AccessPicker";
 import { createPendingThreadTurn, createUserMessageSubmission, type PendingThreadTurn } from "../thread/pending-thread-turn";
 import { DesignStyleLaunchStrip } from "../design/DesignStyleLaunchStrip";
-import { designStyleStartParts } from "../design/style-start";
 import { ModelPicker, thinkingLevelForModelSelection } from "./ModelPicker";
 import { WorkspacePicker } from "./WorkspacePicker";
 import { AgentEntryIcon } from "./AgentEntryIcon";
@@ -200,20 +199,15 @@ export function WelcomeView({ initialExpertPrompt, initialExpertSelection, onOpe
     const submission = createUserMessageSubmission();
     try {
       /*
-        挑了一套风格:先把它的资料(theme.css + DESIGN.md)落进**工作区**,再把这两份资料作为引用
-        带进第一条消息。落盘失败就**不建会话** —— 否则用户会拿到一个"看起来按那套风格开的"、其实
-        没有资料的会话,而原因在几屏之外。
+        挑了一套风格:把**这个选择**作为一条 design-style 标记带进首条消息,就这些。
+
+        资料的落盘不再发生在这里(从前是先写进工作区的 `design-resources/`,再由 agent 抄
+        进设计包) —— 那是"还没有 design_style_apply"时的替代品。现在由 agent 把 styleId 交给
+        `design_create`,主进程往**设计包里**写,确定性、可备份。于是这条路上不再需要工作区:选风格
+        只是消息的一部分。
       */
       const styleId = entry.workbenchId === "ui-preview" ? designStyleId : null;
-      const installed =
-        styleId === null || selectedWorkspace === undefined
-          ? null
-          : await client.installDesignStyleResources({ root: selectedWorkspace.rootPath, styleId });
-      if (styleId !== null && installed === null) {
-        setSubmissionError(t("designStyleLaunchFailed"));
-        return;
-      }
-      const messageParts = installed === null ? parts : [...parts, ...designStyleStartParts(installed)];
+      const messageParts = styleId === null ? parts : [...parts, { type: "design-style" as const, styleId }];
       const pendingTurn = createPendingThreadTurn(messageParts, submission, attachments);
       const session = await client.createAndPrompt({ mode, entryId: entry.id, workspaceId, accessLevel, model, thinkingLevel, connectorIds, interactionMode, toolApprovalMode, ...(expertSelection ? { expertSelection } : {}), ...(entry.workbenchId === "presentation" ? { presentation: { generationMode: presentationMode, templateId: presentationTemplateId === "auto" ? null : presentationTemplateId } } : {}) }, messageParts, submission, attachments);
       onSessionCreated(session.id, pendingTurn);
@@ -302,7 +296,6 @@ export function WelcomeView({ initialExpertPrompt, initialExpertSelection, onOpe
               bridge={client}
               onSelect={setDesignStyleId}
               selected={designStyleId}
-              workspaceReady={selectedWorkspace !== undefined}
             />
           ) : null}
           {entry?.workbenchId === "presentation" ? <PresentationLaunchControls generationMode={presentationMode} onGenerationModeChange={setPresentationMode} onTemplateChange={setPresentationTemplateId} templateId={presentationTemplateId} templates={presentationTemplates} /> : null}

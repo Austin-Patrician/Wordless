@@ -154,6 +154,8 @@ const ARTIFACT_REFERENCE_START = "<wordless-artifact-reference>";
 const ARTIFACT_REFERENCE_END = "</wordless-artifact-reference>";
 const THEME_TOKEN_REFERENCE_START = "<wordless-theme-token-reference>";
 const THEME_TOKEN_REFERENCE_END = "</wordless-theme-token-reference>";
+const DESIGN_STYLE_REFERENCE_START = "<wordless-design-style>";
+const DESIGN_STYLE_REFERENCE_END = "</wordless-design-style>";
 
 type SerializedSkillReference = {
   version: 1;
@@ -184,6 +186,12 @@ type SerializedThemeTokenReference = {
   path: string;
   name: string;
   value: string;
+};
+
+type SerializedDesignStyle = {
+  version: 1;
+  id: string;
+  styleId: string;
 };
 
 type SerializedArtifactReference = {
@@ -225,6 +233,14 @@ export function formatPromptWithSkillReferences(
           value: part.value,
         };
         return `${THEME_TOKEN_REFERENCE_START}${encodeURIComponent(JSON.stringify(reference))}${THEME_TOKEN_REFERENCE_END}`;
+      }
+      if (part.type === "design-style") {
+        const reference: SerializedDesignStyle = {
+          version: 1,
+          id: `${part.styleId}:${index}`,
+          styleId: part.styleId,
+        };
+        return `${DESIGN_STYLE_REFERENCE_START}${encodeURIComponent(JSON.stringify(reference))}${DESIGN_STYLE_REFERENCE_END}`;
       }
       if (part.type === "artifact-reference") {
         const reference: SerializedArtifactReference = {
@@ -469,6 +485,61 @@ export function formatPromptWorkspaceReferencesForModel(text: string): string {
  * 与工作区引用同一个道理:送出去的是**编码过的 JSON**(那是给程序读的),模型读到的必须是一段
  * 说人话的文字 —— 不然后面那串 `%7B%22…` 会原样进上下文。
  */
+/**
+ * 风格引用在模型那边的样子。
+ *
+ * 与前两个同一条道理:送出去的是编码过的 JSON(给程序读的),模型读到的必须是一段说人话的
+ * 文字。这里**必须写清"该怎么做"**——因为这条引用不带文件,只带一个 id;不写的话模型只会
+ * 看到一串 id。而"用哪个工具、什么时候用"属于设计画像的词汇,所以这里只给最小可执行的一句,
+ * 详细纪律在画像里(§14.22)。
+ */
+export function formatPromptDesignStyleForModel(text: string): string {
+  const pattern = new RegExp(
+    `${DESIGN_STYLE_REFERENCE_START}([^<]*)${DESIGN_STYLE_REFERENCE_END}`,
+    "g",
+  );
+  return text.replace(pattern, (marker, encoded: string) => {
+    const reference = parseDesignStyleReference(encoded);
+    if (!reference) return marker;
+    return [
+      "<wordless_design_style>",
+      `styleId=${JSON.stringify(reference.styleId)}`,
+      "The person picked this built-in style before starting. Pass it to design_create as styleId; do not write theme.css or DESIGN.md yourself.",
+      "</wordless_design_style>",
+    ].join("\n");
+  });
+}
+
+function parseDesignStyleReference(encoded: string): SerializedDesignStyle | null {
+  try {
+    const parsed = JSON.parse(decodeURIComponent(encoded)) as SerializedDesignStyle;
+    if (parsed?.version !== 1) return null;
+    if (typeof parsed.styleId !== "string" || parsed.styleId === "") return null;
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+function projectPromptDesignStyles(text: string): MessageBlock[] {
+  const blocks: MessageBlock[] = [];
+  const pattern = new RegExp(
+    `${DESIGN_STYLE_REFERENCE_START}([^<]*)${DESIGN_STYLE_REFERENCE_END}`,
+    "g",
+  );
+  let cursor = 0;
+  for (const match of text.matchAll(pattern)) {
+    const reference = parseDesignStyleReference(match[1] ?? "");
+    if (!reference) continue;
+    const index = match.index ?? 0;
+    if (index > cursor) blocks.push({ type: "text", text: text.slice(cursor, index) });
+    blocks.push({ type: "design-style", id: reference.id, styleId: reference.styleId });
+    cursor = index + match[0].length;
+  }
+  if (cursor < text.length) blocks.push({ type: "text", text: text.slice(cursor) });
+  return blocks;
+}
+
 export function formatPromptThemeTokenReferencesForModel(text: string): string {
   const pattern = new RegExp(
     `${THEME_TOKEN_REFERENCE_START}([^<]*)${THEME_TOKEN_REFERENCE_END}`,
@@ -704,9 +775,13 @@ export function projectUserMessageContent(content: unknown): MessageBlock[] {
       )) {
         if (block.type === "text") {
           for (const tokenBlock of projectPromptThemeTokenReferences(block.text)) {
-            if (tokenBlock.type === "text")
-              blocks.push(...projectPromptSkillReferences(tokenBlock.text));
-            else blocks.push(tokenBlock);
+            if (tokenBlock.type === "text") {
+              for (const styleBlock of projectPromptDesignStyles(tokenBlock.text)) {
+                if (styleBlock.type === "text")
+                  blocks.push(...projectPromptSkillReferences(styleBlock.text));
+                else blocks.push(styleBlock);
+              }
+            } else blocks.push(tokenBlock);
           }
         } else blocks.push(block);
       }

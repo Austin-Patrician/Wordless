@@ -83,6 +83,7 @@ export default defineConfig({
       "test/design-activity.browser.test.tsx",
       "test/session-context-panel.browser.test.tsx",
       "test/design-canvas.browser.test.tsx",
+      "test/design-style-strip.browser.test.tsx",
       "test/design-workspace.browser.test.tsx",
       "test/design-layout-probe.browser.test.tsx",
       "test/mockup-render.browser.test.tsx",

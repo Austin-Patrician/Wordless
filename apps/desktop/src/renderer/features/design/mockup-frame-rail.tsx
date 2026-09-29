@@ -1,4 +1,6 @@
 import { usePreferences } from "../../shared/preferences";
+import { suppressNativeDragImage } from "./drag-image.ts";
+import { MOCKUP_RAIL_FRAME_MIME } from "./mockup-attach.ts";
 
 /**
  * 左栏:还没进渲染区的画框。
@@ -8,6 +10,9 @@ import { usePreferences } from "../../shared/preferences";
  *
  * 缩略图用画布已经缓存过的位图(`thumbnail`)。没有就出一块占位,而**不为了一张缩略图再去
  * 截一次图**:打开这个弹窗时每帧本来就要按导出倍率重新抓一次,那才是真正需要像素的地方。
+ *
+ * **点击和拖拽都能加入**,而且两条路都留着:点击是"我就要这一帧"最短的动作,拖拽是"我要它,
+ * 而且我想看着它落在预览里"。只留点击的话用户会去试拖,拖不动就像坏了。
  */
 export interface MockupRailFrame {
   id: string;
@@ -53,9 +58,16 @@ export function MockupFrameRail({
         ) : null}
         {frames.map((frame) => (
           <button
-            className="flex flex-col gap-1 rounded-lg border border-border bg-background p-1 text-left transition-colors hover:border-[#879b65]"
+            className="flex cursor-grab flex-col gap-1 rounded-lg border border-border bg-background p-1 text-left transition-colors hover:border-[#879b65] active:cursor-grabbing"
+            draggable
             key={frame.id}
             onClick={() => onAttach(frame.id)}
+            onDragStart={(event) => {
+              event.dataTransfer.effectAllowed = "copy";
+              event.dataTransfer.setData(MOCKUP_RAIL_FRAME_MIME, frame.id);
+              // 系统画的拖影不受窗口裁剪,会飘到 app 外面;落点自己会高亮。
+              suppressNativeDragImage(event.dataTransfer);
+            }}
             title={frame.title}
             type="button"
           >

@@ -994,8 +994,12 @@ export const messages = {
     designLibraryTitle: "设计",
     designLibraryHelp: "挑一套内置风格开一份新的,或者继续已有的设计。",
     designMineTitle: "我的设计",
-    designMineEmpty: "这个工作区里还没有设计",
+    designMineEmpty: "还没有设计",
     designMineEmptyHelp: "从下面挑一套风格,它会按那套样式建好第一个画面。",
+    designSourceWorkspace: "工作区",
+    designSourceSession: "会话",
+    designOpenSession: "打开这个会话的设计画布",
+    designCreateNeedsWorkspace: "新建设计需要一个工作区:设计包要落在你选定的文件夹里。",
     designStylesTitle: "内置风格",
     designStylesHelp: "每套风格带一份 color 令牌与一份给 agent 的规范。选中之后就按它来做。",
     designStylesCountAll: "{count} 套",
@@ -1040,10 +1044,13 @@ export const messages = {
     mockupSaveRunning: "保存中…",
     mockupSaveDone: "已保存到 {path}",
     mockupSaveFailed: "保存失败。",
+    mockupSaveNoPermission: "没有写入权限,换个文件夹试试",
     mockupEmptyTitle: "还没有画框进渲染区",
+    mockupDropHint: "松手加入",
     mockupEmptyDesc: "从左侧挑几个画框加进来,它们会按加入顺序排成一行。",
     mockupShotRetry: "重试",
     mockupViewActual: "实际大小",
+    mockupViewFit: "适应",
     mockupViewZoomIn: "放大",
     mockupViewZoomOut: "缩小",
     designPanelTitle: "设计画布",
@@ -1119,9 +1126,9 @@ export const messages = {
     designStyleLaunchAny: "由 agent 自己定",
     designStyleLaunchAnyHint: "不指定风格:让 agent 按你的需求自由发挥。",
     designStyleLaunchPick: "选用",
-    designStyleLaunchNeedWorkspace: "先选一个工作区,资料才有地方落",
+    /** 首条消息里那枚风格 chip。`{name}` 是按当前语言取的风格名。 */
+    designStyleReasonChip: "按「{name}」来做",
     designStyleLaunchSelected: "这次按「{name}」来做。",
-    designStyleLaunchFailed: "这套风格的资料没能落进工作区,请重试。",
 
     designToolTheme: "色彩系统",
     designStyleDetailPalette: "色彩系统",
@@ -1211,7 +1218,6 @@ export const messages = {
     designStyleCategoryRetro: "复古",
     designStyleCategoryPremium: "高级质感",
 
-    designExportFrames: "导出渲染图(各帧一张图)",
 
 
     designRefresh: "刷新画布",
@@ -1239,6 +1245,7 @@ export const messages = {
 
 
     designFrameDeleteConfirm: "删掉这一帧?文件会被删掉。",
+    designFrameDeleteWarning: "帧文件会被直接删除,不进回收站。",
 
 
     designFrameDeleteCancel: "取消",
@@ -1256,13 +1263,11 @@ export const messages = {
     designToolNewFrame: "新建画面",
 
 
-    designToolNotes: "备注",
 
 
     designToolDesignSystem: "设计体系",
 
 
-    designToolComingSoon: "待做",
 
 
     designZoomIn: "放大",
@@ -2938,8 +2943,12 @@ export const messages = {
     designLibraryTitle: "Design",
     designLibraryHelp: "Start from a built-in style, or continue a design you already have.",
     designMineTitle: "My designs",
-    designMineEmpty: "No design in this workspace yet",
+    designMineEmpty: "No designs yet",
     designMineEmptyHelp: "Pick a style below and it will create the first screen in that style.",
+    designSourceWorkspace: "Workspace",
+    designSourceSession: "Session",
+    designOpenSession: "Open this session's design canvas",
+    designCreateNeedsWorkspace: "Creating a design needs a workspace — the design package has to live in a folder you chose.",
     designStylesTitle: "Built-in styles",
     designStylesHelp: "Each style ships a set of colour tokens and a written spec for the agent. Pick one and it is applied from the first frame.",
     designStylesCountAll: "{count} styles",
@@ -2984,10 +2993,13 @@ export const messages = {
     mockupSaveRunning: "Saving…",
     mockupSaveDone: "Saved to {path}",
     mockupSaveFailed: "Could not save.",
+    mockupSaveNoPermission: "no write permission there — try another folder",
     mockupEmptyTitle: "No frames in the render yet",
+    mockupDropHint: "Drop to add",
     mockupEmptyDesc: "Pick frames on the left; they line up in the order you add them.",
     mockupShotRetry: "Retry",
     mockupViewActual: "Actual size",
+    mockupViewFit: "Fit",
     mockupViewZoomIn: "Zoom in",
     mockupViewZoomOut: "Zoom out",
     designPanelTitle: "Design canvas",
@@ -3063,9 +3075,9 @@ export const messages = {
     designStyleLaunchAny: "Let the agent decide",
     designStyleLaunchAnyHint: "No style picked — the agent follows your brief on its own.",
     designStyleLaunchPick: "Use",
-    designStyleLaunchNeedWorkspace: "Pick a workspace first — the style files need somewhere to land",
+    /** 首条消息里那枚风格 chip。`{name}` 是按当前语言取的风格名。 */
+    designStyleReasonChip: "Start from {name}",
     designStyleLaunchSelected: "Starting in the {name} style.",
-    designStyleLaunchFailed: "The style files could not be written to the workspace. Please try again.",
 
     designToolTheme: "Colour system",
     designStyleDetailPalette: "Colour system",
@@ -3155,7 +3167,6 @@ export const messages = {
     designStyleCategoryRetro: "Retro",
     designStyleCategoryPremium: "Premium",
 
-    designExportFrames: "Export renders (one image per frame)",
 
 
     designRefresh: "Refresh the canvas",
@@ -3183,6 +3194,7 @@ export const messages = {
 
 
     designFrameDeleteConfirm: "Delete this frame? Its file is removed.",
+    designFrameDeleteWarning: "The frame file is deleted outright — it does not go to the trash.",
 
 
     designFrameDeleteCancel: "Cancel",
@@ -3200,13 +3212,11 @@ export const messages = {
     designToolNewFrame: "New frame",
 
 
-    designToolNotes: "Notes",
 
 
     designToolDesignSystem: "Design system",
 
 
-    designToolComingSoon: "not built yet",
 
 
     designZoomIn: "Zoom in",

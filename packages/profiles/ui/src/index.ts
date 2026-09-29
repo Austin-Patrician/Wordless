@@ -11,8 +11,12 @@ import type { ProfileDefinition } from "@wordless/profile-sdk";
  * 像素(`design_screenshot`)→ 复核 → 修,最多三轮。**三轮上限写进 systemPrompt 而不是
  * 工具里** —— 那是工作方式的约束,不是接口的约束。
  *
- * 尚未接上的:`design_style_*`(P6)与 `design_export`(P7)。**刻意不在 `activeToolNames`
+ * 尚未接上的:`design_frames`(P6)与 `design_export`(P7)。**刻意不在 `activeToolNames`
  * 里声明** —— 声明了却跑不起来的工具比没有更糟:模型会去调它,然后拿到一个失败。
+ *
+ * 风格那两条(`design_style_list` / `design_style_apply`)已经实现(§14.22),所以在这里声明;
+ * 用户挑的风格由 `design_create` 的 `styleId` 一步落进设计包,**不再有"先落到工作区再抄一遍"**
+ * 那一步。
  */
 export const uiProfile: ProfileDefinition = {
   reference: { id: "ui", version: "1" },
@@ -29,6 +33,8 @@ export const uiProfile: ProfileDefinition = {
     "design_status",
     "design_inspect",
     "design_screenshot",
+    "design_style_list",
+    "design_style_apply",
   ],
   capabilityIds: ["filesystem", "design", "browser"],
   skills: [],
@@ -45,7 +51,7 @@ export const uiProfile: ProfileDefinition = {
      * capabilities/design 的 `resolve-design.ts`)。所以这里**不给任何一种具体的目录名**,
      * 只描述形状;真名永远由 `design_create` 的返回文案给出。
      */
-    "When a message carries references under `design-resources/<id>/`, the person picked a built-in style before starting: read that `DESIGN.md` first and copy its `theme.css` into the design's own `theme.css` after `design_create`, so the design starts on exactly those tokens and that spec. Do not scaffold the design package yourself for this — the reference pack is material, not a design.",
+    "When a message carries a `<wordless_design_style>` block, the person picked that built-in style before starting: pass its `styleId` to `design_create` so the package starts from exactly those tokens and that spec. Do not write `theme.css` or `DESIGN.md` yourself, and do not call `design_style_apply` on a design you are about to create. If no style was picked and the person wants one, offer the list from `design_style_list` with `request_user_input` rather than choosing by yourself.",
     "A design is ONE directory whose name ends in `.wdesign`: it holds `design.json` (the canvas manifest), `theme.css` (the design tokens), and `frames/`, where each `.html` file is one screen. Call `design_status` first — it tells you which designs exist here. If there are none, call `design_create`: the scaffold (manifest, tokens, first frame) is written by that tool, so never hand-build the package and never write `design.json` yourself.",
     "",
     "Paths: every path you pass to a tool, and every path inside a frame, is relative to the workspace root, and the design directory is part of it — `<name>.wdesign/theme.css`, never `theme.css`. Never invent a path: call `design_status` with no `path` and it tells you what exists. `design_inspect` and `design_screenshot` need no `path` at all while the workspace holds a single design.",

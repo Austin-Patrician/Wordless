@@ -1,6 +1,7 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { usePreferences } from "../../shared/preferences";
 import { useBrowserOcclusion } from "../browser/use-occlusion";
+import { placeFrameMenu } from "./design-view.ts";
 
 /**
  * 帧的右键菜单。
@@ -35,6 +36,7 @@ export interface FrameMenuAnchor {
 
 export function DesignFrameContextMenu({
   anchor,
+  containerRef,
   frameTitle,
   onAttach,
   onClose,
@@ -42,6 +44,16 @@ export function DesignFrameContextMenu({
   onRename,
 }: {
   anchor: FrameMenuAnchor;
+  /**
+   * 画布容器。菜单按**它的**边界决定翻边还是贴边。
+   *
+   * 拿元素本身而不是上层算好的尺寸,有两个理由:
+   * - `offsetParent` 在这里不能用:菜单的祖先里没有定位元素(画布容器是 `h-full w-full`,不是
+   *   `relative`),它会一路找到 `body`,于是边界变成窗口的 —— 菜单就跑到画布外面压对话区了;
+   * - 元素的尺寸在**打开菜单的那一刻**读,比"上层 state 里的尺寸"少一次滞后 —— 后者要等
+   *   `ResizeObserver` 回调 + 一次渲染才更新,而那一刻菜单已经按旧边界摆好了。
+   */
+  containerRef: { readonly current: HTMLElement | null };
   /** 重命名时的初值 —— 用户改的是名字,不是从空白开始打。 */
   frameTitle: string;
   /** 把这一帧作为引用放进对话输入框。 */
@@ -52,15 +64,44 @@ export function DesignFrameContextMenu({
 }) {
   const { t } = usePreferences();
   /**
-   * 菜单的三种状态。
+   * 菜单的两种状态。
    *
-   * 删除**要多一步确认**:它是这个画布上唯一会丢东西的动作,而菜单项就在指针底下,点错的
-   * 代价不可能补回来(帧文件直接被删)。确认不弹窗、也不换层 —— 就地变成一句「删掉这一帧?」,
-   * 少一次注意力转移。
+   * 删除**不在这里确认**:它要一个画布中央的确认框(见 `DesignConfirmDialog`)—— 因为它是这个
+   * 画布上唯一会丢东西的动作,而菜单项就在指针底下、点错的代价补不回来(帧文件直接被删)。
+   * 确认框由画布那一层持有:菜单是"指针旁边的浮层",而确认框是"整块画布的模态",两者不该
+   * 挤在同一处。
    */
-  const [mode, setMode] = useState<"menu" | "rename" | "confirm-delete">("menu");
+  const [mode, setMode] = useState<"menu" | "rename">("menu");
   const [draft, setDraft] = useState(frameTitle);
   const box = useRef<HTMLDivElement>(null);
+
+  /**
+   * 摆好的位置(容器内坐标)。`null` = 还没量过。
+   *
+   * 为什么不在上层算:菜单的宽度得先**量出来**才知道够不够地方,而上层在渲染它之前拿不到这个
+   * 尺寸。所以这里量一次、再摆一次 —— 用 `useLayoutEffect`,这一次修正发生在**绘制之前**,
+   * 用户看不到中间那一帧。
+   *
+   * 量出来之前先用指针位置兜底,于是即使 `offsetParent` 取不到,菜单也开在指针处(只是可能
+   * 越界),而不是不出现。
+   */
+  const [placed, setPlaced] = useState<{ left: number; top: number } | null>(null);
+
+  useLayoutEffect(() => {
+    const element = box.current;
+    const container = containerRef.current;
+    if (element === null || container === null) return;
+    const rect = element.getBoundingClientRect();
+    // `mode` 也进依赖:换到重命名 / 确认删除时尺寸会变,得按新的尺寸重新摆。
+    setPlaced(
+      placeFrameMenu({
+        anchor,
+        // `clientWidth/Height`:与 `anchor` 同一套坐标(容器内),不受任何变换影响。
+        bounds: { height: container.clientHeight, width: container.clientWidth },
+        menu: { height: rect.height, width: rect.width },
+      }),
+    );
+  }, [anchor, containerRef, mode]);
 
   // 原生活体视图永远盖在所有 DOM 之上:不声明的话菜单会被它压住,而那是结构性故障。
   useBrowserOcclusion(true, "menu");
@@ -87,16 +128,29 @@ export function DesignFrameContextMenu({
 
   return (
     <div
-      className="absolute z-50 min-w-[150px] rounded-[8px] border border-[#e2e4e6] bg-white p-1 shadow-[0_8px_24px_rgba(0,0,0,0.12)] dark:border-border dark:bg-card"
+      /**
+       * `w-max` + `whitespace-nowrap`:菜单**按内容定宽,而且永不换行**。
+       *
+       * 宽度不够是"该翻到另一侧"的信号(见 `placeFrameMenu`),不是该拆词的信号 ——
+       * 「交给 agent 改这一帧」被拆成两行,读起来像坏了。
+       */
+      className="absolute z-50 w-max min-w-[150px] whitespace-nowrap rounded-[8px] border border-[#e2e4e6] bg-white p-1 shadow-[0_8px_24px_rgba(0,0,0,0.12)] dark:border-border dark:bg-card"
       data-frame-menu=""
       ref={box}
-      style={{ left: anchor.x, top: anchor.y }}
+      style={{ left: placed?.left ?? anchor.x, top: placed?.top ?? anchor.y }}
     >
       {mode === "rename" ? (
         <input
           autoFocus
           className="h-8 w-full rounded-[6px] border border-[#4f7df3] px-2 text-[12px] text-[#3e3e39] outline-none dark:bg-[#202225] dark:text-foreground"
-          onBlur={() => onClose()}
+          /**
+           * **这里没有 `onBlur`。** 曾经有:失去焦点就收起输入框。它看着方便,实际是"点了没
+           * 反应"的来源 —— 切换成输入框时菜单会按新尺寸重摆一次,指针于是可能落到菜单**外面**,
+           * 紧接着的 `mouseup` 落在画布上,输入框失焦,菜单当场收掉。
+           *
+           * 而"点别处就关"本来就有更准的实现:下面那个窗口级 `pointerdown` 监听。收起草稿(而不是
+           * 就地重命名)仍然是对的 —— 半截的草稿不该改到帧源码上。
+           */
           onChange={(event) => setDraft(event.target.value)}
           onKeyDown={(event) => {
             if (event.key === "Enter") {
@@ -107,12 +161,6 @@ export function DesignFrameContextMenu({
           }}
           value={draft}
         />
-      ) : mode === "confirm-delete" ? (
-        <>
-          <p className="px-2 py-1 text-[11px] text-[#8a8f94]">{t("designFrameDeleteConfirm")}</p>
-          <MenuItem label={t("designFrameDelete")} onSelect={onDelete} tone="danger" />
-          <MenuItem label={t("designFrameDeleteCancel")} onSelect={() => setMode("menu")} />
-        </>
       ) : (
         <>
           {/*
@@ -121,7 +169,8 @@ export function DesignFrameContextMenu({
           */}
           <MenuItem label={t("designFrameAskAgent")} onSelect={onAttach} />
           <MenuItem label={t("designFrameRename")} onSelect={() => setMode("rename")} />
-          <MenuItem label={t("designFrameDelete")} onSelect={() => setMode("confirm-delete")} tone="danger" />
+          {/* 删除只是**发起**确认;真正删掉的按钮在那个确认框里。 */}
+          <MenuItem label={t("designFrameDelete")} onSelect={onDelete} tone="danger" />
         </>
       )}
     </div>

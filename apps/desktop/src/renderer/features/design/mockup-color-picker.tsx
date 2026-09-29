@@ -34,7 +34,8 @@ export function MockupColorPicker({
       <div className="flex items-center gap-1.5">
         <input
           aria-label={label}
-          className="h-7 w-9 shrink-0 cursor-pointer rounded-[5px] border border-border bg-transparent p-0 disabled:cursor-not-allowed"
+          // 正方形:`h-7 w-9` 那个长方形读起来像输入框的一部分,而它是"现在是什么颜色"的色块。
+          className="size-7 shrink-0 cursor-pointer rounded-[5px] border border-border bg-transparent p-0 disabled:cursor-not-allowed"
           disabled={disabled}
           onChange={(event) => onPick(event.target.value)}
           type="color"

@@ -761,9 +761,13 @@ export interface DesignPort {
 | `design_frames` | 列出帧(可选重命名/删除) | |
 | `design_screenshot` | 光栅化指定帧,**返回图片本身** | 模型必须能**看**到像素 |
 | `design_inspect` | 布局探针:溢出、裁剪、省略号截断、flex 错位、对比度 | 确定性检查,不依赖模型判断 |
-| `design_style_list` | 风格库列表 | |
-| `design_style_apply` | 应用风格(写 `theme.css` + `DESIGN.md`,**应用前整包备份**) | 见 §11 |
+| `design_style_list` | 风格库列表 | 只回 id + 名字 + 一句话,**不回正文**(正文几 KB,进上下文是纯浪费) |
+| `design_style_apply` | 应用风格(写 `theme.css` + `DESIGN.md`,**应用前整包备份**) | 见 §11;与画布上那条"应用风格"入口共用同一个实现 |
 | `design_export` | 导出 PNG / 静态站点 | |
+
+**状态**:`design_create`(含 `styleId` 参数)/ `design_status` / `design_inspect` / `design_screenshot` /
+`design_style_list` / `design_style_apply` 已实现;`design_frames` 与 `design_export` 还没有。
+风格那两条的落地记在 §14.22。
 
 ### 10.3 布局探针(照抄 open-vetta 的清单)
 
@@ -1986,26 +1990,139 @@ mockup-color-picker.tsx    色板 / 系统取色器 / hex
 卡上仍是**真示例页**(`StyleDemo`),但**进视口才取**:横向胶片里 29 张是同时挂着的,不拦的话就是
 29 份 20–30KB 的文档一起建起来(§14.18 那条"窗口化兜住代价"在横排里不成立,得单独拦一道)。
 
-#### 选中的风格怎么生效:资料落盘,引用进消息
+#### 选中的风格怎么生效(**这一版已被 §14.22 取代**)
 
-| | 做法 | 为什么不 |
-|---|---|---|
-| 采用 | 把该风格的 `theme.css` + `DESIGN.md` 写进工作区的 `design-resources/<id>/`,再把这两份**作为工作区引用**带进第一条消息 | agent 要的是能 `Read`、能**拷进**设计包的东西 —— "应用一套风格"在我们这边的定义就是拷这两份文件;而且文件扛得住上下文压缩,被压掉的是提示词里那句话 |
-| 否掉 | 把规范**内联进提示词**(照 presentation 那种 `<wordless-…>` 块) | 只给 id 不够(agent 读不到应用内置的目录),内联全文则要它凭记忆重写一遍;而且 3–9KB 会永久留在会话记录里 |
-| 否掉 | **预先建好设计包**再把风格应用上去 | 参考实现踩过:先 scaffold 一份再让 agent 开工,agent 照旧另建一份,用户拿到**两份**设计文档。我们画像里的约定也是"包只能由 `design_create` 建" |
+这一版当初的做法是"资料落盘 + 引用进消息":把该风格的 `theme.css` + `DESIGN.md` 写进工作区的
+`design-resources/<id>/`,再把这两份**作为工作区引用**带进第一条消息,由 agent 读进来、拷进设计包。
+配套纪律是"落盘失败就不建会话",以及"没有工作区时不给挑"(资料要有地方落)。
 
-引用块上显示的是文件名(`DESIGN.md` / `theme.css`),与设计对话里其它引用同一套语言;解释"这套
-`design-resources/` 是什么意思"的那句话放在**设计画像**里(它才拥有设计词汇),与
-`<wordless-theme-token-reference>` 那条同一个取舍。
+**它为什么被换掉**:三个理由里只有一个还站着 ——
 
-**落盘失败就不建会话**:否则用户会拿到一个"看起来按那套风格开的"、其实没有资料的会话,而原因在
-几屏之外。没有工作区时不给挑(资料要有地方落),提示写在标题旁。
+| §14.21 当初的理由 | 现在 |
+|---|---|
+| agent 要能 `Read`、能**拷进**设计包 | **不成立了**:拷贝由 `design_style_apply` / `design_create({styleId})` 做(主进程内、确定性、可备份),agent 连读都不需要 |
+| 扛得住上下文压缩(资料在盘上) | **更强**:令牌一开始就在设计包自己的 `theme.css` 里,不依赖对话里那句话 |
+| 用户看得见(消息里两个引用块) | 仍然需要,但**不需要用"盘上的文件"来表达**,一个标记块就够 |
+
+而它带来的连锁代价是真的:必须先选工作区(资料要有地方落 → 风格栏在无工作区时禁用),中间那一站
+落完还要再让 agent 抄一遍。§14.22 记了替代方案。
 
 #### 还没做的
 
 - **「全部风格」入口**:点它就得离开新建页,而用户可能已经写了一半需求(那些字在会话创建前不落
   盘)。要做的话得先把草稿留住,或者改成弹层。
 - **示例页不落盘**:它是给用户看的,agent 不需要(它读的是规范与令牌)。
+
+### 14.22 风格改成「标记 + 工具」:取消工作区前置,也不再让 agent 抄文件
+
+§14.21 那一版落地之后露出两个症状,它们**同一个成因**:
+
+- **不选工作区就不能挑风格。** `DesignStyleLaunchStrip` 有一道 `workspaceReady` 门,无工作区时卡片
+  看起来能点、点了什么都不发生。而"挑风格 → 写需求 → 开工"是用户习惯的路径,设计会话不关联工作区
+  在文档里也是允许的(§14.12 就是在修这条路上的一个 bug)。
+- **"应用一套风格"的实现是让模型把两份文件正确抄一遍。** 画像里那句
+  "read that `DESIGN.md` first and copy its `theme.css` into the design's own `theme.css`" 就是它。
+
+成因在**顺序**:`installDesignStyleResources` 必须在**会话存在之前**把资料写到某个根上,而 IPC 里
+只有 `create-and-prompt`(调用即发出首条消息),**没有"只建会话"这个动作** —— 于是那个根只能是已选的
+工作区。
+
+#### 先把两次写分开
+
+| 写 | 硬性吗 | 为什么 |
+|---|---|---|
+| 风格令牌最终进**设计包**的 `theme.css` / `DESIGN.md` | **是** | 设计包的 `theme.css` 是单一真源:帧引用 `../theme.css`,构建从它编译。没有它帧一条样式都不生效(§14.12 那次事故的成因) |
+| 先落到**工作区**的 `design-resources/<id>/`,再由 agent 抄一遍 | **不是** | 它只是为了让 agent 能 `Read` —— 而"拷贝"这件事本来就不该由模型做 |
+
+所以"落盘"这条设计里唯一不可替代的东西是"**用户的选择要说出来**",而那件事不需要往盘上写文件。
+
+#### 四层
+
+**1) 消息标记:用户的选择进消息**
+
+照 `<wordless-theme-token-reference>` 那条**已有的**管道走一遍,不发明新机制:
+
+| 环节 | 位置(theme-token 的现成先例) |
+|---|---|
+| part 类型 | `domain` 的 `UserPromptPart` 加 `{ type: "design-style"; styleId }` |
+| 编码进提示词 | `agent-driver-sdk` 的 `formatPromptWithSkillReferences` |
+| 给模型的人话 | 同包的 `formatPrompt*ForModel` 那一族:`<wordless_design_style>` 展开成一句可执行的说明 |
+| 投影回消息 | 同包的投影函数 → `pending-thread-turn` → `ThreadView` 的引用 chip |
+| 谁产生它 | 新建页选中风格时(与色板点选用户产生 theme-token 的位置对称) |
+
+**"先有工作区才能落盘"这个问题到这里消失**:标记只是消息的一部分,不需要任何根。
+
+**2) 画像约定:"前缀 → 行为"改成"标记 → 调用"**
+
+`profiles/ui` 里那句 `design-resources/<id>/` 的约定换成:
+
+> 消息里带 `<wordless_design_style>` 时:**先 `design_create` 并带上那个 `styleId`**,不要自己写
+> `theme.css`、不要自己建包。除非用户明确要求换风格,否则不要在已经写过帧之后应用风格。
+
+最后半句是纪律,不是客套:见下面风险 1 与 3。
+
+**3) 工具面**
+
+| 工具 | 实现 | 说明 |
+|---|---|---|
+| `design_create` 加可选 `styleId` | **已存在**:`store.createDesign({ styleId })` 早就解析风格(解析不到退回默认令牌),还能建包后立刻构建一次 | 一步到位,而且第一帧从第一刻起就有样式 |
+| `design_style_list` | 读编译进 app 的风格目录 | 只回 id + 名字 + 一句话;**不回正文** |
+| `design_style_apply({ styleId })` | **已存在**:`store.applyStyle`(整包备份 → 写两份 → 记 `manifest.style` → 报 `framesNeedRestyle`) | 与画布上"应用风格"那条入口**共用同一个实现**,否则两处会漂 |
+
+三个都走既有那条路:`capabilities/design` 加工具 + `DesignPort` 加方法 + `main` 的适配层转发(端口
+里已经有 `store`)。`profiles/ui` 的 `activeToolNames` 要跟着加,并把头部那句"`design_style_*` 刻意
+不声明"的注释改掉 —— **声明了却跑不起来的工具比没有更糟**,反过来实现了不声明也一样糟。
+
+**4) 证据链:怎么知道"真的应用了"**
+
+这是这次改动最大的收益。这一版之前,这条路上唯一的证据是提示词里那句话;之后:
+
+- `manifest.style` 记着风格 id(`createDesign` / `applyStyle` 都写);
+- 设计包自己的 `theme.css` 就是令牌真源,帧从第一刻起引用它;
+- `design_status` 已经在报 issues,其中一类就是"**未应用风格**" → agent 自己就能发现漏了。
+
+#### 数据流
+
+```
+§14.21(已废):
+  挑风格 → [渲染层] installDesignStyleResources(工作区根)   ← 需要工作区
+         → <workspace>/design-resources/<id>/{theme.css,DESIGN.md}
+         → 首条消息带两个 workspace-reference
+         → [agent] 读 DESIGN.md → 自己把 theme.css 抄进设计包   ← 靠模型抄对
+         → 帧才有样式
+
+现在:
+  挑风格 → 首条消息带一个 <wordless_design_style> 标记        ← 不需要工作区
+         → [agent] design_create({ …, styleId })              ← 一次确定性调用
+         → 帧从第一刻起就有样式
+```
+
+#### 「由 agent 自己定」是什么意思
+
+**不指定风格 = 什么都不做**(agent 用默认审美)。**不提供"让 agent 自己挑一套"** —— 那是让模型
+替用户做审美决定。
+
+但**允许 agent 问**:泛用 driver 无条件给每个支持工具的会话注入 `request_user_input`
+(`agent-driver-generic`,与画像无关),配上 `design_style_list` 就能把风格库列成一道选择题交回用户。
+画像里加一句授权这件事即可,**不加第三张卡** —— 卡片是"用户主动选",问是"agent 主动问",两者不是
+同一个东西。
+
+#### 切干净
+
+删掉:`installDesignStyleResources`(bridge / preload / IPC / handlers / store)、`style-start.ts`、
+`DesignStyleLaunchStrip` 的 `workspaceReady`、`WelcomeView` 里落盘那一段。
+
+**不留兼容句子。** 历史消息里的 `design-resources/<id>/` 引用只是一条路径文本,agent 读不到会自己
+说出来;为它长期养一句提示词是净负债。
+
+#### 风险
+
+| # | 风险 | 对策 |
+|---|---|---|
+| 1 | `design_style_apply` 覆盖 `theme.css` / `DESIGN.md` | 整包备份已有(§12.3 第 1 条);画像写死"只在建包后应用一次";工具描述里写明它会覆盖两者 |
+| 2 | 忘了调用 → 用户拿到的是模型的默认审美 | `design_create(styleId)` 是**一步**,比"建完再应用"少一个可能漏掉的环节;`design_status` 的"未应用风格"做第二道网 |
+| 3 | 帧写完后再应用 → 那些帧停在旧令牌上 | `applyStyle` 已经返回 `framesNeedRestyle`;工具描述必须把这个信号说清楚,画像禁止这个时序 |
+| 4 | 标记与设计包表达同一件事,可能不一致 | 单一真源仍是 **`manifest.style`**;标记只是"用户当时选了什么"的记录,不参与判定 |
 
 ---
 

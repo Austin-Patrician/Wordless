@@ -158,22 +158,36 @@ export function visibleFrameIds(
 }
 
 /**
- * 位图按哪个缩放档光栅:取**不超过**当前 zoom 的最大档。
+ * 位图按哪个缩放档光栅:**不低于 1**(帧自己的尺寸),再按 zoom 往上走。
  *
- * 取"不超过"而不是"最接近"是有意的 —— 位图只会被放大显示,放大是模糊的、可接受的;
- * 若取到高于当前 zoom 的档,位图会被缩小显示,那会丢掉细节且浪费内存。
- * 低于最小档时返回最小档(内容小到看不清,模糊无所谓)。
+ * ## 为什么不是"不超过当前 zoom 的最大档"
+ *
+ * 那是我一开始写的:位图只会被放大显示,放大是模糊的、可接受的,取低一档还省内存。它在
+ * 纸面上成立,放进真实流程里就散了 ——
+ *
+ * 打开一份设计时 zoom 是 1,先按 **1 倍**光栅了整批位图;紧接着**自动适应**把 zoom 降到
+ * 0.7,于是画布把整批位图换成了 **0.5 倍**,屏幕上放大 1.4 倍,一眼就失真;而放大回 100%
+ * 时又得等一次重新光栅才清晰。用户的原话就是这个:"一进来确实把设计装进视口,但 frame 有点
+ * 失真,放大后过一会才变清楚"。
+ *
+ * 参考实现压根不按 zoom 分档(`RASTER_PIXEL_RATIO = min(devicePixelRatio, 2)`),理由写在它
+ * 的注释里:位图一旦小于 1 倍,缩放就已经靠浏览器放大,而旁边矢量渲染的活体一对比就刺眼。
+ *
+ * ## 代价是有意选的
+ *
+ * 缩到很小时也留着 1 倍的位图(0.25 档是它的 1/16)。位图缓存有 LRU 预算兜底
+ * (`DESIGN_CANVAS_BUDGETS`),而"看着糊"没有任何兜底。
  */
 export function zoomBucket(zoom: number, buckets: readonly number[]): number {
   const sorted = [...buckets].filter((bucket) => Number.isFinite(bucket) && bucket > 0).sort((a, b) => a - b);
   const smallest = sorted[0];
   if (smallest === undefined) return 1;
-  if (!Number.isFinite(zoom)) return smallest;
-  let best = smallest;
-  for (const bucket of sorted) {
-    if (bucket <= zoom) best = bucket;
-  }
-  return best;
+  // "1 倍"不写死:它取档位表里不超过 1 的最大档 —— 换了档位表这条规则跟着走。
+  const oneToOne = [...sorted].reverse().find((bucket) => bucket <= 1) ?? smallest;
+  if (!Number.isFinite(zoom)) return oneToOne;
+  // 覆盖当前 zoom 的最小档;再与 1 倍取大。
+  const covering = sorted.find((bucket) => bucket >= zoom) ?? (sorted.at(-1) as number);
+  return Math.max(oneToOne, covering);
 }
 
 /** 网格吸附。平移与拖拽共用,`enabled` 为假或网格非法时原样返回。 */

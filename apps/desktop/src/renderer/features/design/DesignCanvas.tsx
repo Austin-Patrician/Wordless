@@ -4,6 +4,7 @@ import {
   BackgroundVariant,
   ReactFlow,
   ReactFlowProvider,
+  useNodesInitialized,
   useReactFlow,
   useStore,
   type Node,
@@ -12,6 +13,7 @@ import {
 import "@xyflow/react/dist/style.css";
 import type { DesignManifestDto, DesignOpenedDto } from "@wordless/protocol";
 import type { DesktopBridge } from "../../../bridge/desktop-bridge";
+import { usePreferences } from "../../shared/preferences";
 import { arrangeFrames, type ArrangeMode } from "./arrange.ts";
 import {
   DesignArrangeToolbar,
@@ -20,9 +22,10 @@ import {
   type DesignTool,
 } from "./DesignControlBar.tsx";
 import { DesignEditorProvider, type DesignEditor } from "./design-editor-context.tsx";
+import { DesignConfirmDialog } from "./DesignConfirmDialog.tsx";
 import { DesignFrameContextMenu } from "./DesignFrameContextMenu.tsx";
 import { DesignFrameDrawLayer } from "./DesignFrameDrawLayer.tsx";
-import { designChromeScale, frameEntryViewport } from "./design-view.ts";
+import { designChromeScale, frameEntryViewport, shouldFitOnOpen } from "./design-view.ts";
 import { DesignStyleDialog } from "./DesignStyleDialog.tsx";
 import { DesignThemePalette } from "./DesignThemePalette.tsx";
 import { DesignViewportProvider } from "./design-viewport-context.tsx";
@@ -91,9 +94,16 @@ export interface DesignCanvasProps {
     opened: DesignOpenedDto;
     styleName: string;
   }) => void;
-  /** 导出渲染图 / 素材。落点由上层选,画布不碰磁盘。 */
-  onExport: (what: "frames" | "assets") => void;
-  /** 导出中 —— 两个按钮一起禁用,避免连点出两批文件。 */
+  /**
+   * 打开合成图弹窗(「导出渲染图」)。
+   *
+   * 弹窗住在工作区那一层:它要的是设计包目录、清单和画布光栅好的位图,而画布这一侧只负责
+   * 把"用户按了"这件事说出来。
+   */
+  onOpenMockup: () => void;
+  /** 下载素材(每帧一张原尺寸图 + 规范与素材文件)。落点由上层选,画布不碰磁盘。 */
+  onDownloadMaterials: () => void;
+  /** 下载中 —— 按钮禁用,避免连点出两批文件。 */
   exporting: boolean;
   /** 手动刷新:让画布跟上磁盘(心跳只在 agent 在跑时开)。 */
   onRefresh: () => void;
@@ -126,6 +136,14 @@ export interface DesignCanvasProps {
    */
   sourceRevision: string;
   onSelectionChange: (frameIds: string[]) => void;
+  /**
+   * 把画布光栅好的位图交出去(`frameId → 位图 URL`)。
+   *
+   * 导出渲染图的左栏要一列缩略图,而那些位图**已经在这里**了 —— 换一次离屏渲染就能得到
+   * 一批同样的图,代价是每帧一个隐藏窗口渲染一遍。这个回调存在的唯一理由就是不让那件事
+   * 发生,所以它是可选的:没有外层要,画布什么都不用做。
+   */
+  onTextures?: (textures: ReadonlyMap<string, string>) => void;
   /** 拖拽结束时提交一次几何;拖拽途中不调用。 */
   onCommitFrameGeometry: (frameId: string, geometry: { x: number; y: number; width: number; height: number }) => void;
   /**
@@ -166,7 +184,8 @@ function DesignCanvasInner({
   onAttachFrame,
   onApplyStyle,
   attachedThemeTokens,
-  onExport,
+  onDownloadMaterials,
+  onOpenMockup,
   onToggleThemeToken,
   sessionId,
   themeRevision,
@@ -175,10 +194,12 @@ function DesignCanvasInner({
   refreshing,
   sourceRevision,
   onSelectionChange,
+  onTextures,
   onCommitFrameGeometry,
   onCommitFrameMoves,
   onCommitFrameMeta,
 }: DesignCanvasProps) {
+  const { t } = usePreferences();
   const { setCenter, setNodes, fitView } = useReactFlow();
   // 活体视图要的是窗口坐标,而相机给的是画布坐标 —— 这个容器的位置就是两者之差。
   const containerRef = useRef<HTMLDivElement>(null);
@@ -238,6 +259,14 @@ function DesignCanvasInner({
    */
   const [frameMenu, setFrameMenu] = useState<{ frameId: string; x: number; y: number } | null>(null);
 
+  /**
+   * 等着被确认删除的那一帧。
+   *
+   * 确认框由**画布**持有,而不是菜单:删掉一帧是"整块画布"这一级的动作(它是唯一会丢东西的
+   * 动作,而且要盖住画布让用户看清自己在删什么),而菜单只是指针旁边的一张浮层。
+   */
+  const [pendingDelete, setPendingDelete] = useState<string | null>(null);
+
   const viewport = useMemo(
     () => ({
       zoom,
@@ -293,6 +322,14 @@ function DesignCanvasInner({
   const texturesRef = useRef(textures);
   texturesRef.current = textures;
 
+  /**
+   * 把位图交出去。触发点就是"有一批位图到货"或"换了缩放档" —— `textures` 是按
+   * `[bucket, frames, revision]` 记忆的,所以这不是每次渲染都发一遍。
+   */
+  useEffect(() => {
+    onTextures?.(textures);
+  }, [onTextures, textures]);
+
   /** 菜单里那一帧的标题 —— 重命名时用它当初值,而不是从空白开始打。 */
   const menuFrame =
     frameMenu === null ? undefined : framesRef.current.find((frame) => frame.id === frameMenu.frameId);
@@ -306,13 +343,34 @@ function DesignCanvasInner({
     setNodes(framesRef.current.map((frame) => toFlowNode(frame, texturesRef.current.get(frame.id) ?? null)));
   }, [manifestKey, revision, setNodes]);
 
-  // 首次有帧时把内容装进视口。之后不再自动适配 —— 用户自己调过视口后不该被抢走。
-  const fittedRef = useRef(false);
+  /**
+   * 打开一份设计时把内容装进视口,**一份设计只自动适应一次**。
+   *
+   * 两条都必须有:
+   * - 只做一次 —— 用户调过视角之后,agent 改磁盘引起的刷新不该把画面抢回去;
+   * - 但**换设计要重做** —— 在旧设计里调过的视角对新设计没有意义,不重做就可能打开一份设计
+   *   却看到一片空白(内容在视口外)。
+   *
+   * 判据本身是纯函数(`shouldFitOnOpen`),这里只负责在它说"该"的时候调用一次 `fitView`。
+   * 它还等 React Flow 量完节点尺寸:节点刚建出来时尺寸是 0,那时适配算的是空内容 ——
+   * 表现就是"什么都没发生"。
+   */
+  const nodesInitialized = useNodesInitialized();
+  const fittedRef = useRef<string | null>(null);
   useEffect(() => {
-    if (fittedRef.current || manifest.frames.length === 0) return;
-    fittedRef.current = true;
+    if (
+      !shouldFitOnOpen({
+        designPath,
+        fitted: fittedRef.current,
+        frameCount: manifest.frames.length,
+        nodesInitialized,
+      })
+    ) {
+      return;
+    }
+    fittedRef.current = designPath;
     void fitView({ maxZoom: 1, padding: 0.12, duration: 0 });
-  }, [fitView, manifest.frames.length]);
+  }, [designPath, fitView, manifest.frames.length, nodesInitialized]);
 
   const handleSelectionChange = useMemo(
     () => (params: OnSelectionChangeParams) => {
@@ -383,7 +441,7 @@ function DesignCanvasInner({
   return (
     <DesignEditorProvider value={editor}>
     <DesignViewportProvider value={viewport}>
-      <div className="h-full w-full" ref={containerRef}>
+      <div className="h-full w-full" data-design-canvas="" ref={containerRef}>
       {/*
         画框工具激活时这一层盖住画布 —— 指针事件于是到不了选择、框选、平移。工具的"关"就是
         这一层"不在",没有第二条开关要维护。
@@ -452,7 +510,13 @@ function DesignCanvasInner({
         */}
         <Background color="#8a8f941f" gap={14} variant={BackgroundVariant.Lines} />
         <DesignArrangeToolbar onArrange={handleArrange} selectedCount={selectedIds.length} />
-        <DesignCanvasActions busy={exporting} onExport={onExport} onRefresh={onRefresh} refreshing={refreshing} />
+        <DesignCanvasActions
+          busy={exporting}
+          onDownloadMaterials={onDownloadMaterials}
+          onOpenMockup={onOpenMockup}
+          onRefresh={onRefresh}
+          refreshing={refreshing}
+        />
         <DesignControlBar
           onOpenStyles={() => setStylesOpen(true)}
           onTogglePalette={() => setPaletteOpen((open) => !open)}
@@ -488,11 +552,36 @@ function DesignCanvasInner({
       {frameMenu === null ? null : (
         <DesignFrameContextMenu
           anchor={frameMenu}
+          containerRef={containerRef}
           frameTitle={menuFrame?.title ?? frameMenu.frameId}
           onAttach={() => onAttachFrame(frameMenu.frameId)}
           onClose={() => setFrameMenu(null)}
-          onDelete={() => onDeleteFrame(frameMenu.frameId)}
+          onDelete={() => {
+            // 先收起菜单再开确认框:两张浮层叠着只会让人分不清现在在确认什么。
+            setPendingDelete(frameMenu.frameId);
+            setFrameMenu(null);
+          }}
           onRename={(title) => onCommitFrameMeta(frameMenu.frameId, { title })}
+        />
+      )}
+      {/**
+       * 删除的确认框。
+       *
+       * 盖的是**画布**而不是整个窗口:旁边的对话区与这次确认无关,盖住它是一次"删一帧"不该有的
+       * 代价(见 `DesignConfirmDialog`)。
+       */}
+      {pendingDelete === null ? null : (
+        <DesignConfirmDialog
+          cancelLabel={t("designFrameDeleteCancel")}
+          confirmLabel={t("designFrameDelete")}
+          danger
+          description={t("designFrameDeleteWarning")}
+          onCancel={() => setPendingDelete(null)}
+          onConfirm={() => {
+            onDeleteFrame(pendingDelete);
+            setPendingDelete(null);
+          }}
+          title={t("designFrameDeleteConfirm")}
         />
       )}
       </div>

@@ -472,6 +472,9 @@ function $createAttachmentChipNode(part: UserPromptPart): LexicalNode | null {
     case "artifact-reference":
       // artifact 选择走的是另一条通道(`pendingArtifactSelection`),不是输入框里挂的 chip。
       return null;
+    case "design-style":
+      // 风格也走另一条通道:新建页选中之后由 `WelcomeView` 直接放进首条消息,输入框里没有它。
+      return null;
     default: {
       // 走到这里意味着 `UserPromptPart` 多了没处理的一种 —— 让它在编译期就报出来。
       const unhandled: never = part;

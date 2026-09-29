@@ -213,7 +213,7 @@ export function TasksView({
   const visible = useMemo(
     () =>
       tasks.filter((task) =>
-        `${task.title} ${task.detailParts.map((part) => (part.type === "text" ? part.text : part.name)).join(" ")}`
+        `${task.title} ${task.detailParts.map((part) => (part.type === "text" ? part.text : part.type === "design-style" ? part.styleId : part.name)).join(" ")}`
           .toLowerCase()
           .includes(query.trim().toLowerCase()),
       ),

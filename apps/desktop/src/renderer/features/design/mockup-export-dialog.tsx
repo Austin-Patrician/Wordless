@@ -1,16 +1,23 @@
 import { Button, Dialog, DialogClose, DialogContent, DialogTitle } from "@wordless/ui-kit";
-import { Maximize2, Minus, Plus, X } from "lucide-react";
+import { X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { DesignFrameDto, DesignManifestDto } from "@wordless/protocol";
 import type { DesktopBridge } from "../../../bridge/desktop-bridge";
 import { usePreferences } from "../../shared/preferences";
 import { attachMockupFrame, detachMockupFrame, mockupRailFrames, swapMockupFrames } from "./mockup-attach.ts";
 import { MockupFrameRail, type MockupRailFrame } from "./mockup-frame-rail.tsx";
+import { useMockupBrandLogo } from "./mockup-logo.ts";
 import { loadMockupOptions, maxMockupRadius, saveMockupOptions, defaultMockupOptions } from "./mockup-options.ts";
 import { MockupOptionsPanel } from "./mockup-options-panel.tsx";
 import { paginateMockup } from "./mockup-paginate.ts";
 import { buildMockupPdf } from "./mockup-pdf.ts";
-import { mockupCanvasToJpegBytes, mockupCanvasToPngBytes, renderMockupToCanvas, stitchMockupPages } from "./mockup-render.ts";
+import {
+  bytesToBase64,
+  mockupCanvasToJpegBytes,
+  mockupCanvasToPngBytes,
+  renderMockupToCanvas,
+  stitchMockupPages,
+} from "./mockup-render.ts";
 import { MockupStage } from "./mockup-stage.tsx";
 import { parseThemeTokens } from "./style-tokens.ts";
 import type { MockupOptions, MockupShot } from "./mockup-types.ts";
@@ -37,6 +44,7 @@ export function MockupExportDialog({
   manifest,
   onClose,
   sessionId,
+  thumbnails,
 }: {
   bridge: DesktopBridge;
   /** 设计包目录,用于读 `theme.css` 取色板。 */
@@ -45,8 +53,18 @@ export function MockupExportDialog({
   manifest: DesignManifestDto;
   onClose: () => void;
   sessionId: string;
+  /**
+   * frameId → 缩略图 URL,由画布把**它已经光栅过的**位图交上来。
+   *
+   * 左栏列的是"还没进渲染区"的那几帧,而它们恰好是**这一趟不会去抓的**帧 —— 所以缩略图不能
+   * 从抓图结果里来。要么复用画布已有的位图,要么为了一列小图把每帧重新离屏渲染一遍;后者
+   * 是真实成本,而位图就在画布里。
+   */
+  thumbnails: ReadonlyMap<string, string>;
 }) {
   const { t } = usePreferences();
+  /** 水印左边的品牌标。预览与导出用的是**同一个**对象,于是"看到的"和"拿到的"是同一张。 */
+  const brandLogo = useMockupBrandLogo();
   const frames = manifest.frames;
 
   const normalizedHeight = useMemo(
@@ -71,7 +89,6 @@ export function MockupExportDialog({
   const [format, setFormat] = useState<"image" | "pdf">("image");
   const [busy, setBusy] = useState<"save" | "copy" | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
-  const [zoom, setZoom] = useState(1);
   const decoded = useRef<CanvasImageSource[]>([]);
 
   // 设置是**本机习惯**,不是设计内容 —— 存 localStorage,不进 design.json(那是画布拥有、
@@ -195,14 +212,18 @@ export function MockupExportDialog({
       title: frame.title,
       width: frame.width,
       height: frame.height,
-      // 缩略图用已经抓到的位图,**不为缩略图再截一次**。
-      thumbnail: null,
+      // 缩略图用画布已经光栅过的位图,**不为缩略图再截一次**。没有就出占位 ——
+      // 那比一张猜的图好:用户能看出"这一帧还没有预览",而不是以为设计长那样。
+      thumbnail: thumbnails.get(frame.id) ?? null,
     }));
-  }, [attached, frames]);
+  }, [attached, frames, thumbnails]);
 
   const composePages = useCallback(
-    () => pages.map((pageShots) => renderMockupToCanvas(pageShots, { ...options, scale: 1 }, options.perPage)),
-    [options, pages],
+    () =>
+      pages.map((pageShots) =>
+        renderMockupToCanvas(pageShots, { ...options, scale: 1 }, options.perPage, brandLogo),
+      ),
+    [brandLogo, options, pages],
   );
 
   const onCopy = useCallback(async () => {
@@ -211,7 +232,7 @@ export function MockupExportDialog({
     try {
       // 复制的是"你会保存的那张图":多页就是长图,与保存走同一条合成路径。
       const image = stitchMockupPages(composePages(), options);
-      const copied = await bridge.copyDesignImage(await mockupCanvasToPngBytes(image));
+      const copied = await bridge.copyDesignImage({ data: bytesToBase64(await mockupCanvasToPngBytes(image)) });
       setNotice(copied ? t("mockupCopyDone") : t("mockupCopyFailed"));
     } catch {
       setNotice(t("mockupCopyFailed"));
@@ -239,18 +260,29 @@ export function MockupExportDialog({
             )
           : await mockupCanvasToPngBytes(stitchMockupPages(composed, options));
 
-      const result = await bridge.saveDesignImage(
-        { fileName: designNameOf(designPath), extension: format === "pdf" ? "pdf" : "png" },
-        bytes,
-      );
+      /**
+       * 载荷是 **base64 字符串**,不是 `Uint8Array` —— 这条通道要过 `contextBridge`,而类型化
+       * 数组在桥上不可靠(那曾经让"点保存就失败")。见 `DesignSaveImageRequestSchema`。
+       */
+      const result = await bridge.saveDesignImage({
+        data: bytesToBase64(bytes),
+        extension: format === "pdf" ? "pdf" : "png",
+        fileName: designNameOf(designPath),
+      });
       if (result.ok) {
         setNotice(t("mockupSaveDone").replace("{path}", result.path));
       } else {
         // 取消不是错误 —— 不报红,只是什么都不说。
-        setNotice(result.reason === "cancelled" ? null : t("mockupSaveFailed"));
+        if (result.reason === "cancelled") setNotice(null);
+        // 失败时把主进程给的原因带出来:一句光秃秃的"保存失败"没法修、也没法报。
+        else {
+          const detail = result.detail ?? "";
+          setNotice(`${t("mockupSaveFailed")}${detail ? ` — ${detail}` : ""}${saveHint(detail, t("mockupSaveNoPermission"))}`);
+        }
       }
-    } catch {
-      setNotice(t("mockupSaveFailed"));
+    } catch (reason) {
+      const detail = reason instanceof Error ? reason.message : String(reason);
+      setNotice(`${t("mockupSaveFailed")} — ${detail}${saveHint(detail, t("mockupSaveNoPermission"))}`);
     } finally {
       setBusy(null);
     }
@@ -260,7 +292,15 @@ export function MockupExportDialog({
 
   return (
     <Dialog onOpenChange={(open) => { if (!open) onClose(); }} open>
-      <DialogContent className="flex h-[min(760px,calc(100vh-2rem))] w-[min(1100px,calc(100vw-2rem))] flex-col rounded-[10px] p-0">
+      {/*
+        `showCloseButton={false}`:标题栏里那个 ✕ 是**这个弹窗自己的**(与参考实现一样,它是
+        标题行的一份子)。ui-kit 的 `DialogContent` 默认还会在右上角**绝对定位**再放一个 ✕
+        —— 两个叠在一起,看起来像渲染坏了。
+      */}
+      <DialogContent
+        className="flex h-[min(760px,calc(100vh-2rem))] w-[min(1100px,calc(100vw-2rem))] flex-col rounded-[10px] p-0"
+        showCloseButton={false}
+      >
         <div className="flex shrink-0 items-start gap-3 border-b border-border px-4 py-3">
           <div className="min-w-0 flex-1">
             <DialogTitle className="truncate text-[14px] font-semibold">{t("mockupTitle")}</DialogTitle>
@@ -286,61 +326,49 @@ export function MockupExportDialog({
           />
 
           <div className="relative flex min-h-0 min-w-0 flex-1 flex-col">
-            <div className="pointer-events-none absolute right-3 top-3 z-10">
-              <MockupOptionsPanel
-                maxRadius={maxMockupRadius(normalizedHeight)}
-                onChange={(patch) => setOptions((current) => ({ ...current, ...patch }))}
-                onRemoveSelected={() =>
-                  setSelectedFrameId((current) => {
-                    if (current !== null) setAttached((list) => detachMockupFrame(list, current));
-                    return null;
-                  })
-                }
-                onReset={() => setOptions(defaultMockupOptions(normalizedHeight))}
-                options={options}
-                palette={palette}
-                selected={
-                  selectedFrameId === null
-                    ? null
-                    : { frameId: selectedFrameId, title: shotTitle(shots, selectedFrameId) }
-                }
-              />
-            </div>
-
-            {shots.length === 0 ? (
-              <div className="grid flex-1 place-items-center px-8 text-center">
-                <div>
-                  <p className="text-[12px] text-foreground">{t("mockupEmptyTitle")}</p>
-                  <p className="mt-1 max-w-[320px] text-[11px] leading-5 text-muted-foreground">
-                    {t("mockupEmptyDesc")}
-                  </p>
-                </div>
+            {/*
+              设置卡是**预览台上的一层**,所以它与预览台同一块定位区(而不是整个右栏):
+              上面贴着标题栏、下面贴着缩放条时,控件一多就会长到压住缩放条。
+            */}
+            <div className="relative flex min-h-0 min-w-0 flex-1 flex-col">
+              <div
+                className="pointer-events-none absolute inset-y-3 right-3 z-10 flex justify-end"
+                data-mockup-overlay
+              >
+                <MockupOptionsPanel
+                  maxRadius={maxMockupRadius(normalizedHeight)}
+                  onChange={(patch) => setOptions((current) => ({ ...current, ...patch }))}
+                  onRemoveSelected={() =>
+                    setSelectedFrameId((current) => {
+                      if (current !== null) setAttached((list) => detachMockupFrame(list, current));
+                      return null;
+                    })
+                  }
+                  onReset={() => setOptions(defaultMockupOptions(normalizedHeight))}
+                  options={options}
+                  palette={palette}
+                  selected={
+                    selectedFrameId === null
+                      ? null
+                      : { frameId: selectedFrameId, title: shotTitle(shots, selectedFrameId) }
+                  }
+                />
               </div>
-            ) : (
+
+              {/**
+                * 预览台**始终**渲染 —— 它是"从左侧把画框拖进来"的落点,没画框时也有空态(see `MockupStage`)。
+                * 缩放条浮在它的左下角,不占一行高度。
+                */}
               <MockupStage
+                brandLogo={brandLogo}
+                onDropRailFrame={(frameId) => setAttached((current) => attachMockupFrame(current, frameId))}
                 onSelect={setSelectedFrameId}
                 onSwap={(from, to) => setAttached((current) => swapMockupFrames(current, from, to))}
                 options={options}
                 pages={pages}
                 selectedFrameId={selectedFrameId}
                 slots={options.perPage}
-                zoom={zoom}
               />
-            )}
-
-            <div className="flex shrink-0 items-center gap-1 border-t border-border px-3 py-1.5">
-              <IconButton label={t("mockupViewZoomOut")} onClick={() => setZoom((value) => Math.max(0.25, value - 0.25))}>
-                <Minus className="size-3.5" />
-              </IconButton>
-              <span className="w-10 text-center font-mono text-[11px] tabular-nums text-muted-foreground">
-                {Math.round(zoom * 100)}%
-              </span>
-              <IconButton label={t("mockupViewZoomIn")} onClick={() => setZoom((value) => Math.min(3, value + 0.25))}>
-                <Plus className="size-3.5" />
-              </IconButton>
-              <IconButton label={t("mockupViewActual")} onClick={() => setZoom(1)}>
-                <Maximize2 className="size-3.5" />
-              </IconButton>
             </div>
           </div>
         </div>
@@ -414,6 +442,17 @@ export function MockupExportDialog({
   );
 }
 
+/**
+ * 写不进去时补一句"那该怎么办"。
+ *
+ * 权限类的失败是最常见的一种,而 `EPERM: operation not permitted, open 'E:\...'` 这句话没告诉
+ * 用户下一步做什么 —— 它只说了发生了什么。别的失败(磁盘满、路径太长)不猜,照实报。
+ */
+function saveHint(detail: string, hint: string): string {
+  if (!/EPERM|EACCES|EROFS/i.test(detail)) return "";
+  return `(${hint})`;
+}
+
 function shotTitle(shots: readonly MockupShot[], frameId: string): string {
   return shots.find((shot) => shot.frameId === frameId)?.title ?? frameId;
 }
@@ -422,18 +461,4 @@ function shotTitle(shots: readonly MockupShot[], frameId: string): string {
 function designNameOf(designPath: string): string {
   const base = designPath.replace(/[\\/]+$/, "").split(/[\\/]/).pop() ?? "design";
   return base.replace(/\.wdesign$/i, "") || "design";
-}
-
-function IconButton({ children, label, onClick }: { children: React.ReactNode; label: string; onClick: () => void }) {
-  return (
-    <button
-      aria-label={label}
-      className="grid h-6 w-6 place-items-center rounded-[5px] text-muted-foreground hover:bg-muted"
-      onClick={onClick}
-      title={label}
-      type="button"
-    >
-      {children}
-    </button>
-  );
 }

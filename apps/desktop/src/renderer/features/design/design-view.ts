@@ -155,6 +155,74 @@ export function frameEntryViewport(frame: DesignFrameDto): { x: number; y: numbe
  * 手柄、标题、参考线按它反向缩放,于是在任何缩放下都是屏幕上的固定尺寸 ——
  * 这是"像 Figma"最直观的一条。
  */
+/**
+ * 这一刻该不该把内容装进视口。
+ *
+ * 三条判断,每一条都对应一次真实的误判:
+ *
+ * 1. **一份设计只自动适应一次**(按路径记)。用户拖过视口之后再刷新(agent 一直在改磁盘)
+ *    不该把画面抢回去;而**换了一份设计**是新的一次上下文 —— 在旧设计里调过的视角对新设计
+ *    没有意义,不重新适应的话打开一份设计可能看到的是一片空白(内容在视口外)。
+ * 2. **节点量完尺寸之前不适配**。`fitView` 是按节点的测量尺寸算的,而节点刚建出来时尺寸是
+ *    0:这时适配算出来的是"空内容",视觉上就是"什么都没发生" —— 打开会话没有自动适应,这是
+ *    最像的原因。
+ * 3. 一帧都没有就什么都不做(空画布的"适应"是没有意义的,而且会把相机推到 0 附近)。
+ */
+export function shouldFitOnOpen(input: {
+  /** 这次要适配的是哪份设计(设计包路径)。 */
+  designPath: string;
+  /** 已经为哪份设计适配过;`null` = 还没适配过。 */
+  fitted: string | null;
+  frameCount: number;
+  /** React Flow 量完节点尺寸了吗。 */
+  nodesInitialized: boolean;
+}): boolean {
+  if (input.frameCount === 0) return false;
+  if (!input.nodesInitialized) return false;
+  return input.fitted !== input.designPath;
+}
+
+/**
+ * 右键菜单摆在哪。
+ *
+ * ## 为什么必须"翻边",而不是"挤窄"
+ *
+ * 绝对定位的元素如果不给宽度,它的宽度是**收缩到适合**(shrink-to-fit):不超过
+ * `容器宽 - left`。于是菜单开在靠近右边缘时会比"它本来该有的宽度"更窄,而里面的文字就**换行**
+ * —— 一行的「交给 agent 改这一帧」变成两行。用户报的就是这个。
+ *
+ * 靠"挤窄"适应边缘这件事本身就不该做:菜单是**界面**,换行只让它变难读。正确做法是保持它
+ * 本来的宽度,放不下就**翻到指针的另一侧**(贴着左边/上边),实在连翻都放不下才贴边。
+ *
+ * 两处判断都留了 `margin`:菜单贴着边界会看起来像被裁掉了。
+ */
+export function placeFrameMenu(input: {
+  /** 指针在容器内的坐标。 */
+  anchor: { x: number; y: number };
+  /** 菜单量出来的尺寸。 */
+  menu: { width: number; height: number };
+  /** 容器尺寸。菜单不能跑到容器外面去(容器不裁剪,跑出去就压到对话区上了)。 */
+  bounds: { width: number; height: number };
+  /** 与容器边缘的间隙。 */
+  margin?: number;
+}): { left: number; top: number } {
+  const margin = input.margin ?? 6;
+  const maxLeft = input.bounds.width - input.menu.width - margin;
+  const maxTop = input.bounds.height - input.menu.height - margin;
+
+  // 默认开在指针的右下;右下放不下就翻到左上;翻过去也放不下(菜单比容器还大)就贴边。
+  const left =
+    input.anchor.x + input.menu.width + margin <= input.bounds.width
+      ? input.anchor.x
+      : Math.max(margin, Math.min(input.anchor.x - input.menu.width, maxLeft));
+  const top =
+    input.anchor.y + input.menu.height + margin <= input.bounds.height
+      ? input.anchor.y
+      : Math.max(margin, Math.min(input.anchor.y - input.menu.height, maxTop));
+
+  return { left, top };
+}
+
 export function designChromeScale(camera: Camera): number {
   return Math.min(1 / camera.zoom, 8);
 }

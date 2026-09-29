@@ -16,6 +16,17 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 // 名字/标语字段必须非空(协议要求),但显示用的是 i18n 那份 —— 下面每个断言都走译文。
 const TAGS = ["product", "dev", "dev", "ai", "ai"] as const;
 const IDS = ["precise-dark", "linear", "github", "anthropic", "openai"] as const;
+
+/**
+ * 共享夹具状态。
+ *
+ * `vi.mock` 的工厂是**提升**的,所以它读不到这个文件里后声明的变量 —— 想要可变夹具就得走
+ * `vi.hoisted`。里面的两个字段就是被 mock 掉的那份运行时快照:哪些根里有设计、有哪些会话。
+ */
+const state = vi.hoisted(() => ({
+  designsByRoot: new Map<string, unknown[]>(),
+  sessions: [] as unknown[],
+}));
 const STYLES = IDS.map((id, index) => ({
   id,
   name: id,
@@ -35,18 +46,34 @@ function styleDetail(id: string) {
 }
 
 /**
- * 客户端必须是**稳定引用**:`DesignLibraryView` 用 `client` 当 `reload` 的依赖,而 `reload`
- * 又是它那个「进入即扫描」effect 的依赖 —— 每次渲染换一个新对象,那个 effect 就会每次渲染都
- * 重跑一次 `setDesigns`,变成无限重渲染(实测 300ms 内 346 次,`act` 因此永不收敛)。真实实现
- * 在 context 里是稳的,这里也得稳。
+ * 客户端必须是**稳定引用**:`DesignLibraryView` 用 `client` 当扫描回调的依赖(另一半是那一串根的
+ * key),而那个回调是它「进入即扫描」effect 的依赖 —— 每次渲染换一个新对象,effect 就会每次渲染都
+ * 重跑一遍扫描。真实实现在 context 里是稳的,这里也得稳。
  */
 vi.mock("../src/renderer/shared/runtime", () => {
   const client = {
     getDesignStyleDetail: async ({ id }: { id: string }) => styleDetail(id),
-    listDesigns: async () => [],
+    // 按根返回:`DesignLibraryView` 现在会同时扫工作区与会话两种根,拿一个写死的 `[]` 就分不出
+    // "这个根里没有设计"和"根本没问到这个根"。
+    listDesigns: async ({ root }: { root: string }) => state.designsByRoot.get(root) ?? [],
     listDesignStyles: async () => STYLES,
   };
-  const runtime = { snapshot: { workspaces: [{ availability: "available", rootPath: "/w" }] } };
+  /**
+   * 夹具的根:一个工作区 + 一个**没有工作区**的设计会话。
+   *
+   * 后者的根是会话私有的那种(`session-workspaces/<id>`),它正是这次要覆盖的来源 —— 从前这页
+   * 只扫工作区,那种设计在画布上看得到、在这里不存在。
+   */
+  const runtime = {
+    snapshot: {
+      workspaces: [{ availability: "available", canonicalRootPath: "/w", id: "w1", name: "My project", rootPath: "/w" }],
+      // getter,**不是**抄下 `state.sessions` 的引用:工厂只在导入时跑一次,抄下来的话后面
+      // 每个用例改的 `state.sessions` 它都看不见。
+      get sessions() {
+        return state.sessions;
+      },
+    },
+  };
   return { useRuntime: () => runtime, useRuntimeClient: () => client };
 });
 
@@ -118,11 +145,14 @@ function cardTitles(container: HTMLElement): string[] {
   );
 }
 
-describe("设计页风格墙", () => {
+describe("设计页", () => {
   let container: HTMLDivElement;
   let root: Root;
 
   beforeEach(() => {
+    // 夹具状态跨用例共享,每个用例自己声明"哪个根里有哪份设计"。
+    state.designsByRoot.clear();
+    state.sessions = [];
     /*
       滚回顶部是有原因的,不是抄来的仪式:风格墙是**窗口化**的,而浏览器窗口的滚动位置跨用例
       保留。前面某个用例打开了名字对话框(`autoFocus` 的输入框),浏览器会把它滚进视野 —— 于是
@@ -142,9 +172,9 @@ describe("设计页风格墙", () => {
     container.remove();
   });
 
-  async function render(): Promise<void> {
+  async function render(props: { onOpenSession?: (sessionId: string) => void } = {}): Promise<void> {
     await act(async () => {
-      root.render(<DesignLibraryView />);
+      root.render(<DesignLibraryView {...props} />);
     });
   }
 
@@ -215,4 +245,56 @@ describe("设计页风格墙", () => {
       container.querySelector(`button[title="${taglineOf("github")}"]`)?.getAttribute("aria-pressed"),
     ).toBe("false");
   });
+
+  it("没有工作区的设计会话,它的设计也进「我的设计」,点开是回到那个会话", async () => {
+    /*
+      这条覆盖的就是那个 bug:没选工作区的设计会话把包落在**自己的私有根**里
+      (`session-workspaces/<id>`),而这一页从前只扫第一个可用工作区 —— 于是画布看得到、
+      列表里不存在。
+    */
+    const sessionId = "5deacdf1-94d6-4533-8cb3-100ee1f50c25";
+    const rootPath = `/secrets/session-workspaces/${sessionId}`;
+    state.sessions = [{ id: sessionId, title: "垃圾分类", workbenchId: "ui-preview", runtimeRootPath: rootPath, updatedAt: 2 }];
+    state.designsByRoot.set(rootPath, [
+      {
+        id: "d1",
+        path: `${rootPath}/community-waste-sorting.wdesign`,
+        name: "community-waste-sorting",
+        mode: "built",
+        style: null,
+        frameCount: 2,
+      },
+    ]);
+    const opened: string[] = [];
+
+    await render({ onOpenSession: (id) => opened.push(id) });
+
+    // 名字、画面数,以及**来源** —— 不标出来,用户不知道这份设计是哪个会话里的。
+    expect(container.textContent).toContain("community-waste-sorting");
+    expect(container.textContent).toContain(`${zh("designSourceSession")} · 垃圾分类`);
+    expect(container.textContent).toContain(zh("designFrameCount").replace("{count}", "2"));
+
+    // 打开 = 切回那个会话:会话来源的设计没有别的入口,它住在会话根里,没有文件夹可给用户点。
+    await click(cardFor(container, "community-waste-sorting"));
+    expect(opened).toEqual([sessionId]);
+  });
+
+  it("工作区的设计标成工作区来源,而且不给出打开动作 —— 没有会话可回", async () => {
+    state.designsByRoot.set("/w", [
+      { id: "d2", path: "/w/landing.wdesign", name: "landing", mode: "static", style: null, frameCount: 1 },
+    ]);
+
+    await render({ onOpenSession: () => { throw new Error("工作区来源的设计不该有打开会话的动作"); } });
+
+    expect(container.textContent).toContain(`${zh("designSourceWorkspace")} · My project`);
+    const card = cardFor(container, "landing");
+    expect(card).not.toBeNull();
+    // 列出来,但**不是**按钮:只有会话来源的那条有点开这个动作(工作区来源没有会话可回)。
+    expect(card?.tagName).toBe("DIV");
+  });
 });
+
+/** 「我的设计」里那张卡。按名字找:它可能是按钮(会话来源,能打开)或纯容器(工作区来源)。 */
+function cardFor(container: HTMLElement, name: string): HTMLElement | null {
+  return container.querySelector<HTMLElement>(`[data-design-card="${name}"]`);
+}

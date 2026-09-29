@@ -164,25 +164,46 @@ test("视口裁剪的余量随缩放换算,不随缩放放大", () => {
   assert.deepEqual(zoomedIn, []);
 });
 
-test("位图档位取不超过当前缩放的最大档", () => {
+test("位图档位不低于 1 倍,并覆盖当前缩放", () => {
+  /*
+    这条规则改过一次,原因是它在真实流程里散了:
+
+    打开一份设计时 zoom 是 1,先按 **1 倍**光栅了整批位图;紧接着自动适应把 zoom 降到 0.7,
+    而"不超过当前 zoom 的最大档"于是选了 **0.5** —— 整批位图被换成一半分辨率、在屏幕上放大
+    1.4 倍,一眼就失真;放大回 100% 时又得等一次重新光栅才清晰。用户的原话是:"一进来确实把
+    设计装进视口,但 frame 有点失真,放大后过一会才变清楚"。
+
+    所以:**不低于 1 倍**(帧自己的尺寸),再按 zoom 往上走。参考实现压根不按 zoom 分档
+    (`RASTER_PIXEL_RATIO = min(devicePixelRatio, 2)`)—— 位图一旦小于 1 倍,缩放就已经在靠
+    浏览器放大,而旁边矢量渲染的活体一对比就刺眼。
+  */
   const buckets = [0.25, 0.5, 1, 2];
-  assert.equal(zoomBucket(0.25, buckets), 0.25);
-  assert.equal(zoomBucket(0.3, buckets), 0.25);
-  assert.equal(zoomBucket(0.5, buckets), 0.5);
-  assert.equal(zoomBucket(0.99, buckets), 0.5);
+
+  // 自动适应后的那一段(0.5~1)必须留在 1 倍上 —— 否则就是"适配完变糊"。
+  assert.equal(zoomBucket(0.7, buckets), 1);
+  assert.equal(zoomBucket(0.5, buckets), 1);
+  assert.equal(zoomBucket(0.99, buckets), 1);
+  // 缩得更小也一样:下限是 1,不是档位表的下限。
+  assert.equal(zoomBucket(0.25, buckets), 1);
+  assert.equal(zoomBucket(0.01, buckets), 1);
+
+  // 往上走:覆盖当前缩放的最小档。
   assert.equal(zoomBucket(1, buckets), 1);
+  assert.equal(zoomBucket(1.1, buckets), 2);
+  assert.equal(zoomBucket(2, buckets), 2);
+  // 超过最高档就用最高档。
   assert.equal(zoomBucket(3, buckets), 2);
-  // 低于最小档时用最小档:内容小到看不清,模糊无所谓。
-  assert.equal(zoomBucket(0.01, buckets), 0.25);
 });
 
 test("位图档位对乱序与非法输入是稳的", () => {
-  assert.equal(zoomBucket(0.7, [1, 0.25, 2, 0.5]), 0.5);
+  assert.equal(zoomBucket(0.7, [1, 0.25, 2, 0.5]), 1);
   assert.equal(zoomBucket(1, [1, 0.5]), 1);
   // 没有合法档位时回落到 1,而不是返回 undefined 让位图尺寸变成 NaN。
   assert.equal(zoomBucket(1, []), 1);
   assert.equal(zoomBucket(1, [0, -1, Number.NaN]), 1);
-  assert.equal(zoomBucket(Number.NaN, [0.5, 1]), 0.5);
+  // 一个 NaN 不该把整块画布降到最低档(那会全屏糊)。
+  assert.equal(zoomBucket(Number.NaN, [0.5, 1]), 1);
+  assert.equal(zoomBucket(Number.NaN, [0.25, 0.5, 1, 2]), 1);
 });
 
 test("网格吸附在关闭或网格非法时原样返回", () => {

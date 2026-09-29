@@ -7,6 +7,15 @@
  * 本文件不 import React、不 import Electron。
  */
 
+/**
+ * 从左侧列表把画框拖进预览台时用的数据类型。
+ *
+ * 用一个自己的 MIME 而不是 `text/plain`:拖拽期间**只有这个类型能让预览台判断"这是一帧"**,
+ * 于是从别的窗口拖文字进来不会突然多出一个画框。`dragover` 里也只能看到类型、看不到内容
+ * (规范如此),所以它同时是"要不要接这一拖"的判据。
+ */
+export const MOCKUP_RAIL_FRAME_MIME = "application/x-wordless-mockup-frame";
+
 export function attachMockupFrame(attached: readonly string[], frameId: string, atIndex?: number): string[] {
   if (attached.includes(frameId)) return [...attached];
   const next = [...attached];

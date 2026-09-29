@@ -42,6 +42,17 @@ function baseOptions(overrides: Partial<MockupOptions> = {}): MockupOptions {
   };
 }
 
+/** 一块纯色的"品牌标",用它当中画到水印左边的图。 */
+function brandMark(color: string): HTMLCanvasElement {
+  const canvas = document.createElement("canvas");
+  canvas.width = 8;
+  canvas.height = 8;
+  const g = canvas.getContext("2d")!;
+  g.fillStyle = color;
+  g.fillRect(0, 0, 8, 8);
+  return canvas;
+}
+
 function pixel(canvas: HTMLCanvasElement, x: number, y: number): number[] {
   const g = canvas.getContext("2d")!;
   return [...g.getImageData(Math.round(x), Math.round(y), 1, 1).data];
@@ -89,6 +100,29 @@ describe("mockup renderer", () => {
     // 而格子照样占着:整张图的尺寸与有位图时一模一样。
     const withImage = renderMockupToCanvas([solidShot("a", "#00ff00")], options);
     expect([canvas.width, canvas.height]).toEqual([withImage.width, withImage.height]);
+  });
+
+  it("画出水印左边那个品牌标 —— 版面留了位置,就得有东西画在那儿", () => {
+    /*
+      水印是"左边一个标 + 右边两行字",而版面早就按这个形状留好了位置(`brand.logo` 与文本的
+      起始位置都从它算)。这里一度只画字:文字于是看着像缩进了,而那个位置是空的。
+
+      这条测试钉的是**版面与绘制一致**:留出来的那个方块里必须出现标的像素。
+    */
+    const options = baseOptions({ brand: true, background: "#0000ff" });
+    const shots = [solidShot("a", "#00ff00")];
+    const brand = layoutMockup(shots, options).brand!;
+    const mark = brandMark("#ff00ff");
+
+    const canvas = renderMockupToCanvas(shots, options, 1, mark);
+    // 方块正中是标的颜色。
+    expect(pixel(canvas, brand.x + brand.logo / 2, brand.y + brand.logo / 2)).toEqual([255, 0, 255, 255]);
+    // 方块外面还是背景 —— 没画成一整块。
+    expect(pixel(canvas, brand.x - 2, brand.y + brand.logo / 2)).toEqual([0, 0, 255, 255]);
+
+    // 没有标时:只画字,而且**版面不动** —— 文字不会因为这个而跳位置。
+    const without = renderMockupToCanvas(shots, options, 1, null);
+    expect([without.width, without.height]).toEqual([canvas.width, canvas.height]);
   });
 
   it("honours the scale when sizing the canvas", () => {

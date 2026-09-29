@@ -1638,6 +1638,20 @@ export type UserPromptPart =
       name: string;
       value: string;
     }
+  /**
+   * 用户在新建成页挑的那套**内置风格**。
+   *
+   * 与 `workspace-reference` / `theme-token-reference` 都不同:那两个指着**已经存在的文件**,
+   * 而这一个只带一个 id —— 资料的落盘由 `design_create` 的 `styleId` 参数(或
+   * `design_style_apply`)在**设计包里**完成,主进程做,不需要先往任何地方写一份再让 agent 抄。
+   *
+   * 它存在只为一件事:**把用户的选择说出来**(§14.22)。风格到底应用没应用,判定看的是设计包的
+   * `manifest.style`,不是这条消息。
+   */
+  | {
+      type: "design-style";
+      styleId: string;
+    }
   | {
       type: "artifact-reference";
       artifactId: string;
@@ -1984,6 +1998,18 @@ export interface MessageThemeTokenBlock {
   value: string;
 }
 
+/**
+ * 用户在新建成页挑的风格。
+ *
+ * 只带 id:显示名按当前语言从 i18n 取(`DESIGN_STYLE_NAME_KEYS`),所以这里**不冻结**任何语言
+ * 相关的文案 —— 冻结了的话,切换界面语言之后老消息会停在旧语言里。
+ */
+export interface MessageDesignStyleBlock {
+  type: "design-style";
+  id: string;
+  styleId: string;
+}
+
 export interface MessageArtifactBlock {
   type: "artifact";
   artifactId: string;
@@ -2002,6 +2028,7 @@ export type MessageBlock =
   | MessageSkillReferenceBlock
   | MessageWorkspaceReferenceBlock
   | MessageThemeTokenBlock
+  | MessageDesignStyleBlock
   | MessageArtifactBlock;
 
 export interface ConversationUsage {

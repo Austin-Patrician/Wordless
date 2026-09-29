@@ -55,7 +55,7 @@ test("预算本身是自洽的", () => {
   assert.ok(DESIGN_CANVAS_BUDGETS.textureByteBudget > 0);
   assert.ok(DESIGN_CANVAS_BUDGETS.rasterMarginPx >= 0);
 
-  // 档位必须严格递增:`zoomBucket` 的语义建立在"不超过当前 zoom 的最大档"上。
+  // 档位必须严格递增:`zoomBucket` 按它找"覆盖当前 zoom 的最小档"。
   const buckets = DESIGN_CANVAS_BUDGETS.zoomBuckets;
   assert.ok(buckets.length > 0);
   for (let index = 1; index < buckets.length; index += 1) {

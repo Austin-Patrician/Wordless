@@ -72,6 +72,29 @@ export type DesignScreenshotResult =
   | { ok: true; frameId: string; mimeType: string; data: string }
   | { ok: false; frameId: string; reason: string };
 
+/**
+ * 风格库里的一套风格。
+ *
+ * **不带正文**(`themeCss` / `designMd`):那是几 KB 的整份规范,而 agent 要的只是"有哪几套、
+ * 各是什么方向"。真要落进设计包,那是 `applyStyle` 的事 —— 它由宿主做,不需要模型读一遍再抄一遍。
+ */
+export interface DesignStyleEntry {
+  id: string;
+  name: string;
+  /** 一句话说明它长什么样。 */
+  tagline: string;
+}
+
+export interface DesignStyleAppliedDto {
+  styleId: string;
+  /**
+   * 已经写过帧。
+   *
+   * 那些帧里写死的旧令牌不会自己变 —— 所以这件事必须说出去,而不是只回一个"成功"。
+   */
+  framesNeedRestyle: boolean;
+}
+
 export interface DesignPort {
   /** 当前工作区里的设计包。 */
   list(): Promise<DesignListEntry[]>;
@@ -88,4 +111,12 @@ export interface DesignPort {
   screenshot(designPath: string, frameId: string): Promise<DesignScreenshotResult>;
   /** 在离屏视图里跑布局探针。 */
   inspect(designPath: string, frameIds: readonly string[]): Promise<LayoutFinding[]>;
+  /** 内置风格库。 */
+  listStyles(): Promise<DesignStyleEntry[]>;
+  /**
+   * 把一套风格应用到已有设计上:覆盖 `theme.css` 与 `DESIGN.md`、记进清单、**应用前整包备份**。
+   *
+   * 风格 id 认不出来、或那份设计读不出来时 null(而不是抛错)——与 `read` 同一个约定。
+   */
+  applyStyle(designPath: string, styleId: string): Promise<DesignStyleAppliedDto | null>;
 }

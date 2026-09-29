@@ -19,7 +19,7 @@ import { paginateMockup } from "../src/renderer/features/design/mockup-paginate.
 import { mockupBrandInk } from "../src/renderer/features/design/mockup-render.ts";
 import { buildMockupPdf } from "../src/renderer/features/design/mockup-pdf.ts";
 import type { MockupOptions, MockupShot } from "../src/renderer/features/design/mockup-types.ts";
-import { centerMockupViewport, stackMockupPages } from "../src/renderer/features/design/mockup-view.ts";
+import { centerMockupViewport, stackMockupPages, stepZoom } from "../src/renderer/features/design/mockup-view.ts";
 
 /**
  * 导出设置与合成几何的 1:1 保真度。
@@ -286,6 +286,42 @@ test("pages stack vertically and each one is centred", () => {
 
 test("an empty stack has no world", () => {
   assert.deepEqual(stackMockupPages([], 40), { world: { width: 0, height: 0 }, boxes: [] });
+});
+
+test("zoom buttons land on fixed steps, not on a multiplied fraction", () => {
+  // 连续乘同一个系数会把缩放比停在 128%、160% 这类数字上,而用户想回到 100% 就得来回点。
+  assert.equal(stepZoom(1, 1), 1.25);
+  assert.equal(stepZoom(1, -1), 0.75);
+  assert.equal(stepZoom(0.5, 1), 0.75);
+  // 档位之间(滚轮缩出来的值)也是往**下一个档**走,不是简单加一档。
+  assert.equal(stepZoom(1.1, 1), 1.25);
+  assert.equal(stepZoom(1.1, -1), 1);
+});
+
+test("at the ends the step does nothing, so the number simply stops moving", () => {
+  assert.equal(stepZoom(3, 1), 3, "最大的那一档");
+  assert.equal(stepZoom(4, 1), 4, "比最大档还大");
+  assert.equal(stepZoom(0.25, -1), 0.25, "最小的一档");
+  assert.equal(stepZoom(0.1, -1), 0.1);
+  // 一个 NaN 不该让整块预览失效。
+  assert.equal(stepZoom(Number.NaN, 1), 1);
+});
+
+test("放大再缩小原路回到起点", () => {
+  let zoom = 0.75;
+  const up: number[] = [];
+  for (let index = 0; index < 3; index += 1) {
+    zoom = stepZoom(zoom, 1);
+    up.push(zoom);
+  }
+  assert.deepEqual(up, [1, 1.25, 1.5]);
+
+  const down: number[] = [];
+  for (let index = 0; index < 3; index += 1) {
+    zoom = stepZoom(zoom, -1);
+    down.push(zoom);
+  }
+  assert.deepEqual(down, [1.25, 1, 0.75]);
 });
 
 test("centring keeps the zoom and puts the world in the middle", () => {

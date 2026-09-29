@@ -11,12 +11,12 @@ import {
   DesignRefreshRequestSchema,
   DesignUpdateFrameMetaRequestSchema,
   CreateDesignRequestSchema,
+  DesignCopyImageRequestSchema,
   DesignSaveImageRequestSchema,
-  isDesignImageBytes,
+  isDesignImagePayload,
   DesignLiveFrameRequestSchema,
   DesignRasterRequestSchema,
   DesignStyleDetailRequestSchema,
-  InstallDesignStyleResourcesRequestSchema,
 } from "@wordless/protocol";
 import type { DesignHandlers } from "../design/handlers.ts";
 
@@ -40,10 +40,17 @@ export const DESIGN_RASTERIZE_CHANNEL = "wordless:design:rasterize";
 export const DESIGN_LIVE_FRAME_CHANNEL = "wordless:design:live-frame";
 export const DESIGN_STYLES_CHANNEL = "wordless:design:styles";
 export const DESIGN_STYLE_DETAIL_CHANNEL = "wordless:design:style-detail";
-export const DESIGN_STYLE_RESOURCES_CHANNEL = "wordless:design:style-resources";
 export const DESIGN_CREATE_CHANNEL = "wordless:design:create";
 export const DESIGN_SAVE_IMAGE_CHANNEL = "wordless:design:save-image";
 export const DESIGN_COPY_IMAGE_CHANNEL = "wordless:design:copy-image";
+
+/** 解码渲染层送上来的 base64。空载荷在上面就被 schema 挡掉了。 */
+function decodeDesignImage(data: string): Uint8Array<ArrayBuffer> {
+  const buffer = Buffer.from(data, "base64");
+  // `Buffer` 是 `Uint8Array` 的一个视图,但它常常背在共享的池子上 —— 复制一份交给下游
+  // (写文件与剪贴板都会持有它一段时间)。
+  return new Uint8Array(buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength));
+}
 
 export interface DesignIpcDeps {
   handlers: DesignHandlers;
@@ -95,23 +102,28 @@ export function registerDesignIpc(deps: DesignIpcDeps): void {
   /**
    * 存一张合成图。
    *
-   * **字节作为独立的实参,不进 schema。** schema 只声明它真的会校验的标量;几 MB 的
-   * `Uint8Array` 由 `isDesignImageBytes` 以 O(1) 校验(`instanceof` + 上限)。把它塞进
-   * `Type.Object` 只有两种结局:要么让 schema 声称校验了一个它不会去 walk 的字段,要么真的
-   * 逐字节走一遍 —— 后者是白花成本。
+   * 图在载荷里是 **base64**,所以它能被 schema 校验(`maxLength` 就是上限)。原来的写法是把
+   * 几 MB 的 `Uint8Array` 当**独立实参**递过来 —— 而那正是它一直失败的地方:这条通道要过
+   * `contextBridge`,类型化数组在那儿不可靠(见 `DesignSaveImageRequestSchema`)。
+   *
+   * `isDesignImagePayload` 是同一件事的第二道,留给直接调 handler 的路径。
    */
-  ipcMain.handle(DESIGN_SAVE_IMAGE_CHANNEL, async (_event, metadata: unknown, bytes: unknown) => {
-    if (!Value.Check(DesignSaveImageRequestSchema, metadata)) throw new Error("Invalid request payload");
-    if (!isDesignImageBytes(bytes)) throw new Error("Invalid image payload");
-    return await deps.handlers.saveMockupImage({
-      ...(metadata as { fileName: string; extension: "png" | "pdf" }),
-      bytes,
-    });
+  ipcMain.handle(DESIGN_SAVE_IMAGE_CHANNEL, async (_event, payload: unknown) => {
+    if (!Value.Check(DesignSaveImageRequestSchema, payload)) throw new Error("Invalid request payload");
+    const { fileName, extension, data } = payload as {
+      fileName: string;
+      extension: "png" | "pdf";
+      data: string;
+    };
+    if (!isDesignImagePayload(data)) throw new Error("Invalid image payload");
+    return await deps.handlers.saveMockupImage({ bytes: decodeDesignImage(data), extension, fileName });
   });
 
-  ipcMain.handle(DESIGN_COPY_IMAGE_CHANNEL, async (_event, bytes: unknown) => {
-    if (!isDesignImageBytes(bytes)) throw new Error("Invalid image payload");
-    return await deps.handlers.copyMockupImage({ bytes });
+  ipcMain.handle(DESIGN_COPY_IMAGE_CHANNEL, async (_event, payload: unknown) => {
+    if (!Value.Check(DesignCopyImageRequestSchema, payload)) throw new Error("Invalid request payload");
+    const { data } = payload as { data: string };
+    if (!isDesignImagePayload(data)) throw new Error("Invalid image payload");
+    return await deps.handlers.copyMockupImage({ bytes: decodeDesignImage(data) });
   });
 
   ipcMain.handle(DESIGN_UPDATE_FRAME_META_CHANNEL, async (_event, payload: unknown) => {
@@ -133,11 +145,6 @@ export function registerDesignIpc(deps: DesignIpcDeps): void {
   ipcMain.handle(DESIGN_STYLE_DETAIL_CHANNEL, async (_event, payload: unknown) => {
     if (!Value.Check(DesignStyleDetailRequestSchema, payload)) throw new Error("Invalid request payload");
     return await deps.handlers.styleDetail(payload as { id: string });
-  });
-
-  ipcMain.handle(DESIGN_STYLE_RESOURCES_CHANNEL, async (_event, payload: unknown) => {
-    if (!Value.Check(InstallDesignStyleResourcesRequestSchema, payload)) throw new Error("Invalid request payload");
-    return await deps.handlers.installStyleResources(payload as { root: string; styleId: string });
   });
 
   ipcMain.handle(DESIGN_CREATE_CHANNEL, async (_event, payload: unknown) => {

@@ -26,6 +26,8 @@ function port(overrides: Partial<DesignPort> = {}): DesignPort {
     create: async () => ({ path: DESIGN, frameId: "index", rename: null }),
     screenshot: async () => ({ ok: true, frameId: "index", mimeType: "image/jpeg", data: "AAAA" }),
     inspect: async () => [],
+    listStyles: async () => [{ id: "linear", name: "Linear", tagline: "克制的产品风" }],
+    applyStyle: async (_designPath: string, styleId: string) => ({ styleId, framesNeedRestyle: false }),
     ...overrides,
   };
 }
@@ -52,7 +54,14 @@ function textOf(result: { content: unknown[] }): string {
 it("只声明已经能跑的工具", () => {
   // 声明了却跑不起来的工具比没有更糟:模型会去调它,然后拿到一个失败。
   const names = createDesignTools(port()).map((tool) => tool.name);
-  expect(names).toEqual(["design_status", "design_create", "design_inspect", "design_screenshot"]);
+  expect(names).toEqual([
+    "design_status",
+    "design_create",
+    "design_inspect",
+    "design_screenshot",
+    "design_style_list",
+    "design_style_apply",
+  ]);
 });
 
 it("工作区里没有设计时给出下一步,而不是空输出", () => {
@@ -309,4 +318,67 @@ it("截图失败时给出原因,而不是空图片", async () => {
   const result = await run(tool, { path: DESIGN, frameId: "index" });
   expect(textOf(result)).toContain("load-failed");
   expect(result.content.some((part) => (part as { type: string }).type === "image")).toBe(false);
+});
+
+it("风格库只回 id / 名字 / 一句话 —— 不回正文", async () => {
+  const tool = find(
+    createDesignTools(
+      port({
+        listStyles: async () => [
+          { id: "linear", name: "Linear", tagline: "克制的产品风" },
+          { id: "playful", name: "Playful", tagline: "圆角与暖色" },
+        ],
+      }),
+    ),
+    "design_style_list",
+  );
+  const result = await run(tool, {});
+  const text = textOf(result);
+  expect(text).toContain("linear");
+  expect(text).toContain("克制的产品风");
+  // 正文(themeCss / designMd)是几 KB,进上下文是纯浪费;截断到 details 只看条数。
+  expect(text).not.toContain("@theme");
+  expect(result.details).toEqual({ styles: 2 });
+});
+
+it("没人挑风格时,让 agent 问而不是替用户挑", async () => {
+  const tool = find(createDesignTools(port()), "design_style_list");
+  // 工具描述里必须写明这条路 —— 否则模型会自己挑一套,而那是替用户做审美决定。
+  expect(tool.description).toContain("request_user_input");
+});
+
+it("design_create 带上 styleId:告诉它令牌已经是那套风格的了", async () => {
+  const tool = find(createDesignTools(port()), "design_create");
+  const result = await run(tool, { name: "meadow", title: "Home", width: 390, height: 844, styleId: "linear" });
+  expect(textOf(result)).toContain("`linear` style");
+});
+
+it("design_create 收到认不出来的 styleId:说出来,并列出真 id", async () => {
+  // 宿主是"解析不到就退回默认令牌",不报错 —— 不说的话模型以为风格生效了,照着默认令牌写到底。
+  const tool = find(createDesignTools(port()), "design_create");
+  const result = await run(tool, { name: "meadow", title: "Home", width: 390, height: 844, styleId: "no-such" });
+  const text = textOf(result);
+  expect(text).toContain("no style called `no-such`");
+  expect(text).toContain("design_style_list");
+});
+
+it("design_style_apply 应用之后说清备份在哪,以及已有帧需要重设", async () => {
+  const tool = find(
+    createDesignTools(port({ applyStyle: async (_path, styleId) => ({ styleId, framesNeedRestyle: true }) })),
+    "design_style_apply",
+  );
+  const result = await run(tool, { path: DESIGN, styleId: "linear" });
+  const text = textOf(result);
+  expect(text).toContain("style-backup");
+  expect(text).toContain("will not restyle themselves");
+  expect(result.details).toMatchObject({ applied: true, framesNeedRestyle: true });
+});
+
+it("design_style_apply 对认不出来的风格:列出可用 id,而不是只说失败", async () => {
+  const tool = find(
+    createDesignTools(port({ applyStyle: async () => null })),
+    "design_style_apply",
+  );
+  const result = await run(tool, { path: DESIGN, styleId: "no-such" });
+  expect(textOf(result)).toContain("available ids: linear");
 });

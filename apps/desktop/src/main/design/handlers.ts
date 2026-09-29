@@ -10,7 +10,6 @@ import type {
   DesignRefreshResultDto,
   DesignSummaryDto,
   DesignStyleDetailDto,
-  InstallDesignStyleResourcesDto,
   DesignStyleSummaryDto,
 } from "@wordless/protocol";
 import type {
@@ -94,11 +93,6 @@ export interface DesignHandlers {
   listStyles(): Promise<DesignStyleSummaryDto[]>;
   /** 一套风格的正文(示例页 + 规范)。按 id 现取 —— 列里不带这两份大文本。 */
   styleDetail(input: { id: string }): Promise<DesignStyleDetailDto | null>;
-  /** 把一套风格的资料落进工作区,供这一次会话当参考。 */
-  installStyleResources(input: {
-    root: string;
-    styleId: string;
-  }): Promise<InstallDesignStyleResourcesDto | null>;
   /** 按选中的风格建一个设计包。 */
   createDesign(input: { root: string; name: string; styleId: string | null }): Promise<CreateDesignResultDto | null>;
   /**
@@ -313,13 +307,6 @@ export function createDesignHandlers(
 
     async listStyles(): Promise<DesignStyleSummaryDto[]> {
       return DESIGN_STYLES.map(designStyleSummary);
-    },
-
-    async installStyleResources(input: {
-      root: string;
-      styleId: string;
-    }): Promise<InstallDesignStyleResourcesDto | null> {
-      return await store.installStyleResources(input);
     },
 
     async styleDetail(input: { id: string }): Promise<DesignStyleDetailDto | null> {

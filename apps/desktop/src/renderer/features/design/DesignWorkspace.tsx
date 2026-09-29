@@ -106,6 +106,14 @@ export function DesignWorkspace({
   const [exporting, setExporting] = useState(false);
   /** 合成图弹窗。与目录导出各自独立:一个是单文件分享图,一个是一批交付文件。 */
   const [mockupOpen, setMockupOpen] = useState(false);
+  /**
+   * 画布光栅好的位图(`frameId → URL`),给导出渲染图的左栏当缩略图。
+   *
+   * 由画布推上来,而不是让弹窗自己去取:位图本来就在画布手里,而再取一次 = 每帧多一次
+   * 离屏渲染。代价是这里存了一份 URL —— 它在画布卸载时会被 `revoke`,而弹窗与画布同生共死
+   * (画布是这个区块的常驻内容),所以不构成悬空引用。
+   */
+  const [frameThumbnails, setFrameThumbnails] = useState<ReadonlyMap<string, string>>(() => new Map());
   /** 手动刷新在途 —— 期间按钮不响应,免得连点叠几次。 */
   const [refreshing, setRefreshing] = useState(false);
   /**
@@ -414,36 +422,38 @@ export function DesignWorkspace({
   );
 
   /**
-   * 导出渲染图或素材。
+   * 下载素材:每帧一张原尺寸图,**加**规范(`theme.css` / `DESIGN.md`)与素材文件。
    *
    * 目录由**用户挑**(对话框在主进程),画布这一侧不碰磁盘 —— 它只说"导出什么",然后等一个
    * 落点。取消不算失败:那是用户的选择,不该报红。
+   *
+   * 只导图那一支(`what: "frames"`)现在没有 UI 入口:它的产物是这一支的**子集**,留着两个
+   * 按钮只会让人猜"我到底该点哪个"。主进程那边仍然两种都支持。
    */
-  const exportDesign = useCallback(
-    (what: "frames" | "assets") => {
-      const current = openedRef.current;
-      if (current === null) return;
-      setExporting(true);
-      void client
-        .exportDesign({ path: current.summary.path, what })
-        .then((result) => {
-          if (result === null) {
-            setError(t("designExportFailed"));
-            return;
-          }
-          if (!result.ok) {
-            if (result.reason === "cancelled") return;
-            setError(result.reason === "empty" ? t("designExportEmpty") : t("designExportFailed"));
-            return;
-          }
-          setNotice(
-            t("designExportDone")
-              .replace("{count}", String(result.files.length))
-              .replace("{directory}", result.directory),
-          );
-        })
-        .catch((reason: unknown) => setError(reason instanceof Error ? reason.message : String(reason)))
-        .finally(() => setExporting(false));
+  const downloadMaterials = useCallback(() => {
+    const current = openedRef.current;
+    if (current === null) return;
+    setExporting(true);
+    void client
+      .exportDesign({ path: current.summary.path, what: "assets" })
+      .then((result) => {
+        if (result === null) {
+          setError(t("designExportFailed"));
+          return;
+        }
+        if (!result.ok) {
+          if (result.reason === "cancelled") return;
+          setError(result.reason === "empty" ? t("designExportEmpty") : t("designExportFailed"));
+          return;
+        }
+        setNotice(
+          t("designExportDone")
+            .replace("{count}", String(result.files.length))
+            .replace("{directory}", result.directory),
+        );
+      })
+      .catch((reason: unknown) => setError(reason instanceof Error ? reason.message : String(reason)))
+      .finally(() => setExporting(false));
     },
     [client, t],
   );
@@ -611,22 +621,6 @@ export function DesignWorkspace({
         <span className="ml-auto shrink-0 text-[11px] tabular-nums text-[#8a8f94]">
           {frameCount > 0 ? t("designFrameCount").replace("{count}", String(frameCount)) : ""}
         </span>
-        {opened === null ? null : (
-          /**
-           * 合成图的入口。
-           *
-           * 与工具栏上那两个(导出渲染图 / 下载素材)**不是同一件事**:那两个把每帧的原尺寸
-           * 渲染图写进一个文件夹,交付给设计师接着改;这个把选中的几帧合成一张带设备外壳的
-           * 分享图。所以它放在设计名这一行,而不是混进那组"把结果拿出来"的按钮里。
-           */
-          <button
-            className="shrink-0 rounded-[5px] border border-[#e2e4e6] px-2 py-0.5 text-[11px] text-[#55575b] hover:bg-[#f1f1ef] dark:border-[#3b3e41] dark:text-[#d2d5d8] dark:hover:bg-muted"
-            onClick={() => setMockupOpen(true)}
-            type="button"
-          >
-            {t("mockupTitle")}
-          </button>
-        )}
       </header>
 
       {notice !== null ? (
@@ -663,7 +657,8 @@ export function DesignWorkspace({
             sessionId={sessionId}
             themeRevision={themeRevision}
             onDeleteFrame={deleteFrame}
-            onExport={exportDesign}
+            onDownloadMaterials={downloadMaterials}
+            onOpenMockup={() => setMockupOpen(true)}
             onRefresh={refresh}
             exporting={exporting}
             refreshing={refreshing}
@@ -675,6 +670,8 @@ export function DesignWorkspace({
             onCommitFrameMoves={commitMove}
             onCommitFrameMeta={commitFrameMeta}
             onSelectionChange={setSelectedFrameIds}
+            /** 缩略图:导出渲染图的左栏直接用画布光栅好的位图。 */
+            onTextures={setFrameThumbnails}
           />
         ) : designs !== null && designs.length === 0 ? (
           /**
@@ -709,6 +706,7 @@ export function DesignWorkspace({
           manifest={opened.manifest}
           onClose={() => setMockupOpen(false)}
           sessionId={sessionId}
+          thumbnails={frameThumbnails}
         />
       ) : null}
     </section>

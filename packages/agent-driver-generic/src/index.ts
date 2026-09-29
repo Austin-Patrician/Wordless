@@ -47,6 +47,7 @@ import {
   USER_REQUEST_JOURNAL_TYPE,
   projectUserMessageContent,
   formatPromptArtifactReferencesForModel,
+  formatPromptDesignStyleForModel,
   formatPromptThemeTokenReferencesForModel,
   formatPromptWorkspaceReferencesForModel,
   formatPromptWorkspaceAttachmentsForModel,
@@ -384,16 +385,20 @@ async function hydrateUserMessageContent(
   context: AgentDriverSessionContext,
 ): Promise<string | Array<Record<string, unknown>>> {
   const parsed = parsePromptAttachmentReferences(text);
-  const baseText = formatPromptThemeTokenReferencesForModel(
-    formatPromptWorkspaceReferencesForModel(
-      formatPromptArtifactReferencesForModel(stripPromptSkillReferences(parsed.text)),
+  const baseText = formatPromptDesignStyleForModel(
+    formatPromptThemeTokenReferencesForModel(
+      formatPromptWorkspaceReferencesForModel(
+        formatPromptArtifactReferencesForModel(stripPromptSkillReferences(parsed.text)),
+      ),
     ),
   );
   if (parsed.attachments.length === 0)
-    return formatPromptThemeTokenReferencesForModel(
-      formatPromptWorkspaceReferencesForModel(
-        formatPromptArtifactReferencesForModel(
-          stripPromptSkillReferences(formatPromptWorkspaceAttachmentsForModel(text)),
+    return formatPromptDesignStyleForModel(
+      formatPromptThemeTokenReferencesForModel(
+        formatPromptWorkspaceReferencesForModel(
+          formatPromptArtifactReferencesForModel(
+            stripPromptSkillReferences(formatPromptWorkspaceAttachmentsForModel(text)),
+          ),
         ),
       ),
     );

@@ -2,11 +2,11 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { Value } from "typebox/value";
 import {
+  CreateDesignRequestSchema,
   DesignListRequestSchema,
   DesignOpenRequestSchema,
   DesignOpenedSchema,
   DesignStyleDetailRequestSchema,
-  InstallDesignStyleResourcesRequestSchema,
   DesignSummarySchema,
 } from "@wordless/protocol";
 import { createDesignHandlers } from "../src/main/design/handlers.ts";
@@ -132,25 +132,17 @@ test("风格目录:不认识的 id 返回 null,而不是抛", async () => {
   assert.equal(await handlers(fixture()).styleDetail({ id: "no-such-style" }), null);
 });
 
-test("把一套风格的资料落进工作区:两份文件都在,且认不出的 id 返回 null", async () => {
+test("风格那半边落盘已经不在工作区里做了(§14.22)", async () => {
   /*
-    这一步是"挑风格开新会话"的落盘半边:落的是**资料**(theme.css + DESIGN.md),不是设计包 ——
-    包由 agent 的 design_create 建(参考实现踩过"预先 scaffold 一份、agent 又另建一份"的坑)。
+    从前的 `installStyleResources` 把 `theme.css` + `DESIGN.md` 写进工作区的
+    `design-resources/<id>/`,再由 agent 读进来抄进设计包。现在风格由 `design_create(styleId)`
+    或 `design_style_apply` 直接写进**设计包** —— 所以工作区里不该再出现这个目录。
+    (写入那一半分别由 `design-scaffold.test.ts` 与 `design-style-apply.test.ts` 覆盖。)
   */
   const fs = fixture();
   const store = new DesignStore({ fs });
-  const installed = await store.installStyleResources({ root: ROOT, styleId: "linear" });
-  assert.ok(installed);
-  // 落点与文件名由主进程给,渲染层照它拼引用。
-  assert.equal(installed.dir, "design-resources/linear");
-  assert.deepEqual(installed.files, ["theme.css", "DESIGN.md"]);
-
-  const theme = await fs.readText(`${ROOT}/design-resources/linear/theme.css`);
-  const spec = await fs.readText(`${ROOT}/design-resources/linear/DESIGN.md`);
-  assert.ok(theme.includes("@theme static {"), "写下去的是那份 theme.css");
-  assert.ok(spec.startsWith("# "), "写下去的是那份 DESIGN.md");
-
-  assert.equal(await store.installStyleResources({ root: ROOT, styleId: "no-such-style" }), null);
+  assert.equal(typeof (store as unknown as Record<string, unknown>).installStyleResources, "undefined");
+  assert.equal(await fs.stat(`${ROOT}/design-resources`), null);
 });
 
 test("请求 schema 拒绝多余的字段", () => {
@@ -163,7 +155,8 @@ test("请求 schema 拒绝多余的字段", () => {
   assert.equal(Value.Check(DesignOpenRequestSchema, { path: DESIGN, mode: "built" }), false);
   assert.equal(Value.Check(DesignStyleDetailRequestSchema, { id: "linear" }), true);
   assert.equal(Value.Check(DesignStyleDetailRequestSchema, {}), false);
-  assert.equal(Value.Check(InstallDesignStyleResourcesRequestSchema, { root: ROOT, styleId: "linear" }), true);
-  assert.equal(Value.Check(InstallDesignStyleResourcesRequestSchema, { styleId: "linear" }), false);
-  assert.equal(Value.Check(InstallDesignStyleResourcesRequestSchema, { root: ROOT }), false);
+  // 风格 id 由 agent 给:字段是 styleId,`null` 表示"不指定风格"(不是缺字段)。
+  assert.equal(Value.Check(CreateDesignRequestSchema, { root: ROOT, name: "meadow", styleId: "linear" }), true);
+  assert.equal(Value.Check(CreateDesignRequestSchema, { root: ROOT, name: "meadow", styleId: null }), true);
+  assert.equal(Value.Check(CreateDesignRequestSchema, { root: ROOT, name: "meadow" }), false);
 });

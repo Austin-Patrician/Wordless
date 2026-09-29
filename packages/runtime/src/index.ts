@@ -1411,6 +1411,30 @@ function workspaceRelativePath(
   return normalized;
 }
 
+async function existingSessionFiles(
+  rootPath: string,
+  changes: readonly SessionArtifactFile[],
+): Promise<SessionArtifactFile[]> {
+  const existing: SessionArtifactFile[] = [];
+  let nextIndex = 0;
+  const workerCount = Math.min(32, changes.length);
+  const worker = async () => {
+    while (true) {
+      const index = nextIndex++;
+      const change = changes[index];
+      if (!change) return;
+      try {
+        const details = await stat(join(rootPath, change.path));
+        if (details.isFile()) existing.push(change);
+      } catch {
+        // A file can disappear between the journal read and this check.
+      }
+    }
+  };
+  await Promise.all(Array.from({ length: workerCount }, () => worker()));
+  return existing;
+}
+
 function approvalFileBaseline(
   value: PersistedOperationApproval,
 ): SessionFileBaseline | undefined {
@@ -2843,7 +2867,11 @@ export class WordlessRuntime {
     }
     for (const change of changes.values())
       change.diffAvailable = baselines.has(change.path);
-    const sortedChanges = [...changes.values()].sort((left, right) =>
+    const existingChanges = await existingSessionFiles(
+      record.runtimeRootPath,
+      [...changes.values()],
+    );
+    const sortedChanges = existingChanges.sort((left, right) =>
       left.path.localeCompare(right.path),
     );
     return {

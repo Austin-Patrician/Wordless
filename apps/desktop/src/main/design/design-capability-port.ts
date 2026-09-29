@@ -1,5 +1,6 @@
 import { LAYOUT_PROBE_EXPRESSION, type DesignPort, type LayoutFinding } from "@wordless/capability-design";
 import type { DesignStore, OpenedDesign } from "./design-store.ts";
+import { DESIGN_STYLES } from "./style-catalog.ts";
 import type { BuildRecipe } from "./build-recipes.ts";
 import type { BuildRunner } from "./design-builder.ts";
 import { designFrameUrl } from "./design-url.ts";
@@ -155,6 +156,24 @@ export function createDesignCapabilityPort(deps: DesignCapabilityPortDeps): Desi
         }
       }
       return findings;
+    },
+
+    /**
+     * 风格库。**只给 id / 名字 / 一句话** —— 正文是几 KB 的 `theme.css` + `DESIGN.md`,进上下文
+     * 是纯浪费,而且 agent 拿到正文也只会想自己抄一遍(那正是 §14.22 要取消的那件事)。
+     */
+    async listStyles() {
+      return DESIGN_STYLES.map((style) => ({ id: style.id, name: style.name, tagline: style.tagline }));
+    },
+
+    /**
+     * 应用风格。**与画布上那条"应用风格"入口走同一份实现**(`store.applyStyle`:整包备份 → 写
+     * 两份 → 记清单),所以两处不会漂。
+     */
+    async applyStyle(designPath: string, styleId: string) {
+      const applied = await deps.store.applyStyle(designPath, styleId);
+      if (applied === null) return null;
+      return { styleId, framesNeedRestyle: applied.framesNeedRestyle };
     },
   };
 }

@@ -10,6 +10,7 @@ import type {
   WebhookTestRequestDto,
   DesignListRequestDto,
   CreateDesignRequestDto,
+  DesignCopyImageRequestDto,
   DesignSaveImageRequestDto,
   DesignLiveFrameRequestDto,
   DesignMoveFramesRequestDto,
@@ -22,7 +23,6 @@ import type {
   DesignRefreshRequestDto,
   DesignUpdateFrameMetaRequestDto,
   DesignStyleDetailRequestDto,
-  InstallDesignStyleResourcesRequestDto,
   WebhookUpdateRequestDto,
 } from "@wordless/protocol";
 
@@ -189,13 +189,13 @@ const wordlessBridge: DesktopBridge = {
   listDesignStyles: () => ipcRenderer.invoke("wordless:design:styles"),
   getDesignStyleDetail: (input) =>
     ipcRenderer.invoke("wordless:design:style-detail", input satisfies DesignStyleDetailRequestDto),
-  installDesignStyleResources: (input) =>
-    ipcRenderer.invoke("wordless:design:style-resources", input satisfies InstallDesignStyleResourcesRequestDto),
   createDesign: (input) => ipcRenderer.invoke("wordless:design:create", input satisfies CreateDesignRequestDto),
-  // 字节作为**独立的实参**:schema 只校验标量,几 MB 的数组由主进程侧的 O(1) 守卫校验。
-  saveDesignImage: (input, bytes) =>
-    ipcRenderer.invoke("wordless:design:save-image", input satisfies DesignSaveImageRequestDto, bytes),
-  copyDesignImage: (bytes) => ipcRenderer.invoke("wordless:design:copy-image", bytes),
+  // 图**编码进载荷**(base64),不作为独立实参:过 `contextBridge` 的类型化数组不可靠 ——
+  // 见 `DesignSaveImageRequestSchema` 的说明。schema 里的 `maxLength` 就是这一层的上限。
+  saveDesignImage: (input) =>
+    ipcRenderer.invoke("wordless:design:save-image", input satisfies DesignSaveImageRequestDto),
+  copyDesignImage: (input) =>
+    ipcRenderer.invoke("wordless:design:copy-image", input satisfies DesignCopyImageRequestDto),
   testWebhookEndpoint: (id, message) =>
     ipcRenderer.invoke("wordless:notifications:test", { id, message } satisfies WebhookTestRequestDto),
   setBrowserPanelSession: (sessionId) =>

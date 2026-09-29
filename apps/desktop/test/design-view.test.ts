@@ -8,6 +8,8 @@ import {
   designFrameViews,
   frameEntryViewport,
   mergeRefreshedManifest,
+  placeFrameMenu,
+  shouldFitOnOpen,
 } from "../src/renderer/features/design/design-view.ts";
 
 function frame(id: string, x: number, y: number, width = 390, height = 844): DesignFrameDto {
@@ -28,6 +30,99 @@ function project(overrides: Partial<Parameters<typeof designFrameViews>[0]> = {}
     ...overrides,
   });
 }
+
+test("右键菜单放不下就翻到另一侧,而不是被挤窄", () => {
+  /*
+    用户报的:frame 靠近边缘时右键,「交给 agent 改这一帧」会**自动换行**成两行。
+
+    原因是绝对定位元素不给宽度时的"收缩到适合":宽度不超过 `容器宽 - left`,于是贴着右边缘
+    开出来的菜单比它该有的宽度更窄,里面的文字只好换行。挤窄是**界面**最不该做的一种适应 ——
+    正确做法是保持本来的宽度,翻到指针的另一侧。
+  */
+  const menu = { height: 100, width: 180 };
+  const bounds = { height: 600, width: 800 };
+
+  // 地方够:就开在指针的右下。
+  assert.deepEqual(placeFrameMenu({ anchor: { x: 100, y: 100 }, bounds, menu }), { left: 100, top: 100 });
+
+  // 右边放不下:翻到指针左边,而且**宽度一分不让**。
+  const flipRight = placeFrameMenu({ anchor: { x: 700, y: 100 }, bounds, menu });
+  assert.equal(flipRight.left, 700 - 180);
+  assert.ok(flipRight.left + menu.width <= bounds.width, "翻过去之后仍然整个在容器里");
+
+  // 下边放不下:翻到指针上边。
+  const flipDown = placeFrameMenu({ anchor: { x: 100, y: 560 }, bounds, menu });
+  assert.equal(flipDown.top, 560 - 100);
+  assert.ok(flipDown.top + menu.height <= bounds.height);
+});
+
+test("右边和下边同时放不下时两轴各自翻,互不影响", () => {
+  const menu = { height: 100, width: 180 };
+  const bounds = { height: 600, width: 800 };
+
+  const corner = placeFrameMenu({ anchor: { x: 780, y: 590 }, bounds, menu });
+  assert.equal(corner.left, 780 - 180);
+  assert.equal(corner.top, 590 - 100);
+});
+
+test("菜单比容器还大时贴边,但绝不越界", () => {
+  // 这条是兜底:真到这一步,翻到哪边都放不下 —— 那就贴边(越界会被别的工作区盖住,更糟)。
+  const menu = { height: 900, width: 900 };
+  const bounds = { height: 600, width: 800 };
+
+  const placed = placeFrameMenu({ anchor: { x: 400, y: 300 }, bounds, menu });
+  assert.equal(placed.left, 6);
+  assert.equal(placed.top, 6);
+
+  // 另一头同样贴边,而不是负数(负的会把菜单推到画布外面)。
+  const nearOrigin = placeFrameMenu({ anchor: { x: 0, y: 0 }, bounds, menu });
+  assert.equal(nearOrigin.left, 6);
+  assert.equal(nearOrigin.top, 6);
+});
+
+test("打开一份设计时该适配一次,而同一份设计刷新时不该再抢视角", () => {
+  /*
+    两条边界都要有,而且方向相反:
+
+    - **换设计要重做**:在旧设计里调过的视角对新设计没有意义,不重做就可能打开一份设计却看到
+      一片空白(内容在视口外)。用户报的就是这个。
+    - **同一份设计只做一次**:agent 一直在改磁盘,刷新引起的重渲染不该把用户调好的画面抢回去。
+  */
+  const base = { designPath: "/w/a.wdesign", fitted: null, frameCount: 2, nodesInitialized: true };
+
+  assert.equal(shouldFitOnOpen(base), true, "第一次打开:适配");
+  assert.equal(
+    shouldFitOnOpen({ ...base, fitted: "/w/a.wdesign" }),
+    false,
+    "同一份设计再刷新:不抢视角",
+  );
+  assert.equal(
+    shouldFitOnOpen({ ...base, fitted: "/w/b.wdesign" }),
+    true,
+    "换了一份设计:重新适配",
+  );
+});
+
+test("节点还没量完尺寸时不适配 —— 那时算出来的是空内容", () => {
+  // `fitView` 按节点的**测量**尺寸算。节点刚建出来时尺寸是 0,这时适配等于"什么都没发生" ——
+  // 而它看起来和"没有适配"一模一样,所以这条必须单独钉住。
+  assert.equal(
+    shouldFitOnOpen({
+      designPath: "/w/a.wdesign",
+      fitted: null,
+      frameCount: 2,
+      nodesInitialized: false,
+    }),
+    false,
+  );
+});
+
+test("一帧都没有就不适配", () => {
+  assert.equal(
+    shouldFitOnOpen({ designPath: "/w/a.wdesign", fitted: null, frameCount: 0, nodesInitialized: true }),
+    false,
+  );
+});
 
 test("屏幕矩形由相机派生,尺寸也按缩放走", () => {
   const views = project({ camera: { x: 100, y: 50, zoom: 2 } });

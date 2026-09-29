@@ -13,6 +13,7 @@ import {
   Copy,
   Layers3,
   LoaderCircle,
+  Palette,
   PanelRightClose,
   PanelRightOpen,
   ListChecks,
@@ -58,6 +59,7 @@ import {
   type MessageSkillReferenceBlock,
   type MessageTextBlock,
   type MessageThemeTokenBlock,
+  type MessageDesignStyleBlock,
   type MessageToolBlock,
   type MessageWorkspaceReferenceBlock,
   type ModelReference,
@@ -68,6 +70,7 @@ import {
 } from "@wordless/domain";
 import { usePreferences } from "../../shared/preferences";
 import type { MessageKey } from "../../shared/i18n";
+import { DESIGN_STYLE_NAME_KEYS } from "../design/style-copy.ts";
 import { useRuntime, useRuntimeClient } from "../../shared/runtime";
 import { ModelPicker } from "../workbench/ModelPicker";
 import type {
@@ -173,6 +176,17 @@ type ThreadVirtuosoContext = {
   /** Failure of a thread action such as turn retry or version switching. */
   actionError?: string;
 };
+
+/**
+ * 风格 chip 上显示的名字。
+ *
+ * 按 id 查 i18n 那张表(`DESIGN_STYLE_NAME_KEYS`),查不到就退回 id 本身 —— 消息里**不冻结**
+ * 语言相关的文案,否则切换界面语言之后老消息会停在旧语言里。
+ */
+function designStyleBlockName(styleId: string, t: (key: MessageKey) => string): string {
+  const key = DESIGN_STYLE_NAME_KEYS[styleId];
+  return key === undefined ? styleId : t(key);
+}
 
 function ThreadVirtuosoHeader({ context }: { context: ThreadVirtuosoContext }) {
   return <div className="h-6" />;
@@ -2960,12 +2974,14 @@ function isBubbleContentBlock(
   | MessageSkillReferenceBlock
   | MessageWorkspaceReferenceBlock
   | MessageThemeTokenBlock
+  | MessageDesignStyleBlock
   | MessageArtifactBlock {
   switch (block.type) {
     case "text":
     case "skill-reference":
     case "workspace-reference":
     case "theme-token":
+    case "design-style":
     case "artifact":
       return true;
     case "attachment":
@@ -3029,6 +3045,19 @@ function isBubbleContentBlock(
                         style={{ background: block.value }}
                       />
                       <span className="min-w-0 truncate">{block.name}</span>
+                    </span>
+                  ) : block.type === "design-style" ? (
+                    // 风格选择:一枚 chip 说明"这一轮是按这套开的"。名字按当前语言取,消息里
+                    // **不冻结文案** —— 冻结了的话,切界面语言之后老消息会停在旧语言里。
+                    <span
+                      className="mx-1.5 inline-flex h-6 max-w-[230px] select-none items-center gap-1 rounded-[5px] border border-[#cbd7b4] bg-[#f4f8ea] px-1.5 align-bottom text-[13px] font-normal leading-4 text-[#41521f] shadow-[inset_0_1px_0_rgba(255,255,255,0.65)] dark:border-[#55663a] dark:bg-[#2a3319] dark:text-[#dcecc0]"
+                      key={block.id}
+                      title={t("designStyleLaunchSelected").replace("{name}", designStyleBlockName(block.styleId, t))}
+                    >
+                      <Palette aria-hidden className="h-3 w-3 shrink-0 text-[#6f8a3c] dark:text-[#b7d47f]" />
+                      <span className="min-w-0 truncate">
+                        {t("designStyleReasonChip").replace("{name}", designStyleBlockName(block.styleId, t))}
+                      </span>
                     </span>
                   ) : block.type === "artifact" ? (
                     <span
@@ -3115,7 +3144,11 @@ function isBubbleContentBlock(
               void navigator.clipboard.writeText(
                 contentBlocks
                   .map((block) =>
-                    block.type === "text" ? block.text : `@${block.name}`,
+                    block.type === "text"
+                      ? block.text
+                      : block.type === "design-style"
+                        ? `@${designStyleBlockName(block.styleId, t)}`
+                        : `@${block.name}`,
                   )
                   .join(""),
               )

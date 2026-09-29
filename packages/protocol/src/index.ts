@@ -617,6 +617,28 @@ export const UserPromptPartSchema = Type.Union([
     name: Type.String({ minLength: 1, maxLength: 256 }),
     kind: Type.Union([Type.Literal("file"), Type.Literal("directory")]),
   }),
+  /**
+   * 画布色彩面板上点选的令牌。
+   *
+   * **这条一直在漏**:渲染层从 `InlineSkillComposer` 把这种 part 直接交给 `promptSession`,而边界
+   * 校验里没有它 —— 于是"挂一枚色块再发送"会以 `Invalid request payload` 结束。schema 太窄和太宽
+   * 一样是 bug,只是它报错的位置离原因更远。
+   */
+  Type.Object({
+    type: Type.Literal("theme-token-reference"),
+    path: Type.String({ minLength: 1, maxLength: 1_024 }),
+    name: Type.String({ minLength: 1, maxLength: 256 }),
+    value: Type.String({ minLength: 1, maxLength: 256 }),
+  }),
+  /**
+   * 用户在新建成页挑的内置风格。
+   *
+   * 只带 id:令牌与规范由 `design_create({ styleId })` 落进设计包(§14.22),这里不做落盘。
+   */
+  Type.Object({
+    type: Type.Literal("design-style"),
+    styleId: Type.String({ minLength: 1, maxLength: 128 }),
+  }),
   Type.Object({
     type: Type.Literal("artifact-reference"),
     artifactId: Type.String({ minLength: 1, maxLength: 128 }),
@@ -2898,27 +2920,6 @@ export const DesignStyleDetailSchema = Type.Object(
   { additionalProperties: false },
 );
 
-/**
- * 把一套内置风格的资料落进工作区。
- *
- * `root` 是**工作区根**,不是设计包 —— 挑风格的时候包还不存在(包由 agent 的 `design_create` 建)。
- * 落进去的是参考资料(theme.css + DESIGN.md),不是一份设计。
- */
-export const InstallDesignStyleResourcesRequestSchema = Type.Object(
-  { root: Type.String({ minLength: 1 }), styleId: Type.String({ minLength: 1 }) },
-  { additionalProperties: false },
-);
-
-export const InstallDesignStyleResourcesSchema = Type.Object(
-  {
-    /** 落点,**工作区相对**路径 —— 渲染层照它拼引用。 */
-    dir: Type.String({ minLength: 1 }),
-    /** 实际写下的文件名。 */
-    files: Type.Array(Type.String({ minLength: 1 })),
-  },
-  { additionalProperties: false },
-);
-
 export const CreateDesignRequestSchema = Type.Object(
   {
     root: Type.String({ minLength: 1 }),
@@ -2997,18 +2998,34 @@ export type ApplyDesignStyleResultDto = Static<typeof ApplyDesignStyleResultSche
 /**
  * 导出合成图的一次保存。
  *
- * 合成发生在**渲染层**(canvas 在那儿),所以字节是**渲染层 → 主进程**的方向 —— 这正是
- * 需要校验的那一侧。标量用 schema,**字节用一个 O(1) 的守卫**:逐字节 walk 多 MB 的数组是
- * 白花成本,而 `instanceof` + 上限给的是同样的保证(与 `DesignRasterResultDto` 刻意没有
- * schema 是同一条理由,只是方向相反)。
+ * 合成发生在**渲染层**(canvas 在那儿),所以字节是**渲染层 → 主进程**的方向。
+ *
+ * ## 为什么载荷是 base64 字符串,而不是 `Uint8Array`
+ *
+ * 这条通道要过 `contextBridge`(渲染层拿到的是 `window.wordless`,见 preload),而**类型化
+ * 数组在这道桥上不可靠**:它可能被序列化成一个普通对象,也可能在调用点直接抛"无法克隆" ——
+ * 两种表现在这里都是"点保存就失败"。
+ *
+ * 这不是猜的:这个 app 里所有过桥的字节都是 base64 字符串(`MediaInlineImage.data`,以及
+ * preload 里把 `ArrayBuffer` 转成 `btoa(binary)` 的那处)。这里跟着同一套走。
  */
 export const DESIGN_IMAGE_PAYLOAD_LIMIT = 64 * 1024 * 1024;
+
+/** base64 形式的上限:原始字节上限按 4/3 换算,再加补齐的余量。 */
+export const DESIGN_IMAGE_BASE64_MAX_LENGTH = Math.ceil((DESIGN_IMAGE_PAYLOAD_LIMIT * 4) / 3) + 4;
 
 export const DesignSaveImageRequestSchema = Type.Object(
   {
     /** 建议的文件名(不含扩展名)。真正的落点由保存对话框决定。 */
     fileName: Type.String({ minLength: 1, maxLength: 120 }),
     extension: Type.Union([Type.Literal("png"), Type.Literal("pdf")]),
+    /**
+     * 图本身,**base64**(没有 `data:` 前缀)。理由见上面的载荷说明。
+     *
+     * 上限放在 schema 里(string 的 `maxLength`)是为了让"太大"在**进 handler 之前**就被拒:
+     * base64 大约膨胀 1/3,所以按 4/3 换算。
+     */
+    data: Type.String({ minLength: 1, maxLength: DESIGN_IMAGE_BASE64_MAX_LENGTH }),
   },
   { additionalProperties: false },
 );
@@ -3037,11 +3054,28 @@ export const DesignSaveImageResultSchema = Type.Union([
   ),
 ]);
 
-export function isDesignImageBytes(value: unknown): value is Uint8Array<ArrayBuffer> {
-  return value instanceof Uint8Array && value.byteLength > 0 && value.byteLength <= DESIGN_IMAGE_PAYLOAD_LIMIT;
+/**
+ * base64 载荷的守卫。仍然是 O(1):逐字符 walk 几 MB 的字符串是白花成本,而"非空 + 有上限"
+ * 给的是同样的保证 —— 内容本身合不合法由解码那边兜底(解出来是一堆垃圾的话,写出来的文件
+ * 打不开,那不是这一层能判的)。
+ *
+ * 上限按**原始字节**算,所以这里先换算回 base64 的长度(`4/3` 加上补齐的余量)。
+ */
+export function isDesignImagePayload(value: unknown): value is string {
+  return (
+    typeof value === "string" &&
+    value.length > 0 &&
+    value.length <= DESIGN_IMAGE_BASE64_MAX_LENGTH
+  );
 }
 
+export const DesignCopyImageRequestSchema = Type.Object(
+  { data: Type.String({ minLength: 1, maxLength: DESIGN_IMAGE_BASE64_MAX_LENGTH }) },
+  { additionalProperties: false },
+);
+
 export type DesignSaveImageRequestDto = Static<typeof DesignSaveImageRequestSchema>;
+export type DesignCopyImageRequestDto = Static<typeof DesignCopyImageRequestSchema>;
 export type DesignSaveImageResultDto = Static<typeof DesignSaveImageResultSchema>;
 export type DesignExportRequestDto = Static<typeof DesignExportRequestSchema>;
 export type DesignExportResultDto = Static<typeof DesignExportResultSchema>;
@@ -3051,8 +3085,6 @@ export type DesignLiveBoundsDto = Static<typeof DesignLiveBoundsSchema>;
 export type DesignStyleSummaryDto = Static<typeof DesignStyleSummarySchema>;
 export type DesignStyleDetailRequestDto = Static<typeof DesignStyleDetailRequestSchema>;
 export type DesignStyleDetailDto = Static<typeof DesignStyleDetailSchema>;
-export type InstallDesignStyleResourcesRequestDto = Static<typeof InstallDesignStyleResourcesRequestSchema>;
-export type InstallDesignStyleResourcesDto = Static<typeof InstallDesignStyleResourcesSchema>;
 export type CreateDesignRequestDto = Static<typeof CreateDesignRequestSchema>;
 export type DesignLiveFrameRequestDto = Static<typeof DesignLiveFrameRequestSchema>;
 export type DesignRasterRequestDto = Static<typeof DesignRasterRequestSchema>;

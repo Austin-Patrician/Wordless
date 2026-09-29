@@ -64,6 +64,8 @@ export function renderMockup(
   options: MockupOptions,
   layout: MockupLayout,
   scale: number,
+  /** 水印左边的品牌标。没有就只画字 —— 版面照旧占着那个位置。 */
+  brandLogo: CanvasImageSource | null = null,
 ): void {
   g.save();
   g.clearRect(0, 0, layout.width * scale, layout.height * scale);
@@ -74,7 +76,7 @@ export function renderMockup(
     g.fillRect(0, 0, layout.width, layout.height);
   }
 
-  if (layout.brand && options.brand) drawBrand(g, layout.brand, mockupBrandInk(options));
+  if (layout.brand && options.brand) drawBrand(g, layout.brand, brandLogo, mockupBrandInk(options));
 
   const border = Math.max(0, options.borderWidth);
   shots.forEach((shot, index) => {
@@ -117,12 +119,31 @@ export function renderMockup(
   g.restore();
 }
 
+/**
+ * 水印:左边品牌标 + 右边两行字。
+ *
+ * **左边那个方块是版面早就留好的**(`layoutMockup` 的 `brand.logo` 与文本的起始位置都按它算),
+ * 但这里一度只画字 —— 于是文字看着像"缩进了",而那个位置该有的标是空的。这一条不是配色问题,
+ * 是**版面与绘制不一致**:留了位却什么都没画。
+ *
+ * 牌子图来自应用自己的品牌资源(见 `mockup-logo.ts`),裁成圆角方块。没有图时只画字:那不是
+ * 错误状态,是"还没加载好" —— 版面仍然占着那个位置,所以两行字不会跟着跳。
+ */
 function drawBrand(
   g: CanvasRenderingContext2D,
   brand: NonNullable<MockupLayout["brand"]>,
+  logo: CanvasImageSource | null,
   ink: { primary: string; secondary: string },
 ): void {
   const size = brand.logo;
+  if (logo !== null) {
+    g.save();
+    roundRectPath(g, { x: brand.x, y: brand.y, width: size, height: size }, size * 0.24);
+    g.clip();
+    g.drawImage(logo, brand.x, brand.y, size, size);
+    g.restore();
+  }
+
   const textX = brand.x + size * 1.24;
   g.save();
   g.textBaseline = "alphabetic";
@@ -141,6 +162,7 @@ export function renderMockupToCanvas(
   options: MockupOptions,
   /** 这一页留几格;末页不满时靠它保住与其他页一致的宽度,见 `mockup-layout.ts`。 */
   slots: number = shots.length,
+  brandLogo: CanvasImageSource | null = null,
 ): HTMLCanvasElement {
   const layout = layoutMockup(shots, options, slots);
   const scale = mockupRenderScale(layout, options);
@@ -150,7 +172,7 @@ export function renderMockupToCanvas(
   canvas.height = size.height;
   const g = canvas.getContext("2d");
   if (!g) throw new Error("2D canvas context unavailable");
-  renderMockup(g, shots, options, layout, scale);
+  renderMockup(g, shots, options, layout, scale, brandLogo);
   return canvas;
 }
 
@@ -219,6 +241,21 @@ export async function mockupCanvasToJpegBytes(canvas: HTMLCanvasElement): Promis
   const blob = await new Promise<Blob | null>((resolve) => flat.toBlob(resolve, "image/jpeg", 0.92));
   if (blob === null) throw new Error("Canvas encoding failed");
   return new Uint8Array(await blob.arrayBuffer()) as Uint8Array<ArrayBuffer>;
+}
+
+/**
+ * 字节 → base64。
+ *
+ * 过 `contextBridge` 的字节一律用 base64 字符串(`DesignSaveImageRequestSchema` 里有全部理由)。
+ * 分块是因为 `String.fromCharCode(...bytes)` 在几 MB 上会**爆掉调用栈** —— 而导出图正好是几 MB。
+ */
+export function bytesToBase64(bytes: Uint8Array): string {
+  const CHUNK = 0x8000;
+  let binary = "";
+  for (let offset = 0; offset < bytes.length; offset += CHUNK) {
+    binary += String.fromCharCode(...bytes.subarray(offset, offset + CHUNK));
+  }
+  return btoa(binary);
 }
 
 /** PNG 直接取,不需要压白 —— alpha 是 PNG 的一部分。 */

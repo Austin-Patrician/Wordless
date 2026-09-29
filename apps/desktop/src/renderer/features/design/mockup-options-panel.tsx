@@ -33,7 +33,9 @@ export function MockupOptionsPanel({
 
   return (
     <div
-      className="pointer-events-auto flex max-h-full w-60 flex-col gap-3.5 overflow-y-auto rounded-xl border border-border bg-popover/95 p-3 shadow-lg backdrop-blur-md"
+      // `bg-popover` 在 Wordless 的令牌表里**不存在**(见 `packages/ui-kit/src/styles/tokens.css`)
+      // —— 它生成的是无效声明,于是面板是透明的,底下黑底的预览图会透上来。
+      className="pointer-events-auto flex max-h-full w-60 flex-col gap-3.5 overflow-y-auto rounded-xl border border-border bg-card/95 p-3 shadow-lg backdrop-blur-md"
       // 卡片浮在预览台之上:指针事件漏下去会变成拖画布。
       onPointerDown={(event) => event.stopPropagation()}
       onWheel={(event) => event.stopPropagation()}
@@ -108,7 +110,7 @@ export function MockupOptionsPanel({
         <div className="flex gap-1">
           {([1, 2] as const).map((value) => (
             <button
-              className={`flex-1 rounded-lg px-2 py-1.5 text-[11px] font-medium transition-colors ${
+              className={`flex-1 rounded-md px-2 py-1 text-[11px] font-medium transition-colors ${
                 options.scale === value
                   ? "bg-[#252624] text-white dark:bg-[#c4eb58] dark:text-[#202225]"
                   : "text-muted-foreground hover:bg-muted"
@@ -128,7 +130,7 @@ export function MockupOptionsPanel({
         <div className="flex gap-1">
           {MOCKUP_FRAMES_PER_PAGE.map((value: MockupFramesPerPage) => (
             <button
-              className={`flex-1 rounded-lg px-2 py-1.5 text-[11px] font-medium transition-colors ${
+              className={`flex-1 rounded-md px-2 py-1 text-[11px] font-medium transition-colors ${
                 options.perPage === value
                   ? "bg-[#252624] text-white dark:bg-[#c4eb58] dark:text-[#202225]"
                   : "text-muted-foreground hover:bg-muted"

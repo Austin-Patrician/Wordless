@@ -1,7 +1,7 @@
 import { InMemorySessionStorage, Session } from "@wordless/agent";
 import { NodeExecutionEnv } from "@wordless/agent/node";
 import { createModels, fauxAssistantMessage, fauxProvider, type FauxResponseFactory } from "@wordless/ai";
-import { formatPromptArtifactReferencesForModel, formatPromptThemeTokenReferencesForModel, formatPromptWithSkillReferences, formatPromptWorkspaceReferencesForModel, projectUserMessageContent, selectedSkillIdsFromPromptParts, stripPromptSkillReferences, type AgentDriverEvent, type AgentDriverSessionContext, type AgentRuntimeSkill } from "@wordless/agent-driver-sdk";
+import { formatPromptArtifactReferencesForModel, formatPromptDesignStyleForModel, formatPromptThemeTokenReferencesForModel, formatPromptWithSkillReferences, formatPromptWorkspaceReferencesForModel, projectUserMessageContent, selectedSkillIdsFromPromptParts, stripPromptSkillReferences, type AgentDriverEvent, type AgentDriverSessionContext, type AgentRuntimeSkill } from "@wordless/agent-driver-sdk";
 import type { SessionRecord } from "@wordless/domain";
 import { describe, expect, it } from "vitest";
 import { createAgentHarnessDriver } from "../src/index.ts";
@@ -271,5 +271,41 @@ describe("selected skills", () => {
     await driverSession.execute({ type: "prompt", text: "Continue without the skill." });
 
     expect(systemPrompts[1]).not.toContain("Use the release note structure from this skill.");
+  });
+});
+
+/**
+ * 风格标记:用户在新建成页挑的那一套,在提示词里长什么样(§14.22)。
+ *
+ * 这条管道与 theme-token 同构 —— 送出去的是编码过的 JSON(给程序读的),模型读到的必须是一段
+ * 说人话的文字,而消息里要还原成一枚 chip。三者都错得很安静:模型只会"没看到风格",然后照着
+ * 默认审美一路写下去。
+ */
+describe("design-style 标记", () => {
+  it("编码进提示词,而且对模型是可执行的一句话", () => {
+    const prompt = formatPromptWithSkillReferences([{ type: "design-style", styleId: "precise-dark" }]);
+    // 出去的是编码过的 JSON —— 它在 journal 里,也在 IPC 上。
+    expect(prompt).toContain("<wordless-design-style>");
+
+    const modelContext = formatPromptDesignStyleForModel(prompt);
+    expect(modelContext).toContain("<wordless_design_style>");
+    expect(modelContext).toContain('styleId="precise-dark"');
+    // 只给 id 不够:这条引用不带文件,不写"该怎么做"模型只会看到一串 id。
+    expect(modelContext).toContain("design_create");
+    // 编码过的 JSON 不能原样进上下文。
+    expect(modelContext).not.toContain("%7B");
+    expect(modelContext).not.toContain("<wordless-design-style>");
+  });
+
+  it("消息里还原成一枚 chip,而且不冻结语言相关的文案", () => {
+    const prompt = formatPromptWithSkillReferences([{ type: "design-style", styleId: "linear" }]);
+    const blocks = projectUserMessageContent(prompt);
+    // 只带 id:显示名按当前语言现取,冻结了的话切语言之后老消息会停在旧语言里。
+    expect(blocks).toEqual([{ type: "design-style", id: "linear:0", styleId: "linear" }]);
+  });
+
+  it("认不出来的编码不会吞掉消息 —— 原样留着", () => {
+    const blocks = projectUserMessageContent("<wordless-design-style>not-json</wordless-design-style>");
+    expect(blocks.every((block) => block.type === "text")).toBe(true);
   });
 });

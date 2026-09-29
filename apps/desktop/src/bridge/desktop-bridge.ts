@@ -106,8 +106,6 @@ import type {
   DesignLiveFrameRequestDto,
   DesignStyleDetailDto,
   DesignStyleDetailRequestDto,
-  InstallDesignStyleResourcesDto,
-  InstallDesignStyleResourcesRequestDto,
   DesignStyleSummaryDto,
   DesignMoveFramesRequestDto,
   DesignRasterRequestDto,
@@ -134,7 +132,7 @@ import type {
 } from "@wordless/protocol";
 import type { ToolApprovalMode } from "@wordless/domain";
 
-export const DESKTOP_BRIDGE_VERSION = 54;
+export const DESKTOP_BRIDGE_VERSION = 55;
 
 export interface DesktopBridge {
   readonly version: typeof DESKTOP_BRIDGE_VERSION;
@@ -397,13 +395,16 @@ export interface DesktopBridge {
    *
    * 落的是**资料**不是设计包:包由 agent 的 `design_create` 建。
    */
-  installDesignStyleResources(input: InstallDesignStyleResourcesRequestDto): Promise<InstallDesignStyleResourcesDto | null>;
   /** Creates a design package with the chosen style applied from its first frame. */
   createDesign(input: CreateDesignRequestDto): Promise<CreateDesignResultDto | null>;
   /** 存一张合成图。取消返回 `{ ok: false, reason: "cancelled" }` —— 那不是错误。 */
-  saveDesignImage(input: DesignSaveImageRequestDto, bytes: Uint8Array<ArrayBuffer>): Promise<DesignSaveImageResultDto>;
+  /**
+   * 保存一张合成图。图在 `input.data` 里,是 **base64** —— 载荷为什么要编码见 DTO 的说明
+   * (`contextBridge` 上类型化数组不可靠)。
+   */
+  saveDesignImage(input: DesignSaveImageRequestDto): Promise<DesignSaveImageResultDto>;
   /** 把一张合成图放进剪贴板。剪贴板被占用时返回 false。 */
-  copyDesignImage(bytes: Uint8Array<ArrayBuffer>): Promise<boolean>;
+  copyDesignImage(input: { data: string }): Promise<boolean>;
   deleteWebhookEndpoint(id: string): Promise<void>;
   /** Sends through a stored endpoint; the text is supplied by the renderer. */
   testWebhookEndpoint(id: string, message: WebhookMessage): Promise<WebhookSendResult>;
@@ -822,7 +823,6 @@ export const requiredMethods: Array<Exclude<keyof DesktopBridge, "version">> = [
     "setDesignLiveFrame",
     "listDesignStyles",
     "getDesignStyleDetail",
-    "installDesignStyleResources",
     "createDesign",
     "saveDesignImage",
     "copyDesignImage",

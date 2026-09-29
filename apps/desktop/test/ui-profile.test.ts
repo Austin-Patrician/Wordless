@@ -48,12 +48,33 @@ test("系统提示保留那几条会让产出质量的硬约束", () => {
 });
 
 test("声明的工具都存在,而且都要么是通用的、要么由设计工具面提供", () => {
-  // `design_style_*` 与 `design_export` **刻意不在这里**:声明了却跑不起来的工具比没有更糟,
-  // 模型会去调它然后拿到一个失败。
+  // 与 `createDesignTools` 的实际产出逐项对齐 —— 声明了却跑不起来的工具比没有更糟,模型会去调
+  // 它然后拿到一个失败(§14.5)。`design_frames` / `design_export` **仍然刻意不在这里**。
   const designTools = uiProfile.activeToolNames.filter((name) => name.startsWith("design_"));
-  assert.deepEqual(designTools, ["design_create", "design_status", "design_inspect", "design_screenshot"]);
+  assert.deepEqual(designTools, [
+    "design_create",
+    "design_status",
+    "design_inspect",
+    "design_screenshot",
+    "design_style_list",
+    "design_style_apply",
+  ]);
 
   // 需要视觉的模型才能看像素 —— 这是这个画像成立的前提。
   assert.equal(uiProfile.modelRequirements.requiresVision, true);
   assert.equal(uiProfile.workbenchId, "ui-preview");
+});
+
+test("风格那条约定改成标记 → 工具,不再是让 agent 抄文件(§14.22)", () => {
+  const prompt = uiProfile.systemPrompt;
+
+  // 从前是"读 design-resources/<id>/ 里的 DESIGN.md,再把 theme.css 抄进设计包" —— 那条约定
+  // 连带要求先有工作区才能落盘,而且拷对与否全看模型。
+  assert.equal(prompt.includes("design-resources"), false);
+  // 现在标记只带 id,落盘由 design_create 的 styleId 一步做完。
+  assert.match(prompt, /<wordless_design_style>/);
+  assert.match(prompt, /pass its `styleId` to `design_create`/);
+  assert.match(prompt, /Do not write `theme\.css` or `DESIGN\.md` yourself/);
+  // 没人挑风格时**问**用户,而不是替他挑一套。
+  assert.match(prompt, /request_user_input/);
 });

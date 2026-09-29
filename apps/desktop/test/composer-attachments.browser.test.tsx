@@ -1,4 +1,6 @@
 import { act, createRef } from "react";
+import { Value } from "typebox/value";
+import { UserPromptPartSchema } from "@wordless/protocol";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { InlineComposerAttachment, InlineSkillComposerHandle } from "../src/renderer/features/thread/InlineSkillComposer.tsx";
@@ -166,5 +168,35 @@ describe("输入框附件", () => {
 
     expect(lastParts()).toContainEqual(expect.objectContaining({ type: "theme-token-reference" }));
     expect(lastParts()).toContainEqual(expect.objectContaining({ type: "workspace-reference" }));
+  });
+});
+
+/**
+ * 边界契约:**渲染层产出的每一种 part 都必须过得了 IPC 的校验。**
+ *
+ * 真事故(两次,同一天):`theme-token-reference` 与 `design-style` 都曾经只加进了 domain 类型、
+ * 没加进 `protocol` 的 `UserPromptPartSchema`(那个 union 是 IPC 的守门人)。表现是发送时一句
+ * `Invalid request payload` —— 报错的地方离原因很远,而类型系统看不见:`Value.Check` 是运行期的。
+ *
+ * 所以这里把形状逐个钉住。加一种新 part 时忘了改 schema,这条会红;而 schema 里那几个上界是故意
+ * 保守的(路径 1024 / 文本 100k),真实形状远小于它们。
+ */
+describe("输入框与新建页交给 IPC 的 part 形状", () => {
+  const shapes = [
+    { type: "text", text: "把这一页改紧凑一点" },
+    { type: "workspace-reference", path: "meadow.wdesign/frames/index.html", name: "index.html", kind: "file" },
+    { type: "theme-token-reference", path: "meadow.wdesign/theme.css", name: "--color-primary", value: "#4f46e5" },
+    // 新建页挑的风格:由 `WelcomeView` 直接放进首条消息,不经过输入框。
+    { type: "design-style", styleId: "precise-dark" },
+  ];
+
+  it("每一种都过 schema", () => {
+    for (const shape of shapes) expect([shape.type, Value.Check(UserPromptPartSchema, shape)]).toEqual([shape.type, true]);
+  });
+
+  it("认不出来的类型与缺字段的仍然被拒 —— 边界不是摆设", () => {
+    expect(Value.Check(UserPromptPartSchema, { type: "design-style" })).toBe(false);
+    expect(Value.Check(UserPromptPartSchema, { type: "design-style", styleId: "" })).toBe(false);
+    expect(Value.Check(UserPromptPartSchema, { type: "nope" })).toBe(false);
   });
 });

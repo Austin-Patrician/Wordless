@@ -1,11 +1,22 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { createDesignHandlers } from "../src/main/design/handlers.ts";
-import type { DesignExporter } from "../src/main/design/design-exporter.ts";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
+import {
+  type DesignExporter,
+  NodeDesignExporter,
+  parentDirectoryToCreate,
+} from "../src/main/design/design-exporter.ts";
 import { DesignStore } from "../src/main/design/design-store.ts";
 import { manifestPathOf } from "../src/main/design/manifest.ts";
 import { rasterCaptureParams } from "../src/main/design/raster-port.ts";
-import { DESIGN_IMAGE_PAYLOAD_LIMIT, isDesignImageBytes } from "@wordless/protocol";
+import {
+  DESIGN_IMAGE_BASE64_MAX_LENGTH,
+  DESIGN_IMAGE_PAYLOAD_LIMIT,
+  isDesignImagePayload,
+} from "@wordless/protocol";
 import { FakeDesignFs } from "./design-test-fs.ts";
 
 /**
@@ -323,18 +334,106 @@ test("没有剪贴板能力时返回 false,而不是抛", async () => {
   assert.equal(await handlers.copyMockupImage({ bytes: new Uint8Array([1]) }), false);
 });
 
-test("字节守卫:非空 Uint8Array 通过,别的都拒", () => {
-  // 这一层是"渲染层 → 主进程"的方向,所以必须查。但**不逐字节 walk**:
-  // `instanceof` + 上限是 O(1) 的,给的是同样的保证。
-  assert.equal(isDesignImageBytes(new Uint8Array([1])), true);
-  assert.equal(isDesignImageBytes(new Uint8Array(0)), false, "空数组不是一张图");
-  assert.equal(isDesignImageBytes([1, 2, 3]), false, "普通数组不是字节");
-  assert.equal(isDesignImageBytes(null), false);
-  assert.equal(isDesignImageBytes("bytes"), false);
-  assert.equal(isDesignImageBytes({ byteLength: 3 }), false, "长得像不算");
-  assert.equal(
-    isDesignImageBytes(new Uint8Array(DESIGN_IMAGE_PAYLOAD_LIMIT + 1)),
-    false,
-    "超过上限的不是我们产出的东西",
+test("载荷守卫:非空 base64 字符串通过,别的都拒", () => {
+  /*
+    载荷是 base64 字符串,不是 `Uint8Array` —— 这条通道过 `contextBridge`,而类型化数组在
+    桥上不可靠。曾经的实现把 `Uint8Array` 当独立实参递过来,于是**每次保存都失败**。
+  */
+  assert.equal(isDesignImagePayload("aGVsbG8="), true);
+  assert.equal(isDesignImagePayload(""), false, "空字符串不是一张图");
+  assert.equal(isDesignImagePayload(new Uint8Array([1])), false, "类型化数组过不了这道桥,不该被接受");
+  assert.equal(isDesignImagePayload(null), false);
+  assert.equal(isDesignImagePayload({ byteLength: 3 }), false, "长得像不算");
+  assert.equal(isDesignImagePayload("x".repeat(DESIGN_IMAGE_BASE64_MAX_LENGTH + 1)), false, "超过上限");
+});
+
+test("盘符根下的落点不会去「创建盘符根」—— 那正是 EPERM 的来源", async () => {
+  /*
+    用户报的错是 `EPERM: operation not permitted, mkdir 'E:\'`:他把文件保存在盘符根下,而保存前
+    我们无条件递归建了一遍父目录 —— 于是去"创建"盘符根,Windows 直接拒。
+
+    这条在真机上才复现(测试跑在临时目录里,碰不到盘符根),所以这里让假 fs **照实地对盘符根
+    抛 EPERM**:只要实现又去建它,这条就红。
+  */
+  const root = path.parse(process.cwd()).root;
+  const created: string[] = [];
+  const exporter = new NodeDesignExporter(
+    async () => root,
+    async () => null,
+    {
+      mkdir: async (directory: string) => {
+        if (directory === root) throw new Error("EPERM: operation not permitted, mkdir");
+        created.push(directory);
+      },
+      writeFile: async () => undefined,
+      copyFile: async () => undefined,
+    },
   );
+
+  await assert.doesNotReject(exporter.writeFile(path.join(root, "shot.png"), new Uint8Array([1])));
+  assert.deepEqual(created, [], "盘符根一个目录都不该建");
+
+  // 而该建的照建:根下面那一层是真需要创建的东西。
+  await exporter.writeFile(path.join(root, "out", "shot.png"), new Uint8Array([1]));
+  assert.deepEqual(created, [path.join(root, "out")]);
+
+  // 复制那条走同一套判断。
+  await exporter.copyFile(path.join(root, "shot.png"), path.join(root, "copy.png"));
+  assert.deepEqual(created, [path.join(root, "out")], "复制到盘符根同样不建目录");
+});
+
+test("要创建的父目录:盘符根和裸文件名都不建", () => {
+  /*
+    用户可以把文件保存在**盘符根下**,那是合法选择 —— 而当时的实现无条件
+    `mkdir(dirname(target), { recursive: true })`,于是盘符根下的落点会去"创建盘符根"。
+    Windows 上对盘符根做 mkdir 直接 EPERM,表现就是**每次保存都失败**,而报错里的路径跟
+    用户选的地方看起来都不像。根目录本来就在那儿,建它是多余的、而且会报错的调用。
+  */
+  const root = path.parse(process.cwd()).root;
+
+  assert.equal(parentDirectoryToCreate(path.join(root, "shot.png")), null, "盘符根不用建");
+  assert.equal(parentDirectoryToCreate("shot.png"), null, "裸文件名没有目录要建");
+  assert.equal(parentDirectoryToCreate(path.join(root, "out", "shot.png")), path.join(root, "out"));
+  assert.equal(
+    parentDirectoryToCreate(path.join(root, "out", "deep", "shot.png")),
+    path.join(root, "out", "deep"),
+  );
+});
+
+test("写文件:该建的建,不该建的不抛", async () => {
+  // 纯判断之外真写一次 —— 这条路径的失败表现是"点保存就报错",值得一次真的落地。
+  const directory = await mkdtemp(path.join(tmpdir(), "wordless-export-"));
+  try {
+    const exporter = new NodeDesignExporter(
+      async () => directory,
+      async () => null,
+    );
+
+    // 需要建的:两层的目录先不存在。
+    const nested = path.join(directory, "a", "b", "shot.png");
+    await exporter.writeFile(nested, new Uint8Array([1, 2, 3]));
+    assert.deepEqual([...await readFile(nested)], [1, 2, 3]);
+
+    // 不需要建的:落在已经存在的目录里。
+    const flat = path.join(directory, "shot.png");
+    await exporter.writeFile(flat, new Uint8Array([4]));
+    assert.deepEqual([...await readFile(flat)], [4]);
+  } finally {
+    await rm(directory, { force: true, recursive: true });
+  }
+});
+
+test("两端编解码对得上:渲染层用 btoa 编,主进程用 Buffer 解", () => {
+  // 一个字节都不能漂 —— 漂一下就是一坨写出去打不开的文件。
+  const bytes = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x00, 0xff]);
+  const encoded = Buffer.from(bytes).toString("base64");
+
+  assert.equal(isDesignImagePayload(encoded), true);
+  assert.deepEqual([...Buffer.from(encoded, "base64")], [...bytes]);
+});
+
+test("base64 上限与字节上限是同一件事 —— 换算错了会放进来一个解码就爆的载荷", () => {
+  // 4/3 加补齐余量:比它短的一定在字节上限之内,比它长的**可能**超。
+  assert.ok(DESIGN_IMAGE_BASE64_MAX_LENGTH >= Math.ceil((DESIGN_IMAGE_PAYLOAD_LIMIT * 4) / 3));
+  assert.ok(DESIGN_IMAGE_BASE64_MAX_LENGTH < (DESIGN_IMAGE_PAYLOAD_LIMIT * 4) / 3 + 16);
 });

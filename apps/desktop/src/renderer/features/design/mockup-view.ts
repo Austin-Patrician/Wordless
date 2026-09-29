@@ -19,6 +19,26 @@ export interface MockupPageBox extends MockupSize {
   top: number;
 }
 
+/**
+ * 缩放按钮跳的档位。
+ *
+ * 离散档位而不是"每次 ×1.25":连续乘法会让缩放比停在 128%、160% 这类数字上,而用户想回到
+ * 100% 就得来回点;档位也保证"放大再缩小"能原路回到起点。
+ */
+export const MOCKUP_ZOOM_STEPS: readonly number[] = [0.25, 0.5, 0.75, 1, 1.25, 1.5, 2, 3];
+
+/**
+ * 上一档 / 下一档。已经在两端时**原样返回**(而不是夹到端点):按钮于是可以不靠外部状态判断
+ * 自己该不该置灰,而"再点也没用"这件事在视觉上表现为数字不动,比按钮突然变灰更好懂。
+ */
+export function stepZoom(zoom: number, direction: 1 | -1): number {
+  if (!Number.isFinite(zoom)) return 1;
+  // 容差:档位值是精确的,而从档位缩放过(滚轮)之后 zoom 只近似等于档位。
+  const epsilon = 1e-6;
+  if (direction === 1) return MOCKUP_ZOOM_STEPS.find((step) => step > zoom + epsilon) ?? zoom;
+  return [...MOCKUP_ZOOM_STEPS].reverse().find((step) => step < zoom - epsilon) ?? zoom;
+}
+
 /** 保持缩放比,把内容重新摆到容器中央(「实际大小」按钮用)。 */
 export function centerMockupViewport(world: MockupSize, viewport: MockupSize, zoom: number): { x: number; y: number; zoom: number } {
   return {

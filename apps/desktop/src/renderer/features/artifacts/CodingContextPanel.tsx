@@ -1,6 +1,6 @@
 import { Button, Dialog, DialogContent, DialogTitle, DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@wordless/ui-kit";
 import { ArrowLeft, ChevronDown, FilePlus2, FolderOpen, MoreHorizontal, Save, Trash2 } from "lucide-react";
-import { useCallback, useEffect, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import type { SessionArtifactDiff, SessionArtifactFile, SessionContextSnapshot, SessionWorkspaceTextFile, WorkspaceFileEntry } from "@wordless/protocol";
 import { FileTypeIcon } from "../../shared/FileTypeIcon";
 import { usePreferences } from "../../shared/preferences";
@@ -57,15 +57,38 @@ export function CodingContextPanel({ fileChangeSelection, onAttachFile, onFileCh
   const [diffPreview, setDiffPreview] = useState<SessionArtifactDiff | null>(null);
   const [artifactsExpanded, setArtifactsExpanded] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const refreshTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const refreshRequest = useRef(0);
 
   const refreshContext = useCallback(async () => {
+    const request = ++refreshRequest.current;
     try {
-      setContext(await client.getSessionContext(sessionId));
+      const next = await client.getSessionContext(sessionId);
+      if (request !== refreshRequest.current) return;
+      setContext(next);
+      setPreview((current) => {
+        if (!current) return current;
+        const wasTracked = context.changes.some((change) => change.path === current.path)
+          || context.artifacts.some((artifact) => artifact.path === current.path);
+        if (!wasTracked) return current;
+        const isCurrent = next.changes.some((change) => change.path === current.path)
+          || next.artifacts.some((artifact) => artifact.path === current.path);
+        return isCurrent ? current : null;
+      });
       setError(null);
     } catch (cause) {
+      if (request !== refreshRequest.current) return;
       setError(cause instanceof Error ? cause.message : String(cause));
     }
   }, [client, sessionId]);
+
+  const scheduleContextRefresh = useCallback(() => {
+    if (refreshTimer.current !== null) return;
+    refreshTimer.current = setTimeout(() => {
+      refreshTimer.current = null;
+      void refreshContext();
+    }, 75);
+  }, [refreshContext]);
 
   const loadDirectory = useCallback(async (path: string) => {
     try {
@@ -90,12 +113,18 @@ export function CodingContextPanel({ fileChangeSelection, onAttachFile, onFileCh
     void client.getSessionSnapshot(sessionId).then((snapshot) => setIsRunning(snapshot.isRunning)).catch(() => {});
     const unsubscribe = client.subscribe((event) => {
       if (event.sessionId !== sessionId) return;
-      if (event.event.type === "tool.completed" || event.event.type === "session.idle") void refreshContext();
+       if (event.event.type === "tool.completed" || event.event.type === "session.idle") scheduleContextRefresh();
       if (event.event.type === "session.idle") setIsRunning(false);
       if (event.event.type === "message.started") setIsRunning(true);
     });
-    return unsubscribe;
-  }, [client, loadDirectory, refreshContext, sessionId]);
+    return () => {
+      unsubscribe();
+      if (refreshTimer.current !== null) {
+        clearTimeout(refreshTimer.current);
+        refreshTimer.current = null;
+      }
+    };
+  }, [client, loadDirectory, refreshContext, scheduleContextRefresh, sessionId]);
 
   useEffect(() => {
     if (!fileChangeSelection) return;

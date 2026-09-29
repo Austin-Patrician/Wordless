@@ -18,7 +18,6 @@ import {
   Plus,
   SwatchBook,
   Space,
-  StickyNote,
   StretchHorizontal,
   StretchVertical,
 } from "lucide-react";
@@ -89,15 +88,13 @@ export function DesignControlBar({
           onClick={() => onToolChange(tool === "frame" ? "select" : "frame")}
         />
         {/*
-          「备注」仍照实禁用:它是一整条通道(存储 + 图层 + 抽屉 + 锚点保鲜 + 工具 + handoff),
-          而这一轮不做它。禁用 + 标题写明原因,比一个点了没反应的按钮诚实
-          (§14.5:声明了却跑不起来的,比没有更糟)。
+          这里原来有一个**禁用的「备注」占位**(参考实现有备注通道,我们没有)。
+          去掉它,因为一个永远点不动、也没有说明的图标就是噪声 —— 用户的原话是"有个空白的菜单
+          留在那里不知道干嘛用的"。而备注这条通道已经**决定不做**(存储 + 图层 + 抽屉 + 锚点
+          保鲜 + 工具 + handoff 是一整条链),那么占位就没有"以后会亮"的那一天可等。
+
+          参考实现里这个位置是「备注显隐」开关 —— 真要做备注时,它连同那条通道一起回来。
         */}
-        <DockButton
-          disabled
-          icon={<StickyNote className="size-4" />}
-          label={`${t("designToolNotes")} · ${t("designToolComingSoon")}`}
-        />
         <DockButton
           active={stylesOpen}
           icon={<Palette className="size-4" />}
@@ -129,13 +126,22 @@ export function DesignControlBar({
  */
 export function DesignCanvasActions({
   busy,
-  onExport,
+  onDownloadMaterials,
+  onOpenMockup,
   onRefresh,
   refreshing,
 }: {
-  /** 导出中:两个按钮都禁用,避免连点出两批文件。 */
+  /** 下载素材中:按钮禁用,避免连点出两批文件。 */
   busy: boolean;
-  onExport: (what: "frames" | "assets") => void;
+  /**
+   * 「导出渲染图」= 打开**合成图弹窗**,不是直接落文件。
+   *
+   * 参考实现里它们也是分开的两件事:这个进弹窗(挑几帧、排版、选格式),「下载素材」直接
+   * 落文件(每帧一张原尺寸图 + 规范与素材文件)。而每帧的原尺寸图在「下载素材」里本来就有
+   * —— 它比只导图**只多不少** —— 所以这里换成弹窗不会少掉任何一个出口。
+   */
+  onOpenMockup: () => void;
+  onDownloadMaterials: () => void;
   /**
    * 手动刷新:让画布跟上磁盘。
    *
@@ -157,16 +163,15 @@ export function DesignCanvasActions({
         />
         <Divider />
         <DockButton
-          disabled={busy}
           icon={<ImageDown className="size-4" />}
-          label={busy ? t("designExportBusy") : t("designExportFrames")}
-          onClick={() => onExport("frames")}
+          label={t("mockupTitle")}
+          onClick={onOpenMockup}
         />
         <DockButton
           disabled={busy}
           icon={<FolderDown className="size-4" />}
-          label={t("designExportAssets")}
-          onClick={() => onExport("assets")}
+          label={busy ? t("designExportBusy") : t("designExportAssets")}
+          onClick={onDownloadMaterials}
         />
       </div>
     </Panel>

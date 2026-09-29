@@ -22,11 +22,12 @@ export type { DesignPort, LayoutFinding } from "./port.js";
  * > 阻塞问题才算完成
  *
  * 这里是它的前两步(`design_inspect` 与 `design_screenshot`)加上状态查询
- * (`design_status`)。"最多三轮"写进了画像的 systemPrompt,不在工具里强制 —— 那是一个
- * 工作方式的约束,不是接口的约束。
+ * (`design_status`)。"最多三轮"写进了画像的 systemPrompt,不在工具里强制 —— 那是一个工作
+ * 方式的约束,不是接口的约束。
  *
- * `design_style_*` 与 `design_export` **尚未实现**(见 docs/architecture/design-canvas.md 的
- * P6/P7),所以这里刻意不声明它们:声明了却跑不起来的工具比没有更糟。
+ * 风格那两条(`design_style_list` / `design_style_apply`)以及 `design_create` 的 `styleId`
+ * 参数是 §14.22 加的:用户挑的风格**不再先落到工作区再由 agent 抄一遍**,而是由宿主直接写进
+ * 设计包。`design_frames` 与 `design_export` 仍然没有 —— 声明了却跑不起来的工具比没有更糟。
  */
 
 type ToolDetails = Record<string, unknown>;
@@ -119,21 +120,41 @@ export function createDesignTools(port: DesignPort): AgentTool[] {
     name: "design_create",
     label: "Create a design package",
     description:
-      "Create a design package with one blank frame. Pass the frame size that matches what is being designed (a phone screen is 390×844, a laptop 1440×900) — it is only a fallback for frames that forget to declare their own size, but declaring it once here is what keeps that fallback honest.",
+      "Create a design package with one blank frame. Pass the frame size that matches what is being designed (a phone screen is 390×844, a laptop 1440×900) — it is only a fallback for frames that forget to declare their own size, but declaring it once here is what keeps that fallback honest. When the person picked a built-in style before starting, pass its `styleId` here: the tokens are written into the package as part of creation, so the first frame already has them.",
     parameters: Type.Object({
       name: Type.String({ description: "Design name, used for the directory name x.wdesign." }),
       title: Type.String({ description: "Title of the first frame, shown on the canvas." }),
       width: Type.Number({ minimum: 1, description: "Frame width in pixels." }),
       height: Type.Number({ minimum: 1, description: "Frame height in pixels." }),
+      styleId: Type.Optional(
+        Type.String({
+          description:
+            "Built-in style id, from design_style_list or from the person's pick in the first message. Unknown ids fall back to the default tokens.",
+        }),
+      ),
     }),
-    async execute(_toolCallId: string, input: { name: string; title: string; width: number; height: number }) {
+    async execute(
+      _toolCallId: string,
+      input: { name: string; title: string; width: number; height: number; styleId?: string },
+    ) {
       const created = await port.create({
         name: input.name,
         title: input.title,
         frameWidth: input.width,
         frameHeight: input.height,
+        ...(input.styleId === undefined ? {} : { styleId: input.styleId }),
       });
       if (created === null) return textResult("Could not create the design package.", { created: false });
+      /**
+       * 风格 id 认不出来时**要说出来**。
+       *
+       * 宿主那边是"解析不到就退回默认令牌,而不是拒绝建包" —— 那是对的(建包不该因为一个 id
+       * 拼错就失败),但代价是模型会以为风格已经生效了,然后照着默认令牌一路写下去。所以这里
+       * 拿库里的 id 核一遍,不匹配就说清楚,并把可用的 id 列出来。
+       */
+      const appliedStyleId = input.styleId ?? null;
+      const styleKnown =
+        appliedStyleId === null || (await port.listStyles()).some((style) => style.id === appliedStyleId);
       /**
        * **每一处路径都带目录,而且相对工作区根。**
        *
@@ -152,6 +173,17 @@ export function createDesignTools(port: DesignPort): AgentTool[] {
             ]),
         `Created ${created.path}.`,
         "",
+        ...(appliedStyleId === null
+          ? []
+          : styleKnown
+            ? [
+                `It starts from the \`${appliedStyleId}\` style: \`${dir}/theme.css\` and \`${dir}/DESIGN.md\` already hold that style's tokens and spec. Read them before writing any styling, and do not replace them.`,
+                "",
+              ]
+            : [
+                `Note: there is no style called \`${appliedStyleId}\`, so this package got the default tokens. Call design_style_list for the real ids, and design_style_apply to change it now (before writing frames).`,
+                "",
+              ]),
         `Every path below is relative to the workspace root, and \`${dir}\` is part of it:`,
         `- the manifest is \`${dir}/design.json\` — read it, never edit it`,
         `- the tokens are \`${dir}/theme.css\` — read this before writing any styling`,
@@ -237,7 +269,70 @@ export function createDesignTools(port: DesignPort): AgentTool[] {
     },
   });
 
-  return [status, create, inspect, screenshot];
+  /**
+   * 风格库列表。
+   *
+   * **不回正文**:一份 `theme.css` + `DESIGN.md` 是几 KB,29 套一起进上下文是纯浪费。它只回答
+   * "有哪几套、各是什么方向";真正落进设计包是 `design_style_apply` / `design_create(styleId)`
+   * 的事,宿主做。
+   */
+  const styleList = tool({
+    name: "design_style_list",
+    label: "List the built-in styles",
+    description:
+      "List the built-in design styles: id, name, and one line describing what it looks like. Use this when the person asked for a style but did not pick one — offer them a few with request_user_input instead of choosing by yourself. Pass a style id to design_create (or design_style_apply) to actually use it.",
+    parameters: Type.Object({}),
+    async execute() {
+      const styles = await port.listStyles();
+      if (styles.length === 0) return textResult("No built-in styles are available.", { styles: 0 });
+      return textResult(
+        [`${styles.length} built-in styles:`, ...styles.map((style) => `- ${style.id} — ${style.name}: ${style.tagline}`)].join("\n"),
+        { styles: styles.length },
+      );
+    },
+  });
+
+  /**
+   * 把一套风格应用到**已有**设计上。
+   *
+   * 新建时不要用它 —— `design_create({ styleId })` 一步就位,而且不会覆盖任何东西。这个工具存在
+   * 是为了"用户明确要换风格"那条路,以及补上"忘了在建包时带上风格"。
+   */
+  const styleApply = tool({
+    name: "design_style_apply",
+    label: "Apply a built-in style to a design",
+    description:
+      "Apply a built-in style: overwrites the design's theme.css and DESIGN.md and records the style in the manifest. The whole design is backed up first (under .build/style-backup/). Prefer passing styleId to design_create when starting a new design — frames written before this call keep the old tokens, and framesNeedRestyle tells you when that is the case.",
+    parameters: Type.Object({
+      path: Type.Optional(
+        Type.String({ description: "Design package directory. Omit to use the only design in the workspace." }),
+      ),
+      styleId: Type.String({ description: "Built-in style id, from design_style_list or from the person's pick." }),
+    }),
+    async execute(_toolCallId: string, input: { path?: string; styleId: string }) {
+      const target = await resolveTarget(port, input.path);
+      if (!target.ok) return textResult(target.message, { applied: false });
+      const applied = await port.applyStyle(target.path, input.styleId);
+      if (applied === null) {
+        const styles = await port.listStyles();
+        return textResult(
+          `Could not apply the style \`${input.styleId}\` to ${target.path}.${styles.some((style) => style.id === input.styleId) ? "" : ` No such style — available ids: ${styles.map((style) => style.id).join(", ")}.`}`,
+          { applied: false },
+        );
+      }
+      return textResult(
+        [
+          `Applied \`${applied.styleId}\` to ${target.path}. Its theme.css and DESIGN.md now come from that style, and the previous ones are in ${target.path}/.build/style-backup/.`,
+          applied.framesNeedRestyle
+            ? "This design already has frames, and they were written against the previous tokens — they will not restyle themselves. Tell the person what changed and check the frames that depend on the old tokens."
+            : "It had no frames yet, so there is nothing to restyle: write the first frame against these tokens.",
+        ].join("\n"),
+        { applied: true, styleId: applied.styleId, framesNeedRestyle: applied.framesNeedRestyle },
+      );
+    },
+  });
+
+  return [status, create, inspect, screenshot, styleList, styleApply];
 }
 
 /**

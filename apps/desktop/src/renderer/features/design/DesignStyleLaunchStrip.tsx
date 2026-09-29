@@ -24,26 +24,31 @@ import { designStyleCopy } from "./style-copy.ts";
  *
  * 不指定风格是一个**看得见的选项**,而不是"什么都没选"这种要靠猜的状态(参考实现里那张卡叫
  * 「不使用设计系统」)。它也是默认值:不动它就是现在的行为,一行都不变。
+ *
+ * 它**不是**"让 agent 自己挑一套" —— 那是让模型替用户做审美决定。用户没选、而 agent 需要一套
+ * 时才问:它手上有 `design_style_list` 与 `request_user_input`,可以把风格库列成一道选择题交回
+ * 用户(§14.22)。
+ *
+ * ## 选中的风格怎么生效:一条消息标记(§14.22)
+ *
+ * 这一栏只负责**把选择说出来** —— 选中之后往首条消息里放一条 `design-style` 标记。资料的落盘
+ * 由 agent 把 `styleId` 交给 `design_create`,主进程往**设计包里**写。
+ *
+ * 从前不是这样:资料先落进工作区的 `design-resources/<id>/`,再由 agent 读进来拷进设计包 ——
+ * 于是"选风格"必须先有工作区(有地方落),而没有工作区的会话偏偏是合法的。标记不占任何位置,
+ * 那条前置条件整条消失。
  */
 export interface DesignStyleLaunchStripProps {
   bridge: DesktopBridge;
   /** 选中的风格 id;`null` = 由 agent 自己定。 */
   selected: string | null;
   onSelect: (styleId: string | null) => void;
-  /**
-   * 没有工作区时不给选。
-   *
-   * 资料要落进工作区(`design-resources/<id>/`),而设计包本身也住在工作区里 —— 没有工作区的
-   * 会话根本落不下这些文件,与其静默失效,不如说清为什么。
-   */
-  workspaceReady: boolean;
 }
 
 export function DesignStyleLaunchStrip({
   bridge,
   selected,
   onSelect,
-  workspaceReady,
 }: DesignStyleLaunchStripProps) {
   const { t } = usePreferences();
   const [styles, setStyles] = useState<DesignStyleSummaryDto[] | null>(null);
@@ -77,11 +82,6 @@ export function DesignStyleLaunchStrip({
         <span className="shrink-0 tabular-nums text-[10px] text-[#8a8f94] dark:text-muted-foreground">
           {t("designStylesCountAll").replace("{count}", String(styles.length))}
         </span>
-        {workspaceReady ? null : (
-          <span className="min-w-0 truncate text-[10px] text-[#b06a3b] dark:text-[#d29a6a]">
-            {t("designStyleLaunchNeedWorkspace")}
-          </span>
-        )}
       </div>
 
       {/*
@@ -96,7 +96,6 @@ export function DesignStyleLaunchStrip({
               ? "border-[#4f7df3] bg-[#f6faff] dark:border-[#4f7df3] dark:bg-[#293441]"
               : "border-[#e4e4e0] bg-white hover:border-[#c9ccc8] dark:border-border dark:bg-[#1c1d18] dark:hover:border-[#4a4e52]"
           }`}
-          disabled={!workspaceReady}
           onClick={() => onSelect(null)}
           title={anyCopy.tagline}
           type="button"
@@ -110,7 +109,7 @@ export function DesignStyleLaunchStrip({
             <DesignStyleCard
               actionLabel={t("designStyleLaunchPick")}
               bridge={bridge}
-              onPick={() => (!workspaceReady ? undefined : onSelect(style.id))}
+              onPick={() => onSelect(style.id)}
               picked={selected === style.id}
               style={style}
             />

@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, unlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -124,4 +124,63 @@ test("indexes scoped General Work artifacts with expert producers", async (conte
     runtime.readSessionArtifact(sessionId, "../../private.txt"),
     /unavailable/,
   );
+});
+
+test("filters deleted session changes from the current context", async (context) => {
+  const root = await mkdtemp(join(tmpdir(), "wordless-session-context-"));
+  const database = new WordlessDatabase(join(root, "wordless.db"));
+  context.after(async () => {
+    await database.close();
+    await rm(root, { force: true, recursive: true });
+  });
+
+  const runtimeRootPath = join(root, "session-root");
+  const journalPath = join(root, "sessions", "session-1.jsonl");
+  const record: SessionRecord = {
+    id: "session-1",
+    title: "Context test",
+    workspaceId: null,
+    runtimeRootPath,
+    mode: "code",
+    entryId: "code-development",
+    profile: { id: "coding", version: "1" },
+    driverId: "coding",
+    journalFormat: "wordless-agent-v1",
+    workbenchId: "conversation",
+    accessLevel: "default",
+    model: { connectionId: "openai", modelId: "gpt-5" },
+    thinkingLevel: "medium",
+    journalPath,
+    connectorIds: [],
+    toolApprovalMode: "manual",
+    pinnedAt: null,
+    expertSelection: null,
+    createdAt: 1,
+    updatedAt: 1,
+  };
+  database.upsertSession(record);
+
+  const createdPath = join(runtimeRootPath, "created.txt");
+  const modifiedPath = join(runtimeRootPath, "modified.txt");
+  await mkdir(runtimeRootPath, { recursive: true });
+  await writeFile(createdPath, "created");
+  await writeFile(modifiedPath, "modified");
+  await mkdir(join(root, "sessions"), { recursive: true });
+  await writeFile(journalPath, [
+    JSON.stringify({ type: "wordless.session", metadata: { id: "session-1", createdAt: new Date(1).toISOString(), cwd: root, path: journalPath, metadata: {} } }),
+    JSON.stringify({ type: "message", id: "tool-result-1", parentId: null, timestamp: new Date(1).toISOString(), message: { role: "toolResult", toolCallId: "write-1", toolName: "write", details: { path: "created.txt", change: { kind: "created" } } } }),
+    JSON.stringify({ type: "message", id: "tool-result-2", parentId: "tool-result-1", timestamp: new Date(2).toISOString(), message: { role: "toolResult", toolCallId: "edit-1", toolName: "edit", details: { path: "modified.txt", change: { kind: "modified" } } } }),
+  ].join("\n") + "\n");
+
+  const runtime = Object.create(WordlessRuntime.prototype) as WordlessRuntime;
+  Object.assign(runtime, { database, artifactRevisions: new Map() });
+
+  const beforeDelete = await runtime.getSessionContext(record.id);
+  assert.deepEqual(beforeDelete.artifacts.map((change) => change.path), ["created.txt"]);
+  assert.deepEqual(beforeDelete.changes.map((change) => change.path), ["created.txt", "modified.txt"]);
+
+  await unlink(createdPath);
+  const afterDelete = await runtime.getSessionContext(record.id);
+  assert.deepEqual(afterDelete.artifacts, []);
+  assert.deepEqual(afterDelete.changes.map((change) => change.path), ["modified.txt"]);
 });
