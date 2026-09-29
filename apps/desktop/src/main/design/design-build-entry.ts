@@ -3,6 +3,7 @@ import { fileURLToPath } from "node:url";
 import { NodeDesignFs } from "./design-fs.ts";
 import { performDesignBuild } from "./design-build-step.ts";
 import { TailwindUnavailableError, createTailwindCompiler } from "./tailwind-theme.ts";
+import { RUNTIME_MISSING_EXIT_CODE } from "./design-builder.ts";
 
 /**
  * 构建脚本的进程入口。
@@ -40,7 +41,15 @@ try {
     `theme.css ${result.cssBytes} bytes from ${result.candidateCount} candidates across ${result.fileCount} files\n`,
   );
 } catch (error) {
-  // Tailwind 不在安装里是配置问题,不是"这次构建运气不好" —— 分开说,免得让人去重跑。
+  /**
+   * Tailwind 不在安装里是配置问题,不是"这次构建运气不好" —— 分开说,并且用**专用退出码**说,
+   * 好让父进程把它归到 `runtime-missing`(见 `design-builder.ts`),而不是一个看起来可以重试的
+   * "exit code 1"。
+   *
+   * 这句话就是模型会读到的那句(父进程把它放进 `detail`),所以措辞不能去猜用户的机器 ——
+   * 上一版写的是 "this means the installation is incomplete",于是模型编出了"你这台机器的
+   * 安装损坏或被拦截、重启解决不了"。
+   */
   const message =
     error instanceof TailwindUnavailableError
       ? error.message
@@ -48,5 +57,5 @@ try {
         ? error.message
         : String(error);
   process.stderr.write(`design-build: ${message}\n`);
-  process.exit(1);
+  process.exit(error instanceof TailwindUnavailableError ? RUNTIME_MISSING_EXIT_CODE : 1);
 }

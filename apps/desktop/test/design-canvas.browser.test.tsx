@@ -8,6 +8,7 @@ vi.mock("../src/renderer/shared/preferences", () => ({
 
 import type { DesignManifestDto, DesignOpenedDto } from "@wordless/protocol";
 import type { DesktopBridge } from "../src/bridge/desktop-bridge";
+import { readCover, resetCoverCacheForTests } from "../src/renderer/features/design/cover-cache.ts";
 import { DesignCanvas } from "../src/renderer/features/design/DesignCanvas";
 
 /**
@@ -848,6 +849,42 @@ describe("design canvas", () => {
     expect([...(last?.keys() ?? [])].sort()).toEqual(["index", "login"]);
     // 交出去的是**位图 URL**,`<img src>` 直接能吃。
     expect([...(last?.values() ?? [])].every((url) => url.startsWith("blob:"))).toBe(true);
+  });
+
+  it("打开的设计顺手存一张封面 —— 列表页那一格用的就是它", async () => {
+    /*
+      封面是**画布打开过这份设计**的副产品:位图已经在内存里,画进一张小图几乎是白送的。
+      列表页按需光栅则是"每张卡一次离屏渲染"—— 几十个隐藏窗口,这一页最不该做的事。
+
+      所以这条钉的是那条**唯一的写入路径**:画布把位图贴上去之后,缓存里就该有这份设计的封面。
+    */
+    resetCoverCacheForTests();
+    // 真的 JPEG:这条链要 `new Image()` 载入位图才能画 —— 假字节会让它静默跳过,那样测试就绿得没意义。
+    const canvas = document.createElement("canvas");
+    canvas.width = 8;
+    canvas.height = 8;
+    canvas.getContext("2d")!.fillRect(0, 0, 8, 8);
+    const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, "image/jpeg"));
+    const jpeg = new Uint8Array(await blob!.arrayBuffer());
+
+    const client = {
+      ...CLIENT,
+      rasterizeDesignFrames: async (input: { frames: { frameId: string; bucket: number }[] }) =>
+        input.frames.map((frame) => ({
+          ok: true as const,
+          key: `${frame.frameId}@${frame.bucket}`,
+          bytes: jpeg,
+          width: 390,
+          height: 844,
+        })),
+    } as unknown as DesktopBridge;
+
+    await render({ client });
+    await act(async () => {});
+
+    await vi.waitFor(async () => {
+      expect(await readCover("/w/meadow.wdesign")).toContain("data:image/jpeg");
+    });
   });
 
   it("源指纹变了就重新光栅 —— 位图不会停在打开那一刻", async () => {

@@ -94,8 +94,24 @@ export function createDesignCapabilityPort(deps: DesignCapabilityPortDeps): Desi
         ...(input.styleId === undefined || input.styleId === null ? {} : { styleId: input.styleId }),
       });
       if (created === null) return null;
-      // `rename` 直接透传:能力的调用方(工具)要靠它告诉模型"你刚要的那个名字已经存在"。
-      return { path: created.path, frameId: created.frameId, rename: created.rename };
+      /**
+       * `rename` 直接透传:能力的调用方(工具)要靠它告诉模型"你刚要的那个名字已经存在"。
+       *
+       * `build` 也透传。原来这里丢掉了它 —— 于是"建包成功但样式没编出来"这件事在工具结果里
+       * 完全不可见,而画布上是无样式的裸结构(见 `docs/architecture/design-canvas.md` §14.23)。
+       */
+      return {
+        path: created.path,
+        frameId: created.frameId,
+        rename: created.rename,
+        build:
+          created.build === null
+            ? null
+            : {
+                ok: created.build.ok,
+                ...(created.build.ok ? {} : { code: created.build.code, detail: created.build.detail }),
+              },
+      };
     },
 
     async screenshot(designPath: string, frameId: string) {

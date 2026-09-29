@@ -49,6 +49,15 @@ export interface DesignSummary {
   mode: DesignMode;
   style: string | null;
   frameCount: number;
+  /**
+   * 最近改动时间(毫秒时间戳):清单与**它引用的帧文件**里最新的那个 mtime。
+   *
+   * 为什么不是"清单的 mtime":agent 改一帧的内容是重写那个 HTML,清单**一动不动** —— 只看
+   * 清单的话,"我刚让 agent 改完的那份"会排在后面。所以取两者的最大值。
+   *
+   * 取不到(文件不在了)就当 0:它不会因此排到前面,也不会让"列出设计"这件事失败。
+   */
+  updatedAt: number;
 }
 
 export interface OpenedDesign {
@@ -76,6 +85,13 @@ export interface DesignStylesStatus {
   state: DesignStylesState;
   /** 构建失败的原因。只在 `state === "failed"` 时有值。 */
   detail?: string;
+  /**
+   * 失败分类(`BuildFailureCode`)。只在 `state === "failed"` 时有值。
+   *
+   * 带出来是为了让上层能区分"重跑会好"和"重跑没用":`runtime-missing` 是**安装包**的问题,
+   * 而其它分类看起来都像可以再试一次。不分的话,模型只能从一句 `exit-nonzero` 里自己猜。
+   */
+  code?: string;
 }
 
 /** `describeDesign` 的结果:一份设计的只读事实,不含任何修复。 */
@@ -180,6 +196,26 @@ export class DesignStore {
   }
 
   /**
+   * 这份设计**最近**是什么时候被改的。
+   *
+   * 清单 + 每一帧的文件都 stat 一次取最大值。`listDesigns` 本来就会把每一帧读进来(清单对账
+   * 要读帧),所以多几次 `stat` 在它旁边可以忽略;而它换来的是"最近改过的那份排在最前面"。
+   */
+  private async latestModified(designPath: string, manifest: DesignManifest): Promise<number> {
+    const targets = [
+      manifestPathOf(designPath),
+      ...manifest.frames.map((frame) => joinPath(designPath, frame.file)),
+    ];
+    let newest = 0;
+    for (const target of targets) {
+      const stat = await this.fs.stat(target).catch(() => null);
+      const time = stat?.modifiedMs ?? 0;
+      if (time > newest) newest = time;
+    }
+    return newest;
+  }
+
+  /**
    * 打开一份设计:读清单 → 与磁盘对账 → 必要时回写 → 同步渲染根。
    *
    * 不是设计包时返回 null(而不是抛错),调用方据此把它从列表里排除。
@@ -219,6 +255,7 @@ export class DesignStore {
         mode: manifest.mode,
         style: manifest.style,
         frameCount: manifest.frames.length,
+        updatedAt: await this.latestModified(designPath, manifest),
       },
       manifest,
       repaired,
@@ -716,7 +753,7 @@ export class DesignStore {
       await this.writeBuildRecord(designPath, {
         fingerprint: revision,
         ok: failed === null,
-        ...(failed === null ? {} : { detail: `${failed.code}: ${failed.detail}` }),
+        ...(failed === null ? {} : { code: failed.code, detail: `${failed.code}: ${failed.detail}` }),
       });
 
       this.refreshedAt.set(designPath, this.now());
@@ -738,7 +775,11 @@ export class DesignStore {
     const record = await this.readBuildRecord(designPath);
     if (record === null) return { state: "never" };
     if (!record.ok) {
-      return { state: "failed", ...(record.detail === undefined ? {} : { detail: record.detail }) };
+      return {
+        state: "failed",
+        ...(record.detail === undefined ? {} : { detail: record.detail }),
+        ...(record.code === undefined ? {} : { code: record.code }),
+      };
     }
     if (record.fingerprint !== revision) return { state: "stale" };
     return { state: "fresh" };
@@ -747,7 +788,7 @@ export class DesignStore {
   /** 上一次构建记下来的事实。没有记录返回 `null`(新包,或这个机制之前建的包)。 */
   private async readBuildRecord(
     designPath: string,
-  ): Promise<{ fingerprint: string; ok: boolean; detail?: string } | null> {
+  ): Promise<{ fingerprint: string; ok: boolean; code?: string; detail?: string } | null> {
     let raw: string;
     try {
       raw = await this.fs.readText(joinPath(joinPath(designPath, BUILD_DIRECTORY), BUILD_STATUS_FILE));
@@ -762,6 +803,7 @@ export class DesignStore {
       return {
         fingerprint: record.fingerprint,
         ok: record.ok === true,
+        ...(typeof record.code === "string" ? { code: record.code } : {}),
         ...(typeof record.detail === "string" ? { detail: record.detail } : {}),
       };
     } catch {
@@ -782,7 +824,7 @@ export class DesignStore {
 
   private async writeBuildRecord(
     designPath: string,
-    record: { fingerprint: string; ok: boolean; detail?: string },
+    record: { fingerprint: string; ok: boolean; code?: string; detail?: string },
   ): Promise<void> {
     const target = joinPath(joinPath(designPath, BUILD_DIRECTORY), BUILD_STATUS_FILE);
     const temporary = `${target}.${randomUUID()}.tmp`;

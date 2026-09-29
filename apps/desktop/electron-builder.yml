@@ -15,6 +15,10 @@ asarUnpack:
   - node_modules/@yuuang/**/*
   - node_modules/sharp/**/*
   - node_modules/@img/**/*
+  # 设计样式编译那棵树(原生模块 + 运行期由 JS 解析器去读的 CSS)。
+  # 这份清单与 `scripts/external-packages.mjs` 的 NATIVE_ASAR_UNPACK 由测试逐条比对。
+  - node_modules/@tailwindcss/**/*
+  - node_modules/lightningcss*/**/*
 extraResources:
   - from: resources/skills
     to: skills

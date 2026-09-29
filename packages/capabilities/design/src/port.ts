@@ -31,6 +31,11 @@ export interface DesignFrameFactsDto {
 export interface DesignStylesFactsDto {
   state: "never" | "fresh" | "stale" | "failed";
   detail?: string;
+  /**
+   * 失败分类(与 `BuildFailureCode` 同名)。`runtime-missing` 表示**安装包里缺编译器运行时**,
+   * 于是"重跑"与"重启"都不会有任何改变 —— 上层要能说出这句话,而不是让模型自己猜。
+   */
+  code?: string;
 }
 
 export interface DesignFactsDto {
@@ -51,10 +56,25 @@ export interface LayoutFinding {
   detail: string;
 }
 
+/** 一次构建的结果事实(宿主把它从自己的 `DesignBuildResult` 收窄成这四件事)。 */
+export interface DesignBuildFactsDto {
+  ok: boolean;
+  code?: string;
+  detail?: string;
+}
+
 export interface DesignCreatedDto {
   path: string;
   frameId: string;
   rename: { requested: string; actual: string } | null;
+  /**
+   * 建包时那一次构建的结果。
+   *
+   * **必须带出来。** 不带的时候,`design_create` 的工具结果对构建只字不提:模型建完包、截一张
+   * 白页图,拿不到任何理由,于是照着白页改颜色,或者编一个原因(实测编出的是"你这台机器的安装
+   * 损坏或被拦截")。`null` 表示这次没有构建(比如宿主没接构建能力)。
+   */
+  build: DesignBuildFactsDto | null;
 }
 
 export interface DesignCreateInput {

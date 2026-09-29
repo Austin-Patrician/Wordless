@@ -5,6 +5,11 @@ import type { DesktopBridge } from "../../../bridge/desktop-bridge";
 import { usePreferences } from "../../shared/preferences";
 import { useRuntime, useRuntimeClient } from "../../shared/runtime";
 import { DesignStyleCard, type DesignStyleCardData } from "./DesignStyleCard.tsx";
+import { filterDesigns, sortDesigns, type DesignSortMode } from "./design-recency.ts";
+import { DesignListToolbar } from "./DesignListToolbar.tsx";
+import { useDesignCovers } from "./use-design-covers.ts";
+import { DesignCardSkeleton } from "./DesignCardSkeleton.tsx";
+import { DesignCard } from "./DesignCard.tsx";
 import { DesignStyleDetailDialog } from "./DesignStyleDetailDialog.tsx";
 import { designLibrarySources, type DesignLibrarySource } from "./design-library-sources.ts";
 import { designStyleCopy } from "./style-copy.ts";
@@ -47,6 +52,12 @@ export function DesignLibraryView({
 }) {
   const client = useRuntimeClient();
   const { snapshot } = useRuntime();
+  /** 正在跑的会话。会话来源的设计据此显示「正在改」—— agent 改的就是这些。 */
+  // 快照里是数组(它要过 IPC),这里包成 Set —— `has` 在渲染里被问几十次。
+  const runningSessionIds = useMemo<ReadonlySet<string>>(
+    () => new Set(snapshot?.runningSessionIds ?? []),
+    [snapshot?.runningSessionIds],
+  );
   const { t } = usePreferences();
 
   /**
@@ -172,7 +183,12 @@ export function DesignLibraryView({
           <p className="mt-3 rounded-lg bg-[#fff6f6] px-3 py-2 text-[11px] text-[#a44] dark:bg-[#2a1d1d]">{error}</p>
         ) : null}
 
-        <MyDesigns entries={entries} onOpenSession={onOpenSession} />
+        <MyDesigns
+          entries={entries}
+          onOpenSession={onOpenSession}
+          runningSessionIds={runningSessionIds}
+          styles={styles}
+        />
         <StyleWall
           bridge={client}
           onPick={setDetailStyle}
@@ -209,6 +225,26 @@ export function DesignLibraryView({
   );
 }
 
+/**
+ * 筛与排读的字段。
+ *
+ * 来源那一行在界面上是「工作区 · My project」这种样子,而搜索要匹配的是**它的名字**(用户找的是
+ * "那个会话里的设计")—— 所以这里给的是 `source.name`,不是拼好的那一行。
+ */
+function listFields(entry: DesignLibraryEntry): {
+  frameCount: number;
+  name: string;
+  source: string;
+  updatedAt: number;
+} {
+  return {
+    frameCount: entry.design.frameCount,
+    name: entry.design.name,
+    source: entry.source.name,
+    updatedAt: entry.design.updatedAt,
+  };
+}
+
 /** 一份设计 + 它住的那个根。**来源要跟着走**:列表要标出来,打开方式也由它决定。 */
 interface DesignLibraryEntry {
   design: DesignSummaryDto;
@@ -218,68 +254,111 @@ interface DesignLibraryEntry {
 function MyDesigns({
   entries,
   onOpenSession,
+  runningSessionIds,
+  styles,
 }: {
   entries: DesignLibraryEntry[] | null;
   onOpenSession?: (sessionId: string) => void;
+  /** 正在跑的会话:会话来源的设计据此显示「正在改」。 */
+  runningSessionIds: ReadonlySet<string>;
+  /** 风格目录:只为取每份设计的底色(见 `designAccent`)。还没到货时是 null。 */
+  styles: readonly DesignStyleSummaryDto[] | null;
 }) {
   const { t } = usePreferences();
+  const [query, setQuery] = useState("");
+  const [sort, setSort] = useState<DesignSortMode>("recent");
+
+  /**
+   * 筛与排。默认"最近改动的在前" —— 回到这一页最常要的就是"我刚弄过的那份"。
+   *
+   * 搜索匹配**名字与来源**:「那个会话里的设计」和「叫什么名」是两个真实的问题,而它们在界面上
+   * 就是同一句话。规则是子串匹配(见 `filterDesigns`),不做模糊 —— 用户猜不到为什么某一份没出来
+   * 比"少命中一条"更糟。
+   */
+  const visible = useMemo(() => {
+    if (entries === null) return null;
+    return sortDesigns(filterDesigns(entries, query, listFields), sort, listFields);
+  }, [entries, query, sort]);
+
+  const styleById = useMemo(() => new Map((styles ?? []).map((style) => [style.id, style])), [styles]);
+  /**
+   * 封面:本机缓存里的那张图。
+   *
+   * 只有**在这台机器上打开过**的设计才有(画布打开它时顺手存的,见 `use-design-cover`)—— 没有
+   * 就是没有,卡片用主色块兜底。这一页**不为封面做任何光栅**:那是几十个隐藏窗口。
+   */
+  const covers = useDesignCovers(entries);
+  const grid = 'mt-3 grid gap-3';
+  const gridStyle = { gridTemplateColumns: "repeat(auto-fill, minmax(200px, 1fr))" } as const;
+
   return (
     <div className="mt-8">
       <h2 className="text-[13px] font-semibold text-[#3e3e39] dark:text-foreground">{t("designMineTitle")}</h2>
-      {entries === null ? (
-        <div className="mt-3 flex items-center gap-2 text-[12px] text-[#8a8f94]">
-          <LoaderCircle className="size-3.5 animate-spin motion-reduce:animate-none" />
-          {t("designLibraryLoading")}
+      {visible === null ? (
+        // 骨架卡,而不是一行字:列表马上就是同样的格子,先用空壳占住位置,内容到货时不跳版。
+        <div className={grid} style={gridStyle}>
+          {[0, 1, 2, 3].map((index) => (
+            <DesignCardSkeleton key={index} />
+          ))}
         </div>
-      ) : entries.length === 0 ? (
+      ) : entries !== null && entries.length === 0 ? (
+        // 一份都没有:这时不摆筛排条 —— 没有东西可搜,它只是噪声。
         <div className="mt-3 rounded-xl border border-dashed border-[#e2e4e6] px-5 py-8 text-center dark:border-[#3b3e41]">
           <FrameIcon className="mx-auto size-4 text-[#b3b8bd]" />
           <p className="mt-2 text-[12px] text-[#8a8f94]">{t("designMineEmpty")}</p>
           <p className="mt-1 text-[11px] text-[#a8adb2]">{t("designMineEmptyHelp")}</p>
         </div>
       ) : (
-        <div className="mt-3 grid gap-3" style={{ gridTemplateColumns: "repeat(auto-fill, minmax(200px, 1fr))" }}>
-          {entries.map(({ design, source }) => {
-            // 会话来源的设计住在那个会话的私有根里 —— **打开它就是打开那个会话**,没有别的入口
-            // (设计包里没有"路径"这个概念给用户用)。工作区来源的没有会话可切,所以今天只列不点。
-            const openable = source.kind === "session" && onOpenSession !== undefined;
-            const body = (
-              <>
-                <PenTool className="size-3.5 shrink-0 text-[#8a8f94]" />
-                <span className="min-w-0 flex-1">
-                  <span className="block truncate text-[12px] font-medium text-[#3e3e39] dark:text-foreground">
-                    {design.name}
-                  </span>
-                  <span className="mt-0.5 block truncate text-[10px] text-[#a8adb2]">
-                    {source.kind === "workspace" ? t("designSourceWorkspace") : t("designSourceSession")} ·{" "}
-                    {source.name}
-                  </span>
-                </span>
-                <span className="shrink-0 text-[11px] tabular-nums text-[#a8adb2]">
-                  {t("designFrameCount").replace("{count}", String(design.frameCount))}
-                </span>
-              </>
-            );
-            const shell =
-              "flex items-center gap-2 rounded-xl border border-[#e2e4e6] bg-white px-3 py-2.5 dark:border-[#3b3e41] dark:bg-[#202225]";
-            return openable ? (
+        <>
+          <DesignListToolbar
+            matched={visible.length}
+            onQueryChange={setQuery}
+            onSortChange={setSort}
+            query={query}
+            sort={sort}
+            total={entries?.length ?? 0}
+          />
+          {visible.length === 0 ? (
+            /*
+              搜不到与"一份都没有"是两件事:前者要说清筛掉了多少(计数在筛排条上),并给一个
+              **一键清掉关键词**的出口 —— 否则用户只能自己回到输入框里删。
+            */
+            <div className="mt-3 rounded-xl border border-dashed border-[#e2e4e6] px-5 py-8 text-center dark:border-[#3b3e41]">
+              <p className="text-[12px] text-[#8a8f94]">{t("designSearchEmpty")}</p>
               <button
-                className={`${shell} text-left transition-colors hover:border-[#c9ccc8] hover:bg-[#f7f7f4] dark:hover:border-[#4a4e52] dark:hover:bg-[#26282b]`}
-                data-design-card={design.name}
-                key={`${source.key}:${design.id}`}
-                onClick={() => onOpenSession(source.sessionId)}
-                title={t("designOpenSession")}
+                className="mt-2 rounded-lg border border-[#e2e4e6] px-2 py-1 text-[11px] text-[#55575b] hover:bg-[#f2f3f2] dark:border-[#3b3e41] dark:text-muted-foreground dark:hover:bg-muted"
+                onClick={() => setQuery("")}
                 type="button"
               >
-                {body}
+                {t("designSearchClear")}
               </button>
-            ) : (
-              <div className={shell} data-design-card={design.name} key={`${source.key}:${design.id}`}>
-                {body}
-              </div>
-            );
-          })}
-        </div>
+            </div>
+          ) : (
+            <div className={grid} style={gridStyle}>
+              {visible.map(({ design, source }) => {
+              /*
+                会话来源的设计住在那个会话的私有根里 —— **打开它就是打开那个会话**,没有别的入口。
+                工作区来源的还没有这条路:它需要"新建一个该工作区的会话,并让画布打开**这一份**",
+                那是两处新机制(见下面的注释),所以它今天仍然是静态卡。
+              */
+              const openable = source.kind === "session" && onOpenSession !== undefined;
+              return (
+                <DesignCard
+                  cover={covers.get(design.path) ?? null}
+                  design={design}
+                  key={`${source.key}:${design.id}`}
+                  onOpen={openable ? () => onOpenSession(source.sessionId) : undefined}
+                  running={source.kind === "session" && runningSessionIds.has(source.sessionId)}
+                  sourceLabel={`${
+                    source.kind === "workspace" ? t("designSourceWorkspace") : t("designSourceSession")
+                  } · ${source.name}`}
+                  style={design.style === null ? null : styleById.get(design.style)}
+                />
+              );
+            })}
+            </div>
+          )}
+        </>
       )}
     </div>
   );
@@ -463,3 +542,7 @@ function StyleNameDialog({
     </div>
   );
 }
+
+
+/** 空集合的稳定引用:没有快照时不要每次渲染都新建一个 Set。 */
+const EMPTY_SESSION_IDS: ReadonlySet<string> = new Set();

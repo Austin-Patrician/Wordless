@@ -994,6 +994,22 @@ export const messages = {
     designLibraryTitle: "设计",
     designLibraryHelp: "挑一套内置风格开一份新的,或者继续已有的设计。",
     designMineTitle: "我的设计",
+    designTimeJustNow: "刚刚",
+    designSearchLabel: "搜索设计",
+    designSearchPlaceholder: "按名字或来源搜",
+    designSearchClear: "清空",
+    designSearchEmpty: "没有匹配的设计。",
+    designSearchCount: "{matched} / {total}",
+    designCount: "{count} 份",
+    designSortRecent: "最近改动",
+    designSortName: "名字",
+    designSortFrames: "画面数",
+    designCardRunning: "正在改",
+    designTimeMinutes: "{count} 分钟前",
+    designTimeHours: "{count} 小时前",
+    designTimeDays: "{count} 天前",
+    /** 时间戳取不到(磁盘上算不出来)时的兜底。**不写"很久以前"**:那是在替用户猜。 */
+    designTimeUnknown: "时间未知",
     designMineEmpty: "还没有设计",
     designMineEmptyHelp: "从下面挑一套风格,它会按那套样式建好第一个画面。",
     designSourceWorkspace: "工作区",
@@ -1009,7 +1025,16 @@ export const messages = {
     designNamePlaceholder: "例如:结算页改版",
     designNameCreate: "创建",
     designCreateFailed: "创建失败,请重试。",
-    designBuildFailed: "设计已建好,但样式没有编译成功。画面会暂时是空白的。",
+    /**
+     * 样式没编出来。
+     *
+     * 旧文案说的是"画面会暂时是空白的" —— 与事实不符:帧照样在画布上,只是**没有样式**
+     * (文字贴在白底上)。一句说错现象的提示,会让人去找错的地方。
+     */
+    designBuildFailed: "样式没有编译成功,画布上的帧会以无样式渲染(文字贴白底)。这不代表设计写得不对。",
+    /** 缺编译器运行时:重跑、重启都不会改变什么,而且不是用户机器的问题。 */
+    designBuildRuntimeMissing:
+      "这份 Wordless 安装缺少样式编译所需的 Tailwind 运行时,所以任何设计的样式都编不出来 —— 重跑或重启都无用。请把这条消息反馈给我们,不要靠手写样式绕过。",
     mockupTitle: "导出渲染图",
     mockupSubtitle: "把选中的几帧合成一张图;设置只影响这张图,不改设计稿。",
     mockupClose: "关闭",
@@ -2943,6 +2968,21 @@ export const messages = {
     designLibraryTitle: "Design",
     designLibraryHelp: "Start from a built-in style, or continue a design you already have.",
     designMineTitle: "My designs",
+    designTimeJustNow: "just now",
+    designSearchLabel: "Search designs",
+    designSearchPlaceholder: "Search by name or source",
+    designSearchClear: "Clear",
+    designSearchEmpty: "No design matches.",
+    designSearchCount: "{matched} / {total}",
+    designCount: "{count} total",
+    designSortRecent: "Recent",
+    designSortName: "Name",
+    designSortFrames: "Frames",
+    designCardRunning: "editing",
+    designTimeMinutes: "{count} min ago",
+    designTimeHours: "{count} h ago",
+    designTimeDays: "{count} d ago",
+    designTimeUnknown: "time unknown",
     designMineEmpty: "No designs yet",
     designMineEmptyHelp: "Pick a style below and it will create the first screen in that style.",
     designSourceWorkspace: "Workspace",
@@ -2958,7 +2998,11 @@ export const messages = {
     designNamePlaceholder: "e.g. Checkout redesign",
     designNameCreate: "Create",
     designCreateFailed: "Could not create it. Try again.",
-    designBuildFailed: "The design was created, but its styles did not compile. The canvas will look empty until that is fixed.",
+    designBuildFailed:
+      "The styles did not compile, so the frames on the canvas render without any styling (text on a white page). That does not mean the design itself is wrong.",
+    /** 缺编译器运行时:重跑、重启都不会改变什么,而且不是用户机器的问题。 */
+    designBuildRuntimeMissing:
+      "This Wordless installation is missing the Tailwind runtime it needs to compile styles, so no design on this machine can be styled — re-running or restarting will not help. Please report this message, and do not work around it by writing styles by hand.",
     mockupTitle: "Export a render",
     mockupSubtitle: "Compose the selected frames into one image. These settings affect this image only, never the design.",
     mockupClose: "Close",

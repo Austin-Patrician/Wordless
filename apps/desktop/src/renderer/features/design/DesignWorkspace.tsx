@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Check, Frame as FrameIcon, LoaderCircle, TriangleAlert } from "lucide-react";
-import type { DesignOpenedDto, DesignSummaryDto } from "@wordless/protocol";
+import type { DesignBuildOutcomeDto, DesignOpenedDto, DesignSummaryDto } from "@wordless/protocol";
 import { usePreferences } from "../../shared/preferences";
 import { useRuntime, useRuntimeClient } from "../../shared/runtime";
 import { DesignCanvas } from "./DesignCanvas.tsx";
@@ -117,12 +117,37 @@ export function DesignWorkspace({
   /** 手动刷新在途 —— 期间按钮不响应,免得连点叠几次。 */
   const [refreshing, setRefreshing] = useState(false);
   /**
+   * 样式没编出来时的提示(不带 `build` 的那次刷新不动它)。
+   *
+   * 这件事在界面上**原来完全不可见**:画布只是"看着没样式",而用户无从判断是设计还是应用的问题 ——
+   * 于是唯一会给出解释的是模型,而它给的是错的(实测:"你这台机器的安装损坏或被拦截",见 §14.23)。
+   * 只有真的构建过的那一次(`build !== null`)才能改变这条提示:被限流或源没变时不带构建结果,
+   * 那时我们并不知道答案,就不该猜。
+   */
+  const [buildWarning, setBuildWarning] = useState<string | null>(null);
+  /**
    * 当前源指纹(来自 `refreshDesign`)。
    *
    * 它是画布位图缓存的代号:主进程说它变了,画布就知道"磁盘变了",于是这一代位图作废。
    * 与清单分开是有意的 —— 一帧改了内容而位置没变时,清单是同一个清单,而位图必须重取。
    */
   const [sourceRevision, setSourceRevision] = useState("");
+
+  /** 把一次刷新的构建结果翻译成提示。只有真的构建过才说话。 */
+  const noteBuild = useCallback(
+    (build: DesignBuildOutcomeDto | null) => {
+      if (build === null) return;
+      if (build.ok) {
+        setBuildWarning(null);
+        return;
+      }
+      setBuildWarning(
+        (build.code === "runtime-missing" ? t("designBuildRuntimeMissing") : t("designBuildFailed")) +
+          ` ${build.detail}`,
+      );
+    },
+    [t],
+  );
 
   const openDesign = useCallback(
     async (path: string) => {
@@ -136,6 +161,7 @@ export function DesignWorkspace({
          * `applied: false` 时它不返回 `opened`(那一次没做事),退回 `openDesign` 直接读。
          */
         const refreshed = await client.refreshDesign({ path });
+        noteBuild(refreshed.build);
         setSourceRevision(refreshed.revision);
         const next = refreshed.opened ?? (await client.openDesign({ path }));
         if (next === null) {
@@ -300,6 +326,7 @@ export function DesignWorkspace({
       void client
         .refreshDesign({ path: current.summary.path })
         .then((result) => {
+          if (active) noteBuild(result.build);
           // `applied: false` **不是失败**:源没变,或者这一次被限流了,下一次会补上。
           // 拿 `null` 去猜"是不是读不到了"才是错的。
           if (!active || !result.applied || result.opened === null) return;
@@ -523,6 +550,7 @@ export function DesignWorkspace({
     void client
       .refreshDesign({ force: true, path: current.summary.path })
       .then((result) => {
+        noteBuild(result.build);
         if (result.applied && result.opened !== null) {
           setSourceRevision(result.revision);
           applyRefreshed(result.opened);
@@ -635,6 +663,17 @@ export function DesignWorkspace({
         <div className="flex items-center gap-2 border-b border-[#e4e4df] bg-[#fff6f6] px-3 py-2 text-[11px] text-[#a44] dark:border-border dark:bg-[#2a1d1d]">
           <TriangleAlert className="size-3.5 shrink-0" />
           <span className="min-w-0 break-words">{error}</span>
+        </div>
+      ) : null}
+
+      {/*
+        样式没编出来:**持久**提示,不是 6 秒回执 —— 它是一个需要处理的状态,而画面本身(无样式的
+        帧)看起来只是"这个设计很朴素",不给理由就会被当成设计问题。构建成功时这条自己消失。
+      */}
+      {buildWarning !== null ? (
+        <div className="flex items-center gap-2 border-b border-[#e4e4df] bg-[#fffaf0] px-3 py-2 text-[11px] text-[#8a6a1f] dark:border-border dark:bg-[#2a2418] dark:text-[#d9bd7f]">
+          <TriangleAlert className="size-3.5 shrink-0" />
+          <span className="min-w-0 break-words">{buildWarning}</span>
         </div>
       ) : null}
 

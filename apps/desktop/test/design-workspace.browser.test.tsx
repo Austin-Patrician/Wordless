@@ -322,4 +322,53 @@ describe("design workspace", () => {
     });
     expect(refreshDesign.mock.calls.length).toBe(refreshCallsAfterStop);
   });
+  it("样式没编出来时,画布上说出来 —— 而且缺编译器运行时与普通失败分开说", async () => {
+    /**
+     * 这两条断言的是**用户看得见**这件事。原来构建失败在界面上完全不可见:画布只是"看着没有
+     * 样式",而唯一会给解释的是模型,它给的解释是错的(实测:"你这台机器的安装损坏或被拦截",
+     * 见 §14.23)。"这不代表设计写得不对"这半句必须有 —— 不然用户会去改设计稿。
+     */
+    listDesigns.mockResolvedValue([summary("/w/meadow.wdesign")]);
+    refreshDesign.mockResolvedValue({
+      revision: "rev-1",
+      changed: true,
+      applied: true,
+      opened: opened("/w/meadow.wdesign"),
+      build: { ok: false, code: "runtime-missing", detail: "missing the Tailwind compiler runtime" },
+    });
+    await render({ running: true });
+
+    expect(text()).toContain("designBuildRuntimeMissing");
+    // 原因要一起显示:只说"没编译成功"的话,没人知道下一步该做什么。
+    expect(text()).toContain("missing the Tailwind compiler runtime");
+  });
+
+  it("普通构建失败用普通措辞,而且构建成功时警示自己消失", async () => {
+    // 靠 agent 运行时的轮询推进第二次刷新(与上一条"画布开着时出现新设计"同一个手法)。
+    vi.useFakeTimers();
+    listDesigns.mockResolvedValue([summary("/w/meadow.wdesign")]);
+    refreshDesign.mockResolvedValue({
+      revision: "rev-1",
+      changed: true,
+      applied: true,
+      opened: opened("/w/meadow.wdesign"),
+      build: { ok: false, code: "exit-nonzero", detail: "The build exited with code 1." },
+    });
+    await render({ running: true });
+    expect(text()).toContain("designBuildFailed");
+    expect(text()).not.toContain("designBuildRuntimeMissing");
+
+    // 下一次轮询里编出来了 —— 警示必须消失,否则它会一直挂在那里骗人。
+    refreshDesign.mockResolvedValue({
+      revision: "rev-2",
+      changed: true,
+      applied: true,
+      opened: opened("/w/meadow.wdesign"),
+      build: { ok: true },
+    });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(3_000);
+    });
+    expect(text()).not.toContain("designBuildFailed");
+  });
 });

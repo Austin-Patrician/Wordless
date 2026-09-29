@@ -25,6 +25,13 @@ export interface DesignDirectoryEntry {
 export interface DesignFileStat {
   isDirectory: boolean;
   isFile: boolean;
+  /**
+   * 最近修改时间(毫秒时间戳);取不到时为 0。
+   *
+   * 它服务的是**画廊的排序**("最近改过的那份在前")。取不到不是错误 —— 那种情况下这一条
+   * 排在最后,而不是让"列出设计"整件事失败。
+   */
+  modifiedMs: number;
 }
 
 export interface DesignFs {
@@ -150,7 +157,11 @@ export class NodeDesignFs implements DesignFs {
   async stat(target: string): Promise<DesignFileStat | null> {
     try {
       const details = await stat(target);
-      return { isDirectory: details.isDirectory(), isFile: details.isFile() };
+      return {
+        isDirectory: details.isDirectory(),
+        isFile: details.isFile(),
+        modifiedMs: details.mtimeMs,
+      };
     } catch {
       return null;
     }

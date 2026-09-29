@@ -47,6 +47,25 @@ test("按 design.json 认出设计包,并跳过非设计目录", async () => {
   assert.match(designs[0].id, /^[a-f0-9]{16}$/);
 });
 
+test("摘要里的时间取清单与帧文件里最新的那一刻", async () => {
+  /*
+    画廊按它倒序,而它必须**跟着 agent 的改动走**:agent 改一帧的内容是重写那个 HTML,清单
+    一动不动 —— 只看清单的话,"我刚让 agent 改完的那份"会排在后面。
+  */
+  const fs = fixture();
+  fs.setModified(manifestPathOf(DESIGN), 1_000);
+  fs.setModified(`${DESIGN}/frames/index.html`, 9_000);
+  fs.setModified(`${DESIGN}/frames/login.html`, 5_000);
+  const store = new DesignStore({ fs });
+
+  const designs = await store.listDesigns(ROOT);
+  assert.equal(designs[0]?.updatedAt, 9_000, "取最新的那一帧,而不是清单");
+
+  // 一个根都没有时列表是空的,而不是抛 —— "列出设计"不该因为一个坏根就整页失败。
+  const empty = new DesignStore({ fs });
+  assert.deepEqual(await empty.listDesigns("/nowhere"), []);
+});
+
 test("打开设计时把磁盘上的帧读进清单,并按声明取尺寸", async () => {
   const fs = fixture();
   const store = new DesignStore({ fs });

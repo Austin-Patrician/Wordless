@@ -1,10 +1,12 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 import { designBuildRecipes, type BuildRecipe } from "../src/main/design/build-recipes.ts";
 import type { BuildRunner, BuildRunnerInput, BuildRunnerResult } from "../src/main/design/design-builder.ts";
 import {
   BUILD_PREVIOUS_DIRECTORY,
   BUILD_STAGING_DIRECTORY,
+  RUNTIME_MISSING_EXIT_CODE,
   resolveBuildPlan,
   runDesignBuild,
 } from "../src/main/design/design-builder.ts";
@@ -458,7 +460,7 @@ test("a build failure never turns a created design into a failed creation", asyn
   assert.deepEqual(created?.build, {
     ok: false,
     code: "exit-nonzero",
-    detail: "The build exited with code 1.",
+    detail: "The build exited with code 1. Last output: tailwind exploded",
     stdout: "",
     stderr: "tailwind exploded",
   });
@@ -482,4 +484,66 @@ test("opening a built design refreshes its frames but keeps the compiled stylesh
   assert.equal(fs.text("/workspace/login.wdesign/dist/frames/index.html"), '<body class="bg-surface">');
   // 但编译产物必须留住 —— 拿源文件覆盖它等于每次打开都把样式删掉。
   assert.equal(fs.text("/workspace/login.wdesign/dist/theme.css"), "/* COMPILED */");
+});
+
+test("构建脚本用专用退出码报告运行时缺失:归到 runtime-missing,并说清重跑没用", async () => {
+  /**
+   * 这一条钉住的是一对约定:入口脚本用 `RUNTIME_MISSING_EXIT_CODE` 退出,构建器据此归到
+   * `runtime-missing`。为什么值得单独一类 —— 因为它的含义与其它失败**相反**:其它分类("这次
+   * 构建的输入有问题")重跑一次往往就好了,而这一个是安装包缺运行时,重跑、重启、换设计都没用。
+   *
+   * 混成 `exit-nonzero` 的代价实测过:模型只拿到一句 "The build exited with code 1",于是自己
+   * 编了个原因("你这台机器的安装损坏或被拦截"),用户被引去折腾机器。
+   */
+  const fs = new FakeDesignFs();
+  withExistingDist(fs);
+  const before = distSnapshot(fs);
+
+  const runner = new FakeBuildRunner(fs);
+  runner.result = {
+    code: RUNTIME_MISSING_EXIT_CODE,
+    timedOut: false,
+    stdout: "",
+    stderr: "design-build: This Wordless installation is missing the Tailwind compiler runtime (@tailwindcss/node).\n",
+  };
+  const result = await build(fs, runner, builtManifest());
+
+  assert.equal(result.ok, false);
+  assert.equal(result.ok === false ? result.code : "ok", "runtime-missing");
+  // detail 直接用子进程那句话:它说的是"这份安装缺了什么",而不是"这台机器坏了"。
+  assert.match(result.ok === false ? result.detail : "", /missing the Tailwind compiler runtime/);
+  assert.deepEqual(distSnapshot(fs), before, "旧产物一个字节都不能动");
+});
+
+test("其它非零退出码把 stderr 尾行带进 detail —— 否则没人看得出真正的原因", async () => {
+  const fs = new FakeDesignFs();
+  const runner = new FakeBuildRunner(fs);
+  runner.result = {
+    code: 1,
+    timedOut: false,
+    stdout: "",
+    stderr: "noise\nError: Cannot find module '@tailwindcss/oxide-win32-x64-msvc'\n",
+  };
+  const result = await build(fs, runner, builtManifest());
+
+  assert.equal(result.ok, false);
+  assert.equal(result.ok === false ? result.code : "ok", "exit-nonzero");
+  // 只看 `exit-nonzero: The build exited with code 1.` 的时代,这句话是查不出问题的。
+  assert.match(result.ok === false ? result.detail : "", /Cannot find module/);
+});
+
+test("入口脚本与构建器用同一个退出码常量 —— 两边漂开就没有分类了", () => {
+  /**
+   * 文本级断言,理由说清楚:入口是"顶层 await + `process.exit`"的脚本,import 进来就会执行,
+   * 所以没法直接单测。而上一条测的映射只证明"构建器认得这个码",证明不了"入口还在发这个码"。
+   *
+   * 这一对必须一起动 —— 这正是本次事故的形状:一条约定写在两个文件里,而没有任何东西连着它们。
+   */
+  const entry = readFileSync(new URL("../src/main/design/design-build-entry.ts", import.meta.url), "utf8");
+  assert.match(
+    entry,
+    /process\.exit\(error instanceof TailwindUnavailableError \? RUNTIME_MISSING_EXIT_CODE : 1\)/,
+    "入口必须用 RUNTIME_MISSING_EXIT_CODE 报告运行时缺失,而不是普通的 1",
+  );
+  assert.match(entry, /import \{ RUNTIME_MISSING_EXIT_CODE \} from "\.\/design-builder\.ts"/);
 });

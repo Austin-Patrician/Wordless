@@ -1,7 +1,7 @@
 import { Type } from "typebox";
 import type { AgentTool, AgentToolResult } from "@wordless/agent";
 import { designIssues, isBlocking, type DesignIssue } from "./issues.js";
-import type { DesignFactsDto, DesignPort, DesignStylesFactsDto } from "./port.js";
+import type { DesignBuildFactsDto, DesignFactsDto, DesignPort, DesignStylesFactsDto } from "./port.js";
 import { describeDesigns, resolveDesignTarget, unknownDesignMessage } from "./resolve-design.js";
 export { LAYOUT_PROBE_EXPRESSION } from "./probe-script.js";
 export { describeDesigns, resolveDesignTarget, unknownDesignMessage } from "./resolve-design.js";
@@ -191,6 +191,8 @@ export function createDesignTools(port: DesignPort): AgentTool[] {
         "",
         `Frames reference \`../theme.css\` and \`../assets/...\` — keep those exactly as they are; the same relative paths hold when the frame is rendered.`,
         `Keep the @frame declaration at the top of every frame file.`,
+        // 样式没编出来的话,这句话是模型唯一会读到的原因。不说,它就会去猜(并且猜错)。
+        ...(created.build === null || created.build.ok ? [] : ["", buildFailedLine(created.build)]),
       ];
       return textResult(lines.join("\n"), { created: true, path: created.path, frameId: created.frameId });
     },
@@ -350,11 +352,36 @@ function stylesLine(styles: DesignStylesFactsDto): string {
       return "Stylesheet: NOT BUILT YET — nothing in theme.css or the frames has any effect right now. It is compiled on the next refresh, so screenshot a frame (or call design_status again in a moment) before judging how it looks.";
     case "stale":
       return "Stylesheet: STALE — the frames changed after the last build, so utility classes you just added do not exist yet. The next refresh rebuilds it.";
-    case "failed":
+    case "failed": {
+      /**
+       * `runtime-missing` 要**单独说**,而且要说"重跑没用"。
+       *
+       * 它与其它失败分类的区别不是语气:其它分类("这次构建的输入有问题")重跑一次往往就好了,
+       * 而这一个是安装包里就缺那份编译器运行时 —— 重跑、重启、换一份设计都不会改变任何事。
+       * 实测:混成一句 `exit-nonzero` 时,模型自己补了一个原因,补出来的是"你这台机器的安装损坏
+       * 或被拦截、重启解决不了",于是用户被引去折腾机器,而真正要改的是我们的打包配置。
+       */
+      if (styles.code === "runtime-missing") {
+        return `Stylesheet: NOT COMPILABLE IN THIS INSTALLATION (${styles.detail ?? "no detail"}). The Tailwind compiler runtime is missing from this Wordless build, so no design on this machine can be styled, re-running the build will not help, and this is not a problem with your computer. Report it and stop; do not restyle the frames by hand to work around it — that silently replaces the design system with whatever you write.`;
+      }
       return `Stylesheet: BUILD FAILED (${styles.detail ?? "no detail"}). Styles from the last good build are still in effect, so new classes will not appear. Report this instead of editing around it.`;
+    }
     default:
       return "Stylesheet: unknown state.";
   }
+}
+
+/**
+ * 建包成功、但样式没编出来时的那一句。
+ *
+ * 抽成函数是为了能单独断言措辞:这句话直接被模型读到,而"措辞决定了它去改代码还是去改
+ * 用户机器"这件事在本次事故里已经付过代价了(见 `stylesLine`)。
+ */
+export function buildFailedLine(build: DesignBuildFactsDto): string {
+  if (build.code === "runtime-missing") {
+    return `Style warning: the FIRST BUILD FAILED and it is not your code — this Wordless installation is missing the Tailwind compiler runtime (@tailwindcss/node). ${build.detail ?? ""} Nothing on this machine can be styled: re-running will not help, and the screenshots will show an unstyled page. Report this and stop; do not write styles into the frames yourself — that replaces the design system with whatever you invent, and the person's chosen style will never show up.`;
+  }
+  return `Style warning: the FIRST BUILD FAILED (${build.detail ?? build.code ?? "no detail"}). The frames you write will render unstyled until that is fixed. Report it before redesigning anything around it.`;
 }
 
 function describeDesign(facts: DesignFactsDto, issues: readonly DesignIssue[]): string {

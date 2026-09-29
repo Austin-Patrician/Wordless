@@ -2603,6 +2603,11 @@ export const DesignSummarySchema = Type.Object(
     mode: DesignModeSchema,
     style: Type.Union([Type.String(), Type.Null()]),
     frameCount: Type.Number({ minimum: 0 }),
+    /**
+     * 最近改动时间(毫秒时间戳)。画廊按它倒序 —— "继续昨天那份"比"翻一个月前那份"常见得多,
+     * 而它只能从磁盘上算(见 `design-store` 的 `latestModified`)。
+     */
+    updatedAt: Type.Number({ minimum: 0 }),
   },
   { additionalProperties: false },
 );

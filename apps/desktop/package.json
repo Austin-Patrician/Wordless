@@ -18,6 +18,7 @@
     "build:renderer": "vite build --config vite.renderer.config.ts && node scripts/verify-renderer-build.mjs",
     "verify:packaged-fff": "node scripts/verify-packaged-fff.mjs",
     "verify:packaged-icon": "node scripts/verify-packaged-icon.mjs",
+    "verify:packaged-design-build": "node scripts/verify-packaged-design-build.mjs",
     "prepare:officecli": "node scripts/prepare-officecli-assets.mjs",
     "update:officecli": "node scripts/update-officecli-lock.mjs",
     "sync:design-styles": "node scripts/sync-design-styles.mjs",
@@ -25,16 +26,20 @@
     "dev:electron": "npm run prepare:officecli && node scripts/build-electron.mjs && node scripts/dev-electron.mjs",
     "test:host": "node --test test/*.test.ts",
     "test:thread-browser": "vitest run --config vitest.thread-browser.config.ts",
-    "dist:mac": "npm run build:desktop && electron-builder --config electron-builder.yml --mac --publish never",
+    "dist:mac": "npm run build:desktop && electron-builder --config electron-builder.yml --mac --publish never && npm run verify:packaged-design-build",
     "dist:mac:preview": "npm run build:desktop && CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --config electron-builder.yml --mac --publish never",
-    "dist:win": "npm run build:desktop && electron-builder --config electron-builder.yml --win --x64 --publish never && node scripts/verify-packaged-icon.mjs release/win-unpacked"
+    "dist:win": "npm run build:desktop && electron-builder --config electron-builder.yml --win --x64 --publish never && node scripts/verify-packaged-icon.mjs release/win-unpacked && npm run verify:packaged-design-build"
   },
   "dependencies": {
     "@ff-labs/fff-node": "0.10.1",
+    "@tailwindcss/node": "4.3.2",
+    "@tailwindcss/oxide": "4.3.2",
     "ajv": "^8.20.0",
     "ajv-formats": "^3.0.1",
+    "lightningcss": "1.32.0",
     "pdf-parse": "^2.4.5",
     "sharp": "0.35.3",
+    "tailwindcss": "4.3.2",
     "undici": "^7.28.0"
   },
   "devDependencies": {
@@ -110,7 +115,6 @@
     "remark-gfm": "4.0.1",
     "remark-math": "6.0.0",
     "remark-parse": "11.0.0",
-    "tailwindcss": "4.3.2",
     "three": "0.185.1",
     "typebox": "1.1.38",
     "typescript": "5.9.3",

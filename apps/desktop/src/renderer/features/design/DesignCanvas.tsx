@@ -30,6 +30,7 @@ import { DesignStyleDialog } from "./DesignStyleDialog.tsx";
 import { DesignThemePalette } from "./DesignThemePalette.tsx";
 import { DesignViewportProvider } from "./design-viewport-context.tsx";
 import { DesignFrameNode, type DesignFrameNodeData } from "./DesignFrameNode.tsx";
+import { useDesignCover } from "./use-design-cover.ts";
 import { useDesignTextures } from "./use-design-textures.ts";
 import { DesignLiveFrameLayer } from "./DesignLiveFrameLayer.tsx";
 import type { FrameActivity } from "./frame-activity.ts";
@@ -313,6 +314,12 @@ function DesignCanvasInner({
     sourceRevision,
     zoom,
   });
+
+  /**
+   * 顺手给这份设计存一张封面(列表页要用)。写在这里的理由见 `use-design-cover.ts`:
+   * 位图已经在内存里,画一张小图几乎是白送的。
+   */
+  useDesignCover({ designPath, frames: manifest.frames, textures });
 
   const framesRef = useRef(manifest.frames);
   framesRef.current = manifest.frames;

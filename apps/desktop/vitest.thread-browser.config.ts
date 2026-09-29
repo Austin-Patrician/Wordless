@@ -89,6 +89,8 @@ export default defineConfig({
       "test/mockup-render.browser.test.tsx",
       "test/mockup-dialog.browser.test.tsx",
       "test/design-library.browser.test.tsx",
+      "test/design-cover.browser.test.tsx",
+      // 封面这一层只能在真浏览器里验(IndexedDB + canvas)。
       "test/composer-attachments.browser.test.tsx",
     ],
   },

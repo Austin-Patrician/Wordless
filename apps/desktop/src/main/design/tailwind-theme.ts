@@ -48,12 +48,22 @@ export interface TailwindCompiler {
   compile(input: TailwindCompileInput): Promise<string>;
 }
 
-/** 工具不可用。文案要指到具体是哪个包 —— "构建失败"四个字对谁都没用。 */
+/**
+ * 工具不可用。文案要指到具体是哪个包 —— "构建失败"四个字对谁都没用。
+ *
+ * **措辞是这份错误的一半功能。** 上一版写的是 "It is a dependency of the app, so this means the
+ * installation is incomplete." —— 那句话把责任推给了用户的安装。而实测的事故恰好相反:包**根本
+ * 没被打进安装包**(见 `scripts/external-packages.mjs` 的说明)。于是模型顺着那句话编出"你这台
+ * 机器安装损坏或被拦截、重启解决不了",用户白白折腾一圈。所以现在:说出缺的是哪个包、说明这是
+ * Wordless 自己的缺陷、并明确"重跑无用、不要绕开"。
+ */
 export class TailwindUnavailableError extends Error {
   constructor(cause: unknown) {
     super(
-      "Tailwind is not part of this build: the @tailwindcss/node package could not be loaded. " +
-        "It is a dependency of the app, so this means the installation is incomplete.",
+      "This Wordless installation is missing the Tailwind compiler runtime (@tailwindcss/node). " +
+        "That is a packaging defect in Wordless itself, not a problem with this machine, and " +
+        "re-running the build or restarting the app will not help. Report it; do not work around " +
+        "it by writing styles into the frames.",
       { cause },
     );
     this.name = "TailwindUnavailableError";

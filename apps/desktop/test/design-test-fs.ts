@@ -13,9 +13,16 @@ export class FakeDesignFs implements DesignFs {
   private readonly files = new Map<string, string>();
   private readonly binary = new Map<string, Uint8Array<ArrayBuffer>>();
   private readonly symlinks = new Map<string, string>();
+  /** 路径 → mtime。默认 0("不知道"),测试里显式设一次就能断言排序。 */
+  private readonly modified = new Map<string, number>();
 
   putFile(filePath: string, content: string): void {
     this.files.set(normalize(filePath), content);
+  }
+
+  /** 让某条路径看起来是"这个时间改的"。 */
+  setModified(filePath: string, modifiedMs: number): void {
+    this.modified.set(normalize(filePath), modifiedMs);
   }
 
   putBytes(filePath: string, content: Uint8Array<ArrayBuffer>): void {
@@ -102,14 +109,16 @@ export class FakeDesignFs implements DesignFs {
 
   async stat(target: string): Promise<DesignFileStat | null> {
     const key = normalize(target);
-    if (this.files.has(key) || this.binary.has(key)) return { isDirectory: false, isFile: true };
+    if (this.files.has(key) || this.binary.has(key)) {
+      return { isDirectory: false, isFile: true, modifiedMs: this.modified.get(key) ?? 0 };
+    }
     if (this.symlinks.has(key)) {
       const resolved = this.resolveSymlink(key);
       return resolved === null ? null : await this.stat(resolved);
     }
     const prefix = `${key}/`;
     for (const candidate of [...this.files.keys(), ...this.binary.keys()]) {
-      if (candidate.startsWith(prefix)) return { isDirectory: true, isFile: false };
+      if (candidate.startsWith(prefix)) return { isDirectory: true, isFile: false, modifiedMs: 0 };
     }
     return null;
   }

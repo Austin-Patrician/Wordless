@@ -31,6 +31,15 @@ export type BuildFailureCode =
   | "spawn-failed"
   | "timeout"
   | "exit-nonzero"
+  /**
+   * 子进程说"这个包里没有编译器运行时"(`design-build-entry.ts` 的专用退出码)。
+   *
+   * 单独一类的理由:这是**安装包的问题**,重跑、重启、换设计都不会好 —— 而上面那些分类
+   * ("这次构建的输入有问题")看起来都像可以重试。混成 `exit-nonzero` 的代价实测过了:模型拿到
+   * 一句 `exit-nonzero: The build exited with code 1.`,于是自己编了个原因,编出来的是
+   * "你这台机器的安装损坏或被拦截" —— 用户白折腾,而真正该改的是我们的打包配置。
+   */
+  | "runtime-missing"
   | "output-missing"
   | "swap-failed";
 
@@ -181,10 +190,23 @@ export async function runDesignBuild(input: RunDesignBuildInput): Promise<Design
 
   if (result.code !== 0) {
     await fs.remove(staging);
+    if (result.code === RUNTIME_MISSING_EXIT_CODE) {
+      return {
+        ok: false,
+        code: "runtime-missing",
+        // 子进程那句就是给人和模型看的:它说的是"这份安装缺了什么",不是"这台机器坏了"。
+        detail: lastLine(result.stderr) ?? "The build reported that its compiler runtime is missing from this installation.",
+        stdout: result.stdout,
+        stderr: result.stderr,
+      };
+    }
     return {
       ok: false,
       code: "exit-nonzero",
-      detail: `The build exited with code ${result.code === null ? "unknown (killed by a signal)" : result.code}.`,
+      detail:
+        `The build exited with code ${result.code === null ? "unknown (killed by a signal)" : result.code}.` +
+        // 尾几行比一句退出码有用得多:`spawn` 被安全软件拦下、原生模块加载失败都只在这里露头。
+        (lastLine(result.stderr) === null ? "" : ` Last output: ${lastLine(result.stderr)}`),
       stdout: result.stdout,
       stderr: result.stderr,
     };
@@ -269,4 +291,23 @@ function joinPath(root: string, name: string): string {
 
 function describeError(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+/**
+ * 构建脚本用退出码报告"运行时缺失"。
+ *
+ * 为什么不靠 stderr 里的一句话来分类:那句话是给人看的文案,会改;退出码是父子之间的约定。
+ * 两者都改的时候,这里与 `design-build-entry.ts` 必须一起动 —— 测试钉住了这一对。
+ */
+export const RUNTIME_MISSING_EXIT_CODE = 3;
+
+/** stderr 的最后一个非空行,截断到预算内。`null` 表示没有可用的输出。 */
+function lastLine(text: string, limit = 400): string | null {
+  const lines = text
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line !== "");
+  const last = lines.at(-1);
+  if (last === undefined) return null;
+  return last.length <= limit ? last : `${last.slice(0, limit)}…`;
 }

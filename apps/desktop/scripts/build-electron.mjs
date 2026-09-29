@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import { build } from "vite";
 import { generateAppIcon } from "./generate-app-icon.mjs";
 import { readWindowsIcon } from "./windows-icon.mjs";
+import { isExternalRuntimeDependency } from "./external-packages.mjs";
 
 const scriptDirectory = dirname(fileURLToPath(import.meta.url));
 const appRoot = resolve(scriptDirectory, "..");
@@ -17,25 +18,13 @@ function isNodeBuiltin(id) {
   return nodeBuiltins.has(id) || id.startsWith("node:");
 }
 
-function isNativeRuntimeDependency(id) {
-  return id === "undici" || id === "sharp" || id.startsWith("sharp/") || id === "@img" || id.startsWith("@img/") || id === "@ff-labs/fff-node" || id.startsWith("@ff-labs/fff-node/") || id === "ffi-rs" || id.startsWith("ffi-rs/") || id.startsWith("@ff-labs/fff-bin-") || id.startsWith("@yuuang/ffi-rs-");
-}
-
 /**
- * 设计构建要用、但**不能被打进产物**的包。
+ * **外化判定的规则表在 `scripts/external-packages.mjs`。**
  *
- * `@tailwindcss/node` 是 ESM 且带原生依赖(`lightningcss` / `oxide`),内联进产物既会让
- * 原生 require 在错误的路径上解析,也会让主进程产物无谓地变大 —— 它只在真要构建时才被
- * 动态 import。与上面那份原生依赖清单分开写,是因为它是 **JS 包但必须外部化**,成因不同。
+ * 这里原来是两张手写的谓词。它们只说"什么不该被内联",没说"那它从哪来" —— 于是
+ * `@tailwindcss/node` 被 external 了却没随包发布,安装版永远缺一份编译器运行时。
+ * 规则表因此多了一栏 `shippedBy`,由 `test/external-runtime-packages.test.ts` 守着。
  */
-function isDesignBuildRuntimeDependency(id) {
-  return (
-    id === "@tailwindcss/node" || id.startsWith("@tailwindcss/node/") ||
-    id === "@tailwindcss/oxide" || id.startsWith("@tailwindcss/oxide/") ||
-    id === "tailwindcss" || id.startsWith("tailwindcss/") ||
-    id === "lightningcss" || id.startsWith("lightningcss")
-  );
-}
 
 async function buildEntry(entry, name, emptyOutDir, options = {}) {
   await build({
@@ -56,8 +45,7 @@ async function buildEntry(entry, name, emptyOutDir, options = {}) {
       sourcemap: true,
       target: "node22",
       rollupOptions: {
-        external: (id) =>
-          id === "electron" || isNodeBuiltin(id) || isNativeRuntimeDependency(id) || isDesignBuildRuntimeDependency(id),
+        external: (id) => id === "electron" || isNodeBuiltin(id) || isExternalRuntimeDependency(id),
       },
     },
   });

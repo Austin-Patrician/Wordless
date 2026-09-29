@@ -26,6 +26,10 @@ const IDS = ["precise-dark", "linear", "github", "anthropic", "openai"] as const
 const state = vi.hoisted(() => ({
   designsByRoot: new Map<string, unknown[]>(),
   sessions: [] as unknown[],
+  /** 正在跑的会话 id。会话来源的卡片据此显示「正在改」。 */
+  runningSessionIds: [] as string[],
+  /** 扫描挂起(用来断言骨架卡):非 null 时 `listDesigns` 会等这个 promise。 */
+  holdScan: null as Promise<void> | null,
 }));
 const STYLES = IDS.map((id, index) => ({
   id,
@@ -55,7 +59,11 @@ vi.mock("../src/renderer/shared/runtime", () => {
     getDesignStyleDetail: async ({ id }: { id: string }) => styleDetail(id),
     // 按根返回:`DesignLibraryView` 现在会同时扫工作区与会话两种根,拿一个写死的 `[]` 就分不出
     // "这个根里没有设计"和"根本没问到这个根"。
-    listDesigns: async ({ root }: { root: string }) => state.designsByRoot.get(root) ?? [],
+    listDesigns: async ({ root }: { root: string }) => {
+      // 用例可以先把扫描挂住,好断言"内容还没来"那一刻的界面。
+      if (state.holdScan !== null) await state.holdScan;
+      return state.designsByRoot.get(root) ?? [];
+    },
     listDesignStyles: async () => STYLES,
   };
   /**
@@ -72,6 +80,9 @@ vi.mock("../src/renderer/shared/runtime", () => {
       get sessions() {
         return state.sessions;
       },
+      get runningSessionIds() {
+        return state.runningSessionIds;
+      },
     },
   };
   return { useRuntime: () => runtime, useRuntimeClient: () => client };
@@ -83,6 +94,9 @@ vi.mock("../src/renderer/shared/preferences", () => ({
 }));
 
 const { DesignLibraryView } = await import("../src/renderer/features/design/DesignLibraryView.tsx");
+const { resetCoverCacheForTests, writeCover } = await import(
+  "../src/renderer/features/design/cover-cache.ts"
+);
 const { DESIGN_STYLE_TAGLINE_KEYS } = await import("../src/renderer/features/design/style-copy.ts");
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
@@ -153,6 +167,10 @@ describe("设计页", () => {
     // 夹具状态跨用例共享,每个用例自己声明"哪个根里有哪份设计"。
     state.designsByRoot.clear();
     state.sessions = [];
+    state.runningSessionIds = [];
+    state.holdScan = null;
+    // 封面缓存是**跨用例**的(进程内的内存镜像),不清的话上一个用例写的封面会漏过来。
+    resetCoverCacheForTests();
     /*
       滚回顶部是有原因的,不是抄来的仪式:风格墙是**窗口化**的,而浏览器窗口的滚动位置跨用例
       保留。前面某个用例打开了名字对话框(`autoFocus` 的输入框),浏览器会把它滚进视野 —— 于是
@@ -263,6 +281,7 @@ describe("设计页", () => {
         mode: "built",
         style: null,
         frameCount: 2,
+        updatedAt: 2_000,
       },
     ]);
     const opened: string[] = [];
@@ -279,9 +298,217 @@ describe("设计页", () => {
     expect(opened).toEqual([sessionId]);
   });
 
+  it("「我的设计」按最近改动倒序 —— 不管它住在工作区还是会话里", async () => {
+    /*
+      这条钉的是顺序的**依据**:从前它由两件与"我想找哪份"无关的事决定(每个根内部按名字排,
+      根之间工作区在前)。现在按磁盘上的改动时间倒序,于是"我刚让 agent 改完的那份"在最前面。
+    */
+    const sessionId = "5deacdf1-94d6-4533-8cb3-100ee1f50c25";
+    const rootPath = `/secrets/session-workspaces/${sessionId}`;
+    state.sessions = [
+      { id: sessionId, title: "垃圾分类", workbenchId: "ui-preview", runtimeRootPath: rootPath, updatedAt: 5 },
+    ];
+    // 会话里那份更旧,工作区里那份更新 —— 顺序必须由**时间**决定,而不是由来源决定。
+    state.designsByRoot.set(rootPath, [
+      { id: "old", path: `${rootPath}/old.wdesign`, name: "older-in-session", mode: "built", style: null, frameCount: 2, updatedAt: 1_000 },
+    ]);
+    state.designsByRoot.set("/w", [
+      { id: "new", path: "/w/newer.wdesign", name: "newer-in-workspace", mode: "static", style: null, frameCount: 1, updatedAt: 9_000 },
+    ]);
+
+    await render();
+
+    const names = Array.from(container.querySelectorAll("[data-design-card]")).map((card) =>
+      card.getAttribute("data-design-card"),
+    );
+    expect(names).toEqual(["newer-in-workspace", "older-in-session"]);
+  });
+
+  it("卡片上说得出「几个画面 + 多久以前」", async () => {
+    // 时间那一句是这一页最主要的问题("哪份是我昨天改的")的答案,所以按译文断言。
+    const recent = Date.now() - 3 * 60 * 1000;
+    state.sessions = [];
+    state.designsByRoot.set("/w", [
+      { id: "d3", path: "/w/fresh.wdesign", name: "fresh", mode: "static", style: null, frameCount: 4, updatedAt: recent },
+    ]);
+
+    await render();
+
+    const card = cardFor(container, "fresh");
+    expect(card).not.toBeNull();
+    expect(card?.textContent).toContain(zh("designFrameCount").replace("{count}", "4"));
+    expect(card?.textContent).toContain(zh("designTimeMinutes").replace("{count}", "3"));
+  });
+
+  it("搜索按名字或来源筛,并且说清筛掉了多少", async () => {
+    /*
+      两个真实的问题在界面上是同一句话:「叫什么名」和「那个会话里的设计」。筛的是**子串**
+      (见 `filterDesigns`)—— 规则一句话说得清,比"多命中几条"重要。
+    */
+    const sessionId = "5deacdf1-94d6-4533-8cb3-100ee1f50c25";
+    const rootPath = `/secrets/session-workspaces/${sessionId}`;
+    state.sessions = [
+      { id: sessionId, title: "垃圾分类", workbenchId: "ui-preview", runtimeRootPath: rootPath, updatedAt: 5 },
+    ];
+    state.designsByRoot.set(rootPath, [
+      { id: "d1", path: `${rootPath}/sorting.wdesign`, name: "sorting", mode: "built", style: null, frameCount: 2, updatedAt: 2 },
+    ]);
+    state.designsByRoot.set("/w", [
+      { id: "d2", path: "/w/landing.wdesign", name: "landing", mode: "static", style: null, frameCount: 1, updatedAt: 1 },
+    ]);
+
+    await render();
+    await vi.waitFor(() => expect(container.querySelectorAll("[data-design-card]").length).toBe(2));
+
+    const search = container.querySelector<HTMLInputElement>(`input[aria-label="${zh("designSearchLabel")}"]`);
+    expect(search).not.toBeNull();
+    const typeInto = async (value: string): Promise<void> => {
+      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
+      await act(async () => {
+        setter?.call(search, value);
+        search?.dispatchEvent(new Event("input", { bubbles: true }));
+      });
+    };
+
+    // 按名字筛。
+    await typeInto("land");
+    expect(container.querySelectorAll("[data-design-card]").length).toBe(1);
+    expect(cardFor(container, "landing")).not.toBeNull();
+    // 计数说清"筛掉了多少",而不是只给一个数。
+    expect(container.querySelector("[data-design-count]")?.textContent).toContain(
+      zh("designSearchCount").replace("{matched}", "1").replace("{total}", "2"),
+    );
+
+    // 按**来源**筛:用户说的是"那个会话里的设计"。
+    await typeInto("垃圾");
+    expect(cardFor(container, "sorting")).not.toBeNull();
+    expect(cardFor(container, "landing")).toBeNull();
+
+    // 搜不到:说清是"没有匹配",并给一键清空的出口。
+    await typeInto("zzz");
+    expect(container.querySelectorAll("[data-design-card]").length).toBe(0);
+    expect(container.textContent).toContain(zh("designSearchEmpty"));
+    const clear = Array.from(container.querySelectorAll("button")).find(
+      (button) => (button.textContent ?? "") === zh("designSearchClear"),
+    );
+    await act(async () => {
+      clear?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+    });
+    await vi.waitFor(() => expect(container.querySelectorAll("[data-design-card]").length).toBe(2));
+  });
+
+  it("排序可以切成名字,顺序立刻跟着变", async () => {
+    state.sessions = [];
+    state.designsByRoot.set("/w", [
+      { id: "d1", path: "/w/zeta.wdesign", name: "zeta", mode: "static", style: null, frameCount: 1, updatedAt: 9_000 },
+      { id: "d2", path: "/w/alpha.wdesign", name: "alpha", mode: "static", style: null, frameCount: 1, updatedAt: 1_000 },
+    ]);
+
+    await render();
+    const names = (): string[] =>
+      Array.from(container.querySelectorAll("[data-design-card]")).map(
+        (card) => card.getAttribute("data-design-card") ?? "",
+      );
+    // 默认按最近改动。
+    expect(names()).toEqual(["zeta", "alpha"]);
+
+    const byName = Array.from(container.querySelectorAll("button")).find(
+      (button) => (button.textContent ?? "") === zh("designSortName"),
+    );
+    expect(byName).not.toBeNull();
+    await act(async () => {
+      byName?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+    });
+
+    expect(names()).toEqual(["alpha", "zeta"]);
+    // 选中的那一项要能看出来(`aria-pressed`)。
+    expect(byName?.getAttribute("aria-pressed")).toBe("true");
+  });
+
+  it("扫描还没回来时先铺骨架卡,而不是一行字", async () => {
+    /*
+      一行「正在读取…」到货时会被整片格子换掉,页面跳一次版 —— 而这一页打开时正好是"我在找
+      那份设计"。骨架卡把位置先占住。
+    */
+    state.designsByRoot.set("/w", [
+      { id: "d1", path: "/w/a.wdesign", name: "a", mode: "static", style: null, frameCount: 1, updatedAt: 1 },
+    ]);
+
+    let release!: () => void;
+    state.holdScan = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    await render();
+
+    // 扫描被挂住:这一刻列表还没东西,骨架卡应该已经在了。
+    expect(container.querySelectorAll("[data-design-card-skeleton]").length).toBeGreaterThan(0);
+    // 而真卡片一张都还没有。
+    expect(container.querySelectorAll("[data-design-card]")).toHaveLength(0);
+
+    // 放行:骨架卡换成真卡片。
+    await act(async () => {
+      release();
+    });
+    await vi.waitFor(() => {
+      expect(container.querySelectorAll("[data-design-card]").length).toBeGreaterThan(0);
+    });
+  });
+
+  it("有本机封面就用封面,没有才用主色块", async () => {
+    /*
+      封面是"画布打开过这份设计"的副产品(见 `use-design-cover`),所以它**可能没有** ——
+      没有不是错误,卡片用设计主色刷底兜底。
+    */
+    state.designsByRoot.set("/w", [
+      { id: "d1", path: "/w/with-cover.wdesign", name: "with-cover", mode: "static", style: null, frameCount: 1, updatedAt: 2 },
+      { id: "d2", path: "/w/no-cover.wdesign", name: "no-cover", mode: "static", style: null, frameCount: 1, updatedAt: 1 },
+    ]);
+    await writeCover("/w/with-cover.wdesign", "data:image/jpeg;base64,COVER");
+
+    await render();
+
+    await vi.waitFor(() => {
+      expect(cardFor(container, "with-cover")?.querySelector("img")?.getAttribute("src")).toBe(
+        "data:image/jpeg;base64,COVER",
+      );
+    });
+    // 没封面那张:不出图,名字画在底色上。
+    expect(cardFor(container, "no-cover")?.querySelector("img")).toBeNull();
+    expect(cardFor(container, "no-cover")?.textContent).toContain("no-cover");
+  });
+
+  it("会话正在跑的时候,那张卡上写「正在改」", async () => {
+    const sessionId = "5deacdf1-94d6-4533-8cb3-100ee1f50c25";
+    const rootPath = `/secrets/session-workspaces/${sessionId}`;
+    state.sessions = [
+      { id: sessionId, title: "垃圾分类", workbenchId: "ui-preview", runtimeRootPath: rootPath, updatedAt: 5 },
+    ];
+    state.designsByRoot.set(rootPath, [
+      { id: "d1", path: `${rootPath}/a.wdesign`, name: "in-session", mode: "built", style: null, frameCount: 2, updatedAt: 2 },
+    ]);
+    state.designsByRoot.set("/w", [
+      { id: "d2", path: "/w/b.wdesign", name: "in-workspace", mode: "static", style: null, frameCount: 1, updatedAt: 1 },
+    ]);
+    state.runningSessionIds = [sessionId];
+
+    await render();
+
+    await vi.waitFor(() => expect(cardFor(container, "in-session")?.textContent).toContain(zh("designCardRunning")));
+    // 工作区来源没有会话,所以它**不可能**知道"有没有在跑" —— 也就不会有这个徽标。
+    expect(cardFor(container, "in-workspace")?.querySelector("[data-design-card-running]")).toBeNull();
+  });
+
   it("工作区的设计标成工作区来源,而且不给出打开动作 —— 没有会话可回", async () => {
     state.designsByRoot.set("/w", [
-      { id: "d2", path: "/w/landing.wdesign", name: "landing", mode: "static", style: null, frameCount: 1 },
+      {
+        id: "d2",
+        path: "/w/landing.wdesign",
+        name: "landing",
+        mode: "static",
+        style: null,
+        frameCount: 1,
+        updatedAt: 1_000,
+      },
     ]);
 
     await render({ onOpenSession: () => { throw new Error("工作区来源的设计不该有打开会话的动作"); } });

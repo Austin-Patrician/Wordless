@@ -531,6 +531,10 @@ rename,中间有一个 `dist/` 不存在的窗口。这个窗口是安全的,因
 (`dist/electron/design-build.mjs`):`@tailwindcss/node` 是 ESM-only,而 CJS 里的动态
 import 会被改写成 require,那条路在 ESM-only 包上不通。
 
+**⑦ "不假设用户机器上装了 node"这句还有另一半:那就必须把那份运行时随包发布。** 第 ⑥ 条决定了
+这几个包只能 external(`design-build.mjs` 运行期 `import()` 它们),而 external 的代价是**打包清单
+要跟上** —— 当时没跟上,于是安装版上任何设计都编不出样式,开发机却一切正常。修法与守卫见 §14.23。
+
 ---
 
 ## 7. 每帧显式状态机
@@ -1164,8 +1168,17 @@ return,而 `openDesign` 会调它 —— 于是 agent 改了帧,画布上还是�
 
 **④ 打包要 `asarUnpack`。** `lightningcss` 与 `@tailwindcss/oxide` 都是**原生模块**,
 按平台各一份二进制(`darwin-arm64` 实测 8.1M + 2.8M)。原生 `.node` 不能从 asar 里加载,
-所以 `electron-builder.yml` 需要给它们加 `asarUnpack` —— **这一条还没做**,因为它是打包配置
-改动,不是代码改动。在此之前,开发环境能构建、发布版会失败。
+所以 `electron-builder.yml` 需要给它们加 `asarUnpack`。
+
+> **已做,而且这条当初漏了一半 —— 那一半让安装版整整一轮都编不出样式(§14.23)。**
+> 漏掉的是更前面的一步:**这些包当时根本不在安装包里。** 它们只出现在 `devDependencies`,
+> 而被 external 之后就只能靠运行期从 `node_modules` 解析 —— 仓库里解析得到,安装版里没有。
+> 当时把这条债记成"打包配置改动,不是代码改动",于是它既没有测试、也没有归属,烂了整整一轮,
+> 而且症状被预言得一字不差("开发环境能构建、发布版会失败")。
+>
+> 现在的收尾是两份:**配置**(`dependencies` 里真的声明它们)+ **守卫**
+> (`test/external-runtime-packages.test.ts` 守着"被 external 的每个包都有随包发布的来源",
+> `scripts/verify-packaged-design-build.mjs` 在发布产物里真编一次)。
 
 ### 14.11 「切走再切回来,对话没了」(P6 之后修)
 
@@ -2126,6 +2139,91 @@ mockup-color-picker.tsx    色板 / 系统取色器 / hex
 
 ---
 
+### 14.23 安装版编不出样式:被 external 的运行时依赖没有随包发布
+
+**现象**(用户报的是一个,根因是同一个):安装版上**任何**设计都没有样式。它的表现有三种,取决于
+agent 怎么写帧:
+
+| 帧的写法 | 安装版上的表现 |
+|---|---|
+| agent 按画像用工具类 + 令牌(脚手架首帧就是 `bg-surface`) | 一条样式都不生效 → 裸 HTML |
+| agent 自己写内联 `<style>`、用字面颜色 | **看着正常,而选的风格静默失效**(`design.json` 里 `style: "playful"` 完全没生效) |
+| 恰好留着旧的编译产物(某次在仓库里跑出来的) | 看着正常,直到产物过期或换台机器 |
+
+于是同一次故障,一个用户看到"全是白底、AI 说我的机器坏了",另一个用户**以为一切正常**。
+
+#### 根因:两半,而文档只记了后一半
+
+1. **包根本不在安装包里。** `build-electron.mjs` 把 `@tailwindcss/node` / `@tailwindcss/oxide` /
+   `tailwindcss` / `lightningcss` 列为 external(它们不能内联进产物:ESM + 原生依赖),于是唯一
+   消费者 `dist/electron/design-build.mjs` 只能运行期 `import()` 它们 —— 而它们当时只出现在
+   `devDependencies` 里,`electron-builder.yml` 的 `files` 只收 `dist/**` 与 `package.json`。
+2. **原生模块还要解出 asar**(§14.10 ④ 那条债)—— 但后面这条只在"包已经在包里"的前提下才有意义。
+
+症状因此是确定的:子进程 `import("@tailwindcss/node")` 失败 → `design-build` 退出 1 → 构建器
+按"失败不动 `dist/`"保留旧产物 → 而 `openDesign` 的 `syncRenderRoot` 已经把帧铺进 `dist/` 了,
+`built` 模式下又**不碰 `dist/theme.css`** → 帧里 `<link href="../theme.css">` 404 →
+浏览器默认样式 = 裸结构。**这一步一步都是设计里对的纪律,合起来却把"编译没发生"变成了一张
+看起来只是"很朴素"的页面。**
+
+#### 为什么一整轮都没发现
+
+- **开发机上必然正常**:脚本的解析基准是它自己所在的目录,仓库里向上就是
+  `apps/desktop/node_modules`(devDependency 装着)。
+- **仓库内的"打包自测"也会假绿**:解包目录 `release/win-unpacked` 在仓库里,同一份**缺运行时**
+  的安装包在仓库内跑得到 `exit=0` 与 7222 字节产物,复制到仓库外立刻变成
+  `exit=1: Tailwind is not part of this build`。实测过两次(一次是我自己的第一版实验)。
+- **发布检查没覆盖这一样**:`verify-packaged-fff` / `-icon` / `-renderer-build` 守着别的三样。
+- **欠债被记成"配置改动,不是代码改动"**:§14.10 ④ 已经把这条写下来了,连症状都预言对了
+  ("开发环境能构建、发布版会失败"),但既没有测试、也没有归属 —— 于是它烂了整整一轮。
+
+#### 修法:一条不变量,两处守卫
+
+**不变量:被 external 的运行时依赖,必须有一个把它带进安装包的来源。**
+
+- **单一真源** `apps/desktop/scripts/external-packages.mjs`:每条规则带 `shippedBy`(谁把它带进
+  安装包)。这一栏就是本次事故缺的那一环 —— 原来那两张手写谓词只说了"什么不该内联",没说
+  "那它从哪来"。
+- **配置**:四个包进 `apps/desktop/package.json` 的 `dependencies`(精确版本,与渲染层构建用的
+  那一份必须逐字节同源);`electron-builder.yml` 的 `asarUnpack` 收下整棵 tailwind 树 +
+  `lightningcss*`(asarUnpack 不增加体积:文件是从 asar 挪到 `app.asar.unpacked`)。
+- **静态守卫** `test/external-runtime-packages.test.ts`:每个 `shippedBy` 必须在 `dependencies`
+  里;精确声明必须等于锁文件解析出的版本;`asarUnpack` 与规则表逐条一致;外化判定对子路径与平台
+  后缀包仍然成立。**验证过它真会红**:把 `@tailwindcss/node` 从 `dependencies` 拿掉,第 1 条立刻失败。
+- **发布探针** `scripts/verify-packaged-design-build.mjs`,挂在 `dist:win` / `dist:mac` 上:用
+  **安装包自己的运行时**跑它自己包里的构建脚本,在一份最小设计包上编译,断言产物含
+  `tailwindcss v` / `.bg-surface` / 令牌变量,且比源文件大。
+
+**探针必须在仓库外跑,这一条是它的语义而不是实现细节。** 所以它第 2 步会把安装包复制到临时目录,
+然后断言上溯路径**解析不到** `@tailwindcss/node`(判据精确到包,不是"上溯有没有 `node_modules`"
+—— 用户机器上随便一个目录都可能有无关的 `node_modules`,拿它当理由把探针拦下来只会让人去关掉检查)。
+少了这一步,探针就是一个会骗人的绿灯。
+
+#### 顺带修掉的第二件事:故障说不出自己的名字
+
+分类、文案、可见性一起改,因为**这次事故里"用户白折腾"有一半是报错文案造成的**:
+
+- `BuildFailureCode` 增 `runtime-missing`:入口脚本用**专用退出码 3** 报告(退出码是父子之间的约定,
+  文案会改),构建器据此分类。它与其它失败分类的含义**相反**:其它分类("这次构建的输入有问题")
+  重跑往往就好,这一个重跑、重启、换设计都没用。
+- 其它非零退出码的 `detail` 带上 stderr **尾行** —— 只看 `The build exited with code 1.` 是查不出
+  问题的(安全软件拦 `spawn`、原生模块加载失败都只在这里露头)。
+- `TailwindUnavailableError` 的文案改写:上一版说 `this means the installation is incomplete`,
+  **把责任推给用户的安装** —— 而模型顺着它编出了"你这台机器的安装损坏或被拦截、重启解决不了"。
+  现在它说的是"这份 Wordless 安装缺了编译器运行时,这是 Wordless 的打包缺陷,重跑无用,别绕开"。
+- 界面:画布上多一条**持久**警示(构建成功才消失);`design_status` 的 `runtime-missing` 单独措辞;
+  `design_create` 的工具结果也说出来 —— 原来它对构建**只字不提**,于是模型建完包、截一张白页图,
+  没有任何理由可依。
+
+#### 未做(留给下一轮)
+
+- 画像与 `DESIGN.md` 是否**禁止帧自带 `<style>`**(实测两次会话都自带,风格因此静默失效;
+  修好编译之后这类帧仍然不会跟随风格)。倾向禁止 + 在 `design_inspect` 里报一条 lint。
+- 存量用户必须升级才能修好;修好之后"引用了令牌但没有产物"的设计**颜色会变**(令牌开始生效),
+  这是修好而不是回退,要写进发行说明。
+
+---
+
 ## 15. 风险登记
 
 | # | 风险 | 影响 | 对策 |
@@ -2137,6 +2235,7 @@ mockup-color-picker.tsx    色板 / 系统取色器 / hex
 | 5 | 帧数很大(100+) | 首次光栅排队久 | 视口裁剪 + 余量;先低档位再补高档位 |
 | 6 | 活体视图与位图切换闪白 | 观感断裂 | 活体出现时**位图留作底**,不撤 |
 | 7 | agent 漏声明尺寸 | 帧不上画布 → agent 盲猜 | **fail-open**:照常上画布 + `design_status` 报 issue |
+| 8 | **打包漏项:被 external 的运行时依赖没随包发布** | 安装版上**任何设计都编不出样式**(裸结构、截图失真、agent 误诊;开发机完全正常) | 单一真源 `scripts/external-packages.mjs`(`shippedBy` 一栏)+ 静态守卫 + 发布探针(§14.23) |
 
 ---
 

@@ -426,5 +426,6 @@ function toSummaryDto(summary: DesignSummary): DesignSummaryDto {
     mode: summary.mode,
     style: summary.style,
     frameCount: summary.frameCount,
+    updatedAt: summary.updatedAt,
   };
 }

@@ -23,7 +23,7 @@ function port(overrides: Partial<DesignPort> = {}): DesignPort {
   return {
     list: async () => [{ path: DESIGN, name: "meadow", frameCount: 1 }],
     read: async () => facts(),
-    create: async () => ({ path: DESIGN, frameId: "index", rename: null }),
+    create: async () => ({ path: DESIGN, frameId: "index", rename: null, build: null }),
     screenshot: async () => ({ ok: true, frameId: "index", mimeType: "image/jpeg", data: "AAAA" }),
     inspect: async () => [],
     listStyles: async () => [{ id: "linear", name: "Linear", tagline: "克制的产品风" }],
@@ -232,7 +232,7 @@ it("建包之后告诉模型接下来要读什么 —— 而且每一处路径�
 
 it("重名另建时说清楚这是第二份空的,以免模型接着往上写", async () => {
   const tool = find(
-    createDesignTools(port({ create: async () => ({ path: "/w/meadow-1.wdesign", frameId: "index", rename: { requested: "meadow", actual: "meadow-1" } }) })),
+    createDesignTools(port({ create: async () => ({ path: "/w/meadow-1.wdesign", frameId: "index", rename: { requested: "meadow", actual: "meadow-1" }, build: null }) })),
     "design_create",
   );
   const text = textOf(await run(tool, { name: "meadow", title: "Home", width: 390, height: 844 }));
@@ -381,4 +381,62 @@ it("design_style_apply 对认不出来的风格:列出可用 id,而不是只说�
   );
   const result = await run(tool, { path: DESIGN, styleId: "no-such" });
   expect(textOf(result)).toContain("available ids: linear");
+});
+
+it("建包时样式没编出来:说出原因,并明说重跑无用、不要自己写样式", async () => {
+  /**
+   * 这一条是本次事故的直接产物。原来 `design_create` 对构建**只字不提** —— 模型建完包、截一张
+   * 白页图,没有任何理由可依,于是自己编了一个:"是 Wordless 的样式编译在你这台机器上损坏或被
+   * 拦截,重启解决不了。"而事实是安装包里缺编译器运行时。措辞在这里就是功能。
+   */
+  const tool = find(
+    createDesignTools(
+      port({
+        create: async () => ({
+          path: DESIGN,
+          frameId: "index",
+          rename: null,
+          build: { ok: false, code: "runtime-missing", detail: "This Wordless installation is missing the Tailwind compiler runtime." },
+        }),
+      }),
+    ),
+    "design_create",
+  );
+  const text = textOf(await run(tool, { name: "meadow", title: "Home", width: 390, height: 844 }));
+
+  expect(text).toContain("FIRST BUILD FAILED");
+  // 关键是这三句:不是你的代码、重跑没用、不要自己写样式绕开。
+  expect(text).toContain("not your code");
+  expect(text).toContain("re-running will not help");
+  expect(text).toContain("do not write styles into the frames");
+});
+
+it("建包时构建成功:不多说一个字", async () => {
+  const tool = find(
+    createDesignTools(port({ create: async () => ({ path: DESIGN, frameId: "index", rename: null, build: { ok: true } }) })),
+    "design_create",
+  );
+  const text = textOf(await run(tool, { name: "meadow", title: "Home", width: 390, height: 844 }));
+
+  expect(text).not.toContain("Style warning");
+});
+
+it("样式表的 runtime-missing 与普通构建失败分开说 —— 前者重跑没用", async () => {
+  const missing = textOf(
+    await run(
+      find(createDesignTools(port({ read: async () => facts({ styles: { state: "failed", code: "runtime-missing", detail: "exit: missing runtime" } }) })), "design_status"),
+      {},
+    ),
+  );
+  expect(missing).toContain("NOT COMPILABLE IN THIS INSTALLATION");
+  expect(missing).toContain("not a problem with your computer");
+
+  const plain = textOf(
+    await run(
+      find(createDesignTools(port({ read: async () => facts({ styles: { state: "failed", detail: "exit-nonzero: code 1" } }) })), "design_status"),
+      {},
+    ),
+  );
+  expect(plain).toContain("BUILD FAILED");
+  expect(plain).not.toContain("NOT COMPILABLE IN THIS INSTALLATION");
 });
