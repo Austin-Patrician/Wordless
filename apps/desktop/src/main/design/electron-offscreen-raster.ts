@@ -1,4 +1,5 @@
 import { BrowserWindow } from "electron";
+import { createRasterIdlePolicy, type RasterIdlePolicy } from "./raster-idle.ts";
 import { imagePixelSize, rasterCaptureParams } from "./raster-port.ts";
 import type {
   OffscreenEvaluatePort,
@@ -50,19 +51,34 @@ const CDP_PROTOCOL_VERSION = "1.3";
 /** 加载完成之后再多等一会儿,让字体、图片、布局落定。 */
 const SETTLE_MS = 60;
 
+/** 默认空闲阈值。调用方(`main/index.ts`)按预算传值,这里只是兜底。 */
+const DEFAULT_IDLE_MS = 60_000;
+
 export interface ElectronOffscreenRasterOptions {
   /** 同时允许存在的离屏窗口上限。超过时等待空闲窗口。 */
   maxWindows?: number;
+  /**
+   * 空闲多久之后销毁空闲窗口。省略表示 60 秒,`0` 表示不销毁(只给测试用)。
+   *
+   * 窗口只在销毁/重建这两个动作之间切换,**不做暂停复用** —— 见下面 `release()` 的注释。
+   */
+  idleMs?: number;
 }
 
 export class ElectronOffscreenRaster implements RasterPort, OffscreenEvaluatePort {
   private readonly idle: BrowserWindow[] = [];
   private readonly maxWindows: number;
+  private readonly idlePolicy: RasterIdlePolicy;
   private live = 0;
   private disposed = false;
 
   constructor(options: ElectronOffscreenRasterOptions = {}) {
     this.maxWindows = Math.max(1, Math.floor(options.maxWindows ?? 2));
+    this.idlePolicy = createRasterIdlePolicy({
+      idleMs: options.idleMs ?? DEFAULT_IDLE_MS,
+      onIdle: () => this.destroyIdleWindows(),
+      timer: { setTimeout, clearTimeout },
+    });
   }
 
   async capture(request: RasterRequest, signal: AbortSignal): Promise<RasterResult> {
@@ -149,9 +165,15 @@ export class ElectronOffscreenRaster implements RasterPort, OffscreenEvaluatePor
     }
   }
 
-  /** 关掉所有空闲窗口。应用退出或设计全部关闭时调用。 */
+  /** 关掉所有空闲窗口。应用退出时调用;空闲超时走的是同一条路(`destroyIdleWindows`)。 */
   dispose(): void {
     this.disposed = true;
+    this.idlePolicy.stop();
+    for (const window of this.idle.splice(0)) this.destroyWindow(window);
+  }
+
+  /** 空闲窗口到期:销毁它们,让"打开过一次画布"不再等于"常驻两个渲染进程"。 */
+  private destroyIdleWindows(): void {
     for (const window of this.idle.splice(0)) this.destroyWindow(window);
   }
 
@@ -160,6 +182,8 @@ export class ElectronOffscreenRaster implements RasterPort, OffscreenEvaluatePor
       if (this.disposed || signal.aborted) return null;
       const reused = this.idle.pop();
       if (reused !== undefined) {
+        // 取用即"刚用过":把空闲计时重新推到 60 秒之后,别在复用期间被销毁。
+        this.idlePolicy.touched(this.idle.length);
         if (!reused.isDestroyed()) return reused;
         this.live = Math.max(0, this.live - 1);
         continue;
@@ -264,6 +288,7 @@ export class ElectronOffscreenRaster implements RasterPort, OffscreenEvaluatePor
      * 窗口在 `dispose()` 与 `destroyWindow()` 里照常销毁 —— 该省的地方省在那里。
      */
     this.idle.push(window);
+    this.idlePolicy.released(this.idle.length);
   }
 
   private destroyWindow(window: BrowserWindow): void {

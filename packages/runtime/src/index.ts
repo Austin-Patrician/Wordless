@@ -209,6 +209,11 @@ import {
   type SubagentFileChange,
 } from "./subagent-runner.ts";
 import { estimateSessionContextUsage } from "./context-usage.ts";
+import {
+  HISTORY_BYTES_PER_FILE_BYTE,
+  historyCacheEvictions,
+  historyRevision,
+} from "./history-cache.ts";
 import { withModelRequestHeaders } from "./model-request-headers.ts";
 import { projectSessionTurnVersions } from "./session-branches.ts";
 import {
@@ -1505,7 +1510,8 @@ type ActiveRun = {
   isCompacting: boolean;
   compactionTrigger?: ContextCompactionRecord["trigger"];
   sequence: number;
-  contextUsageRevision: number;
+  /** 用量估算在途时又被要求刷新一次 —— 回来后重算,而不是排队重算。 */
+  contextUsageDirty: boolean;
   runId: string;
   userMessageId?: string;
   /**
@@ -1520,6 +1526,7 @@ type ActiveRun = {
 };
 
 type CachedSessionHistory = {
+  /** 按 `HISTORY_BYTES_PER_FILE_BYTE` 折算后的估算占用,用来守 64MB 那条预算。 */
   bytes: number;
   projection: SessionHistoryProjection;
   revision: string;
@@ -2460,44 +2467,14 @@ export class WordlessRuntime {
         latestCompactionTimestamp = compaction.timestamp;
       }
     }
-    let latestInputTokens: number | undefined;
-    for (let index = activeContext.messages.length - 1; index >= 0; index -= 1) {
-      const message = activeContext.messages[index] as {
-        role?: string;
-        timestamp?: number;
-        usage?: { input?: number; cacheRead?: number; cacheWrite?: number };
-      };
-      if (message.role !== "assistant") continue;
-      if (
-        typeof message.timestamp === "number" &&
-        message.timestamp <= latestCompactionTimestamp
-      ) {
-        break;
-      }
-      const usage = message.usage;
-      if (!usage) continue;
-      const total = (usage.input ?? 0) + (usage.cacheRead ?? 0) + (usage.cacheWrite ?? 0);
-      if (total > 0) { latestInputTokens = total; break; }
-    }
-    let contextUsage: SessionSnapshot["contextUsage"];
-    try {
-      const model = this.requireRuntimeModel(record.model);
-      contextUsage = estimateSessionContextUsage({
-        connectors: this.connectorRegistry
-          .snapshot()
-          .connectors.filter((connector) =>
-            record.connectorIds.includes(connector.id),
-          ),
-        contextWindow: model.contextWindow || 128_000,
-        entries: activeContext.messages,
-        extensions: this.extensions.snapshot(),
-        latestInputTokens,
-        profile: this.contextUsageProfile(record),
-        skills: this.skillRegistry.getSessionSkills(record.workspaceId),
-      });
-    } catch {
-      contextUsage = undefined;
-    }
+    const contextUsage = this.buildContextUsage({
+      latestInputTokens: this.latestProviderInputTokens(
+        activeContext.messages,
+        latestCompactionTimestamp,
+      ),
+      messages: activeContext.messages,
+      record,
+    });
     const visibleMessages = messages.filter(
       (message) => !recoveredFailureEntryIds.has(message.id),
     );
@@ -2719,7 +2696,7 @@ export class WordlessRuntime {
     }
     return {
       projection: createSessionHistoryProjection(messages, compactions),
-      revision: `${details.size}:${Math.round(details.mtimeMs)}`,
+      revision: historyRevision(details),
     };
   }
 
@@ -5613,7 +5590,7 @@ export class WordlessRuntime {
       isCompacting: kind === "compaction",
       compactionTrigger: kind === "compaction" ? "manual" : undefined,
       sequence: 0,
-      contextUsageRevision: 0,
+      contextUsageDirty: false,
       runId: randomUUID(),
       ...(userMessageId ? { userMessageId } : {}),
       ...(turnId ? { turnId } : {}),
@@ -5845,14 +5822,142 @@ export class WordlessRuntime {
     if (event.type === "extension.event") this.emit(sessionId, active, event);
   }
 
-  private async refreshContextUsage(sessionId: string, active: ActiveRun): Promise<void> {
-    const revision = ++active.contextUsageRevision;
+  /**
+   * 最新一条 assistant 用量块里的 prompt token 数。
+   *
+   * 只认**最后一次压缩之后**的用量:压缩把上下文换掉了,压缩之前那条用量描述的是另一份
+   * 请求,拿它当基准会让指示器凭空少算一段。
+   */
+  private latestProviderInputTokens(
+    messages: readonly unknown[],
+    latestCompactionTimestamp: number,
+  ): number | undefined {
+    for (let index = messages.length - 1; index >= 0; index -= 1) {
+      const message = messages[index] as {
+        role?: string;
+        timestamp?: number;
+        usage?: { input?: number; cacheRead?: number; cacheWrite?: number };
+      };
+      if (message.role !== "assistant") continue;
+      if (
+        typeof message.timestamp === "number" &&
+        message.timestamp <= latestCompactionTimestamp
+      ) {
+        break;
+      }
+      const usage = message.usage;
+      if (!usage) continue;
+      const total = (usage.input ?? 0) + (usage.cacheRead ?? 0) + (usage.cacheWrite ?? 0);
+      if (total > 0) return total;
+    }
+    return undefined;
+  }
+
+  /**
+   * 五类上下文用量的估算。失败返回 `undefined` —— 它是展示面,不该让上层流程失败。
+   *
+   * 抽成方法是为了让"要一份完整快照"和"只要一个用量数字"两条路共用同一套输入,
+   * 否则两边会慢慢算出不同的数。
+   */
+  private buildContextUsage(input: {
+    latestInputTokens: number | undefined;
+    messages: readonly unknown[];
+    record: SessionRecord;
+  }): SessionSnapshot["contextUsage"] {
     try {
-      const snapshot = await this.getSessionSnapshot(sessionId);
-      if (revision !== active.contextUsageRevision || !snapshot.contextUsage) return;
-      this.emit(sessionId, active, { type: "context.usage.updated", contextUsage: snapshot.contextUsage });
+      const model = this.requireRuntimeModel(input.record.model);
+      return estimateSessionContextUsage({
+        connectors: this.connectorRegistry
+          .snapshot()
+          .connectors.filter((connector) =>
+            input.record.connectorIds.includes(connector.id),
+          ),
+        contextWindow: model.contextWindow || 128_000,
+        entries: input.messages,
+        extensions: this.extensions.snapshot(),
+        latestInputTokens: input.latestInputTokens,
+        profile: this.contextUsageProfile(input.record),
+        skills: this.skillRegistry.getSessionSkills(input.record.workspaceId),
+      });
     } catch {
-      // Snapshot refresh is best effort; the next session view will recover it.
+      return undefined;
+    }
+  }
+
+  /** 压缩后时间戳:`latestProviderInputTokens` 用它划出"这次请求"的范围。 */
+  private latestCompactionTimestamp(entries: readonly unknown[]): number {
+    let latest = 0;
+    for (const entry of entries) {
+      const candidate = entry as { type?: string; timestamp?: number };
+      if (candidate.type !== "compaction") continue;
+      const timestamp = candidate.timestamp ?? 0;
+      if (timestamp > latest) latest = timestamp;
+    }
+    return latest;
+  }
+
+  /**
+   * 只算用量,不构造会话视图。
+   *
+   * 这条路径以前走的是 `getSessionSnapshot`:为了拿一个数字,把整份 journal 解析、把
+   * 会话视图整个投影出来(消息、turn 版本、审批、澄清请求)。而它每条消息完成都会跑一次
+   * (`message.completed`),于是最贵的一步被重复了最多遍。
+   */
+  private async estimateContextUsageForSession(
+    sessionId: string,
+  ): Promise<SessionSnapshot["contextUsage"]> {
+    const record = await this.ensureSessionModelForOpen(sessionId);
+    /**
+     * 这里**不复用**会话视图缓存里的用量,即使修订号相同。
+     *
+     * 试过,收益与代价不成比例:命中的只有"journal 没变但用量要重算"这一小撮场景
+     * (合并后的重算、切模型、澄清回答),省下的是这次读盘(~118ms);而 `connectors` /
+     * `skills` / `toolsAndSubagents` 这三个分类的输入**可以在不写 journal 的情况下变化**
+     * (启用扩展、装技能、连连接器),复用会让它们在整个回合里停在旧值上。
+     *
+     * 真正值得做的是"只读 journal 新增的那一段"(见 docs 的待办),那需要一条前缀完整性
+     * 判据,该单独设计 —— 不是为了省这 118ms 顺手塞进这里。
+     */
+    const session = await openWordlessSession(record.journalPath);
+    const entries = await session.getEntries();
+    const activeContext = await session.buildContext();
+    return this.buildContextUsage({
+      latestInputTokens: this.latestProviderInputTokens(
+        activeContext.messages,
+        this.latestCompactionTimestamp(entries),
+      ),
+      messages: activeContext.messages,
+      record,
+    });
+  }
+
+  /**
+   * 刷新上下文用量(展示面)。
+   *
+   * 合并:在途未完成时只置一个 dirty 标记,回来后重算一次。原来只是"丢弃过期结果",
+   * 每一次调用仍然各跑一遍 —— 一轮里几十条消息就是几十次重算,而它们的结果几乎一样。
+   */
+  private pendingContextUsage = new Set<string>();
+
+  private async refreshContextUsage(sessionId: string, active: ActiveRun): Promise<void> {
+    if (this.pendingContextUsage.has(sessionId)) {
+      active.contextUsageDirty = true;
+      return;
+    }
+    this.pendingContextUsage.add(sessionId);
+    try {
+      do {
+        active.contextUsageDirty = false;
+        const contextUsage = await this.estimateContextUsageForSession(sessionId);
+        if (active.contextUsageDirty) continue;
+        if (contextUsage) {
+          this.emit(sessionId, active, { type: "context.usage.updated", contextUsage });
+        }
+      } while (active.contextUsageDirty);
+    } catch {
+      // 用量是展示面:失败就等下一次。下一条消息还会再触发一次。
+    } finally {
+      this.pendingContextUsage.delete(sessionId);
     }
   }
 
@@ -6031,7 +6136,7 @@ export class WordlessRuntime {
   ): Promise<CachedSessionHistory> {
     const record = this.requireSession(sessionId);
     const details = await stat(record.journalPath);
-    const revision = `${details.size}:${Math.round(details.mtimeMs)}`;
+    const revision = historyRevision(details);
     const cached = this.historyCache.get(sessionId);
     if (cached?.revision === revision) {
       this.historyCache.delete(sessionId);
@@ -6051,22 +6156,15 @@ export class WordlessRuntime {
       ),
       revision,
       snapshot,
-      bytes: details.size * 2,
+      bytes: details.size * HISTORY_BYTES_PER_FILE_BYTE,
     };
     this.historyCache.delete(sessionId);
     this.historyCache.set(sessionId, next);
-    while (
-      this.historyCache.size > 5 ||
-      [...this.historyCache.values()].reduce(
-        (total, item) => total + item.bytes,
-        0,
-      ) >
-        64 * 1024 * 1024
-    ) {
-      const oldest = this.historyCache.keys().next().value;
-      if (!oldest) break;
-      this.historyCache.delete(oldest);
-    }
+    // 淘汰策略是纯函数(`history-cache.ts`):这里只负责按它说的删。
+    const evictions = historyCacheEvictions(
+      [...this.historyCache].map(([id, item]) => ({ sessionId: id, bytes: item.bytes })),
+    );
+    for (const id of evictions) this.historyCache.delete(id);
     return next;
   }
 

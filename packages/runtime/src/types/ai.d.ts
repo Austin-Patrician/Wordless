@@ -25,6 +25,18 @@ export interface Model<TApi extends Api = Api> {
 export function getSupportedThinkingLevels(model: Model): ModelThinkingLevel[];
 export function clampThinkingLevel(model: Model, level: ModelThinkingLevel): ModelThinkingLevel;
 export function estimateBpeTokens(text: string): number;
+export function countBpeTokens(text: string): number;
+export const GENERIC_BPE_SAFETY_FACTOR: number;
+export function tokenCacheStats(): {
+  maxEntries: number;
+  maxChars: number;
+  maxEntryChars: number;
+  entries: number;
+  chars: number;
+  skipped: number;
+  hits: number;
+  misses: number;
+};
 
 export interface AssistantMessage {
   role: "assistant";

@@ -172,7 +172,11 @@ app.whenReady().then(async () => {
     isWithinRoot: (root, candidate) => designPaths.isWithinRoot(root, candidate),
   });
   // 离屏光栅化:窗口数跟池的并发数走 —— 两者不一致时池会等空闲窗口,不会出错但会变慢。
-  designRaster = new ElectronOffscreenRaster({ maxWindows: DESIGN_RASTER_BUDGETS.rasterConcurrency });
+  designRaster = new ElectronOffscreenRaster({
+    maxWindows: DESIGN_RASTER_BUDGETS.rasterConcurrency,
+    // 空闲即销毁:两个离屏窗口各约 128MB,留着到退出等于每次用过画布就永久多付 264MB。
+    idleMs: DESIGN_RASTER_BUDGETS.rasterIdleMs,
+  });
   const rasterPool = new RasterPool({
     port: designRaster,
     concurrency: DESIGN_RASTER_BUDGETS.rasterConcurrency,
