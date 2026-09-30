@@ -63,6 +63,7 @@ import {
 	clampMaxTokensToContext,
 	clampReasoning,
 } from "./simple-options.ts";
+import { cacheUsageReportingOf } from "../utils/cache-reporting.ts";
 import { transformMessages } from "./transform-messages.ts";
 
 export type BedrockThinkingDisplay = "summarized" | "omitted";
@@ -686,6 +687,11 @@ function handleMetadata(
 	if (event.usage) {
 		output.usage.input = event.usage.inputTokens || 0;
 		output.usage.output = event.usage.outputTokens || 0;
+		// 存在性判定,不看值(见 cache-reporting.ts)。
+		output.usage.cacheUsageReporting = cacheUsageReportingOf({
+			readReported: event.usage.cacheReadInputTokens !== undefined,
+			writeReported: event.usage.cacheWriteInputTokens !== undefined,
+		});
 		output.usage.cacheRead = event.usage.cacheReadInputTokens || 0;
 		output.usage.cacheWrite = event.usage.cacheWriteInputTokens || 0;
 		output.usage.totalTokens = event.usage.totalTokens || output.usage.input + output.usage.output;

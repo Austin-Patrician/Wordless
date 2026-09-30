@@ -534,6 +534,26 @@ function shouldUsePromptCaching(options?: MistralOptions): options is MistralOpt
 	return options?.cacheRetention !== "none" && !!options?.sessionId;
 }
 
+/** provider 这次**有没有**给出缓存命中字段 —— 与它的值无关(0 是"没命中",缺字段是"不知道")。 */
+function mistralReportsCachedPromptTokens(usage: unknown): boolean {
+	const rawUsage = usage as {
+		promptTokensDetails?: { cachedTokens?: unknown } | null;
+		prompt_tokens_details?: { cached_tokens?: unknown } | null;
+		promptTokenDetails?: { cachedTokens?: unknown } | null;
+		prompt_token_details?: { cached_tokens?: unknown } | null;
+		numCachedTokens?: unknown;
+		num_cached_tokens?: unknown;
+	};
+	return (
+		typeof rawUsage.promptTokensDetails?.cachedTokens === "number" ||
+		typeof rawUsage.prompt_tokens_details?.cached_tokens === "number" ||
+		typeof rawUsage.promptTokenDetails?.cachedTokens === "number" ||
+		typeof rawUsage.prompt_token_details?.cached_tokens === "number" ||
+		typeof rawUsage.numCachedTokens === "number" ||
+		typeof rawUsage.num_cached_tokens === "number"
+	);
+}
+
 function getMistralCachedPromptTokens(usage: unknown, promptTokens: number): number {
 	const rawUsage = usage as {
 		promptTokensDetails?: { cachedTokens?: unknown } | null;
@@ -601,6 +621,12 @@ async function consumeChatStream(
 			output.usage.output = chunk.usage.completion_tokens || 0;
 			output.usage.cacheRead = cachedPromptTokens;
 			output.usage.cacheWrite = 0;
+			// Mistral 只报缓存读,写永不报;命中字段有没有给,按存在性判定。
+			output.usage.cacheUsageReporting = mistralReportsCachedPromptTokens(chunk.usage)
+				? "read-only"
+				: "unavailable";
+			if (typeof chunk.usage.prompt_tokens === "number")
+				output.usage.reportedPromptTokens = chunk.usage.prompt_tokens;
 			output.usage.totalTokens =
 				chunk.usage.total_tokens ||
 				output.usage.input + output.usage.output + output.usage.cacheRead + output.usage.cacheWrite;

@@ -13,3 +13,14 @@
   `baseUrl` host (`isOpenCodeEndpoint`) and is exported as `openCodeSessionHeadersFor()`, so layers that dispatch
   without going through a wrapped provider (a user-configured provider entry) share one implementation instead of
   duplicating it. Upstream only matches provider ids `opencode` / `opencode-go`.
+- Added an additive `Usage.cacheUsageReporting` (`"unavailable" | "read-only" | "read-write"`) and
+  `Usage.reportedPromptTokens`, plus `src/utils/cache-reporting.ts`, so a "cache read of 0" can be told
+  apart from "the provider never reported caching". The level is decided per **response** from field
+  presence (never from the value, which `|| 0` would collapse), in `anthropic-messages` (message_start,
+  monotone across message_delta), `bedrock-converse-stream`, `openai-completions`, `openai-responses-shared`,
+  `google-generative-ai`, `google-vertex` (read-only at most; Google never reports writes) and
+  `mistral-conversations`. `pi-messages` forwards the server payload verbatim, so it stays `unavailable`
+  unless the gateway sends the field. `reportedPromptTokens` is only set where the provider reports a
+  prompt total that is independent of our normalized components (OpenAI/Google/Mistral), and exists so
+  normalization drift can be detected instead of silently clamped. Covered by
+  `test/wordless-cache-usage-reporting.test.ts`.

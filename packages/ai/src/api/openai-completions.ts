@@ -57,6 +57,7 @@ import {
 import { buildCopilotDynamicHeaders, hasCopilotVisionInput } from "./github-copilot-headers.ts";
 import { clampOpenAIPromptCacheKey } from "./openai-prompt-cache.ts";
 import { buildBaseOptions, clampThinkingBudgetToAnswerRoom, thinkingBudgetForLevel } from "./simple-options.ts";
+import { cacheUsageReportingOf } from "../utils/cache-reporting.ts";
 import { transformMessages } from "./transform-messages.ts";
 
 /**
@@ -1469,9 +1470,12 @@ function parseChunkUsage(
 	model: Model<"openai-completions">,
 ): AssistantMessage["usage"] {
 	const promptTokens = rawUsage.prompt_tokens || 0;
-	const cacheReadTokens =
-		rawUsage.prompt_tokens_details?.cached_tokens ?? rawUsage.prompt_cache_hit_tokens ?? rawUsage.cached_tokens ?? 0;
-	const cacheWriteTokens = rawUsage.prompt_tokens_details?.cache_write_tokens || 0;
+	// 先取"有没有这个字段",再落到 0 —— `?? 0` 会把"没上报"和"报了个 0"压成一件事。
+	const reportedCachedTokens =
+		rawUsage.prompt_tokens_details?.cached_tokens ?? rawUsage.prompt_cache_hit_tokens ?? rawUsage.cached_tokens;
+	const reportedCacheWriteTokens = rawUsage.prompt_tokens_details?.cache_write_tokens;
+	const cacheReadTokens = reportedCachedTokens ?? 0;
+	const cacheWriteTokens = reportedCacheWriteTokens || 0;
 
 	// Follow documented OpenAI/OpenRouter semantics: cached_tokens is cache-read
 	// tokens (hits). Providers disagree on placement: OpenAI/OpenRouter use
@@ -1494,6 +1498,14 @@ function parseChunkUsage(
 		cacheWrite: cacheWriteTokens,
 		reasoning: rawUsage.completion_tokens_details?.reasoning_tokens || 0,
 		totalTokens: input + outputTokens + cacheReadTokens + cacheWriteTokens,
+		cacheUsageReporting: cacheUsageReportingOf({
+			readReported: reportedCachedTokens !== undefined,
+			writeReported: reportedCacheWriteTokens !== undefined,
+		}),
+		// OpenAI 报的 prompt_tokens 是**总数**,而我们把缓存读写减掉了 —— 留着它对账。
+		...(typeof rawUsage.prompt_tokens === "number"
+			? { reportedPromptTokens: rawUsage.prompt_tokens }
+			: {}),
 		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
 	};
 	calculateCost(model, usage);

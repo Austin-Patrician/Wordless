@@ -68,6 +68,8 @@ export default defineConfig({
     },
     include: [
       "test/thread-production-row.browser.test.tsx",
+      "test/turn-token-usage.browser.test.tsx",
+      "test/assistant-message-footer.browser.test.tsx",
       "test/sidebar-settings-menu.browser.test.tsx",
       "test/sidebar-nav-more.browser.test.tsx",
       "test/thread-selection-menu.browser.test.tsx",

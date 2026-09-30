@@ -2,6 +2,7 @@ import { HoverCard, HoverCardContent, HoverCardTrigger } from "@wordless/ui-kit"
 import { X } from "lucide-react";
 import { useState } from "react";
 import type { SessionContextUsage, SessionContextUsageCategories } from "@wordless/domain";
+import { formatTokenCount } from "../../shared/format-tokens";
 import { usePreferences } from "../../shared/preferences";
 import { estimateBpeTokens } from "@wordless/ai";
 
@@ -20,12 +21,6 @@ type ContextCategory = {
 
 function estimateDraftTokens(text: string): number {
   return estimateBpeTokens(text);
-}
-
-function formatTokens(tokens: number): string {
-  if (tokens < 1_000) return Math.round(tokens).toLocaleString();
-  const compact = Math.round((tokens / 1_000) * 10) / 10;
-  return `${Number.isInteger(compact) ? compact.toFixed(0) : compact.toFixed(1)}K`;
 }
 
 export function ContextUsageIndicator({ contextUsage, draftMessage, draftSkillTokens }: ContextUsageIndicatorProps) {
@@ -56,13 +51,13 @@ export function ContextUsageIndicator({ contextUsage, draftMessage, draftSkillTo
       <HoverCardContent align="end" className="w-[300px] max-w-[calc(100vw-2rem)] rounded-[14px] border-[#deded9] p-0 shadow-[0_10px_26px_rgba(0,0,0,0.11)] dark:border-border" side="top">
         <section className="p-3">
           <header className="flex items-center justify-between gap-3"><h2 className="text-[12px] font-semibold text-[#353532] dark:text-foreground">{t("contextUsage")}</h2><button aria-label={t("closeContextUsage")} className="grid h-6 w-6 place-items-center rounded-[5px] text-[#595954] hover:bg-[#f0f0ed] dark:text-muted-foreground dark:hover:bg-muted" onClick={() => setOpen(false)} type="button"><X className="h-3.5 w-3.5" /></button></header>
-          <div className="mt-2 flex items-baseline gap-1.5"><span className="font-mono text-[20px] font-semibold text-[#1d1e1b] dark:text-foreground">{percentage.toFixed(1)}%</span><span className="text-[10px] text-[#7c7c75] dark:text-muted-foreground">{t("contextUsed")} {formatTokens(usedTokens)} / {formatTokens(contextUsage.contextWindow)}</span></div>
+          <div className="mt-2 flex items-baseline gap-1.5"><span className="font-mono text-[20px] font-semibold text-[#1d1e1b] dark:text-foreground">{percentage.toFixed(1)}%</span><span className="text-[10px] text-[#7c7c75] dark:text-muted-foreground">{t("contextUsed")} {formatTokenCount(usedTokens)} / {formatTokenCount(contextUsage.contextWindow)}</span></div>
           <div aria-hidden className="mt-2 flex h-1.5 overflow-hidden rounded-full bg-[#e7e7e3] dark:bg-muted">
             {categories.filter((category) => category.tokens > 0).map((category) => <span key={category.id} style={{ backgroundColor: category.color, flexGrow: category.tokens }} />)}
             {remainder > 0 ? <span className="bg-[#e7e7e3] dark:bg-muted" style={{ flexGrow: remainder }} /> : null}
           </div>
           <div className="mt-3 space-y-1.5">
-            {categories.map((category) => <div className="flex items-center gap-1.5 text-[11px]" key={category.id}><span className="h-2 w-2 shrink-0 rounded-full" style={{ backgroundColor: category.color }} /><span className="min-w-0 flex-1 text-[#454540] dark:text-foreground">{category.label}</span><span className="font-mono text-[10px] text-[#7d7d76] dark:text-muted-foreground">~{formatTokens(category.tokens)}</span></div>)}
+            {categories.map((category) => <div className="flex items-center gap-1.5 text-[11px]" key={category.id}><span className="h-2 w-2 shrink-0 rounded-full" style={{ backgroundColor: category.color }} /><span className="min-w-0 flex-1 text-[#454540] dark:text-foreground">{category.label}</span><span className="font-mono text-[10px] text-[#7d7d76] dark:text-muted-foreground">~{formatTokenCount(category.tokens)}</span></div>)}
           </div>
         </section>
       </HoverCardContent>

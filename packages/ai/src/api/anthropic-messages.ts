@@ -29,6 +29,7 @@ import type {
 	ToolCall,
 	ToolResultMessage,
 } from "../types.ts";
+import { cacheUsageReportingOf } from "../utils/cache-reporting.ts";
 import { splitDeferredTools } from "../utils/deferred-tools.ts";
 import { AssistantMessageEventStream } from "../utils/event-stream.ts";
 import { headersToRecord } from "../utils/headers.ts";
@@ -601,6 +602,12 @@ export const stream: StreamFunction<"anthropic-messages", AnthropicOptions> = (
 					// This ensures we have input token counts even if the stream is aborted early
 					output.usage.input = event.message.usage.input_tokens || 0;
 					output.usage.output = event.message.usage.output_tokens || 0;
+					// 观测级别看字段**是否存在**,不看它的值:`|| 0` 会把"没上报"和"报了个 0"
+					// 压成同一个数,而这两者一个说明"没命中"、一个说明"无从判断"。
+					output.usage.cacheUsageReporting = cacheUsageReportingOf({
+						readReported: event.message.usage.cache_read_input_tokens != null,
+						writeReported: event.message.usage.cache_creation_input_tokens != null,
+					});
 					output.usage.cacheRead = event.message.usage.cache_read_input_tokens || 0;
 					output.usage.cacheWrite = event.message.usage.cache_creation_input_tokens || 0;
 					output.usage.cacheWrite1h = event.message.usage.cache_creation?.ephemeral_1h_input_tokens || 0;
@@ -752,6 +759,18 @@ export const stream: StreamFunction<"anthropic-messages", AnthropicOptions> = (
 						if (event.usage.cache_creation_input_tokens != null) {
 							output.usage.cacheWrite = event.usage.cache_creation_input_tokens;
 						}
+						// 判定是**单调**的:这个增量事件给了字段就以它为准,没给就保留
+						// message_start 的结论(代理常常只在其中一个事件里给字段)。
+						const previousReporting = output.usage.cacheUsageReporting;
+						output.usage.cacheUsageReporting = cacheUsageReportingOf({
+							readReported:
+								event.usage.cache_read_input_tokens != null ||
+								previousReporting === "read-only" ||
+								previousReporting === "read-write",
+							writeReported:
+								event.usage.cache_creation_input_tokens != null ||
+								previousReporting === "read-write",
+						});
 						// Anthropic reports reasoning tokens in `output_tokens_details.thinking_tokens` on the
 						// final message_delta usage (a subset of output_tokens). SDK 0.91.1 omits the field from
 						// its Usage type, so read it through a narrow cast. Verified against the live API.

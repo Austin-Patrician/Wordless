@@ -27,6 +27,7 @@ const zhSidebar = [
         translations: { en: 'Workflows' },
         items: [
           'docs/workflows/general',
+          'docs/workflows/design',
           'docs/workflows/presentation',
           'docs/workflows/spreadsheet',
           'docs/workflows/data-analysis',

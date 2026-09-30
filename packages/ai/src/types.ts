@@ -386,6 +386,16 @@ export interface ToolCall {
 	namespace?: string;
 }
 
+/**
+ * 这一次调用 provider **有没有**上报缓存读写明细。
+ *
+ * `cacheRead === 0` 有三张面孔:真的没命中、provider 压根没上报、这个模型没有缓存。没有这个
+ * 字段,三者会被压成同一个 0,而界面上会因此出现一个假的"缓存命中率 0%"。
+ *
+ * 缺省(字段不存在)= `unavailable` —— 历史记录天生如此,也是保守的一侧。
+ */
+export type CacheUsageReporting = "unavailable" | "read-only" | "read-write";
+
 export interface Usage {
 	input: number;
 	output: number;
@@ -400,6 +410,20 @@ export interface Usage {
 	 */
 	reasoning?: number;
 	totalTokens: number;
+	/**
+	 * 本次调用的缓存观测级别。由各适配器**按响应里字段是否存在**声明,不是按协议写死:
+	 * 同一个协议的不同网关给出的字段并不一致。
+	 */
+	cacheUsageReporting?: CacheUsageReporting;
+	/**
+	 * provider 自己报告的 prompt 总数,独立于归一化后的分量。
+	 *
+	 * 只用于对账:我们归一化时会把缓存命中/写入从 prompt 总数里减掉,一旦 provider 的数字
+	 * 不自洽,差额会被 `Math.max(0, …)` 静默吞掉。有了这个自报值,才能分清"我们算错了"
+	 * 和"provider 自己不自洽"。没有独立总数的协议(如 Anthropic 的 `input_tokens` 本身
+	 * 就是未命中部分)不写这个字段。
+	 */
+	reportedPromptTokens?: number;
 	cost: {
 		input: number;
 		output: number;

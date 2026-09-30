@@ -41,6 +41,7 @@ import type {
   UserPromptPart,
   WorkspaceRecord,
 } from "@wordless/domain";
+import type { SessionUsageSnapshot } from "@wordless/protocol";
 import type {
   AgentExtensionSnapshot,
   JsonObject,
@@ -190,6 +191,8 @@ export interface DesktopBridge {
   ): Promise<ExpertTeamDefinition>;
   deleteExpertTeam(id: string): Promise<void>;
   getUsageReport(query: UsageReportQuery): Promise<UsageReport>;
+  /** 一个会话的总用量。来源是 journal,所以与逐轮面板同一套口径。 */
+  getSessionUsage(sessionId: string): Promise<SessionUsageSnapshot>;
   getSessionSnapshot(sessionId: string): Promise<SessionSnapshot>;
   getSessionView(sessionId: string): Promise<SessionViewSnapshot>;
   getSessionHistoryPage(
@@ -784,6 +787,7 @@ export const requiredMethods: Array<Exclude<keyof DesktopBridge, "version">> = [
   "saveExpertTeam",
   "deleteExpertTeam",
   "getUsageReport",
+  "getSessionUsage",
   "getSessionSnapshot",
   "getSessionView",
   "getSessionHistoryPage",

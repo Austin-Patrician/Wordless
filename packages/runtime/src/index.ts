@@ -79,6 +79,8 @@ import {
 import {
   calculateCurrentTurnUsage,
   conversationUsageFromUnknown,
+  emptyTokenUsageSummary,
+  summarizeTokenUsage,
   resolveTranslationTargetLanguage,
   SIDEBAR_PINNED_LIMIT_DEFAULT,
 } from "@wordless/domain";
@@ -178,6 +180,7 @@ import {
   type SessionMessageSearchRequest,
   type SessionMessageSearchResponse,
   type SessionSnapshot,
+  type SessionUsageSnapshot,
   type SessionViewSnapshot,
   type SessionWorkspaceTextFile,
   type WorkspaceFileEntry,
@@ -218,6 +221,7 @@ import { sessionTitleFromPrompt } from "./session-title.ts";
 import {
   UsageReportService,
   conversationUsageFromAiUsage,
+  summarizeSessionUsage,
 } from "./usage-report.ts";
 
 const SUBAGENT_FILE_CHANGE_JOURNAL_TYPE = "wordless.subagent-file-change";
@@ -1002,39 +1006,11 @@ function contentToText(value: unknown): string {
     .join("\n");
 }
 
-function toConversationUsage(value: unknown): ConversationUsage | undefined {
-  const usage = asRecord(value);
-  const cost = asRecord(usage?.cost);
-  const inputTokens = typeof usage?.input === "number" ? usage.input : 0;
-  const outputTokens = typeof usage?.output === "number" ? usage.output : 0;
-  const cacheReadTokens =
-    typeof usage?.cacheRead === "number" ? usage.cacheRead : 0;
-  const cacheWriteTokens =
-    typeof usage?.cacheWrite === "number" ? usage.cacheWrite : 0;
-  const totalTokens =
-    typeof usage?.totalTokens === "number"
-      ? usage.totalTokens
-      : typeof usage?.total === "number"
-        ? usage.total
-        : inputTokens + outputTokens + cacheReadTokens + cacheWriteTokens;
-  const totalCost = typeof cost?.total === "number" ? cost.total : 0;
-  if (
-    totalTokens === 0 &&
-    inputTokens === 0 &&
-    outputTokens === 0 &&
-    cacheReadTokens === 0 &&
-    cacheWriteTokens === 0
-  )
-    return undefined;
-  return {
-    inputTokens,
-    outputTokens,
-    cacheReadTokens,
-    cacheWriteTokens,
-    totalTokens,
-    totalCost,
-  };
-}
+/**
+ * 唯一的实现处是 `@wordless/domain` 的 `conversationUsageFromAiUsage`(见那里的注释:
+ * 这曾经是三份互不一致的副本)。
+ */
+const toConversationUsage = conversationUsageFromAiUsage;
 
 function persistedApproval(
   value: unknown,
@@ -2076,6 +2052,21 @@ export class WordlessRuntime {
 
   async getUsageReport(query: UsageReportQuery): Promise<UsageReport> {
     return await this.usageReport.getReport(query);
+  }
+
+  /**
+   * 一个会话的总用量。**从 journal 现算**,不走派生表(理由见 `collectSessionUsage`)。
+   *
+   * 对话与图片分开返回:图片的计费形态不同(按张 / 按 token 混着),把它并进对话的命中率分母
+   * 是错的。所以图片只在这里报计数与金额,不参与 `chat` 的率。
+   */
+  async getSessionUsage(sessionId: string): Promise<SessionUsageSnapshot> {
+    const session = this.requireSession(sessionId);
+    // 读取与口径分开:`collectSessionUsage` 只负责把 journal 读成记录,
+    // `summarizeSessionUsage` 负责分类与汇总(纯函数,单独有测试)。
+    return summarizeSessionUsage(
+      await this.usageReport.collectSessionUsage(session),
+    );
   }
 
   async refreshSkills(): Promise<void> {

@@ -46,6 +46,7 @@ import {
 import type {
   ArtifactSelection,
   ConversationMessage,
+  SessionUsageSnapshot,
   ExpertCollaborationLeader,
   ExpertCollaborationMember,
   SessionHistoryPage,
@@ -111,7 +112,8 @@ import {
   ToolActivityGroupHeader,
   useToolActivityGroupCollapseState,
 } from "./ToolActivityGroup";
-import { TurnTokenUsageRow } from "./TurnTokenUsageRow";
+import { AssistantMessageFooter } from "./AssistantMessageFooter";
+import { TurnUsageFooter } from "./TurnUsageFooter";
 import { ThreadContentFrame } from "./ThreadContentFrame";
 import { MessageMarkdown } from "./MessageMarkdown";
 import { MessageSelectionMenu } from "./MessageSelectionMenu";
@@ -2475,12 +2477,14 @@ function AssistantMessageBody({
   hasStructuredPlan,
   planMode,
   runPresentation,
-  showFooter,
+  showTurnTail,
   turnUserMessageId,
   turnVersions,
   onRetryTurn,
   onSelectTurnVersion,
   workbenchId,
+  loadSessionUsage,
+  isTurnRunning,
 }: {
   assistantIdentity?: Pick<ExpertCollaborationLeader, "name" | "portrait">;
   messages: ConversationMessage[];
@@ -2513,7 +2517,14 @@ function AssistantMessageBody({
   hasStructuredPlan: boolean;
   planMode: "off" | "planning" | "executing";
   runPresentation: AssistantRunPresentation | null;
-  showFooter: boolean;
+  /**
+   * 只有**最新一轮**才显示的东西:重做/版本切换、计划待确认、澄清交接、本轮文件变更。
+   *
+   * 操作行(复制 / 用量详情 / 时间戳)不在这里 —— 它们是每条回复自己的属性,由
+   * `AssistantMessageFooter` 自己判断。这两件事以前共用一个 `showFooter`,于是复制与用量详情
+   * 退化成"只有最新一条消息底下才有"。
+   */
+  showTurnTail: boolean;
   /** User message id of this turn; enables retry when present. */
   turnUserMessageId?: string;
   /** Assistant response versions of this turn, when the response was retried. */
@@ -2527,6 +2538,10 @@ function AssistantMessageBody({
     version: number,
   ) => Promise<void>;
   workbenchId: WorkbenchId;
+  /** 会话总计的读取器(懒加载;见 `loadSessionUsage` 的注释)。 */
+  loadSessionUsage?: () => Promise<SessionUsageSnapshot | null>;
+  /** 这一行就是**正在生成**的那一轮:回复还没答完,不摆操作行。 */
+  isTurnRunning: boolean;
 }) {
   const { t } = usePreferences();
   const message = messages.at(-1)!;
@@ -2599,7 +2614,7 @@ function AssistantMessageBody({
               <AssistantMessageBlocks
                 canPlan={canPlan}
                 clarificationHandoffAvailable={
-                  showFooter &&
+                  showTurnTail &&
                   !isStreaming &&
                   !hasPendingInteraction &&
                   candidate.id === message.id
@@ -2632,51 +2647,39 @@ function AssistantMessageBody({
         {showRunStatus && runPresentation ? (
           <AssistantRunStatus activity={runPresentation.activity} />
         ) : null}
-        {showFooter &&
+        {showTurnTail &&
         !isStreaming &&
         !hasPendingInteraction &&
         planMode === "planning" &&
         hasStructuredPlan ? (
           <PlanResultActions onResolve={onResolvePlanResult} />
         ) : null}
-        {showFooter && !isStreaming && !hasPendingInteraction ? (
-          <div className="mt-4 flex items-center gap-2 text-[#898981]">
-            <button
-              aria-label={t("threadCopyResponse")}
-              className="grid h-6 w-6 place-items-center rounded-[5px] hover:bg-[#efefeb] hover:text-[#454540]"
-              onClick={() =>
-                void navigator.clipboard.writeText(
-                  blocks
-                    .filter((block) => block.type === "text")
-                    .map((block) => block.text)
-                    .join("\n"),
-                )
-              }
-              type="button"
-            >
-              <Copy className="h-3.5 w-3.5" />
-            </button>
-            {turnUserMessageId && onRetryTurn && onSelectTurnVersion ? (
+        {/*
+          操作行每条回复都有(复制、用量详情、时间戳);重做只在最新一轮 —— 见
+          `assistant-message-footer.ts` 的注释。所以这里不再用 `showTurnTail` 这道"只有最新"的闸。
+        */}
+        <AssistantMessageFooter
+          copyText={blocks
+            .filter((block) => block.type === "text")
+            .map((block) => block.text)
+            .join("\n")}
+          hasPendingInteraction={hasPendingInteraction}
+          isStreaming={isStreaming}
+          isTurnRunning={isTurnRunning}
+          messageCount={messages.length}
+          retry={
+            showTurnTail && turnUserMessageId && onRetryTurn && onSelectTurnVersion ? (
               <AssistantRetryActions
-                onRetry={(instruction) =>
-                  onRetryTurn(turnUserMessageId, instruction)
-                }
-                onSelectVersion={(version) =>
-                  onSelectTurnVersion(turnUserMessageId, version)
-                }
+                onRetry={(instruction) => onRetryTurn(turnUserMessageId, instruction)}
+                onSelectVersion={(version) => onSelectTurnVersion(turnUserMessageId, version)}
                 versions={turnVersions ?? null}
               />
-            ) : null}
-            <span className="ml-auto font-mono text-[11px] text-[#aaa9a1]">
-              {new Date(message.timestamp).toLocaleTimeString([], {
-                hour: "2-digit",
-                minute: "2-digit",
-                second: "2-digit",
-              })}
-            </span>
-          </div>
-        ) : null}
-        {showFooter &&
+            ) : undefined
+          }
+          timestamp={message.timestamp}
+          usage={<TurnUsageFooter loadSessionUsage={loadSessionUsage} messages={messages} />}
+        />
+        {showTurnTail &&
         !isStreaming &&
         !hasPendingInteraction &&
         workbenchId === "code" ? (
@@ -2860,6 +2863,7 @@ function CollapsibleUserMessage({
 
 function MessageBody({
   assistantIdentity,
+  isTurnRunning,
   messages,
   onEnableAutoApprove,
   onHandoffClarification,
@@ -2876,7 +2880,7 @@ function MessageBody({
   pendingAssistant = false,
   planMode,
   runPresentation,
-  showFooter,
+  showTurnTail,
   turnUserMessageId,
   turnVersions,
   onRetryTurn,
@@ -2917,7 +2921,7 @@ function MessageBody({
   pendingAssistant?: boolean;
   planMode: "off" | "planning" | "executing";
   runPresentation: AssistantRunPresentation | null;
-  showFooter: boolean;
+  showTurnTail: boolean;
   /** User message id of this turn; enables retry when present. */
   turnUserMessageId?: string;
   /** Assistant response versions of this turn, when the response was retried. */
@@ -2932,12 +2936,28 @@ function MessageBody({
   ) => Promise<void>;
   workbenchId: WorkbenchId;
   sessionId: string;
+  /** 这一行就是正在生成的那一轮(见 `assistant-message-footer.ts`)。 */
+  isTurnRunning: boolean;
 }) {
   const { t } = usePreferences();
+  const client = useRuntimeClient();
+  /**
+   * 会话总计要**现读 journal**(唯一权威源),所以做成懒加载:只有用户真的切到「会话总计」
+   * 才会读一次磁盘。失败就是 `null`,面板显示「读取失败」—— 不假装知道。
+   */
+  const loadSessionUsage = useCallback(async () => {
+    try {
+      return await client.getSessionUsage(sessionId);
+    } catch {
+      return null;
+    }
+  }, [client, sessionId]);
   const message = messages[0];
   if (!message)
     return pendingAssistant ? (
       <AssistantMessageBody
+        isTurnRunning={isTurnRunning}
+        loadSessionUsage={loadSessionUsage}
         assistantIdentity={assistantIdentity}
         canPlan={canPlan}
         hasStructuredPlan={hasStructuredPlan}
@@ -2953,7 +2973,7 @@ function MessageBody({
         onResolveUserRequest={onResolveUserRequest}
         planMode={planMode}
         runPresentation={runPresentation}
-        showFooter={false}
+        showTurnTail={false}
         workbenchId={workbenchId}
       />
     ) : null;
@@ -3164,6 +3184,8 @@ function isBubbleContentBlock(
   }
   return (
     <AssistantMessageBody
+      isTurnRunning={isTurnRunning}
+      loadSessionUsage={loadSessionUsage}
       assistantIdentity={assistantIdentity}
       canPlan={canPlan}
       hasStructuredPlan={hasStructuredPlan}
@@ -3181,7 +3203,7 @@ function isBubbleContentBlock(
       onSelectTurnVersion={onSelectTurnVersion}
       planMode={planMode}
       runPresentation={runPresentation}
-      showFooter={showFooter}
+      showTurnTail={showTurnTail}
       turnUserMessageId={turnUserMessageId}
       turnVersions={turnVersions}
       workbenchId={workbenchId}
@@ -3530,6 +3552,7 @@ function ThreadStoreRow({
         <ContextCompactionActivity compaction={row.compaction} />
       ) : (
         <MessageBody
+          isTurnRunning={isRunning}
           assistantIdentity={assistantIdentity}
           canPlan={environment.canPlan}
           hasStructuredPlan={environment.hasStructuredPlan}
@@ -3557,7 +3580,7 @@ function ThreadStoreRow({
           pendingAssistant={descriptor.type === "assistant"}
           planMode={environment.planMode}
           runPresentation={row.presentation}
-          showFooter={!isRunning && isLastMessage}
+          showTurnTail={!isRunning && isLastMessage}
           turnUserMessageId={
             descriptor.type === "assistant"
               ? descriptor.turnId.slice("turn:".length)
@@ -4706,7 +4729,6 @@ export function ThreadView({
                     thinkingLevel={session.thinkingLevel}
                   />
                 </div>
-                <TurnTokenUsageRow usage={threadMetadata.turnUsage} />
                 <p className="mt-2 text-center text-[11px] text-[#96968e] dark:text-muted-foreground">
                   {t("aiContentNotice")}
                 </p>

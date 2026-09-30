@@ -41,6 +41,7 @@ import {
 	retryGoogleRequest,
 	supportsGoogleStrictToolSampling,
 } from "./google-shared.ts";
+import { cacheUsageReportingOf } from "../utils/cache-reporting.ts";
 import { buildBaseOptions } from "./simple-options.ts";
 
 export interface GoogleVertexOptions extends StreamOptions {
@@ -246,6 +247,12 @@ export const stream: StreamFunction<"google-vertex", GoogleVertexOptions> = (
 							(chunk.usageMetadata.candidatesTokenCount || 0) + (chunk.usageMetadata.thoughtsTokenCount || 0),
 						cacheRead: chunk.usageMetadata.cachedContentTokenCount || 0,
 						cacheWrite: 0,
+						// 同 Google:只有缓存读可观测。
+						cacheUsageReporting:
+							chunk.usageMetadata.cachedContentTokenCount === undefined ? "unavailable" : "read-only",
+						...(typeof chunk.usageMetadata.promptTokenCount === "number"
+							? { reportedPromptTokens: chunk.usageMetadata.promptTokenCount }
+							: {}),
 						reasoning: chunk.usageMetadata.thoughtsTokenCount || 0,
 						totalTokens: chunk.usageMetadata.totalTokenCount || 0,
 						cost: {

@@ -1346,6 +1346,12 @@ const MediaOperationKindSchema = Type.Union([
   Type.Literal("multi-view"),
 ]);
 
+const CacheUsageReportingSchema = Type.Union([
+  Type.Literal("unavailable"),
+  Type.Literal("read-only"),
+  Type.Literal("read-write"),
+]);
+
 const ConversationUsageSchema = Type.Object({
   inputTokens: Type.Number({ minimum: 0 }),
   outputTokens: Type.Number({ minimum: 0 }),
@@ -1353,7 +1359,81 @@ const ConversationUsageSchema = Type.Object({
   cacheWriteTokens: Type.Number({ minimum: 0 }),
   totalTokens: Type.Number({ minimum: 0 }),
   totalCost: Type.Number({ minimum: 0 }),
+  /**
+   * 这次调用 provider **有没有**上报缓存读写明细。缺省 = `unavailable`(历史记录天生如此)。
+   * 没有它,"cacheRead 为 0"就分不清"没命中"和"没上报",界面上会出现假的 0% 命中率。
+   */
+  cacheUsageReporting: Type.Optional(CacheUsageReportingSchema),
+  /** provider 自报的 prompt 总数,只用于对账(见 `packages/domain`)。 */
+  reportedPromptTokens: Type.Optional(Type.Number({ minimum: 0 })),
+  /** 以下为**聚合**字段:合并多条用量时累计,逐条记录不写。 */
+  cacheReadObservedCalls: Type.Optional(Type.Number({ minimum: 0 })),
+  cacheWriteObservedCalls: Type.Optional(Type.Number({ minimum: 0 })),
+  cacheReadObservedPromptTokens: Type.Optional(Type.Number({ minimum: 0 })),
+  cacheWriteObservedPromptTokens: Type.Optional(Type.Number({ minimum: 0 })),
+  cacheReadObservedTokens: Type.Optional(Type.Number({ minimum: 0 })),
+  cacheWriteObservedTokens: Type.Optional(Type.Number({ minimum: 0 })),
+  cacheHitCalls: Type.Optional(Type.Number({ minimum: 0 })),
 });
+
+/**
+ * 一次用量汇总的 JSON 形状(与 `@wordless/domain` 的 `TokenUsageSummary` 一一对应)。
+ *
+ * 率一律允许 `null`:`null` 是"没有可用的数据"(未上报 / 分母为 0),**不是** 0%。
+ */
+const TokenUsageSummarySchema = Type.Object({
+  modelCalls: Type.Number({ minimum: 0 }),
+  primaryCalls: Type.Number({ minimum: 0 }),
+  delegatedCalls: Type.Number({ minimum: 0 }),
+  inputTokens: Type.Number({ minimum: 0 }),
+  outputTokens: Type.Number({ minimum: 0 }),
+  cacheReadTokens: Type.Number({ minimum: 0 }),
+  cacheWriteTokens: Type.Number({ minimum: 0 }),
+  totalTokens: Type.Number({ minimum: 0 }),
+  totalCost: Type.Number({ minimum: 0 }),
+  promptTokens: Type.Number({ minimum: 0 }),
+  cacheReadObservedCalls: Type.Number({ minimum: 0 }),
+  cacheWriteObservedCalls: Type.Number({ minimum: 0 }),
+  cacheReadObservedPromptTokens: Type.Number({ minimum: 0 }),
+  cacheReadObservedTokens: Type.Number({ minimum: 0 }),
+  cacheWriteObservedTokens: Type.Number({ minimum: 0 }),
+  cacheHitCalls: Type.Number({ minimum: 0 }),
+  tokenHitRate: Type.Union([Type.Number(), Type.Null()]),
+  requestHitRate: Type.Union([Type.Number(), Type.Null()]),
+  writeRate: Type.Union([Type.Number(), Type.Null()]),
+  readCallCoverage: Type.Union([Type.Number(), Type.Null()]),
+  readTokenCoverage: Type.Union([Type.Number(), Type.Null()]),
+  writeCallCoverage: Type.Union([Type.Number(), Type.Null()]),
+  cacheWriteObservation: Type.Union([
+    Type.Literal("reported"),
+    Type.Literal("read-only"),
+    Type.Literal("unavailable"),
+  ]),
+  reportedPromptTokens: Type.Number({ minimum: 0 }),
+  reportedPromptCount: Type.Number({ minimum: 0 }),
+  reportedPromptDriftCount: Type.Number({ minimum: 0 }),
+  reportedPromptMaxDrift: Type.Number({ minimum: 0 }),
+});
+
+/**
+ * 会话总计。来源是 **journal**(唯一权威),所以它和逐轮面板由同一套纯函数算出。
+ *
+ * 图片单独放在 `image` 里:它的计费形态不同(按张 / 按 token 混着),**不并进对话的命中率分母**。
+ */
+export const SessionUsageSnapshotSchema = Type.Object({
+  chat: TokenUsageSummarySchema,
+  image: Type.Object({
+    operations: Type.Number({ minimum: 0 }),
+    unmeteredOperations: Type.Number({ minimum: 0 }),
+    totalTokens: Type.Number({ minimum: 0 }),
+    totalCost: Type.Number({ minimum: 0 }),
+  }),
+  /** 有助手消息但拿不到用量的调用数 —— "我们不知道",与"花了 0"不同。 */
+  unmeasuredCalls: Type.Number({ minimum: 0 }),
+});
+
+/** IPC 契约上的会话总计。 */
+export type SessionUsageSnapshot = Static<typeof SessionUsageSnapshotSchema>;
 
 const MediaUsageEventSchema = Type.Object({
   id: Type.String({ minLength: 1 }),

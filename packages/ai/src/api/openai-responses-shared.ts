@@ -40,6 +40,7 @@ import {
 	resolveGrammarConstrainedSampling,
 	resolveJsonSchemaStrictSampling,
 } from "./constrained-sampling.ts";
+import { cacheUsageReportingOf } from "../utils/cache-reporting.ts";
 import { transformMessages } from "./transform-messages.ts";
 
 // =============================================================================
@@ -570,6 +571,13 @@ export async function processResponsesStream<TApi extends Api>(
 				cacheWrite: cacheWriteTokens,
 				reasoning: response.usage.output_tokens_details?.reasoning_tokens || 0,
 				totalTokens: response.usage.total_tokens || 0,
+				cacheUsageReporting: cacheUsageReportingOf({
+					readReported: inputDetails?.cached_tokens !== undefined,
+					writeReported: inputDetails?.cache_write_tokens !== undefined,
+				}),
+				...(typeof response.usage.input_tokens === "number"
+					? { reportedPromptTokens: response.usage.input_tokens }
+					: {}),
 				cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
 			};
 		}

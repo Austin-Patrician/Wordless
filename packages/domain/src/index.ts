@@ -2031,6 +2031,17 @@ export type MessageBlock =
   | MessageDesignStyleBlock
   | MessageArtifactBlock;
 
+/**
+ * 缓存观测级别:provider 这**一次**调用有没有上报缓存读写的明细。
+ *
+ * 之所以必须有这个字段:token 直接关系计费,而"`cacheRead` 为 0"有三张面孔 —— 真的没命中、
+ * provider 压根没上报、这个模型没有缓存。没有这个字段,三者会被压成同一个 0,界面上就出现了
+ * 一个假的"命中率 0%"。
+ *
+ * 缺省(字段不存在)= `unavailable`:历史记录天生如此,也是保守的那一侧。
+ */
+export type CacheUsageReporting = "unavailable" | "read-only" | "read-write";
+
 export interface ConversationUsage {
   inputTokens: number;
   outputTokens: number;
@@ -2038,6 +2049,35 @@ export interface ConversationUsage {
   cacheWriteTokens: number;
   totalTokens: number;
   totalCost: number;
+  /**
+   * **逐条调用**的缓存观测级别。只有原始模型调用的记录带它;聚合结果不写这一项,而是带下面
+   * 那组累计计数(见 `observationOf`)。
+   */
+  cacheUsageReporting?: CacheUsageReporting;
+  /**
+   * **逐条调用**:provider 自己报告的 prompt 总数,独立于我们归一化出来的分量。
+   *
+   * 只用于对账。归一化时我们会把 cached 从 prompt 里减掉(见 `packages/ai` 各适配器),
+   * 一旦 provider 的数字不自洽,差额会被 `Math.max(0, …)` 静默吞掉 —— 有了这个自报值,
+   * 才能分清"我们算错了"和"provider 自己不自洽"。
+   */
+  reportedPromptTokens?: number;
+  /**
+   * 以下六项是**聚合字段**:合并多条用量时累计,逐条记录不写。
+   *
+   * 它们存在的唯一理由:命中率只允许在"可观测到缓存读"的调用上求和(I2/I3)。如果聚合时
+   * 丢掉这个区分,分母就会退化成"凭运气",命中率会随合并路径变化。
+   */
+  cacheReadObservedCalls?: number;
+  cacheWriteObservedCalls?: number;
+  cacheReadObservedPromptTokens?: number;
+  cacheWriteObservedPromptTokens?: number;
+  /** 可观测到的缓存读 token 之和 —— 命中率的**分子**(不是 `cacheReadTokens`,见 `summarizeTokenUsage`)。 */
+  cacheReadObservedTokens?: number;
+  /** 可观测到的缓存写 token 之和 —— 与 `cacheReadObservedTokens` 对称。 */
+  cacheWriteObservedTokens?: number;
+  /** `cacheRead > 0` 的调用数,用于调用级命中率。 */
+  cacheHitCalls?: number;
 }
 
 export type UsageGroupBy = "provider" | "model";
@@ -2447,6 +2487,93 @@ export type NotificationDefaultsResult =
   | { ok: true; defaults: NotificationDefaults }
   | { ok: false; code: NotificationTemplateErrorCode; detail?: string };
 
+/**
+ * 把适配器形状的 usage(`input` / `output` / `cacheRead` / `cacheWrite` / `totalTokens` / `cost.total`)
+ * 折算成 `ConversationUsage`。
+ *
+ * 这个映射以前有**三份逐字重复**的实现(`runtime`、`agent-driver-generic`、`usage-report`),
+ * 而且全零判断并不一致:两份返回 `undefined`,一份把全零当成一次"成功但没有用量"的调用。
+ * 计费敏感的路径上不该有三份判断,所以只留这一份。
+ *
+ * 全零一律返回 `undefined`:一次真实调用即使把 token 用成 0,也应该是"没有用量数据"而不是
+ * "确实花了 0" —— 否则汇总里会多出一次假的成功调用。
+ */
+export function conversationUsageFromAiUsage(
+  value: unknown,
+): ConversationUsage | undefined {
+  if (typeof value !== "object" || value === null || Array.isArray(value))
+    return undefined;
+  const usage = value as Record<string, unknown>;
+  const cost =
+    typeof usage.cost === "object" && usage.cost !== null
+      ? (usage.cost as Record<string, unknown>)
+      : undefined;
+  const inputTokens = typeof usage.input === "number" ? usage.input : 0;
+  const outputTokens = typeof usage.output === "number" ? usage.output : 0;
+  const cacheReadTokens =
+    typeof usage.cacheRead === "number" ? usage.cacheRead : 0;
+  const cacheWriteTokens =
+    typeof usage.cacheWrite === "number" ? usage.cacheWrite : 0;
+  const totalTokens =
+    typeof usage.totalTokens === "number"
+      ? usage.totalTokens
+      : typeof usage.total === "number"
+        ? usage.total
+        : inputTokens + outputTokens + cacheReadTokens + cacheWriteTokens;
+  const totalCost = typeof cost?.total === "number" ? cost.total : 0;
+  if (
+    totalTokens === 0 &&
+    inputTokens === 0 &&
+    outputTokens === 0 &&
+    cacheReadTokens === 0 &&
+    cacheWriteTokens === 0
+  )
+    return undefined;
+  const result: ConversationUsage = {
+    inputTokens,
+    outputTokens,
+    cacheReadTokens,
+    cacheWriteTokens,
+    totalTokens,
+    totalCost,
+  };
+  const reporting = optionalCacheUsageReporting(usage.cacheUsageReporting);
+  if (reporting !== undefined) result.cacheUsageReporting = reporting;
+  const reportedPromptTokens = optionalNonNegativeNumber(
+    usage.reportedPromptTokens,
+  );
+  if (reportedPromptTokens !== undefined)
+    result.reportedPromptTokens = reportedPromptTokens;
+  return result;
+}
+
+/** 逐条调用的可选事实:非法值一律当"没有",而不是当 0 —— 0 是一个有含义的值。 */
+function optionalNonNegativeNumber(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0
+    ? value
+    : undefined;
+}
+
+function optionalCacheUsageReporting(
+  value: unknown,
+): CacheUsageReporting | undefined {
+  return value === "unavailable" || value === "read-only" || value === "read-write"
+    ? value
+    : undefined;
+}
+
+/** 可选数值字段(`reportedPromptTokens` 与那组聚合计数)。 */
+const OPTIONAL_USAGE_NUMBER_KEYS = [
+  "reportedPromptTokens",
+  "cacheReadObservedCalls",
+  "cacheWriteObservedCalls",
+  "cacheReadObservedPromptTokens",
+  "cacheWriteObservedPromptTokens",
+  "cacheReadObservedTokens",
+  "cacheWriteObservedTokens",
+  "cacheHitCalls",
+] as const;
+
 export function conversationUsageFromUnknown(
   value: unknown,
 ): ConversationUsage | undefined {
@@ -2463,7 +2590,7 @@ export function conversationUsageFromUnknown(
   ) {
     return undefined;
   }
-  return {
+  const result: ConversationUsage = {
     inputTokens: usage.inputTokens,
     outputTokens: usage.outputTokens,
     cacheReadTokens: usage.cacheReadTokens,
@@ -2471,6 +2598,105 @@ export function conversationUsageFromUnknown(
     totalTokens: usage.totalTokens,
     totalCost: usage.totalCost,
   };
+  const reporting = optionalCacheUsageReporting(usage.cacheUsageReporting);
+  if (reporting !== undefined) result.cacheUsageReporting = reporting;
+  for (const key of OPTIONAL_USAGE_NUMBER_KEYS) {
+    const parsed = optionalNonNegativeNumber(usage[key]);
+    if (parsed !== undefined) result[key] = parsed;
+  }
+  return result;
+}
+
+/**
+ * prompt 的分量口径:`input` / `cacheRead` / `cacheWrite` **互斥**,三者之和才是 prompt。
+ * `output` 永不进任何 prompt 分母(它不属于请求)。
+ */
+export function promptTokensOf(
+  usage: Pick<
+    ConversationUsage,
+    "inputTokens" | "cacheReadTokens" | "cacheWriteTokens"
+  >,
+): number {
+  return usage.inputTokens + usage.cacheReadTokens + usage.cacheWriteTokens;
+}
+
+function readsObserved(reporting: CacheUsageReporting | undefined): boolean {
+  return reporting === "read-only" || reporting === "read-write";
+}
+
+function writesObserved(reporting: CacheUsageReporting | undefined): boolean {
+  return reporting === "read-write";
+}
+
+interface UsageObservation {
+  readCalls: number;
+  writeCalls: number;
+  readPromptTokens: number;
+  writePromptTokens: number;
+  readTokens: number;
+  writeTokens: number;
+  hitCalls: number;
+}
+
+/**
+ * 把一条用量折算成"观测计数"。两种输入形态都吃:
+ *
+ * - **逐条调用**记录:带 `cacheUsageReporting`,按它折算成 0 或 1;
+ * - **聚合**记录:带累计计数,原样读出。
+ *
+ * 这是 I2/I3 的唯一实现处:未上报的调用**不进**命中率的分子分母,但仍进调用数与覆盖率的
+ * 分母 —— 也就是说"没上报"会让覆盖率下降,而不会伪装成"没命中"。
+ */
+function observationOf(usage: ConversationUsage): UsageObservation {
+  const reporting = usage.cacheUsageReporting;
+  if (reporting !== undefined) {
+    const promptTokens = promptTokensOf(usage);
+    const read = readsObserved(reporting);
+    const write = writesObserved(reporting);
+    return {
+      readCalls: read ? 1 : 0,
+      writeCalls: write ? 1 : 0,
+      readPromptTokens: read ? promptTokens : 0,
+      writePromptTokens: write ? promptTokens : 0,
+      readTokens: read ? usage.cacheReadTokens : 0,
+      writeTokens: write ? usage.cacheWriteTokens : 0,
+      hitCalls: read && usage.cacheReadTokens > 0 ? 1 : 0,
+    };
+  }
+  return {
+    readCalls: usage.cacheReadObservedCalls ?? 0,
+    writeCalls: usage.cacheWriteObservedCalls ?? 0,
+    readPromptTokens: usage.cacheReadObservedPromptTokens ?? 0,
+    writePromptTokens: usage.cacheWriteObservedPromptTokens ?? 0,
+    readTokens: usage.cacheReadObservedTokens ?? 0,
+    writeTokens: usage.cacheWriteObservedTokens ?? 0,
+    hitCalls: usage.cacheHitCalls ?? 0,
+  };
+}
+
+function ratio(numerator: number, denominator: number): number | null {
+  return denominator > 0 ? numerator / denominator : null;
+}
+
+/** 合并后的观测计数;为 0 的项一律省略(缺省读出来就是 0)。 */
+function observationCountFields(
+  left: UsageObservation,
+  right: UsageObservation,
+): Partial<ConversationUsage> {
+  const sums: Array<[keyof ConversationUsage, number]> = [
+    ["cacheReadObservedCalls", left.readCalls + right.readCalls],
+    ["cacheWriteObservedCalls", left.writeCalls + right.writeCalls],
+    ["cacheReadObservedPromptTokens", left.readPromptTokens + right.readPromptTokens],
+    ["cacheWriteObservedPromptTokens", left.writePromptTokens + right.writePromptTokens],
+    ["cacheReadObservedTokens", left.readTokens + right.readTokens],
+    ["cacheWriteObservedTokens", left.writeTokens + right.writeTokens],
+    ["cacheHitCalls", left.hitCalls + right.hitCalls],
+  ];
+  const result: Partial<ConversationUsage> = {};
+  for (const [key, value] of sums) {
+    if (value > 0) (result as Record<string, number>)[key] = value;
+  }
+  return result;
 }
 
 export function mergeConversationUsage(
@@ -2479,6 +2705,8 @@ export function mergeConversationUsage(
 ): ConversationUsage | undefined {
   if (!current) return next ? { ...next } : undefined;
   if (!next) return { ...current };
+  const left = observationOf(current);
+  const right = observationOf(next);
   return {
     inputTokens: current.inputTokens + next.inputTokens,
     outputTokens: current.outputTokens + next.outputTokens,
@@ -2486,12 +2714,214 @@ export function mergeConversationUsage(
     cacheWriteTokens: current.cacheWriteTokens + next.cacheWriteTokens,
     totalTokens: current.totalTokens + next.totalTokens,
     totalCost: current.totalCost + next.totalCost,
+    // 观测计数是**可加**的聚合事实,合并时必须带上 —— 否则"只对可观测的调用求分母"这条
+    // 就退化了:命中率会随合并路径变化(先合并再总结 ≠ 先总结再合并)。
+    //
+    // 计数为 0 时**不写**这个字段:读到的默认值就是 0,语义没有任何变化,而"一次都没观测到"
+    // 的记录可以和普通记录逐字段相等 —— 不会凭空给每个聚合结果加一堆 0。
+    ...observationCountFields(left, right),
+    // 逐条事实合并后不再有唯一答案,一律清掉;缺省 = 未上报,是保守的一侧。
+    // `reportedPromptTokens` 同理:两个来源不同的自报数相加没有意义。
   };
 }
 
-export function calculateCurrentTurnUsage(
+/**
+ * 缓存**写入**的可观测状态。用它而不是"写入覆盖率 0%"来说话 —— 后者字面上没错
+ * (确实没有调用上报过写入),但在界面上会被读成"写入占比 0%",而真实含义是
+ * "这些调用根本不报写入"(只读上报),或者"什么都没上报"。
+ */
+export type CacheWriteObservation = "reported" | "read-only" | "unavailable";
+
+export interface TokenUsageSummary {
+  /** 参与统计的用量记录数 = 主调用数 + 委派(子代理/团队)调用数。 */
+  modelCalls: number;
+  primaryCalls: number;
+  delegatedCalls: number;
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+  cacheWriteTokens: number;
+  totalTokens: number;
+  totalCost: number;
+  /** `input + cacheRead + cacheWrite`。 */
+  promptTokens: number;
+  cacheReadObservedCalls: number;
+  cacheWriteObservedCalls: number;
+  cacheReadObservedPromptTokens: number;
+  cacheReadObservedTokens: number;
+  cacheWriteObservedTokens: number;
+  cacheHitCalls: number;
+  /** token 级缓存命中率;没有可观测调用时为 `null`(注意:`null` ≠ 0)。 */
+  tokenHitRate: number | null;
+  /** 调用级命中率。 */
+  requestHitRate: number | null;
+  writeRate: number | null;
+  /** 可观测读的调用占比;用于让界面说清"这个率覆盖了几次调用"。 */
+  readCallCoverage: number | null;
+  readTokenCoverage: number | null;
+  writeCallCoverage: number | null;
+  /** 写入是否可观测。见 `CacheWriteObservation`。 */
+  cacheWriteObservation: CacheWriteObservation;
+  /** Σ provider 自报 prompt 总数(只有逐条记录带);用于对账。 */
+  reportedPromptTokens: number;
+  /** 有多少条记录带了自报值。 */
+  reportedPromptCount: number;
+  /** 自报值与分量和不一致的记录数 —— 不为 0 说明要么我们算错了,要么 provider 不自洽。 */
+  reportedPromptDriftCount: number;
+  /** 不一致记录里最大的绝对差额(token)。 */
+  reportedPromptMaxDrift: number;
+}
+
+/**
+ * 汇总一组用量记录。
+ *
+ * `counts` 是调用数(主调用 / 委派),由调用方给 —— 因为一条**聚合**记录可能代表多次调用,
+ * 光看数组长度会把覆盖率算错。
+ */
+/** 空汇总:还没有任何用量时的形状。率一律是 `null` —— "没有数据"不等于"0%"。 */
+export function emptyTokenUsageSummary(): TokenUsageSummary {
+  return {
+    modelCalls: 0,
+    primaryCalls: 0,
+    delegatedCalls: 0,
+    inputTokens: 0,
+    outputTokens: 0,
+    cacheReadTokens: 0,
+    cacheWriteTokens: 0,
+    totalTokens: 0,
+    totalCost: 0,
+    promptTokens: 0,
+    cacheReadObservedCalls: 0,
+    cacheWriteObservedCalls: 0,
+    cacheReadObservedPromptTokens: 0,
+    cacheReadObservedTokens: 0,
+    cacheWriteObservedTokens: 0,
+    cacheHitCalls: 0,
+    tokenHitRate: null,
+    requestHitRate: null,
+    writeRate: null,
+    readCallCoverage: null,
+    readTokenCoverage: null,
+    writeCallCoverage: null,
+    cacheWriteObservation: "unavailable",
+    reportedPromptTokens: 0,
+    reportedPromptCount: 0,
+    reportedPromptDriftCount: 0,
+    reportedPromptMaxDrift: 0,
+  };
+}
+
+export function summarizeTokenUsage(
+  usages: readonly ConversationUsage[],
+  counts: { primaryCalls: number; delegatedCalls: number },
+): TokenUsageSummary | undefined {
+  if (usages.length === 0) return undefined;
+  let inputTokens = 0;
+  let outputTokens = 0;
+  let cacheReadTokens = 0;
+  let cacheWriteTokens = 0;
+  let totalTokens = 0;
+  let totalCost = 0;
+  let cacheReadObservedCalls = 0;
+  let cacheWriteObservedCalls = 0;
+  let cacheReadObservedPromptTokens = 0;
+  let cacheWriteObservedPromptTokens = 0;
+  let cacheReadObservedTokens = 0;
+  let cacheWriteObservedTokens = 0;
+  let cacheHitCalls = 0;
+  let reportedPromptTokens = 0;
+  let reportedPromptCount = 0;
+  let reportedPromptDriftCount = 0;
+  let reportedPromptMaxDrift = 0;
+
+  for (const usage of usages) {
+    inputTokens += usage.inputTokens;
+    outputTokens += usage.outputTokens;
+    cacheReadTokens += usage.cacheReadTokens;
+    cacheWriteTokens += usage.cacheWriteTokens;
+    totalTokens += usage.totalTokens;
+    totalCost += usage.totalCost;
+    const observation = observationOf(usage);
+    cacheReadObservedCalls += observation.readCalls;
+    cacheWriteObservedCalls += observation.writeCalls;
+    cacheReadObservedPromptTokens += observation.readPromptTokens;
+    cacheWriteObservedPromptTokens += observation.writePromptTokens;
+    cacheReadObservedTokens += observation.readTokens;
+    cacheWriteObservedTokens += observation.writeTokens;
+    cacheHitCalls += observation.hitCalls;
+    if (usage.reportedPromptTokens !== undefined) {
+      reportedPromptTokens += usage.reportedPromptTokens;
+      reportedPromptCount += 1;
+      const drift = Math.abs(
+        usage.reportedPromptTokens - promptTokensOf(usage),
+      );
+      if (drift > 0) {
+        reportedPromptDriftCount += 1;
+        reportedPromptMaxDrift = Math.max(reportedPromptMaxDrift, drift);
+      }
+    }
+  }
+
+  const promptTokens = inputTokens + cacheReadTokens + cacheWriteTokens;
+  const modelCalls = counts.primaryCalls + counts.delegatedCalls;
+  return {
+    modelCalls,
+    primaryCalls: counts.primaryCalls,
+    delegatedCalls: counts.delegatedCalls,
+    inputTokens,
+    outputTokens,
+    cacheReadTokens,
+    cacheWriteTokens,
+    totalTokens,
+    totalCost,
+    promptTokens,
+    cacheReadObservedCalls,
+    cacheWriteObservedCalls,
+    cacheReadObservedPromptTokens,
+    cacheReadObservedTokens,
+    cacheWriteObservedTokens,
+    cacheHitCalls,
+    // 分子也必须是"可观测"的那部分:否则未上报调用里的 cacheRead 会白送给分子,
+    // 而它们的分母没有进来 —— 命中率就被抬高了。
+    tokenHitRate: ratio(cacheReadObservedTokens, cacheReadObservedPromptTokens),
+    requestHitRate: ratio(cacheHitCalls, cacheReadObservedCalls),
+    writeRate: ratio(cacheWriteObservedTokens, cacheWriteObservedPromptTokens),
+    readCallCoverage: ratio(cacheReadObservedCalls, modelCalls),
+    readTokenCoverage: ratio(cacheReadObservedPromptTokens, promptTokens),
+    writeCallCoverage: ratio(cacheWriteObservedCalls, modelCalls),
+    cacheWriteObservation:
+      cacheWriteObservedCalls > 0
+        ? "reported"
+        : cacheReadObservedCalls > 0
+          ? "read-only"
+          : "unavailable",
+    reportedPromptTokens,
+    reportedPromptCount,
+    reportedPromptDriftCount,
+    reportedPromptMaxDrift,
+  };
+}
+
+export interface TurnUsageDetails {
+  /** 兼容既有形状:合并后的用量 + 两个调用计数。 */
+  usage: SessionTurnUsage;
+  /** 本轮汇总:命中率、覆盖率、对账结果都在这里。 */
+  summary: TokenUsageSummary;
+  /** 参与统计的逐条用量(主调用在前、委派在后),给折叠明细用。 */
+  usages: readonly ConversationUsage[];
+}
+
+/**
+ * 本轮用量。**轮次边界只有一个定义**(I11):
+ *
+ * 从**最后一条 `user` 消息**起,到下一个 `user` 消息止。中途 steer / follow-up 会插入新的
+ * user 消息,所以它开新一轮 —— 与既有的 `turnUsage` 口径一致,避免同一屏上出现两个"本轮"。
+ *
+ * 委派(子代理 / 专家团)的用量挂在该消息的 tool 块上,计入**同一轮**,并单独计数。
+ */
+export function calculateTurnUsage(
   messages: readonly ConversationMessage[],
-): SessionTurnUsage | undefined {
+): TurnUsageDetails | undefined {
   let turnStart = -1;
   for (let index = messages.length - 1; index >= 0; index -= 1) {
     if (messages[index]?.role === "user") {
@@ -2501,20 +2931,56 @@ export function calculateCurrentTurnUsage(
   }
   if (turnStart === -1) return undefined;
 
-  let usage: ConversationUsage | undefined;
+  return summarizeUsageMessages(messages.slice(turnStart + 1));
+}
+
+/**
+ * 把一组消息折算成本轮用量。
+ *
+ * 与 `calculateTurnUsage` 分开的理由:**逐轮渲染的地方拿不到 user 消息**(助手行只有助手消息),
+ * 而它要算的又必须是同一个东西。所以"哪些用量算在一条记录上"只有这一个实现,轮次**边界**才由
+ * `calculateTurnUsage` 负责 —— 两处不会各算各的。
+ */
+export function summarizeUsageMessages(
+  messages: readonly ConversationMessage[],
+): TurnUsageDetails | undefined {
+  const usages: ConversationUsage[] = [];
   let primaryCallCount = 0;
   let toolCallCount = 0;
-  for (const message of messages.slice(turnStart + 1)) {
+  for (const message of messages) {
     if (message.role !== "assistant") continue;
     if (message.usage) {
-      usage = mergeConversationUsage(usage, message.usage);
+      usages.push(message.usage);
       primaryCallCount += 1;
     }
+    // 委派(子代理 / 专家团)的用量挂在该消息的工具块上,算同一轮。
     for (const block of message.blocks) {
       if (block.type !== "tool" || !block.usage) continue;
-      usage = mergeConversationUsage(usage, block.usage);
+      usages.push(block.usage);
       toolCallCount += 1;
     }
   }
-  return usage ? { ...usage, primaryCallCount, toolCallCount } : undefined;
+  if (usages.length === 0) return undefined;
+
+  let merged: ConversationUsage | undefined;
+  for (const usage of usages)
+    merged = mergeConversationUsage(merged, usage);
+  if (!merged) return undefined;
+  const summary = summarizeTokenUsage(usages, {
+    primaryCalls: primaryCallCount,
+    delegatedCalls: toolCallCount,
+  });
+  if (!summary) return undefined;
+  return {
+    usage: { ...merged, primaryCallCount, toolCallCount },
+    summary,
+    usages,
+  };
+}
+
+/** 只用合并结果的地方(存储、协议)走这里;要率就调 `calculateTurnUsage`。 */
+export function calculateCurrentTurnUsage(
+  messages: readonly ConversationMessage[],
+): SessionTurnUsage | undefined {
+  return calculateTurnUsage(messages)?.usage;
 }

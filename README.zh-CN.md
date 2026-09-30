@@ -28,9 +28,9 @@
 
 ## Wordless 是什么
 
-Wordless 不是一个只返回文本的聊天窗口。它是运行在 macOS 和 Windows 上的 Agent 工作台：你选择工作区、模型和任务模式，Agent 在明确的权限边界内读取上下文、调用工具，并将演示文稿、电子表格、研究结果或代码变更呈现在同一个界面中。
+Wordless 不是一个只返回文本的聊天窗口。它是运行在 macOS 和 Windows 上的 Agent 工作台：你选择工作区、模型和任务模式，Agent 在明确的权限边界内读取上下文、调用工具，并将演示文稿、电子表格、研究结果、UI 设计、生成的图片或代码变更呈现在同一个界面中。
 
-项目采用本地优先设计。工作区、会话和产物保存在设备上；Google 登录与云同步均为可选能力，未登录或网络不可用不会阻止本地工作。
+项目采用本地优先设计。工作区、会话和产物保存在设备上；Google 登录与云同步均为可选能力，未登录或网络不可用不会阻止本地工作。界面提供中文与英文两套语言。
 
 ## 为什么做 Wordless
 
@@ -79,15 +79,15 @@ Wordless 使用 MIT License 发布的 [Pi Agent Harness](https://github.com/eare
 
 ## Wordless 与腾讯 WorkBuddy
 
-Wordless 与腾讯 WorkBuddy 都希望超越聊天并交付真实工作，但选择了不同的产品路线。以下对比依据 2026 年 8 月可见的腾讯 [WorkBuddy 产品页](https://cloud.tencent.com/product/workbuddy) 与[官方概览](https://www.workbuddy.cn/docs/workbuddy/Overview)；能力和商业方案后续可能变化。
+Wordless 与腾讯 WorkBuddy 都希望超越聊天并交付真实工作，但选择了不同的产品路线。以下对比依据 2026 年 9 月可见的腾讯 [WorkBuddy 产品页](https://cloud.tencent.com/product/workbuddy) 与[官方概览](https://www.workbuddy.cn/docs/workbuddy/Overview)；能力和商业方案后续可能变化。
 
 | 维度 | Wordless | 腾讯 WorkBuddy |
 | --- | --- | --- |
 | 产品路线 | 本地优先、源码可见，面向希望控制模型、工具、权限和扩展方式的用户 | 面向广泛职场角色、强调开箱即用与托管体验的商业办公 Agent |
-| 场景组织 | 仓库内可见的 Profile、Driver、Extension、Skills 和 MCP 集成 | 领域专家、Skills、项目空间和多 Agent 协同 |
+| 场景组织 | 仓库内可见的 Profile、Driver、Extension、Skills 和 MCP 集成，覆盖文档、数据、代码、UI 设计与图片 | 领域专家、Skills、项目空间和多 Agent 协同 |
 | 模型与成本 | 用户自带 Provider 与 API Key，消耗由所选模型提供商计费 | 腾讯运营的产品与 Token 配额方案，并在产品体验中提供模型配置 |
 | 数据与执行 | 会话和产物默认留在本地，工具执行受工作区策略与显式审批控制 | 可以操作用户授权的本地目录，账号、服务和团队边界由腾讯产品体系管理 |
-| 产物体验 | PPT 和 Spreadsheet 提供专用应用内预览，可选择具体对象或区域并从精确上下文继续修改 | 覆盖文档、表格、PPT、研究、代码和创意等广泛任务与可验收结果交付 |
+| 产物体验 | PPT、Spreadsheet、数据、代码、UI 设计与图片都有专用应用内界面，可选择具体对象、区域或画框并从精确上下文继续修改 | 覆盖文档、表格、PPT、研究、代码和创意等广泛任务与可验收结果交付 |
 | 协作与生态 | 当前以个人、本地工作流为主，提供可选设置同步与开发者可控扩展 | 提供项目空间、共享专家、Skills、连接器、团队复用和腾讯生态 |
 | 透明度与定制 | 源码可见、BYOK、事件与权限边界明确，适配器可以替换 | 托管式产品，并提供规模更大的预置专家和服务生态 |
 
@@ -95,17 +95,43 @@ Wordless 与腾讯 WorkBuddy 都希望超越聊天并交付真实工作，但选
 
 ## 核心能力
 
-- **工作区上下文**：通过 `@` 快速引用工作区内的文件和文件夹，通过 `$` 选择 Skills；文件索引遵循 `.gitignore`。
-- **可控工具执行**：默认手动审批工具调用，也可在当前会话启用自动审批；高风险操作仍会回到人工确认，并支持单次工作区外访问授权。
+- **工作区上下文**：通过 `@` 快速引用工作区内的文件和文件夹，通过 `$` 选择 Skills，通过 `!` 引用一个进行中的任务；文件索引遵循 `.gitignore`。
+- **UI 设计**：挑一套内置风格，或者直接描述你要的界面。Agent 把真实的 HTML 画框写进工作区里的 `x.wdesign` 设计包，你在画布上缩放、选择、对齐、换色和导出。
+- **图片生成与编辑**：在画布上生成图片，再按变体、裁剪、局部编辑、去背景、移除物体等方式迭代。
 - **交互式 Presentation**：Agent 创建和修改幻灯片后，可在右侧工作区查看页面、选择对象并继续迭代，而不只是下载一次性文件。
 - **交互式 Spreadsheet**：直接查看单元格、图表和变更，在当前选区继续发出指令并即时验证结果。
 - **Data Analysis 与深度研究**：拆分研究维度、并行委派、追踪进度，并将分析结果与图表放回工作区。
 - **Coding 工作流**：结合计划、文件检索、Shell、差异视图和测试结果完成可审阅的代码修改。
-- **模型与思考深度**：支持内置及 OpenAI-compatible Provider，自定义 Base URL、模型能力、上下文限制与推理级别。
-- **Skills & MCP**：导入 Skills，并连接兼容 Model Context Protocol 的外部工具服务。
-- **会话体验**：消息搜索与定位、上下文压缩、Markdown/GFM、代码高亮、Mermaid 与 KaTeX 数学公式渲染。
+- **任务与自动化**：把工作变成带负责人、状态和时间线的任务，并让提示词按周期自动运行。
+- **数字员工**：把一套工作方法沉淀为可复用的角色，组成团队，并从任务中把活分派出去。
+- **可控工具执行**：默认手动审批工具调用，也可在当前会话启用自动审批，另有面向已隔离环境的 bypass 档；高风险操作仍会回到人工确认，并支持单次工作区外访问授权。
+- **模型与思考深度**：支持内置及 OpenAI-compatible Provider（支持订阅登录的 Provider 可直接登录），自定义 Base URL、模型能力、上下文限制与推理级别。
+- **Skills & MCP**：导入 Skills，从官方 MCP Registry 发现并安装连接器，也可接入自定义 stdio 或 HTTP 服务。
+- **内置浏览器**：Agent 可在右侧面板打开页面、读取内容并按同一套审批规则操作。
+- **会话体验**：消息搜索与定位、上下文压缩、Markdown/GFM、代码高亮、Mermaid、KaTeX 数学公式渲染，以及就地翻译。
+- **界面语言**：中文（默认）与英文，可在设置、侧栏或首次引导中切换。
 
 ## 为真实产物设计
+
+### UI 设计
+
+挑一套内置风格并描述你要的界面，或者从零开始。画框是工作区里 `x.wdesign` 设计包中的真实 HTML 文件，所以 Agent 能检查结构、拿风格的令牌再核一遍，并直接看渲染出来的像素，而不是凭猜。布局、对齐、换色都在画布上完成；某一屏做完，可以直接导出渲染图——PNG、长图或 PDF，可加设备外壳——或者下载这份设计的素材。
+
+<!-- 截图: design-export.png —— 导出对话框：画框轨道、PNG / 长图 / PDF、每页帧数、导出倍率、设备外壳、阴影、水印、保存。 -->
+![Design export dialog](docs/assets/desktop/design-export.png)
+
+<!-- 截图: design-canvas.png —— 画布上 3 个以上已带样式的画框、工具栏（选择/抓手/新建画框/风格/色彩系统/缩放）、选中画框的色彩系统、缩放百分比。英文界面，不要出现真实工作区路径。 -->
+![UI design canvas with HTML frames](docs/assets/desktop/design-canvas.png)
+
+<!-- 截图: design-library.png —— 设计库与内置风格墙（风格名可辨认）、搜索与排序、"挑一套风格开始"的入口。 -->
+![Design library and built-in styles](docs/assets/desktop/design-library.png)
+
+下面是同一份简述生成的两套界面。它们仍然是工作区里可以重新打开、继续改的 `x.wdesign` 设计包，而不是导出的图片：
+
+<!-- 效果展示：这个工作模式的产出。请保持是真实生成的设计包，不要用修过的效果图。 -->
+| A generated interface | Another generated interface |
+| --- | --- |
+| ![Generated interface, first example](docs/assets/desktop/design-example-01.png) | ![Generated interface, second example](docs/assets/desktop/design-example-02.png) |
 
 ### Presentation
 
@@ -131,11 +157,42 @@ Wordless 与腾讯 WorkBuddy 都希望超越聊天并交付真实工作，但选
 
 ![Coding plan, diff, and tests](docs/assets/desktop/code-plan-diff-tests.png)
 
+### 图片生成
+
+生成的图片以节点形式留在画布上，所以下一条指令可以直接引用某个结果，而不必重新描述它。八个操作覆盖生成、变体、裁剪、局部编辑、去背景、移除物体和多视角。
+
+<!-- 截图: media-canvas.png —— 媒体画布上多张生成候选、带迭代连线的节点图，以及编辑操作菜单。 -->
+![Image generation canvas](docs/assets/desktop/media-canvas.png)
+
+## 单次对话之外
+
+会话是干活的地方；下面这些界面让工作在模型停下来之后仍然可见。每一项都是侧栏中的一行。
+
+- **任务**：每件事都是一个带负责人、状态和时间线的任务。总览、看板、时间线、列表、仪表盘五种视图随时切换；要开工时用 `!` 把它丢进对话。
+- **自动化**：让提示词按周期运行，保留运行历史，也可以从模板开始。
+- **数字员工**：把可复用的角色存下来，组成团队，并从对话中把活分派出去。
+- **翻译**：在消息里选中文字就地翻译，或者把翻译面板开在对话旁边。
+
+<!-- 截图: tasks-board.png —— 任务中心：看板（待办/进行中/已完成三列带卡片）与时间线视图（甘特条、周/月区间切换）。 -->
+![Task board and timeline](docs/assets/desktop/tasks-board.png)
+
+<!-- 截图: automation.png —— 自动化列表或运行历史，含 queued / running / completed / failed 状态与一条定时规则。 -->
+![Automation runs and history](docs/assets/desktop/automation.png)
+
+<!-- 截图: digital-employees.png —— 数字员工卡片与一个团队，最好能看见一次委派。 -->
+![Digital employees and teams](docs/assets/desktop/digital-employees.png)
+
+<!-- 截图: translation.png —— 选中文字后的翻译浮泡，或对话旁的翻译面板。 -->
+![Inline translation](docs/assets/desktop/translation.png)
+
 ## 扩展与控制
 
-Skills 用于沉淀可复用工作方法，MCP 用于连接外部能力。模型能力和工具权限彼此独立：模型能生成请求，不代表工具已获得执行权限。
+Skills 用于沉淀可复用工作方法，MCP 用于连接外部能力。Skills 可以从文件导入，也可以在 SkillsMP 技能目录里发现；MCP 标签页从官方 MCP Registry 发现连接器，安装前先展示传输方式、能力、发布者和源码仓库，已安装的连接器有新版本时以同样方式提示。模型能力和工具权限彼此独立：模型能生成请求，不代表工具已获得执行权限。
 
 ![Skills and MCP settings](docs/assets/desktop/skills-and-mcp.png)
+
+<!-- 截图: mcp-marketplace.png —— MCP 发现标签页：Registry 搜索结果（传输方式、发布者、安装入口），以及一个显示"有更新"的已安装连接器。 -->
+![MCP connector discovery](docs/assets/desktop/mcp-marketplace.png)
 
 API Key、OAuth token 等敏感凭据优先进入操作系统安全存储。Google 云同步默认关闭；开启后仅同步设置页面声明的数据类型，不同步 API Key、工作区文件、生成产物和会话正文。
 
@@ -189,17 +246,22 @@ Pi 上游能力继续按照原始 MIT License 保留归属。更详细的边界�
 > [!IMPORTANT]
 > 当前 macOS Release 是未使用 Apple Developer ID 公证的测试构建。请只从本仓库的官方 Release 下载；首次打开时可能需要在 Finder 中按住 Control 点击 Wordless 并选择“打开”，或前往“系统设置 → 隐私与安全性 → 仍要打开”。不要全局关闭 Gatekeeper。
 
+首次启动时会有一段简短引导，帮你建好第一个工作区、接上模型，并带你过一遍侧栏；之后可以在设置里重播。
+
 应用会提示可用的新版本，但不会强制安装。受 macOS 未签名构建的代码签名限制，部分版本需要按照应用内链接下载 DMG 并手动覆盖安装。
 
 ## 模型配置
 
 Wordless 不捆绑模型额度。首次任务前，在 **Settings → Models** 中配置一个可用的 Provider：
 
-1. 选择内置 Provider，或创建自定义 Provider。
-2. 输入 API Key；密钥与普通模型 JSON 分开保存。
+1. 选择内置 Provider（内置数十家，从 Anthropic、OpenAI、Google、DeepSeek 到 OpenRouter、Cloudflare 等网关），或创建自定义 Provider。支持订阅账号的 Provider 会在 API Key 输入框旁显示登录按钮。
+2. 输入 API Key，或登录订阅账号；密钥与普通模型 JSON 分开保存。
 3. 对于 OpenAI-compatible 服务，填写通常以 `/v1` 结尾的 Base URL、实际 Model ID 和对应协议。
 4. 在 **Enabled models** 中启用模型，然后回到 Composer 选择它。
-5. 如果模型声明了推理能力，可在当前模型的二级选项中选择思考深度；未手动设置时默认使用 `medium`。
+5. 如果模型声明了推理能力，可在当前模型的二级选项中选择思考深度；未手动设置时默认使用 `medium`。图片生成模型在同一页面配置。
+
+<!-- 截图: model-providers.png —— Provider 列表：能看清订阅登录按钮（Claude Pro/Max、ChatGPT Plus/Pro、GitHub Copilot）与一个 API Key 类型的 Provider 并列。 -->
+![Model providers, including subscription sign-in](docs/assets/desktop/model-providers.png)
 
 ![Model and thinking-depth selector](docs/assets/desktop/model-thinking-depth.png)
 
@@ -233,12 +295,18 @@ npm run check
 # Desktop 主进程测试
 npm run test:host --workspace=@wordless/desktop
 
+# Renderer 测试（单元测试，以及在真实浏览器中跑的测试）
+npm run test:thread-unit --workspace=@wordless/desktop
+npm run test:thread-browser --workspace=@wordless/desktop
+
 # 构建 Desktop（不生成安装包）
 npm run build:desktop --workspace=@wordless/desktop
 
 # 检查并构建 Website 与用户手册
 npm run build --workspace=@wordless/website
 ```
+
+发布构建还会运行安装包探针（`npm run verify:packaged-icon`、`verify:packaged-fff`、`verify:packaged-design-build`），它们验证的是刚刚产出的那个安装包。**必须在仓库之外运行**：在仓库内运行会解析到仓库自己的 `node_modules`，对从未进入安装包的依赖报出假绿灯。
 
 打包命令：
 
@@ -256,15 +324,22 @@ apps/
 packages/
   ai, agent/                       基于 Pi 的内部 fork
   runtime, protocol, persistence/  会话编排、IPC 契约与本地持久化
-  agent-driver-*/                  General、Coding、Presentation、Spreadsheet 驱动
+  coding-agent/                    读、写、编辑、Shell 与工作区检索工具
+  agent-driver-*/                  Generic、Coding、Presentation、Spreadsheet、SDK
   agent-extension-*/               压缩、计划、运行时与 Subagent 扩展
-  capabilities/                    文件、Shell、Office、数据、浏览器等能力
-  profiles/                        内置场景 Profile
+  capabilities/                    浏览器、数据、设计、文件、Shell、Office 能力
+  profiles/                        内置场景 Profile（general、coding、ppt、excel、data、ui）
+  agent-workspace-policy/          审批、风险等级与工作区边界
+  connector-registry/              Skills 与 MCP 连接器目录及安装
+  domain/                          共享领域类型、工作台与权限
+  platform-node/                   Node 侧平台适配、索引与检索
+  profile-sdk, provider-sdk/       Profile 与模型 Provider 的扩展点
   model-config, skill-registry/    模型配置与 Skills 注册
   workspace-search/                工作区文件搜索与忽略规则
   ui-kit/                          Renderer 共享状态与 UI 原语
 docs/                              架构文档与 README 资产
 third_party/                       随发行版保留的第三方许可材料
+open-vetta/                        保留备查的上游代码树，不参与构建
 ```
 
 `apps/website` 是独立构建和部署的静态站点，不会被打包进 Desktop 安装包。
@@ -275,7 +350,8 @@ third_party/                       随发行版保留的第三方许可材料
 - 模型请求会发送到用户选择的模型提供商；发送范围取决于任务和显式引用的上下文。
 - 工具在 Electron 主进程或用户配置的 MCP 服务中执行，Renderer 不直接获得 Node.js 权限。
 - Google 登录是可选项；Google Cloud Sync 需要用户单独开启，网络失败不会阻断本地功能。
-- 云同步当前面向模型元数据和用户偏好，不包含 API Key、会话正文、工作区文件和生成产物。
+- 云同步当前面向模型元数据和用户偏好（含界面语言），不包含 API Key、会话正文、工作区文件和生成产物。
+- 界面提供中文（默认）与英文两套语言；语言选择保存在本地，只有在你开启同步时才会一并同步。
 
 安全边界和数据流向详见 [Security & Privacy](apps/website/src/content/docs/docs/security-privacy.mdx)。安全问题请避免在公开 Issue 中附带 API Key、OAuth token、私有文件或完整日志中的敏感数据。
 
@@ -289,6 +365,11 @@ Wordless 建立在多个优秀项目之上，并保留其原始许可证与归�
 - [React Virtuoso](https://github.com/petyosi/react-virtuoso)：长会话虚拟列表。
 - [Astro](https://github.com/withastro/astro) 与 [Starlight](https://github.com/withastro/starlight)：官网和用户手册。
 - [Three.js](https://github.com/mrdoob/three.js)：Website 的 3D 视觉体验。
+- [Tailwind CSS](https://tailwindcss.com)：Renderer 的样式引擎，也是设计令牌管线的底座。
+- [React Flow](https://reactflow.dev)：设计画布、节点与画框交互。
+- [Mermaid](https://mermaid.js.org)、[KaTeX](https://katex.org) 与 [highlight.js](https://highlightjs.org)：消息中的图表、数学公式与代码高亮。
+- [sharp](https://sharp.pixelplumbing.com) 与 `pdf-parse`：图像与 PDF 处理。
+- `@ff-labs/fff-node`：工作区检索与 `@` 引用背后的本地文件索引。
 
 第三方组件不受 Wordless 自定义许可证重新授权；它们继续遵循各自仓库或随附文件中的许可证。
 

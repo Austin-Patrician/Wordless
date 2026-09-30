@@ -58,7 +58,10 @@ import {
   type PersistedContextCompaction,
   type PersistedModelRetry,
 } from "@wordless/agent-driver-sdk";
-import { conversationUsageFromUnknown } from "@wordless/domain";
+import {
+  conversationUsageFromAiUsage,
+  conversationUsageFromUnknown,
+} from "@wordless/domain";
 import type {
   ClarificationBrief,
   ClarificationQuestion,
@@ -838,39 +841,11 @@ function contentToText(value: unknown): string {
     .join("\n");
 }
 
-function toConversationUsage(value: unknown): ConversationUsage | undefined {
-  const usage = asRecord(value);
-  const cost = asRecord(usage?.cost);
-  const inputTokens = typeof usage?.input === "number" ? usage.input : 0;
-  const outputTokens = typeof usage?.output === "number" ? usage.output : 0;
-  const cacheReadTokens =
-    typeof usage?.cacheRead === "number" ? usage.cacheRead : 0;
-  const cacheWriteTokens =
-    typeof usage?.cacheWrite === "number" ? usage.cacheWrite : 0;
-  const totalTokens =
-    typeof usage?.totalTokens === "number"
-      ? usage.totalTokens
-      : typeof usage?.total === "number"
-        ? usage.total
-        : inputTokens + outputTokens + cacheReadTokens + cacheWriteTokens;
-  const totalCost = typeof cost?.total === "number" ? cost.total : 0;
-  if (
-    totalTokens === 0 &&
-    inputTokens === 0 &&
-    outputTokens === 0 &&
-    cacheReadTokens === 0 &&
-    cacheWriteTokens === 0
-  )
-    return undefined;
-  return {
-    inputTokens,
-    outputTokens,
-    cacheReadTokens,
-    cacheWriteTokens,
-    totalTokens,
-    totalCost,
-  };
-}
+/**
+ * 唯一的实现处是 `@wordless/domain` 的 `conversationUsageFromAiUsage`(见那里的注释:
+ * 这曾经是三份互不一致的副本)。
+ */
+const toConversationUsage = conversationUsageFromAiUsage;
 
 function toolUsageFromDetails(details: unknown): ConversationUsage | undefined {
   return conversationUsageFromUnknown(asRecord(details)?.usage);

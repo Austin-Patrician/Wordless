@@ -1,0 +1,115 @@
+---
+title: UI design
+description: Start from a built-in style, let the agent write real HTML frames, and finish layout, colour, and export on the canvas.
+---
+
+import { Steps } from '@astrojs/starlight/components';
+import Prerequisites from '../../../../../components/docs/Prerequisites.astro';
+import PromptBlock from '../../../../../components/docs/PromptBlock.astro';
+import ExpectedResult from '../../../../../components/docs/ExpectedResult.astro';
+import ApprovalCheckpoint from '../../../../../components/docs/ApprovalCheckpoint.astro';
+import ScreenshotFrame from '../../../../../components/docs/ScreenshotFrame.astro';
+
+## Goal
+
+End up with **a design you can keep editing**, not an image or a snippet of HTML. A design is a package inside your workspace: `design.json` (the canvas manifest), `theme.css` (the design tokens), and one `.html` file per screen under `frames/`. The agent writes those files; you zoom, select, align, recolour, and export on the canvas.
+
+## Complete the design loop on the canvas
+
+The canvas is the working surface for this session, not a screenshot of the result. When the agent finishes a screen, the canvas renders the actual pixels. Geometry you change on the canvas — moving, resizing, aligning, distributing — is recorded in the manifest and is **not written back into the frame source**, so the next instruction about that frame changes its content, not the position you arranged.
+
+One division of labour is worth remembering: **you add frames, the agent fills them.** The agent has no "new frame" tool (only state, creation, layout checks, screenshots, and styles), because "this needs one more screen" is a design decision, not something it should make for you.
+
+<Steps>
+1. On the new-conversation page, pick a style under **Start from a style**. Choosing **decide for me** means no style, and the agent will follow your brief — or ask you about it.
+2. Describe the interface: how many screens, what each one does, who it is for, and what has to appear.
+3. The agent calls `design_create` to lay down the package; the first frame already carries that style's tokens and spec. The style you picked travels with your first message.
+4. Inspect the first frame on the canvas. Use **Select**, **hand**, and the zoom controls (in, out, fit content, back to 100%).
+5. To add a screen, add a frame yourself with **New frame**, then let the agent write it.
+6. Select a frame and use **Ask the agent to change this frame** to send that frame as context, then describe the change.
+7. Open **Colour system** to see this design's tokens (from `theme.css`); click a swatch to hand it to the conversation.
+8. To change the style wholesale, use **Apply**. Frames that already exist keep the old tokens until the agent reworks them against the new spec.
+9. When a screen is settled, **Export a render** to compose it into an image (PNG, long image, or PDF, with an optional device shell), or **Download materials** to take the images, the spec, and the asset files.
+
+</Steps>
+
+<PromptBlock>Turn the three screens in @design-brief.md into a mobile interface. Create the package with design_create at 390×844; the first frame is the home screen. One job per screen. Use the tokens from theme.css for headings and body text, and no hard-coded colours. Keep the grid on multiples of 8. Run design_inspect when the structure is in place, then look at a screenshot; fix what it shows before starting the next screen.</PromptBlock>
+
+<ScreenshotFrame src="/images/workflows/design-canvas.png" alt="HTML frames on the design canvas, with the tool bar" caption="Frames are real HTML rendered against the package's tokens. The tool bar handles selection, new frames, the colour system, and zoom." />
+<ScreenshotFrame src="/images/workflows/design-library.png" alt="Design library and the built-in style wall" caption="Start from a style, or continue a design you already have. Each style ships a set of colour tokens and a written spec for the agent." />
+
+<ExpectedResult>An `x.wdesign` package in the workspace: every frame is a still-editable HTML file whose colours come from the tokens in `theme.css`, and the positions you arranged on the canvas survive the agent's next change.</ExpectedResult>
+
+## The full workflow
+
+<Prerequisites>
+- A model that supports both tool use and image input: the second half of the quality loop is **looking at the rendered pixels**, and a model without vision can only guess at layout from markup
+- A writable workspace; the package is created inside it
+- Optional: brand colours, reference screenshots, competitor links
+
+</Prerequisites>
+
+<Steps>
+1. Reference the existing brief, copy, or reference images, and state the platform and size (phone 390×844, laptop 1440×900).
+2. Have the agent create the package (`design_create`, with the style you picked) and write the first screen only — not three at once.
+3. Once the structure is in place, have it run `design_inspect`: deterministic checks for content overflowing its box, text cut off without an ellipsis, nowrap text wider than its parent, row items wider than their row, and painted surfaces clipped by a parent. It returns coordinate facts, not opinions.
+4. When those pass, have it call `design_screenshot` to see the real pixels — type, spacing, alignment, and colour are invisible in markup.
+5. Fix what the screenshot shows, then look again. This inspect → look → fix loop has a round limit; it does not replace your own judgement.
+6. Repeat steps 2–5 for each screen, and tidy the canvas with align, distribute, and rename.
+7. To change the style, **Apply** another one, accept that existing frames need reworking, and have the agent go frame by frame.
+8. Finish with **Download materials** to hand the images and spec files to the next step.
+
+</Steps>
+
+<PromptBlock>Rework the table area in the frame I selected into three comparable columns: one option per column, the option name as a heading, three bullet points under it. Use the tokens already in theme.css and do not add colours. Equal column widths, row heights on multiples of 8. Run design_inspect, then design_screenshot, and tell me both results: whether anything overflows, and where it still looks cramped.</PromptBlock>
+
+<ApprovalCheckpoint risk="medium">Design tools write and overwrite files in the workspace: `design_create` creates the directory, and `design_style_apply` overwrites `theme.css` and `DESIGN.md` (backing the whole design up under `.build/style-backup/` first). Check which package is the target before approving.</ApprovalCheckpoint>
+
+## Exporting renders and materials
+
+Two export entry points sit on the canvas, with different jobs:
+
+- **Export a render** composes the selected frames into one image: PNG, long image, or PDF, with 1 to 4 frames per page and automatic pagination. Device shell (corner radius, border width and colour), background or transparency, drop shadow, the Wordless watermark, and export scale are all adjustable. Frames are dragged in from the rail on the right, and that order is the order in the image. **These settings affect this one image only, never the design** — exporting does not touch `theme.css` and never writes back into a frame.
+- **Download materials** packs the design's images, spec, and asset files for handoff and delivery.
+
+<ScreenshotFrame src="/images/workflows/design-export.png" alt="The export-a-render dialog" caption="Pick frames, pick a format, adjust the device shell and scale. Export settings apply to this image only." />
+
+## Inside a design package
+
+| Path | What it is | Who owns it |
+| --- | --- | --- |
+| `<name>.wdesign/design.json` | The canvas manifest: which frames exist, their sizes, and the geometry you arranged | Written by the tools — do not hand-edit |
+| `<name>.wdesign/theme.css` | The design tokens: colour, spacing, type scale. **The single source of truth** | Written by the style — do not hand-write |
+| `<name>.wdesign/DESIGN.md` | The spec for the agent: how this style is meant to be used | Written by the style |
+| `<name>.wdesign/frames/*.html` | One screen per file, declaring its own size and title in a leading comment | Written by the agent |
+| `<name>.wdesign/.build/` | Build output and backups | Managed by the tools |
+
+Frames reference relative paths (`../theme.css`, `../assets/...`), and those same paths hold when a frame is rendered, so leave them alone. Do not remove the size declaration at the top of a frame (`<!-- @frame { "width": 390, "height": 844, "title": "Home" } -->`) — the canvas labels each frame with its title.
+
+## Built-in styles
+
+The style library currently ships 29 styles, from Linear, Stripe, Notion, and Apple through to claymorphism, glassmorphism, and a 1995 retro look. Each one is a set of colour tokens plus a written spec for the agent, so changing style is not a recolour — it replaces the system the design follows.
+
+- Picking a style when you start is the cheap path: the tokens are written as the package is created, so the first frame is right from birth.
+- Applying a style halfway through overwrites `theme.css` and `DESIGN.md` (after a full backup), and **frames that already exist still carry the old tokens**. The interface tells you how many frames need reworking, and the agent reworks them against the new spec.
+- Having the agent pick the style for you is the worst option. With no style selected it offers a few with a question instead of deciding by itself.
+
+## What is different in Wordless
+
+Most "generate UI" flows end by handing you HTML or a screenshot; Wordless leaves the design in your workspace where it can keep changing. Frames are real HTML, colours come from tokens instead of hard-coded hex values, the agent has both deterministic layout checks and a way to look at the real pixels, and the geometry you arranged on the canvas survives the next generation.
+
+| Scenario | Action in Wordless | Verification |
+| --- | --- | --- |
+| A whole interface from a brief | Pick a style, create the package, then write it screen by screen | One job per screen; every colour comes from a token |
+| Change one block in one screen | Select the frame and send it as context | Other frames and canvas positions stay put |
+| Rebrand or change style | Apply the style, then rework the existing frames against it | Tokens are consistent throughout, with no leftover old colours |
+| Hand off to engineering | Download materials, or point at the package in the workspace | Frames are HTML you can open directly |
+
+## Common recovery paths
+
+- A frame smaller than its content: frames are fixed-size canvases, so overflow does not make the frame grow. Widen the frame, or have the agent cut the content down.
+- The interface looks unstyled: the stylesheet did not compile. That is an installation or packaging problem, not a design mistake — upgrade to a fixed build rather than hand-writing styles inside frames.
+- Hard-coded colours inside a frame: have the agent switch them to the tokens in `theme.css`. A hard-coded colour will not follow the style.
+- Unknown style id: `design_style_apply` refuses it and lists the real ids; hand it one of the ids it printed.
+- Cannot find the package: paths are relative to the workspace root and the directory name ends in `.wdesign`. Have the agent call `design_status` with no `path` — it lists the designs that actually exist.
+- Want the agent to add a frame: it cannot, and should not. Use **New frame** on the canvas.

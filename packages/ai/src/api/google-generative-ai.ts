@@ -36,6 +36,7 @@ import {
 	retryGoogleRequest,
 	supportsGoogleStrictToolSampling,
 } from "./google-shared.ts";
+import { cacheUsageReportingOf } from "../utils/cache-reporting.ts";
 import { buildBaseOptions } from "./simple-options.ts";
 
 export interface GoogleOptions extends StreamOptions {
@@ -229,6 +230,12 @@ export const stream: StreamFunction<"google-generative-ai", GoogleOptions> = (
 							(chunk.usageMetadata.candidatesTokenCount || 0) + (chunk.usageMetadata.thoughtsTokenCount || 0),
 						cacheRead: chunk.usageMetadata.cachedContentTokenCount || 0,
 						cacheWrite: 0,
+						// Google 只报缓存读,写入永不报 ⇒ 最多只能是 read-only。
+						cacheUsageReporting:
+							chunk.usageMetadata.cachedContentTokenCount === undefined ? "unavailable" : "read-only",
+						...(typeof chunk.usageMetadata.promptTokenCount === "number"
+							? { reportedPromptTokens: chunk.usageMetadata.promptTokenCount }
+							: {}),
 						reasoning: chunk.usageMetadata.thoughtsTokenCount || 0,
 						totalTokens: chunk.usageMetadata.totalTokenCount || 0,
 						cost: {

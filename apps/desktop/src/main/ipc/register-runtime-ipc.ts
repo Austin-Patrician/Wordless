@@ -505,6 +505,14 @@ export function registerRuntimeIpc(
     }>(UsageReportQuerySchema, payload);
     return await runtime.getUsageReport(input);
   });
+  ipcMain.handle("wordless:usage:session", async (_event, payload: unknown) => {
+    const input = parsePayload<{ sessionId: string }>(
+      Type.Object({ sessionId: Type.String({ minLength: 1 }) }),
+      payload,
+    );
+    return await runtime.getSessionUsage(input.sessionId);
+  });
+
   ipcMain.handle("wordless:session:snapshot", (_event, sessionId: unknown) =>
     runtime.getSessionSnapshot(String(sessionId)),
   );

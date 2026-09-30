@@ -103,6 +103,7 @@ const wordlessBridge: DesktopBridge = {
     }),
   deleteExpertTeam: (id) =>
     ipcRenderer.invoke("wordless:expert-teams:delete", { id }),
+  getSessionUsage: (sessionId) => ipcRenderer.invoke("wordless:usage:session", { sessionId }),
   getUsageReport: (query) => ipcRenderer.invoke("wordless:usage:report", query),
   getSessionSnapshot: (sessionId) =>
     ipcRenderer.invoke("wordless:session:snapshot", sessionId),
