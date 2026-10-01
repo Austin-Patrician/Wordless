@@ -10,8 +10,15 @@ export function createCodingAgentDriver(options: {
   /**
    * Host-supplied tools. Given the driver context so they can be built per
    * session, which the browser capability needs: its grants are per task.
+   *
+   * `model.input` 也在这里:宿主工具要不要把图片递给模型(截图)取决于模型能不能看图,
+   * 而这是**会话级**判断 —— 同一个会话里换模型就该换行为。
    */
-  extraTools?: (context: { record: { id: string }; resourceOwnerSessionId?: string }) => AgentTool[];
+  extraTools?: (context: {
+    record: { id: string; runtimeRootPath: string };
+    resourceOwnerSessionId?: string;
+    model: { input: string[] };
+  }) => AgentTool[];
 } = {}): AgentDriver {
   return createAgentHarnessDriver({
     id: "coding",

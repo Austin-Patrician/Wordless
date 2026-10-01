@@ -1,5 +1,6 @@
 import { expect, it } from "vitest";
-import { NO_SHARED_TAB_MESSAGE, createBrowserTools } from "../src/index.ts";
+import { NO_SHARED_TAB_MESSAGE, SCREENSHOT_NO_TEXT_MESSAGE, SCREENSHOT_UNSUPPORTED_MESSAGE, createBrowserTools } from "../src/index.ts";
+import type { OcrPort } from "@wordless/capability-ocr";
 import type { BrowserPort, BrowserTabSummary } from "../src/port.ts";
 
 const EMPTY_SNAPSHOT = { url: "", title: "", text: "", refs: [], truncated: false, settling: false };
@@ -170,4 +171,94 @@ it("explains the sharing gate when a screenshot is refused", async () => {
   const tools = createBrowserTools(port({ captureScreenshot: async () => null }));
   const text = textOf(await run(tools, "browser_screenshot"));
   expect(text).toBe(NO_SHARED_TAB_MESSAGE);
+});
+
+it("模型看不了图:截图连截都不截,只回一句实话并指向可访问性树", async () => {
+  let captures = 0;
+  const tools = createBrowserTools(
+    port({
+      captureScreenshot: async () => {
+        captures += 1;
+        return { tab: SHARED, data: "aW1hZ2U=", mimeType: "image/png" };
+      },
+    }),
+    { imagesVisible: false },
+  );
+
+  const result = await run(tools, "browser_screenshot", {});
+
+  // 像素递不过去,截图就是白烧一次渲染。
+  expect(captures).toBe(0);
+  expect(result.content.some((part) => part.type === "image")).toBe(false);
+  expect(textOf(result)).toBe(SCREENSHOT_UNSUPPORTED_MESSAGE);
+  expect(textOf(result)).toContain("browser_snapshot");
+});
+
+it("能看图的模型行为不变:照样拿到 image block", async () => {
+  const tools = createBrowserTools(
+    port({ captureScreenshot: async () => ({ tab: SHARED, data: "aW1hZ2U=", mimeType: "image/png" }) }),
+    { imagesVisible: true },
+  );
+
+  const result = await run(tools, "browser_screenshot", {});
+
+  expect(result.content.some((part) => part.type === "image")).toBe(true);
+});
+
+function ocrPort(text: string, ok = true): OcrPort {
+  return {
+    available: async () => true,
+    recognize: async () => ({ ok: false, code: "pipeline-error", message: "not used" }),
+    recognizeInline: async () => ok
+      ? {
+          ok: true,
+          recognition: {
+            engine: "wordless-ocr/ppocrv5",
+            cached: false,
+            totalDurationMs: 200,
+            pages: [{ name: "tab-1.png", path: "tab-1.png", text, lineCount: 2, width: 800, height: 600, confidence: 0.9, durationMs: 200 }],
+          },
+        }
+      : { ok: false, code: "assets-missing", message: "not bundled" },
+  };
+}
+
+it("看不了图但有文字识别:截图读成文字,并说明这不是视觉描述", async () => {
+  let captures = 0;
+  const tools = createBrowserTools(
+    port({
+      captureScreenshot: async () => {
+        captures += 1;
+        return { tab: SHARED, data: "aW1hZ2U=", mimeType: "image/png" };
+      },
+    }),
+    { imagesVisible: false, ocr: ocrPort("TypeError: x is undefined") },
+  );
+
+  const result = await run(tools, "browser_screenshot", {});
+
+  expect(captures).toBe(1);
+  expect(result.content.some((part) => part.type === "image")).toBe(false);
+  expect(textOf(result)).toContain("TypeError: x is undefined");
+  // 标注必须在:否则模型会把识别到的文字当成"我看过这个页面"。
+  expect(textOf(result)).toContain("not a visual description");
+  expect(result.details["ocr"]).toBe(true);
+});
+
+it("截图里没有文字时如实说没有,而不是给一段空白", async () => {
+  const tools = createBrowserTools(
+    port({ captureScreenshot: async () => ({ tab: SHARED, data: "aW1hZ2U=", mimeType: "image/png" }) }),
+    { imagesVisible: false, ocr: ocrPort("") },
+  );
+  expect(textOf(await run(tools, "browser_screenshot", {}))).toBe(SCREENSHOT_NO_TEXT_MESSAGE);
+});
+
+it("文字识别本身不可用时,退回原来那句实话", async () => {
+  const tools = createBrowserTools(
+    port({ captureScreenshot: async () => ({ tab: SHARED, data: "aW1hZ2U=", mimeType: "image/png" }) }),
+    { imagesVisible: false, ocr: ocrPort("unused", false) },
+  );
+  const result = await run(tools, "browser_screenshot", {});
+  expect(textOf(result)).toBe(SCREENSHOT_UNSUPPORTED_MESSAGE);
+  expect(result.details["ocr"]).toBe("assets-missing");
 });

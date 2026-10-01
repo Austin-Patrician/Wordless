@@ -32,6 +32,7 @@ import {
   isValidFileSecurityPattern,
   resolveFileSecurityRules,
 } from "@wordless/capability-filesystem";
+import type { OcrPort } from "@wordless/capability-ocr";
 import { resolveCommandSecurityRules } from "@wordless/capability-shell";
 import type {
   AgentExtensionInteraction,
@@ -555,9 +556,16 @@ export interface RuntimeOptions {
   drivers: AgentDriverRegistry;
   extensions: AgentExtensionManager;
   workspaceSearch: WorkspaceSearchService;
+  /**
+   * 本地文字识别。可选:构建时没带 OCR 资产、或换一个宿主时都可以没有 —— 没有它时非多模态
+   * 模型会收到一句实话("这个模型看不了图片"),而不是一句做不到的"用工作区工具看看"。
+   */
+  ocr?: OcrPort;
 }
 
 const MAX_INLINE_IMAGE_BYTES = Math.floor(4.5 * 1024 * 1024);
+/** OCR 的墙钟上限。识别本身是几百毫秒,给 60 秒是为了让"卡住"有个尽头,而不是等下去。 */
+const OCR_TIMEOUT_MS = 60_000;
 const MAX_INLINE_IMAGE_DIMENSION = 2_000;
 
 type CachedPromptImage = { key: string; image: ImageContent; bytes: number };
@@ -685,6 +693,11 @@ const DEFAULT_PREFERENCES = (defaultWorkspaceRoot: string): AppPreferences => ({
     // Nothing arranged yet: the app's default split decides what shows inline.
     layout: { pinned: [], more: [] },
     pinnedLimit: SIDEBAR_PINNED_LIMIT_DEFAULT,
+  },
+  ocr: {
+    // 缓存默认开:附件每轮都会重新水合,没有缓存就会把同一张图反复识别。
+    cache: true,
+    granularity: "text",
   },
 });
 
@@ -5569,6 +5582,7 @@ export class WordlessRuntime {
       toolApprovalMode: record.toolApprovalMode,
       automaticCompaction,
       resolvePromptImage: (reference) => this.resolvePromptImage(record, reference),
+      resolvePromptImageText: (reference) => this.resolvePromptImageText(record, reference),
       expertTeamDelegates:
         expertSnapshot?.kind === "team"
           ? expertSnapshot.teamMembers.map((member) => ({
@@ -5619,6 +5633,7 @@ export class WordlessRuntime {
       toolApprovalMode: record.toolApprovalMode,
       automaticCompaction,
       resolvePromptImage: (reference) => this.resolvePromptImage(record, reference),
+      resolvePromptImageText: (reference) => this.resolvePromptImageText(record, reference),
       createExtensionHost: createAgentExtensionHostFactory(this.extensions),
     });
     const active: ActiveRun = {
@@ -6332,6 +6347,46 @@ export class WordlessRuntime {
       await Promise.all(created.map((file) => rm(file, { force: true })));
       throw error;
     }
+  }
+
+  /**
+   * 用本地 OCR 把图片附件里的文字读出来。
+   *
+   * **只在模型看不了图时才会被调用**(驱动那边判断),所以这里不重复判断模型能力。
+   *
+   * 路径约束与 `resolvePromptImage` 完全一致:只认工作区内的 `.attachments/` 暂存文件。
+   * 失败一律返回 `undefined`(资产缺失、超时、图里没字)—— 调用方会退回一句实话,而不是让
+   * 整轮请求失败。
+   */
+  private async resolvePromptImageText(
+    record: SessionRecord,
+    reference: PromptImageReference,
+  ): Promise<{ text: string; engine: string } | undefined> {
+    // 失败一律退回 undefined(调用方会换成一句实话)。但**静默**会让"贴了图却没读到字"变得无从
+    // 排查 —— 所以 `WORDLESS_OCR_DEBUG=1` 时把原因打出来(与运行器窗口的日志同一个开关)。
+    const debug = (reason: string): undefined => {
+      if (process.env.WORDLESS_OCR_DEBUG === "1") console.error(`[ocr] skipped ${reference.name}: ${reason}`);
+      return undefined;
+    };
+    const ocr = this.options.ocr;
+    if (!ocr) return debug("no OCR service in this build");
+    if (!reference.mediaType.toLowerCase().startsWith("image/")) return debug("not an image");
+    const previewPath = reference.previewPath;
+    if (!previewPath || !previewPath.startsWith(".attachments/") || previewPath.includes("..") || isAbsolute(previewPath)) return debug("attachment is not a staged .attachments/ file");
+    const source = join(this.sessionAttachmentRoot(record), previewPath);
+    const isFile = await stat(source).then((details) => details.isFile(), () => false);
+    if (!isFile) return debug(`staged file is missing: ${source}`);
+    const outcome = await ocr
+      .recognize([{ path: source, name: reference.name, mimeType: reference.mediaType }], { signal: AbortSignal.timeout(OCR_TIMEOUT_MS) })
+      .catch((cause: unknown) => {
+        debug(`the engine threw: ${cause instanceof Error ? cause.message : String(cause)}`);
+        return undefined;
+      });
+    if (!outcome) return undefined;
+    if (!outcome.ok) return debug(`engine failed (${outcome.code}): ${outcome.message}`);
+    const text = outcome.recognition.pages.map((page) => page.text).join("\n").trim();
+    if (text === "") return debug("the engine recognized no text in this image");
+    return { text, engine: outcome.recognition.engine };
   }
 
   private async resolvePromptImage(

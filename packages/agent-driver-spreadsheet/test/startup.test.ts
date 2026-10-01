@@ -132,4 +132,118 @@ describe("spreadsheet driver startup", () => {
     expect(workspacePreflightCalls).toEqual(["read"]);
     driverSession.dispose();
   });
+
+  it("模型看不了图时:spreadsheet_render 不把 PNG 塞给模型,而是指路", async () => {
+    const models = createModels();
+    const faux = fauxProvider({ models: [{ id: "text-only", name: "Text only", input: ["text"] }] });
+    models.setProvider(faux.provider);
+    const model = faux.getModel();
+    const session = new Session(new InMemorySessionStorage());
+    const record: SessionRecord = {
+      id: crypto.randomUUID(), title: "Spreadsheet", workspaceId: null, runtimeRootPath: process.cwd(), mode: "everyday", entryId: "spreadsheet",
+      profile: { id: "excel", version: "1" }, driverId: "spreadsheet", journalFormat: "wordless-agent-v1", workbenchId: "workbook", accessLevel: "default",
+      model: { connectionId: model.provider, modelId: model.id }, thinkingLevel: "off", journalPath: "memory", connectorIds: [], interactionMode: "default", toolApprovalMode: "manual", pinnedAt: null, createdAt: Date.now(), updatedAt: Date.now(),
+    };
+    const context: AgentDriverSessionContext = {
+      record,
+      profile: {
+        reference: record.profile, driverId: "spreadsheet", modelRequirements: { requiresToolUse: true }, systemPrompt: "Use spreadsheet tools.",
+        activeToolNames: ["spreadsheet_render", "spreadsheet_read"],
+        capabilityIds: ["filesystem", "shell", "office"], skills: [], artifactKinds: ["spreadsheet"], workbenchId: "workbook",
+      },
+      model,
+      modelCapabilities: { supportsText: true, supportsVision: false, supportsToolUse: true, supportsReasoning: false, supportedThinkingLevels: ["off"], contextWindow: model.contextWindow, maxOutputTokens: model.maxTokens },
+      models, session, env: new NodeExecutionEnv({ cwd: process.cwd() }), skills: [], connectorTools: [], connectorToolPolicies: [], security: { fileRules: [], commandRules: [] }, resolveModel: () => model,
+    };
+    let imageCount = 0;
+    let toolResultText = "";
+    faux.setResponses([
+      fauxAssistantMessage([fauxToolCall("spreadsheet_render", { artifactId: "workbook-1", sheet: "Summary" }, { id: "render-1" })], { stopReason: "toolUse" }),
+      (request) => {
+        // 工具结果就在下一轮请求里:数一数里面有没有 image block。
+        // 用循环而不是 flatMap:`content` 的联合类型会让 flatMap 的结果也变成联合,读起来更绕。
+        const texts: string[] = [];
+        for (const message of request.messages) {
+          if (typeof message.content === "string") continue;
+          for (const block of message.content) {
+            if (block.type === "image") imageCount += 1;
+            if (block.type === "text") texts.push(block.text);
+          }
+        }
+        toolResultText = texts.join("\n");
+        return fauxAssistantMessage("Ready");
+      },
+    ]);
+    const renderOffice: SpreadsheetOfficeService = {
+      ...office,
+      renderSpreadsheet: async () => ({
+        revision: 7,
+        images: [{ surfaceId: "sheet-1", sheet: "Summary", mimeType: "image/png", data: "aW1hZ2U=" }],
+        details: {},
+      }),
+    };
+    const driverSession = await createSpreadsheetAgentDriver(renderOffice, {
+      createWorkspaceTools: () => [],
+      // 渲染这条路径不碰工作区写操作;给一个明确的"允许",免得预检把它当成待审请求。
+      preflightWorkspaceOperation: async () => ({ type: "allow" }),
+    }).createSession(context);
+    await driverSession.execute({ type: "prompt", text: "Render the summary sheet." });
+
+    expect(imageCount).toBe(0);
+    expect(toolResultText).toContain("cannot view images");
+    expect(toolResultText).toContain("spreadsheet_read");
+    driverSession.dispose();
+  });
+
+  it("能看图的模型行为不变:渲染出的 PNG 照旧递过去", async () => {
+    const models = createModels();
+    const faux = fauxProvider({ models: [{ id: "vision", name: "Vision", input: ["text", "image"] }] });
+    models.setProvider(faux.provider);
+    const model = faux.getModel();
+    const session = new Session(new InMemorySessionStorage());
+    const record: SessionRecord = {
+      id: crypto.randomUUID(), title: "Spreadsheet", workspaceId: null, runtimeRootPath: process.cwd(), mode: "everyday", entryId: "spreadsheet",
+      profile: { id: "excel", version: "1" }, driverId: "spreadsheet", journalFormat: "wordless-agent-v1", workbenchId: "workbook", accessLevel: "default",
+      model: { connectionId: model.provider, modelId: model.id }, thinkingLevel: "off", journalPath: "memory", connectorIds: [], interactionMode: "default", toolApprovalMode: "manual", pinnedAt: null, createdAt: Date.now(), updatedAt: Date.now(),
+    };
+    const context: AgentDriverSessionContext = {
+      record,
+      profile: {
+        reference: record.profile, driverId: "spreadsheet", modelRequirements: { requiresToolUse: true }, systemPrompt: "Use spreadsheet tools.",
+        activeToolNames: ["spreadsheet_render", "spreadsheet_read"],
+        capabilityIds: ["filesystem", "shell", "office"], skills: [], artifactKinds: ["spreadsheet"], workbenchId: "workbook",
+      },
+      model,
+      modelCapabilities: { supportsText: true, supportsVision: true, supportsToolUse: true, supportsReasoning: false, supportedThinkingLevels: ["off"], contextWindow: model.contextWindow, maxOutputTokens: model.maxTokens },
+      models, session, env: new NodeExecutionEnv({ cwd: process.cwd() }), skills: [], connectorTools: [], connectorToolPolicies: [], security: { fileRules: [], commandRules: [] }, resolveModel: () => model,
+    };
+    let imageCount = 0;
+    faux.setResponses([
+      fauxAssistantMessage([fauxToolCall("spreadsheet_render", { artifactId: "workbook-1", sheet: "Summary" }, { id: "render-1" })], { stopReason: "toolUse" }),
+      (request) => {
+        for (const message of request.messages) {
+          if (typeof message.content === "string") continue;
+          for (const block of message.content) if (block.type === "image") imageCount += 1;
+        }
+        return fauxAssistantMessage("Ready");
+      },
+    ]);
+    const renderOffice: SpreadsheetOfficeService = {
+      ...office,
+      renderSpreadsheet: async () => ({
+        revision: 7,
+        images: [{ surfaceId: "sheet-1", sheet: "Summary", mimeType: "image/png", data: "aW1hZ2U=" }],
+        details: {},
+      }),
+    };
+    const driverSession = await createSpreadsheetAgentDriver(renderOffice, {
+      createWorkspaceTools: () => [],
+      // 渲染这条路径不碰工作区写操作;给一个明确的"允许",免得预检把它当成待审请求。
+      preflightWorkspaceOperation: async () => ({ type: "allow" }),
+    }).createSession(context);
+    await driverSession.execute({ type: "prompt", text: "Render the summary sheet." });
+
+    expect(imageCount).toBe(1);
+    driverSession.dispose();
+  });
 });

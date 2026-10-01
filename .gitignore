@@ -24,6 +24,8 @@ apps/desktop/resources/presentation-templates/*
 !apps/desktop/resources/presentation-templates/.gitkeep
 apps/desktop/resources/python/*
 !apps/desktop/resources/python/.gitkeep
+apps/desktop/resources/ocr/*
+!apps/desktop/resources/ocr/.gitkeep
 
 # Local high-resolution sources; optimized website models are committed from public/glb.
 apps/website/assets/glb-source/

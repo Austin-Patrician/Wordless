@@ -4,7 +4,7 @@ import { AlertTriangle, ArrowRight, Check, ChevronLeft, Download, Terminal, X } 
 import { useCallback, useEffect, useState } from "react";
 import { usePreferences } from "../../shared/preferences";
 import { useRuntimeClient } from "../../shared/runtime";
-import { hostEnvironmentRows } from "../settings/environment-rows";
+import { environmentNeedsAttention, hostEnvironmentRows } from "../settings/environment-rows";
 
 /**
  * 首次导览里的**环境一页**。
@@ -55,10 +55,12 @@ export function OnboardingEnvironment({ onBack, onContinue }: { onBack: () => vo
   }, [client, load, t]);
 
   const rows = facts ? hostEnvironmentRows(facts, t) : [];
-  // 只有"agent 跑不跑得起来"那两行算数:Python 的组件只影响数据功能,不该在这一页拦住用户。
-  const blocking = rows.filter((row) => row.id !== "python" && row.status !== "ok");
+  // 只有"agent 跑不跑得起来"的行算数:数据组件、文字识别这些缺了只影响某个功能,不该在这一页
+  // 拦住用户(否则用户会以为整个应用不能用)。哪些行属于这一类**由行自己声明**(`optional`),
+  // 不在这里写死 id —— 写死的话,每加一行都要回来改这里。
+  const blocking = environmentNeedsAttention(rows);
   const needsInstall = rows.some((row) => row.action === "install-python-packages");
-  const ready = facts !== null && blocking.length === 0;
+  const ready = facts !== null && !blocking;
 
   return (
     <div className="fixed inset-0 z-[140] grid place-items-center overflow-y-auto bg-[var(--wordless-overlay-surface)] px-6 py-10">

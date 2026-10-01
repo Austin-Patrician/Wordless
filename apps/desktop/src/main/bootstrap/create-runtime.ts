@@ -16,8 +16,12 @@ import { createHeadlessCodingTools } from "@wordless/coding-agent";
 import { createGenericAgentDriver } from "@wordless/agent-driver-generic";
 import { createDataAnalysisTools, type DataAnalysisService } from "@wordless/capability-data";
 import { createBrowserTools } from "@wordless/capability-browser";
+import { createOcrTools } from "@wordless/capability-ocr";
 import { createDesignTools } from "@wordless/capability-design";
 import { createDesignCapabilityPort } from "../design/design-capability-port";
+import { createOcrPort } from "../ocr/ocr-port";
+import type { OcrService } from "../ocr/ocr-service";
+import { WorkspacePathService } from "@wordless/platform-node";
 import type { DesignStore } from "../design/design-store";
 import type { OffscreenEvaluatePort, RasterPort } from "../design/raster-port";
 import { createAgentDriverRegistry } from "@wordless/agent-driver-sdk";
@@ -53,12 +57,27 @@ export interface DesignRuntimeDeps {
   builds?: { runner: BuildRunner; recipes: readonly BuildRecipe[] };
 }
 
-export function createDesktopRuntime(userData: string, office: OfficeCliService, credentialVault = new ElectronCredentialVault(path.join(userData, "credentials.json")), dataAnalysis: DataAnalysisService = new DesktopDataAnalysisService({ metadataRoot: path.join(userData, "analysis-metadata"), resourcesRoot: app.isPackaged ? process.resourcesPath : path.resolve(__dirname, "../../resources") }), browser?: BrowserService, design?: DesignRuntimeDeps): WordlessRuntime {
+export function createDesktopRuntime(userData: string, office: OfficeCliService, credentialVault = new ElectronCredentialVault(path.join(userData, "credentials.json")), dataAnalysis: DataAnalysisService = new DesktopDataAnalysisService({ metadataRoot: path.join(userData, "analysis-metadata"), resourcesRoot: app.isPackaged ? process.resourcesPath : path.resolve(__dirname, "../../resources") }), browser?: BrowserService, design?: DesignRuntimeDeps, ocr?: OcrService): WordlessRuntime {
+  // OCR 工具按会话构建:端口捕获工作区根,"哪些路径允许读"属于会话。
+  const ocrPaths = new WorkspacePathService();
+  const ocrToolsFor = (workspaceRoot: string) =>
+    ocr ? createOcrTools(createOcrPort(ocr, { workspaceRoot, isWithinRoot: (root, candidate) => ocrPaths.isWithinRoot(root, candidate) })) : [];
   // Browser tools are built per session, following the data capability: the port
   // captures the session id, because sharing and action grants belong to the task
   // the user was working on rather than to the app as a whole.
-  const browserToolsFor = (sessionId: string) =>
-    browser ? createBrowserTools(createBrowserPort(browser, sessionId)) : [];
+  /**
+   * 浏览器工具按会话构建。
+   *
+   * 看不了图的模型有两种下场:有文字识别时把截图**读成文字**(截图的常见用途就是"页面上写了
+   * 什么报错"),没有时连截都不截,回一句实话。
+   */
+  const browserToolsFor = (sessionId: string, imagesVisible: boolean, workspaceRoot: string) =>
+    browser
+      ? createBrowserTools(createBrowserPort(browser, sessionId), {
+          imagesVisible,
+          ...(ocr ? { ocr: createOcrPort(ocr, { workspaceRoot, isWithinRoot: (root, candidate) => ocrPaths.isWithinRoot(root, candidate) }) } : {}),
+        })
+      : [];
   /**
    * 设计工具按会话构建,与浏览器那套同一个理由:端口捕获工作区根,而"哪份设计"属于
    * 用户当时在做的任务,不属于应用整体。
@@ -117,8 +136,10 @@ export function createDesktopRuntime(userData: string, office: OfficeCliService,
         createExtensionHost: extensions,
         createTools: (context) => [
           ...createHeadlessCodingTools(context.env, context.workspaceSearch),
-          ...browserToolsFor(context.resourceOwnerSessionId ?? context.record.id),
+          ...browserToolsFor(context.resourceOwnerSessionId ?? context.record.id, context.model.input.includes("image"), context.record.runtimeRootPath),
           ...(context.profile.reference.id === "ui" ? designToolsFor(context.record.runtimeRootPath) : []),
+          // 文字识别对所有 profile 都可用:它只是"读图里的字",没有任何写操作。
+          ...ocrToolsFor(context.record.runtimeRootPath),
           ...(context.profile.reference.id === "data" ? createDataAnalysisTools(dataAnalysis, {
             sessionId: context.resourceOwnerSessionId ?? context.record.id,
             workspaceRoot: context.record.runtimeRootPath,
@@ -130,7 +151,11 @@ export function createDesktopRuntime(userData: string, office: OfficeCliService,
       }),
       createCodingAgentDriver({
         createExtensionHost: extensions,
-        extraTools: (context) => browserToolsFor(context.resourceOwnerSessionId ?? context.record.id),
+        extraTools: (context) => [
+          ...browserToolsFor(context.resourceOwnerSessionId ?? context.record.id, context.model.input.includes("image"), context.record.runtimeRootPath),
+          // 贴一张报错截图然后问"哪里错了"最常发生在写代码这条路,所以这里也要有。
+          ...ocrToolsFor(context.record.runtimeRootPath),
+        ],
       }),
       createPresentationAgentDriver(office, {
         createWorkspaceTools: (context) => createHeadlessCodingTools(context.env, context.workspaceSearch),

@@ -1,6 +1,6 @@
 import { Button, DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger, Popover, PopoverAnchor, PopoverContent, PopoverTrigger, Tooltip, TooltipContent, TooltipTrigger } from "@wordless/ui-kit";
 import { canPinSidebarNavItem, moveSidebarNavItem, pinSidebarNavItem, resolveSidebarNavLayout, sidebarPinnedCapacity, toStoredSidebarNavLayout, unpinSidebarNavItem, type ResolvedSidebarNavLayout, type SidebarNavLayout } from "@wordless/domain";
-import { Bell, CalendarClock, ChevronDown, ChevronLeft, ChevronsDown, ChevronsUp, Cloud, Ellipsis, FolderOpen, LoaderCircle, LogIn, LogOut, Monitor, Moon, Pin, PinOff, Search, Settings, Sun, Trash2, Pencil, X } from "lucide-react";
+import { CalendarClock, ChevronDown, ChevronLeft, ChevronsDown, ChevronsUp, Cloud, Ellipsis, FolderOpen, LoaderCircle, LogIn, LogOut, Monitor, Moon, Pin, PinOff, Search, Settings, Sun, Trash2, Pencil, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import type { SessionRecord } from "@wordless/domain";
@@ -18,6 +18,7 @@ import { useSidebarNavDrag, type SidebarNavRegion } from "./use-sidebar-nav-drag
 import { sortWorkspaceGroupsByRecentSession } from "./sidebar-sessions";
 import { useDesktopAccount } from "../../shared/account";
 import type { SettingsPage } from "../settings/SettingsDialog";
+import { NotificationCenter } from "./NotificationCenter";
 
 type SidebarProps = {
   collapsed: boolean;
@@ -452,7 +453,7 @@ export function Sidebar({ collapsed, mainView, onNewThread, onOpenAutomation, on
         return <section key={workspace.id}><button aria-expanded={expanded} className="flex h-8 w-full items-center gap-2 rounded-[7px] px-2 text-left text-[11px] text-[#4f4f4a] outline-none hover:bg-[#e7e7e3] focus-visible:ring-2 focus-visible:ring-ring dark:text-muted-foreground dark:hover:bg-[#282a21]" onClick={() => setExpandedWorkspaceIds((current) => { const next = new Set(current); if (next.has(workspace.id)) next.delete(workspace.id); else next.add(workspace.id); return next; })} type="button"><img alt="" className="h-3.5 w-3.5 shrink-0 opacity-75 dark:invert" src={folderIcon} /><span className="min-w-0 flex-1 truncate font-medium">{workspace.name}</span><ChevronDown className={`h-3.5 w-3.5 transition-transform ${expanded ? "" : "-rotate-90"}`} /></button>{expanded ? <div className="mt-0.5 space-y-1 pl-2">{workspaceSessions.map(sessionRow)}</div> : null}</section>;
       })}</div></section></div> : null}
 
-      <div className={`mt-auto flex shrink-0 items-center ${collapsed ? "justify-center" : "justify-between px-2"}`}><AccountMenu collapsed={collapsed} onOpenSettings={onOpenSettings} onToggle={onToggle} t={t} />{!collapsed ? <div className="flex gap-1"><SidebarSettingsPopover onOpenSettings={onOpenSettings} /><Button aria-label={t("notifications")} size="icon" type="button" variant="ghost"><Bell className="h-4 w-4" /></Button></div> : null}</div>
+      <div className={`mt-auto flex shrink-0 items-center ${collapsed ? "justify-center" : "justify-between px-2"}`}><AccountMenu collapsed={collapsed} onOpenSettings={onOpenSettings} onToggle={onToggle} t={t} />{!collapsed ? <div className="flex gap-1"><SidebarSettingsPopover onOpenSettings={onOpenSettings} /><NotificationCenter onOpenSettings={onOpenSettings} /></div> : null}</div>
 
       <SessionDeleteConfirm error={deleteError} onCancel={() => { setDeleteError(null); setDeleting(null); }} onConfirm={() => void confirmDelete()} saving={saving} session={deleting} t={t} />
       <SessionSearchDialog entries={entries} onOpenChange={setSessionSearchOpen} onSelectSession={openSession} open={sessionSearchOpen} sessions={sessions} workspaces={workspaces} />

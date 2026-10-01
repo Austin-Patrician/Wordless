@@ -17,6 +17,7 @@ import type {
   AgentDriverSession,
   AgentDriverSessionContext,
   ResolvePromptImage,
+  ResolvePromptImageText,
   AgentProfileDefinition,
   AgentRuntimeSkill,
   ConnectorToolPolicy,
@@ -85,6 +86,8 @@ export interface SessionSubagentRunnerOptions {
   onFilesChanged(changes: SubagentFileChange[]): Promise<void>;
   toolApprovalMode: ToolApprovalMode;
   resolvePromptImage?: ResolvePromptImage;
+  /** 子代理同样要能读图里的字:子代理的模型也可能看不了图。 */
+  resolvePromptImageText?: ResolvePromptImageText;
   onExpertMemberEvent?: (event: ExpertMemberStreamEvent) => void;
   expertTeamDelegates?: {
     id: string;
@@ -783,6 +786,7 @@ export class SessionSubagentRunner
         : role !== "researcher" && role !== "research-reviewer",
       toolApprovalMode: this.options.toolApprovalMode,
       resolvePromptImage: this.options.resolvePromptImage,
+      resolvePromptImageText: this.options.resolvePromptImageText,
     };
     const session = await this.options.driver.createSession(childContext);
     const entry: SubagentTaskEntry = {

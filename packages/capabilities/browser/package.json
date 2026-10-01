@@ -12,7 +12,8 @@
   },
   "dependencies": {
     "@wordless/agent": "0.80.6-wordless.0",
-    "typebox": "1.1.38"
+    "typebox": "1.1.38",
+    "@wordless/capability-ocr": "0.0.0"
   },
   "devDependencies": {
     "typescript": "5.9.3",

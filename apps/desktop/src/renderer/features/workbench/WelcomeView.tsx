@@ -1,5 +1,5 @@
 import { Button, Select, SelectContent, SelectItem, SelectTrigger, SelectValue, cn } from "@wordless/ui-kit";
-import { ChevronDown, Folder, Terminal } from "lucide-react";
+import { ChevronDown, Folder } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import type { AgentInteractionModeId, ExpertSelection, ModelReference, PresentationGenerationMode, SessionAccessLevel, ThinkingLevel, ToolApprovalMode, UserPromptPart, WorkbenchEntryDefinition, WorkbenchMode } from "@wordless/domain";
 import type { PresentationTemplate } from "@wordless/protocol";
@@ -12,7 +12,6 @@ import { Composer, EMPTY_INLINE_SKILL_COMPOSER_VALUE } from "../thread/Composer"
 import { AccessPicker } from "../thread/AccessPicker";
 import { createPendingThreadTurn, createUserMessageSubmission, type PendingThreadTurn } from "../thread/pending-thread-turn";
 import { DesignStyleLaunchStrip } from "../design/DesignStyleLaunchStrip";
-import { hostEnvironmentRows } from "../settings/environment-rows";
 import { ModelPicker, thinkingLevelForModelSelection } from "./ModelPicker";
 import { WorkspacePicker } from "./WorkspacePicker";
 import { AgentEntryIcon } from "./AgentEntryIcon";
@@ -115,24 +114,6 @@ export function WelcomeView({ initialExpertPrompt, initialExpertSelection, onOpe
   const client = useRuntimeClient();
   const { refresh, snapshot } = useRuntime();
   const { t } = usePreferences();
-  // 环境那枚状态只回答"agent 能不能跑起来":命令行与 Node。**Python 不算在这里** ——
-  // 只有数据功能需要它,为了它去打扰每个新用户是本末倒置(见 docs/architecture/host-environment.md)。
-  const [environmentReady, setEnvironmentReady] = useState<boolean | null>(null);
-  useEffect(() => {
-    let cancelled = false;
-    void client
-      .getHostEnvironmentFacts()
-      .then((facts) => {
-        if (cancelled) return;
-        setEnvironmentReady(hostEnvironmentRows(facts, t).every((row) => row.id === "python" || row.status === "ok"));
-      })
-      .catch(() => {
-        if (!cancelled) setEnvironmentReady(null);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [client, t]);
 
   const [mode, setMode] = useState<WorkbenchMode>("everyday");
   const [entryId, setEntryId] = useState("general-work");
@@ -422,23 +403,6 @@ export function WelcomeView({ initialExpertPrompt, initialExpertSelection, onOpe
                   selectedWorkspaceId={workspaceId}
                   workspaces={snapshot.workspaces}
                 />
-              </div>
-              {/* 发消息之前就能看到"agent 跑不跑得起来"。点进去是设置 → 环境。 */}
-              <div data-tour="welcome-environment">
-                <Button
-                  aria-label={t("welcomeEnvironmentDetails")}
-                  className="min-w-0 text-[#64645e]"
-                  onClick={onOpenEnvironment}
-                  size="sm"
-                  title={t("welcomeEnvironmentDetails")}
-                  type="button"
-                  variant="ghost"
-                >
-                  <Terminal className="h-3.5 w-3.5" />
-                  <span className="truncate">
-                    {environmentReady === null ? t("environmentProbing") : environmentReady ? t("welcomeEnvironmentReady") : t("welcomeEnvironmentMissing")}
-                  </span>
-                </Button>
               </div>
               {workspaceRequired || supportsGeneralWorkAccessSelection(entry.id) ? (
                 <AccessPicker

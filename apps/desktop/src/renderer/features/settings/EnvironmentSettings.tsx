@@ -1,4 +1,5 @@
-import { Button } from "@wordless/ui-kit";
+import { Button, Select, SelectContent, SelectItem, SelectTrigger, SelectValue, Switch } from "@wordless/ui-kit";
+import type { OcrGranularity } from "@wordless/domain";
 import type { HostEnvironmentFacts } from "@wordless/protocol";
 import { AlertTriangle, Check, Download, RefreshCw, X } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
@@ -23,7 +24,7 @@ const PYTHON_DOWNLOAD_URL = "https://www.python.org/downloads/";
  *   (失败时那句话本身就说"检查网络后重试")。
  */
 export function EnvironmentSettings() {
-  const { t } = usePreferences();
+  const { ocr, setOcr, t } = usePreferences();
   const client = useRuntimeClient();
   const [facts, setFacts] = useState<HostEnvironmentFacts | null>(null);
   const [busy, setBusy] = useState(false);
@@ -149,7 +150,7 @@ function EnvironmentRowItem({
   onInstall: () => void;
   row: EnvironmentRow;
 }) {
-  const { t } = usePreferences();
+  const { ocr, setOcr, t } = usePreferences();
   const client = useRuntimeClient();
   const tone =
     row.status === "ok"
@@ -188,25 +189,67 @@ function EnvironmentRowItem({
               {row.location}
             </p>
           ) : null}
-          {row.hint ? <p className="mt-1 text-[12px] leading-5 text-[#73736d] dark:text-muted-foreground">{row.hint}</p> : null}
+          {/* 有动作区的行,把 hint 放进动作区里(与"点它会怎样"挨着),避免同一件事说两遍。 */}
+          {row.hint && row.action === undefined ? <p className="mt-1 text-[12px] leading-5 text-[#73736d] dark:text-muted-foreground">{row.hint}</p> : null}
 
+          {/* 识别选项**长在"文字识别"这张 card 里面**:它们是这一项能力的设置,单独摆一张卡会让人
+              以为是另一件事。只在就绪时出现 —— 没资产时给开关只会让人以为"打开就能用"。 */}
+          {row.id === "ocr" && row.status === "ok" ? (
+            <div className="mt-3 space-y-3 border-t border-[#e6e6e1] pt-3 dark:border-[#2f3129]">
+              <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                <span className="min-w-0">
+                  <label className="block text-[12px] font-medium" htmlFor="ocr-cache">{t("environmentOcrCache")}</label>
+                  <span className="mt-0.5 block text-[11px] leading-5 text-[#8a8a83] dark:text-muted-foreground">{t("environmentOcrCacheHelp")}</span>
+                </span>
+                <Switch checked={ocr.cache} id="ocr-cache" onCheckedChange={(cache) => void setOcr({ ...ocr, cache })} />
+              </div>
+
+              <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                <span className="min-w-0">
+                  <label className="block text-[12px] font-medium" htmlFor="ocr-granularity">{t("environmentOcrGranularity")}</label>
+                  <span className="mt-0.5 block text-[11px] leading-5 text-[#8a8a83] dark:text-muted-foreground">{t("environmentOcrGranularityHelp")}</span>
+                </span>
+                <Select onValueChange={(value) => void setOcr({ ...ocr, granularity: value as OcrGranularity })} value={ocr.granularity}>
+                  {/* 比语言/主题那两个窄:这里只有两个短选项("纯文本"/"逐行"),170px 会留一大片空。
+                      解释放在下面的说明行里,所以标签可以短。 */}
+                  <SelectTrigger className="w-[112px] shrink-0 rounded-lg border-border bg-white px-3 py-2 text-left text-[12px] dark:bg-[#181912]" id="ocr-granularity">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="text">{t("environmentOcrGranularityText")}</SelectItem>
+                    <SelectItem value="line">{t("environmentOcrGranularityLine")}</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+          ) : null}
+
+          {/* 动作区与上面的"识别选项"同一套版式:**说明在左、按钮在右**。
+              之前按钮和说明并排一行,于是"缺什么"和"点它会发生什么"挤在一起、层级也看不出来;
+              现在左边是两行(缺什么 / 点它会发生什么),右边只有按钮 —— 和卡片标题那一行(标题在左、
+              重新探测在右)也对得上。窄屏时自动上下堆叠。 */}
           {row.action === "install-python-packages" ? (
-            <div className="mt-2.5 flex flex-wrap items-center gap-2">
-              <Button disabled={installing} onClick={onInstall} size="sm" type="button">
+            <div className="mt-3 flex flex-col gap-2 border-t border-[#e6e6e1] pt-3 sm:flex-row sm:items-center sm:justify-between dark:border-[#2f3129]">
+              <span className="min-w-0">
+                <span className="block text-[12px] leading-5 text-[#73736d] dark:text-muted-foreground">{t("environmentPythonPackages").replace("{packages}", (row.missingPackages ?? []).join(", "))}</span>
+                <span className="mt-0.5 block text-[11px] leading-5 text-[#8a8a83] dark:text-muted-foreground">{t("environmentPythonInstallHelp")}</span>
+              </span>
+              <Button className="shrink-0 self-start sm:self-auto" disabled={installing} onClick={onInstall} size="sm" type="button">
                 <Download className={installing ? "h-3.5 w-3.5 animate-pulse motion-reduce:animate-none" : "h-3.5 w-3.5"} />
                 {installing ? t("environmentPythonInstalling") : t("environmentPythonInstall")}
               </Button>
-              <span className="text-[11px] text-[#8a8a83] dark:text-muted-foreground">{t("environmentPythonInstallHelp")}</span>
             </div>
           ) : null}
 
           {row.action === "python-download" ? (
-            <div className="mt-2.5 flex flex-wrap items-center gap-2">
-              <Button onClick={() => void client.openExternalUrl(PYTHON_DOWNLOAD_URL)} size="sm" type="button" variant="outline">
+            <div className="mt-3 flex flex-col gap-2 border-t border-[#e6e6e1] pt-3 sm:flex-row sm:items-center sm:justify-between dark:border-[#2f3129]">
+              <span className="min-w-0 text-[11px] leading-5 text-[#8a8a83] dark:text-muted-foreground">
+                {/* 环境与 PATH 是启动时读一次的:不说清这一步,用户会以为按钮没生效。 */}
+                {t("environmentPythonRestart")}
+              </span>
+              <Button className="shrink-0 self-start sm:self-auto" onClick={() => void client.openExternalUrl(PYTHON_DOWNLOAD_URL)} size="sm" type="button" variant="outline">
                 {t("environmentPythonDownload")}
               </Button>
-              {/* 环境与 PATH 是启动时读一次的:不说清这一步,用户会以为按钮没生效。 */}
-              <span className="text-[11px] text-[#8a8a83] dark:text-muted-foreground">{t("environmentPythonRestart")}</span>
             </div>
           ) : null}
         </div>

@@ -9,6 +9,7 @@ import type {
   BrowserTabSummary,
 } from "./port.js";
 import { buildSnapshot } from "./snapshot.js";
+import type { OcrPort } from "@wordless/capability-ocr";
 
 /**
  * Read-only browser tools for the agent.
@@ -32,6 +33,19 @@ function tool<TParameters extends TSchema>(definition: AgentTool<TParameters, To
 
 export const NO_SHARED_TAB_MESSAGE =
   "No browser tab is shared with you. Ask the user to open the page in the browser panel and turn on sharing for it.";
+
+/**
+ * 模型看不了图片时的截图答复。
+ *
+ * 截图的价值全在"像素"上,而看不见像素的模型拿不到任何东西 —— 与其塞给它一个它读不了的
+ * image block(它会以为"我看过了"),不如直说,并把它指向可访问性树。
+ */
+/** 截了、也识别了,但图里没有文字(纯图形页面)。 */
+export const SCREENSHOT_NO_TEXT_MESSAGE =
+  "The screenshot was read, but no text was recognized in it. This model cannot view images, so the page's visual content is not available to it: use browser_snapshot for the accessibility tree, or ask the user.";
+
+export const SCREENSHOT_UNSUPPORTED_MESSAGE =
+  "Screenshots are unavailable: the current model cannot view images. Use browser_snapshot to read the page as text (it returns the accessibility tree), and browser_console for errors. If a purely visual judgement is needed, ask the user to switch to a vision-capable model.";
 
 function textResult(content: string, details: ToolDetails = {}): AgentToolResult<ToolDetails> {
   return { content: [{ type: "text", text: content }], details };
@@ -61,7 +75,24 @@ function describeReadState(tab: BrowserTabSummary): string[] {
   return notes;
 }
 
-export function createBrowserTools(port: BrowserPort): AgentTool[] {
+export interface BrowserToolOptions {
+  /**
+   * 当前模型能否看图片(`model.input.includes("image")`)。
+   *
+   * 默认 `true` —— 截图是浏览器面板的主要用途,只有明确知道看不了时才降级。
+   */
+  imagesVisible?: boolean;
+  /**
+   * 看不了图时的**兜底**:把截图交给本地文字识别,返回图里的文字。
+   *
+   * 不给这个能力时,`browser_screenshot` 只能回一句"这个模型看不了图片" —— 那是实话,但对
+   * "页面上的报错写了什么"这种问题毫无帮助。有了它,截图至少能读成文字。
+   */
+  ocr?: OcrPort;
+}
+
+export function createBrowserTools(port: BrowserPort, options: BrowserToolOptions = {}): AgentTool[] {
+  const imagesVisible = options.imagesVisible ?? true;
   const tabs = tool({
     name: "browser_tabs",
     label: "List shared browser tabs",
@@ -134,6 +165,33 @@ export function createBrowserTools(port: BrowserPort): AgentTool[] {
       "Capture the current visual state of a shared browser tab. Use this only when the accessibility tree cannot describe what matters — canvas, WebGL, or a purely visual layout problem. It costs far more context than browser_snapshot.",
     parameters: Type.Object({ tabId: Type.Optional(Type.String({ minLength: 1 })) }),
     async execute(_id, input) {
+      // 看不了图的模型:像素递不过去。有本地文字识别时**改成读文字** —— 截图的常见用途就是
+      // "页面上写了什么报错",那件事 OCR 做得到;没有它才退回一句实话。
+      if (!imagesVisible && options.ocr?.recognizeInline) {
+        const shot = await port.captureScreenshot(input.tabId);
+        if (!shot) return textResult(NO_SHARED_TAB_MESSAGE, { tabCount: 0 });
+        const outcome = await options.ocr.recognizeInline(
+          [{ name: `tab-${shot.tab.id}.png`, mimeType: shot.mimeType, base64: shot.data }],
+          { signal: new AbortController().signal },
+        );
+        if (outcome.ok) {
+          const recognizedText = outcome.recognition.pages.map((page) => page.text).join("\n").trim();
+          const details = { tabId: shot.tab.id, url: shot.tab.url, imagesVisible: false, ocr: true };
+          if (recognizedText === "") return textResult(SCREENSHOT_NO_TEXT_MESSAGE, details);
+          return textResult([
+            `tab ${shot.tab.id}`,
+            `url: ${shot.tab.url || "(none)"}`,
+            "",
+            recognizedText,
+            "",
+            "---",
+            "The text above was extracted from the screenshot by a local OCR engine: it is not a visual description of the page. Layout, colour and anything graphical are not available.",
+          ].join("\n"), details);
+        }
+        return textResult(SCREENSHOT_UNSUPPORTED_MESSAGE, { tabCount: 0, imagesVisible: false, ocr: outcome.code });
+      }
+      // 既看不了图、也没有文字识别:连截都不截 —— 截图只是白烧一次渲染。
+      if (!imagesVisible) return textResult(SCREENSHOT_UNSUPPORTED_MESSAGE, { tabCount: 0, imagesVisible: false });
       const shot = await port.captureScreenshot(input.tabId);
       if (!shot) return textResult(NO_SHARED_TAB_MESSAGE, { tabCount: 0 });
       return {

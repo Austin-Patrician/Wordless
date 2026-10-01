@@ -93,6 +93,10 @@ export class WordlessDatabase {
           ...defaults.notifications,
           ...(typeof stored.notifications === "object" && stored.notifications !== null && !Array.isArray(stored.notifications) ? stored.notifications : {}),
         },
+        ocr: {
+          ...defaults.ocr,
+          ...(typeof stored.ocr === "object" && stored.ocr !== null && !Array.isArray(stored.ocr) ? stored.ocr : {}),
+        },
         security: {
           ...defaults.security,
           ...(typeof stored.security === "object" && stored.security !== null && !Array.isArray(stored.security) ? stored.security : {}),

@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Wordless OCR runner</title>
+    <!--
+      隐藏窗口的页面。这里**刻意什么都不做**:没有 UI、没有字体、没有 React。
+      窗口存在的唯一目的是让 onnxruntime-web 有一个安全的浏览器上下文可用 ——
+      WASM 需要一个真实的渲染进程(SharedArrayBuffer / canvas 解码都在这里)。
+    -->
+    <style>
+      html,
+      body {
+        margin: 0;
+        background: #fff;
+        color: #333;
+        font: 11px ui-monospace, monospace;
+      }
+      #log {
+        white-space: pre-wrap;
+        padding: 4px 6px;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="log"></div>
+    <script type="module" src="./main.ts"></script>
+  </body>
+</html>

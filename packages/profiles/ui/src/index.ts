@@ -35,6 +35,7 @@ export const uiProfile: ProfileDefinition = {
     "design_screenshot",
     "design_style_list",
     "design_style_apply",
+    "extract_text_from_image",
   ],
   capabilityIds: ["filesystem", "design", "browser"],
   skills: [],

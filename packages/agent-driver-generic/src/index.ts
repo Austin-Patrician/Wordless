@@ -33,6 +33,8 @@ import type {
   OperationApprovalResolution,
   OperationPreflightDecision,
   PersistedUserRequest,
+  PromptImageReference,
+  RecognizedAttachmentText,
   SessionFileBaseline,
 } from "@wordless/agent-driver-sdk";
 import type {
@@ -383,6 +385,27 @@ async function stripSkillReferenceMarkers(
   return changed ? sanitized : messages;
 }
 
+/**
+ * 对每个图片附件跑一次本地 OCR。
+ *
+ * 失败一律当作"没有文字"而不是错误:OCR 不可用(构建时没带资产)、超时、图里没字,三种都
+ * 应当让模型收到那句实话,而不是让整轮请求炸掉。
+ */
+async function recognizeImageAttachments(
+  attachments: readonly PromptImageReference[],
+  context: AgentDriverSessionContext,
+): Promise<Map<string, RecognizedAttachmentText>> {
+  const resolve = context.resolvePromptImageText;
+  const recognized = new Map<string, RecognizedAttachmentText>();
+  if (!resolve) return recognized;
+  for (const attachment of attachments) {
+    if (!attachment.mediaType.toLowerCase().startsWith("image/")) continue;
+    const text = await resolve(attachment).catch(() => undefined);
+    if (text) recognized.set(attachment.path, text);
+  }
+  return recognized;
+}
+
 async function hydrateUserMessageContent(
   text: string,
   context: AgentDriverSessionContext,
@@ -405,14 +428,19 @@ async function hydrateUserMessageContent(
         ),
       ),
     );
-  if (!context.model.input.includes("image") || !context.resolvePromptImage)
+  if (!context.model.input.includes("image") || !context.resolvePromptImage) {
+    // 图片进不去模型。先试**本地 OCR**:非多模态模型看不了图,但可以读图里的字 —— 这是让
+    // "贴一张报错截图"对便宜/本地模型也有用的唯一办法。读到了就把文字给它(带来源标注);
+    // 读不到就退回一句实话,而不是那句做不到的"用工作区工具看看这个文件"。
+    const recognizedText = await recognizeImageAttachments(parsed.attachments, context);
     return formatPromptThemeTokenReferencesForModel(
       formatPromptWorkspaceReferencesForModel(
         formatPromptArtifactReferencesForModel(
-          stripPromptSkillReferences(formatPromptWorkspaceAttachmentsForModel(text)),
+          stripPromptSkillReferences(formatPromptWorkspaceAttachmentsForModel(text, { imagesVisible: false, recognizedText })),
         ),
       ),
     );
+  }
 
   const content: Array<Record<string, unknown>> = [{ type: "text", text: baseText }];
   for (const attachment of parsed.attachments) {

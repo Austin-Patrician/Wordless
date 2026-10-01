@@ -255,7 +255,12 @@ function createTools(office: SpreadsheetOfficeService, context: AgentDriverSessi
       async execute(_id, input) {
         const request = input as { artifactId: string; sheet: string; range?: string };
         const rendered = await office.renderSpreadsheet(context.record.id, context.record.runtimeRootPath, request.artifactId, request);
-        return { content: [...text(`Rendered ${request.sheet}${request.range ? `!${request.range}` : ""} at revision ${rendered.revision}.`), ...rendered.images.map((image) => ({ type: "image" as const, mimeType: image.mimeType, data: image.data }))], details: rendered.details };
+        const caption = `Rendered ${request.sheet}${request.range ? `!${request.range}` : ""} at revision ${rendered.revision}.`;
+        // 模型看不了图:渲染照做(工作台的预览要用这次渲染),但**不要把像素塞给它** ——
+        // 它读不了,却会因此以为"渲染没问题"。改成指路:数值用 spreadsheet_read,版式请用户看。
+        if (!context.model.input.includes("image"))
+          return { content: text(`${caption} This model cannot view images, so the rendered pixels are not attached: use spreadsheet_read to check values, and ask the user to review the visual layout.`), details: rendered.details };
+        return { content: [...text(caption), ...rendered.images.map((image) => ({ type: "image" as const, mimeType: image.mimeType, data: image.data }))], details: rendered.details };
       },
     },
     {

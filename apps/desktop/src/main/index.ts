@@ -1,6 +1,7 @@
 import path from "node:path";
+import { writeFile } from "node:fs/promises";
 import { app, BrowserWindow, dialog, Menu, nativeImage, nativeTheme, session, shell, Tray } from "electron";
-import type { AppPreferences } from "@wordless/domain";
+import { normalizeOcrPreferences, type AppPreferences } from "@wordless/domain";
 import { createDesktopRuntime } from "./bootstrap/create-runtime";
 import { prepareUserDataPath } from "./bootstrap/user-data";
 import { registerRuntimeIpc } from "./ipc/register-runtime-ipc";
@@ -18,6 +19,9 @@ import { registerPresentationProtocol } from "./protocols/presentation";
 import { registerAnalysisProtocol } from "./protocols/analysis";
 import { registerAttachmentProtocol } from "./protocols/attachment";
 import { registerDesignProtocol, registerDesignScheme } from "./protocols/design";
+import { registerOcrProtocol, registerOcrScheme } from "./protocols/ocr";
+import { ElectronOcrRunner } from "./ocr/ocr-runner";
+import { OcrService } from "./ocr/ocr-service";
 import { createDesignHandlers } from "./design/handlers";
 import { NodeDesignExporter } from "./design/design-exporter";
 import { ElectronDesignClipboard } from "./design/design-clipboard";
@@ -85,6 +89,8 @@ let office: OfficeCliService | undefined;
 let designStore: DesignStore | undefined;
 /** 光栅化池。离屏窗口是真实渲染进程,退出时要一起关掉。 */
 let designRaster: ElectronOffscreenRaster | undefined;
+/** OCR 运行器:一个常驻隐藏窗口 + 常热引擎。退出时要一起关掉。 */
+let ocrRunner: ElectronOcrRunner | undefined;
 /** 活体视图宿主。至多一个,所以只需要一个实例。 */
 let designViewHost: WebContentsViewDesignHost | undefined;
 let account: GoogleAccountService | undefined;
@@ -138,6 +144,9 @@ function updateTrayMenu(preferences: AppPreferences): void {
 // 必须在 `app.whenReady()` 之前:设计帧要解析相对 URL(`../theme.css`),
 // 那要求这个 scheme 被登记成标准 scheme。见 protocols/design.ts 的说明。
 registerDesignScheme();
+// 同理,而且 OCR 那个还多一层:`secure` 与 COOP/COEP 是**多线程 wasm** 的前提
+// (没有跨源隔离就没有 SharedArrayBuffer)。见 protocols/ocr.ts。
+registerOcrScheme();
 
 if (!hasSingleInstance) {
   app.quit();
@@ -184,6 +193,43 @@ app.whenReady().then(async () => {
     registry: designStore.registry,
     isWithinRoot: (root, candidate) => designPaths.isWithinRoot(root, candidate),
   });
+  // OCR:资产在打包期准备好(`resources/ocr`),页面在 `dist/ocr-runner`(打包后在
+  // `resources/ocr-runner`),两者都由 `wordless-ocr://` 供给那个隐藏窗口。
+  registerOcrProtocol({
+    runner: app.isPackaged ? path.join(process.resourcesPath, "ocr-runner") : path.resolve(__dirname, "../../dist/ocr-runner"),
+    assets: path.join(resourcesRoot, "ocr"),
+  });
+  ocrRunner = new ElectronOcrRunner({
+    entryUrl: "wordless-ocr://runner/index.html",
+    preload: path.join(__dirname, "ocr-preload.cjs"),
+    // 空闲即销毁窗口(连同引擎):热着的时候是个真实渲染进程,一直留着等于白占一份内存。
+    idleMs: 5 * 60_000,
+  });
+  const ocr = new OcrService({
+    assetsRoot: path.join(resourcesRoot, "ocr"),
+    cacheRoot: path.join(userData.path, "ocr-cache"),
+    runner: ocrRunner,
+    // **现读偏好**,不是构造时快照:用户在设置里关掉缓存或改粒度之后,下一次识别就该照新的来。
+    // runtime 还没建好时(构造顺序)退回默认值。
+    readOptions: () => {
+      const preferences = runtime?.getSnapshot().preferences.ocr;
+      return preferences === undefined ? { cache: true, granularity: "text" } : normalizeOcrPreferences(preferences);
+    },
+  });
+  const ocrAssetsRoot = path.join(resourcesRoot, "ocr");
+  void ocr.status().then(async (status) => {
+    // 只是让日志里能看出这一版有没有内置资产;界面上的状态由 IPC 现取(P3)。
+    if (!status.available) console.warn(`[ocr] ${status.detail}`);
+    // **面包屑**:把"这一版看到的资产目录与结论"写下来。用户报"文字识别不可用"时,这一份比
+    // 任何转述都直接 —— 工具结果可能被模型改写、界面只显示一句 i18n 文案,而"看的是哪个目录"
+    // 恰恰是唯一能分辨"打包版 vs 开发版 / 资产没准备"的信息。
+    await writeFile(
+      path.join(userData.path, "ocr-status.json"),
+      JSON.stringify({ at: new Date().toISOString(), assetsRoot: ocrAssetsRoot, ...status }, null, 2),
+      "utf8",
+    ).catch(() => undefined);
+  });
+
   // 离屏光栅化:窗口数跟池的并发数走 —— 两者不一致时池会等空闲窗口,不会出错但会变慢。
   designRaster = new ElectronOffscreenRaster({
     maxWindows: DESIGN_RASTER_BUDGETS.rasterConcurrency,
@@ -319,6 +365,7 @@ app.whenReady().then(async () => {
     designRaster === undefined || designViewHost === undefined || designStore === undefined
       ? undefined
       : { store: designStore, raster: designRaster, evaluator: designRaster, builds: designBuilds },
+    ocr,
   );
   await runtime.initialize();
   registerAttachmentProtocol(async (sessionId, previewPath) => await runtime!.resolveSessionAttachmentPreview(sessionId, previewPath));
@@ -442,6 +489,8 @@ app.whenReady().then(async () => {
     office,
     dataAnalysis,
     hostEnvironment,
+    // 文字识别状态由环境面板一起显示(合成发生在 IPC 边界,见 register-runtime-ipc)。
+    ...(ocr === undefined ? {} : { ocr }),
     automation,
     mcpMarketplace: new McpRegistryService(userData.path),
     onboarding: new OnboardingService(userData.path),
@@ -516,5 +565,6 @@ app.on("before-quit", (event) => {
   // 离屏窗口是真实渲染进程,不关掉会让进程残留。
   designRaster?.dispose();
   designViewHost?.dispose();
+  ocrRunner?.dispose();
   void (office?.dispose() ?? Promise.resolve()).finally(() => app.quit());
 });

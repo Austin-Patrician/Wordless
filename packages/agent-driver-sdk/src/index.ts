@@ -291,6 +291,16 @@ export type ResolvePromptImage = (
   reference: PromptImageReference,
 ) => Promise<ImageContent | undefined>;
 
+/**
+ * 用本地 OCR 读出图片里的文字(非多模态模型的兜底)。
+ *
+ * 返回 `undefined` 表示"这台机器做不了"或"图里没字"—— 两种都不该被当成错误,调用方会退回
+ * 到一句实话("这个模型看不了图片")。
+ */
+export type ResolvePromptImageText = (
+  reference: PromptImageReference,
+) => Promise<RecognizedAttachmentText | undefined>;
+
 export function parsePromptAttachmentReferences(text: string): {
   text: string;
   attachments: PromptImageReference[];
@@ -333,10 +343,50 @@ export function parsePromptAttachmentReferences(text: string): {
   }
 }
 
-export function formatPromptWorkspaceAttachmentsForModel(text: string): string {
+/** 本地 OCR 识别出来的文字,按附件路径索引。 */
+export interface RecognizedAttachmentText {
+  text: string;
+  engine: string;
+}
+
+/**
+ * 把附件引用渲染成给模型看的文本块(附件没有变成真正的 image block 时走这里)。
+ *
+ * `imagesVisible: false` 表示**这个模型看不了图片**。这时对图片附件不能再写"用工作区工具看看
+ * 这个文件"——那是一句做不到的话:没有任何工具能从一张 PNG 里取出文字,而模型会据此以为
+ * "我看过了",接着编。
+ *
+ * 于是按"手上有什么"分三种写法:
+ * 1. 模型能看图 —— 走 image block,根本不到这里;
+ * 2. **看不了图但有 OCR 结果**(`recognizedText` 命中)—— 把文字给它,并**标注来源**:
+ *    这是机器识别的文字,不是"看过这张图"。少了这句标注,后面所有推理都会被带偏;
+ * 3. 看不了图也没有 OCR —— 一句实话,让它去问用户。
+ *
+ * 图片**以外**的附件不受影响:文本、表格、代码文件确实能用工作区工具读。
+ */
+export function formatPromptWorkspaceAttachmentsForModel(
+  text: string,
+  options: { imagesVisible?: boolean; recognizedText?: ReadonlyMap<string, RecognizedAttachmentText> } = {},
+): string {
   const parsed = parsePromptAttachmentReferences(text);
   if (parsed.attachments.length === 0) return text;
-  const formatted = parsed.attachments.map((item) => ["<wordless_workspace_attachment>", `path=${JSON.stringify(item.path)}`, `name=${JSON.stringify(item.name)}`, `media_type=${JSON.stringify(item.mediaType)}`, `size=${item.size}`, "Inspect this user-attached file with the available workspace tools when needed.", "</wordless_workspace_attachment>"].join("\n")).join("\n");
+  const imagesVisible = options.imagesVisible ?? true;
+  const formatted = parsed.attachments.map((item) => {
+    const isImage = item.mediaType.toLowerCase().startsWith("image/");
+    const recognized = isImage ? options.recognizedText?.get(item.path) : undefined;
+    const instruction = !isImage || imagesVisible
+      ? "Inspect this user-attached file with the available workspace tools when needed."
+      : recognized
+        ? [
+            `The following text was extracted from this image by a local OCR engine (${recognized.engine}).`,
+            "It is machine-recognized text, NOT a visual description: layout, colour, charts, handwriting and stamps are not available.",
+            "Quote it as recognized text, and say so if the user asks what you can see in the image.",
+            "",
+            recognized.text,
+          ].join("\n")
+        : "This model cannot view images. Do not claim to have seen this image: ask the user to describe it or paste the text it contains.";
+    return ["<wordless_workspace_attachment>", `path=${JSON.stringify(item.path)}`, `name=${JSON.stringify(item.name)}`, `media_type=${JSON.stringify(item.mediaType)}`, `size=${item.size}`, instruction, "</wordless_workspace_attachment>"].join("\n");
+  }).join("\n");
   return `${parsed.text}${formatted}`;
 }
 
@@ -977,6 +1027,12 @@ export interface AgentDriverSessionContext {
   toolApprovalMode?: ToolApprovalMode;
   /** Resolve a staged image attachment immediately before a provider request. */
   resolvePromptImage?: ResolvePromptImage;
+  /**
+   * 把图片附件里的文字读出来(本地 OCR)。
+   *
+   * 只在**模型看不了图**时用得上:能看图的模型直接拿像素,没有理由退化成文字。
+   */
+  resolvePromptImageText?: ResolvePromptImageText;
   createExtensionHost?: AgentExtensionHostFactory;
   /** Enable threshold-based compaction before subsequent assistant turns. */
   automaticCompaction?: boolean;

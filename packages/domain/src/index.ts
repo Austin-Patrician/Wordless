@@ -1409,6 +1409,36 @@ export function moveSidebarNavItem(
   return { pinned, more };
 }
 
+/**
+ * 文字识别的输出粒度。
+ *
+ * - `text` —— 只给整段文字(默认);
+ * - `line` —— 逐行给,并带上每行的置信度。
+ *
+ * 没有"词"和"版面树":PP-OCRv5 给得出行框,但**版面结构本来就不该由 OCR 承担**(它读不出
+ * 表格的列关系、图表的趋势)。多出来的那一档只会让人以为它懂版面。
+ */
+export type OcrGranularity = "text" | "line";
+
+export interface OcrPreferences {
+  /**
+   * 是否缓存识别结果。
+   *
+   * 默认开:**附件在每一轮请求都会重新水合**,没有缓存就会把同一张截图反复识别(每次几百毫秒
+   * 到几秒)。关掉它只有两个正当理由:排查"结果是不是旧缓存",以及不想让识别结果落盘。
+   */
+  cache: boolean;
+  granularity: OcrGranularity;
+}
+
+export function normalizeOcrPreferences(value: unknown): OcrPreferences {
+  const record = typeof value === "object" && value !== null && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
+  return {
+    cache: typeof record.cache === "boolean" ? record.cache : true,
+    granularity: record.granularity === "line" ? "line" : "text",
+  };
+}
+
 export interface AppPreferences {
   locale: "zh-CN" | "en-US";
   theme: "light" | "dark" | "system";
@@ -1423,6 +1453,7 @@ export interface AppPreferences {
   translation: TranslationPreferences;
   shortcuts: ShortcutPreferences;
   sidebar: SidebarPreferences;
+  ocr: OcrPreferences;
 }
 
 /** Languages offered for translation; the label is resolved by the interface locale. */

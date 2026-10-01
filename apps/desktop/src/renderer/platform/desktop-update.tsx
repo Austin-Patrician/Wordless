@@ -87,6 +87,16 @@ export function DesktopUpdateProvider({ children }: { children: ReactNode }) {
   return <DesktopUpdateContext.Provider value={value}>{children}</DesktopUpdateContext.Provider>;
 }
 
+/**
+ * 只读更新快照的**可选**版本:没有 provider 时给 `null`,不抛。
+ *
+ * 给"锦上添花"的消费者用(侧边栏那颗铃铛):它少了一条更新提醒照样工作,却会因为缺上下文
+ * 把整棵组件树带崩 —— 而测试里渲染侧边栏时本来就不会包 provider。
+ */
+export function useOptionalUpdateSnapshot(): DesktopUpdateSnapshot | null {
+  return useContext(DesktopUpdateContext)?.snapshot ?? null;
+}
+
 export function useDesktopUpdate(): DesktopUpdateContextValue {
   const value = useContext(DesktopUpdateContext);
   if (!value) throw new Error("useDesktopUpdate must be used inside DesktopUpdateProvider.");

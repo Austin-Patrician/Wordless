@@ -36,8 +36,15 @@ vi.mock("../src/renderer/shared/runtime", () => ({
 }));
 
 const { messages } = await import("../src/renderer/shared/i18n.ts");
+/** 文字识别那两项是**偏好**(会落盘),所以这里要有一个能记下写入的 setter。 */
+const setOcr = vi.fn(async () => {});
+const preferences = { ocr: { cache: true, granularity: "text" as "text" | "line" } };
 vi.mock("../src/renderer/shared/preferences", () => ({
-  usePreferences: () => ({ t: (key: string): string => (messages["zh-CN"] as Record<string, string>)[key] ?? key }),
+  usePreferences: () => ({
+    t: (key: string): string => (messages["zh-CN"] as Record<string, string>)[key] ?? key,
+    ocr: preferences.ocr,
+    setOcr,
+  }),
 }));
 
 const { EnvironmentSettings } = await import("../src/renderer/features/settings/EnvironmentSettings.tsx");
@@ -169,6 +176,69 @@ describe("设置 → 环境", () => {
 
     expect(redetectHostEnvironment).toHaveBeenCalledTimes(1);
     // 新事实里 Python 已可用:那一行不再说"未安装"。
-    expect(container.textContent).toContain("Python 3.12.4");
+    expect(container.textContent).toContain("3.12.4");
+    // 行标签已经写着 Python,版本列再带一遍前缀就是三行里三个 Python。
+    expect(container.textContent).not.toContain("Python 3.12.4");
+  });
+
+  describe("文字识别的选项", () => {
+    /** Radix 的 Select 需要指针事件,单纯 click 不会展开列表。 */
+    function press(element: HTMLElement): void {
+      for (const type of ["pointerenter", "pointerdown", "pointerup", "click"]) {
+        element.dispatchEvent(new MouseEvent(type, { bubbles: true, cancelable: true }));
+      }
+    }
+
+    async function chooseGranularity(label: string): Promise<void> {
+      const trigger = document.getElementById("ocr-granularity");
+      expect(trigger).not.toBeNull();
+      await act(async () => {
+        press(trigger!);
+      });
+      const option = Array.from(document.querySelectorAll<HTMLElement>('[role="option"]')).find((candidate) => candidate.textContent?.includes(label));
+      expect(option, `option ${label} was not offered`).not.toBeUndefined();
+      await act(async () => {
+        press(option!);
+      });
+    }
+
+    async function renderWithOcr(): Promise<void> {
+      getHostEnvironmentFacts.mockResolvedValueOnce(facts({ ocr: { available: true, modelSet: "ppocrv5", detail: "Ready (ppocrv5)." } }) as never);
+      await act(async () => {
+        root.render(<EnvironmentSettings />);
+      });
+    }
+
+    it("选项长在「文字识别」那张 card 里,而不是另起一张", async () => {
+      await renderWithOcr();
+
+      const text = container.textContent ?? "";
+      expect(text).toContain(zh("environmentOcrCache"));
+      expect(text).toContain(zh("environmentOcrGranularity"));
+
+      // 结构性断言:装着「文字识别」这一行的那个 li,同时也是装着这两个控件的那一个。
+      const row = Array.from(container.querySelectorAll("li")).find((item) => (item.textContent ?? "").includes(zh("environmentOcr")));
+      expect(row).toBeTruthy();
+      expect(row!.querySelector('[role="switch"]')).toBeTruthy();
+      expect(row!.querySelector("#ocr-granularity")).toBeTruthy();
+    });
+
+    it("未就绪时不出现:没资产时给开关只会让人以为打开就能用", async () => {
+      getHostEnvironmentFacts.mockResolvedValueOnce(facts({ ocr: { available: false, modelSet: null, detail: "not bundled" } }) as never);
+      await act(async () => {
+        root.render(<EnvironmentSettings />);
+      });
+      expect(container.textContent ?? "").not.toContain(zh("environmentOcrCache"));
+      expect(container.querySelector("#ocr-granularity")).toBeNull();
+    });
+
+    it("粒度是个 select:选「逐行」就把整份偏好写回去(缓存不动)", async () => {
+      setOcr.mockClear();
+      preferences.ocr = { cache: true, granularity: "text" };
+      await renderWithOcr();
+
+      await chooseGranularity(zh("environmentOcrGranularityLine"));
+      expect(setOcr).toHaveBeenCalledWith({ cache: true, granularity: "line" });
+    });
   });
 });

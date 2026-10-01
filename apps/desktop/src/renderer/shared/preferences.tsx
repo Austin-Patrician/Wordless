@@ -4,6 +4,7 @@ import type { Locale, ThemeMode } from "./models";
 import { useRuntime } from "./runtime";
 import {
   normalizeShortcutBindings,
+  normalizeOcrPreferences,
   normalizeSidebarPreferences,
   SIDEBAR_PINNED_LIMIT_DEFAULT,
   type AppearancePreferences,
@@ -11,6 +12,7 @@ import {
   type SecurityPreferences,
   type ShortcutBindings,
   type ShortcutPreferences,
+  type OcrPreferences,
   type SidebarPreferences,
   type TranslationPreferences,
 } from "@wordless/domain";
@@ -37,6 +39,7 @@ const defaultShortcuts: ShortcutPreferences = { bindings: {} };
 
 /** Nothing arranged yet: the sidebar falls back to its built-in split. */
 const defaultSidebar: SidebarPreferences = { layout: { pinned: [], more: [] }, pinnedLimit: SIDEBAR_PINNED_LIMIT_DEFAULT };
+const defaultOcr: OcrPreferences = { cache: true, granularity: "text" };
 
 type Preferences = {
   locale: Locale;
@@ -49,6 +52,7 @@ type Preferences = {
   translation: TranslationPreferences;
   shortcuts: ShortcutPreferences;
   sidebar: SidebarPreferences;
+  ocr: OcrPreferences;
   setLocale: (locale: Locale) => void;
   setTheme: (theme: ThemeMode) => void;
   setFontScale: (fontScale: number) => void;
@@ -62,6 +66,8 @@ type Preferences = {
   setShortcutBindings: (bindings: ShortcutBindings) => Promise<void>;
   /** Replaces the sidebar arrangement; malformed keys and a limit out of range are repaired. */
   setSidebar: (sidebar: SidebarPreferences) => Promise<void>;
+  /** 文字识别的选项(缓存开关、输出粒度)。 */
+  setOcr: (ocr: OcrPreferences) => Promise<void>;
   t: (key: MessageKey) => string;
 };
 
@@ -79,6 +85,7 @@ export function PreferencesProvider({ children }: { children: ReactNode }) {
   const [translation, setTranslationPreferences] = useState<TranslationPreferences>(defaultTranslation);
   const [shortcuts, setShortcutPreferences] = useState<ShortcutPreferences>(defaultShortcuts);
   const [sidebar, setSidebarPreferences] = useState<SidebarPreferences>(defaultSidebar);
+  const [ocr, setOcrPreferences] = useState<OcrPreferences>(defaultOcr);
 
   useEffect(() => {
     if (!snapshot) return;
@@ -92,6 +99,7 @@ export function PreferencesProvider({ children }: { children: ReactNode }) {
     setTranslationPreferences(snapshot.preferences.translation ?? defaultTranslation);
     setShortcutPreferences(snapshot.preferences.shortcuts ?? defaultShortcuts);
     setSidebarPreferences(snapshot.preferences.sidebar ?? defaultSidebar);
+    setOcrPreferences(normalizeOcrPreferences(snapshot.preferences.ocr));
   }, [snapshot]);
 
   useEffect(() => {
@@ -125,6 +133,7 @@ export function PreferencesProvider({ children }: { children: ReactNode }) {
       notifications,
       security,
       appearance,
+      ocr,
       translation,
       shortcuts,
       sidebar,
@@ -169,6 +178,12 @@ export function PreferencesProvider({ children }: { children: ReactNode }) {
         const nextShortcuts: ShortcutPreferences = { bindings: normalizeShortcutBindings(nextBindings) };
         setShortcutPreferences(nextShortcuts);
         if (snapshot && client) await client.setPreferences({ ...snapshot.preferences, shortcuts: nextShortcuts });
+      },
+      setOcr: async (nextOcr) => {
+        // 与 sidebar 同一条纪律:先规范化再落盘,界面渲染的和磁盘上的是同一个形状。
+        const normalized = normalizeOcrPreferences(nextOcr);
+        setOcrPreferences(normalized);
+        if (snapshot && client) await client.setPreferences({ ...snapshot.preferences, ocr: normalized });
       },
       setSidebar: async (nextSidebar) => {
         // Normalize before storing so the arrangement the sidebar renders and

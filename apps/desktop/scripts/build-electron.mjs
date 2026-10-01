@@ -53,6 +53,9 @@ async function buildEntry(entry, name, emptyOutDir, options = {}) {
 
 await buildEntry(resolve(appRoot, "src/main/index.ts"), "main", true);
 await buildEntry(resolve(appRoot, "src/preload/index.ts"), "preload", false);
+// OCR 运行器窗口的 preload。与主 preload 分开:那个窗口是 sandbox 的隐藏窗口,只该拿到
+// 那五个桥方法,不该能碰应用 IPC。
+await buildEntry(resolve(appRoot, "src/preload/ocr-runner.ts"), "ocr-preload", false);
 // 设计构建脚本。**打成 ESM**:`@tailwindcss/node` 是 ESM-only,而 CJS 产物里的动态 import
 // 会被改写成 require —— 那条路在 ESM-only 包上不通。
 await buildEntry(resolve(appRoot, "src/main/design/design-build-entry.ts"), "design-build", false, {

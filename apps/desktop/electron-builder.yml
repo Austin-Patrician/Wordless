@@ -28,6 +28,13 @@ extraResources:
   # 应用**不原地使用**它:首启拷到用户目录再跑,免得改坏签名/撞上不可写的安装目录。
   - from: resources/python/${os}-${arch}
     to: python/${os}-${arch}
+  # 内置的文字识别资产(打包期准备,见 scripts/prepare-ocr-assets.mjs)。模型与 wasm 必须
+  # 能被渲染器按路径直读,所以放在 asar 外。
+  - from: resources/ocr
+    to: ocr
+  # OCR 运行器页面(隐藏窗口加载的那一页)。
+  - from: dist/ocr-runner
+    to: ocr-runner
   - from: resources/presentation-templates
     to: presentation-templates
   - from: resources/third-party-notices

@@ -56,6 +56,7 @@ import researchValidateIcon from "../../../icons/common-icons/research_validate.
 import planIcon from "../../../icons/common-icons/plan.svg";
 import updatePlanIcon from "../../../icons/common-icons/update-plan.svg";
 import writeIcon from "../../../icons/common-icons/Write.svg";
+import extractTextFromImageIcon from "../../../icons/common-icons/extract_text_from_image.svg";
 import terminalBashIcon from "../../../icons/common-icons/terminal-bash.svg";
 import { ConnectorIcon } from "../../shared/ConnectorIcon";
 import {
@@ -147,6 +148,10 @@ const standardToolIconSources: Record<string, StandardToolIconSource> = {
   design_style_apply: { path: designStyleApplyIcon, invertOnDark: true },
   design_style_list: { path: designStyleListIcon, invertOnDark: true },
   edit: { path: editIcon, invertOnDark: true },
+  extract_text_from_image: {
+    path: extractTextFromImageIcon,
+    invertOnDark: true,
+  },
   find: { path: findIcon, invertOnDark: true },
   grep: { path: grepIcon, invertOnDark: true },
   load_skill: { path: loadSkillIcon, invertOnDark: true },

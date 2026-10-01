@@ -1,0 +1,28 @@
+OCR (bundled text recognition)
+==============================
+
+Wordless ships a local OCR engine so that models which cannot view images can still
+read text out of a screenshot or a photo. It runs entirely offline: the ONNX models
+are part of the application bundle, and nothing is sent anywhere.
+
+Models: PP-OCRv5 (detection + recognition + dictionary)
+- Upstream model family: PaddleOCR (`https://github.com/PaddlePaddle/PaddleOCR`)
+- Copyright: PaddlePaddle Authors and contributors
+- License: Apache-2.0 (SPDX), i.e. the Apache License, Version 2.0
+- ONNX conversion: `https://github.com/bent2685/ocr-web` (`@ocr-web/models-ppocrv5`)
+- Copyright: ocr-web contributors
+- License: MIT
+
+Runtime: onnxruntime-web
+- Source: `https://github.com/microsoft/onnxruntime`
+- Copyright: Microsoft Corporation and contributors
+- License: MIT
+
+Inference wrapper: `@ocr-web/core`
+- Source: `https://github.com/bent2685/ocr-web`
+- Copyright: ocr-web contributors
+- License: MIT
+
+The models are downloaded at package time and verified against a locked SHA-256. The
+wasm and its JavaScript glue are copied from the installed `onnxruntime-web` package so
+that both halves are always the same version.

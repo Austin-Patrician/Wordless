@@ -2276,6 +2276,20 @@ export type HostPythonDependency = "openpyxl" | "pyarrow" | "pandas";
  *
  * 只有事实,没有建议:装什么、去哪装是界面的事(见 docs/architecture/host-environment.md)。
  */
+/**
+ * 本地文字识别的状态。
+ *
+ * `available: false` **不是错误**:构建时可以不带 OCR 资产(`WORDLESS_SKIP_OCR=1`),这时界面
+ * 该如实说"未就绪",而不是显示一个失败。
+ */
+export interface HostOcrStatus {
+  available: boolean;
+  /** 形如 `ppocrv5`;未就绪时为 null。 */
+  modelSet: string | null;
+  /** 一句话说明,直接给界面用。 */
+  detail: string;
+}
+
 export interface HostEnvironmentFacts {
   platform: string;
   shell: { kind: HostShellKind; executable: string } | null;
@@ -2287,6 +2301,16 @@ export interface HostEnvironmentFacts {
     source: HostRuntimeSource;
     packages: Record<HostPythonDependency, boolean>;
   };
+  /**
+   * 文字识别。
+   *
+   * 它和 shell/node/python 不是一类东西(那三样是"能不能跑"),但对用户是同一个问题:"这台机器
+   * 上 agent 能做什么"。所以放在同一份事实里,界面一屏说完。
+   *
+   * **可选**:`HostEnvironmentService` 只负责探测 shell/node/python,OCR 状态由 IPC 边界合成
+   * (两个服务各自独立)。没有这个字段 = 这一版没有文字识别。
+   */
+  ocr?: HostOcrStatus;
   probedAt: number;
 }
 

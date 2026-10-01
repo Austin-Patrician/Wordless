@@ -106,6 +106,8 @@ import { WordlessRuntime } from "@wordless/runtime";
 import { AppearanceAssetService } from "../appearance/appearance-asset-service";
 import { OfficeCliService } from "../office/office-cli-service";
 import type { HostEnvironmentService } from "../environment/host-environment-service";
+import type { OcrService } from "../ocr/ocr-service";
+import { environmentFactsPayload } from "../environment/environment-facts-payload";
 import { GoogleAccountService } from "../account/google-account-service";
 import { CloudSyncService } from "../cloud-sync/cloud-sync-service";
 import { updateTitleBarOverlays } from "../windows/main-window";
@@ -277,6 +279,13 @@ type DesktopIpcOptions = {
   dataAnalysis: DesktopDataAnalysisService;
   /** 宿主环境(设置 → 环境面板读它)。 */
   hostEnvironment: HostEnvironmentService;
+  /**
+   * 本地文字识别。可选:构建时可能没有资产。
+   *
+   * 状态在这里**并进环境事实**,而不是让 host-environment-service 去依赖 OCR —— 前者是"这台
+   * 机器有什么"的纯快照,后者是一个功能。两个服务各自独立,合成发生在边界上。
+   */
+  ocr?: OcrService;
   automation: AutomationService;
   /** Present so deleting a session can drop the grants it was given. */
   browser?: BrowserService;
@@ -962,14 +971,25 @@ export function registerRuntimeIpc(
   );
   ipcMain.handle("wordless:presentation:health", () => options.office.health());
   // 只读:面板拿事实,装什么由用户自己决定(见 docs/architecture/host-environment.md)。
-  ipcMain.handle("wordless:environment:facts", () => options.hostEnvironment.facts());
+  // 合成逻辑在纯模块里(带测试):`facts()` 是异步的,漏 await 会让载荷变成 `{}` —— 真的发生过。
+  ipcMain.handle("wordless:environment:facts", () =>
+    environmentFactsPayload({
+      readFacts: () => options.hostEnvironment.facts(),
+      ...(options.ocr ? { readOcrStatus: () => options.ocr!.status() } : {}),
+    }));
   // 按需装包:会联网、会写盘,所以**只有用户点了才会走到这里**(功能侧遇到缺包只给一句指路的话)。
   ipcMain.handle("wordless:environment:install-python-packages", () => options.hostEnvironment.provisionPythonPackages());
   ipcMain.handle("wordless:environment:redetect", async () => {
     // 显式操作:force 绕过节流,并把 Node 兜底的 PATH 策略按新结论重算一次。
     await options.hostEnvironment.refresh("all", { force: true });
     await options.hostEnvironment.installNodeFallback();
-    return await options.hostEnvironment.facts();
+    // 文字识别也要重新探测,而且**返回和 facts 一样的合成载荷** —— 否则"重新探测"之后面板
+    // 拿到的是一份没有 ocr 字段的事实,那一行会退回"未就绪",看起来像按钮没生效。
+    options.ocr?.invalidateStatus();
+    return await environmentFactsPayload({
+      readFacts: () => options.hostEnvironment.facts(),
+      ...(options.ocr ? { readOcrStatus: () => options.ocr!.status() } : {}),
+    });
   });
   ipcMain.handle("wordless:presentation:templates", () =>
     options.office.listTemplates(),

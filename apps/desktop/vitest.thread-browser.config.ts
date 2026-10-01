@@ -1,9 +1,47 @@
+import { createReadStream, existsSync, statSync } from "node:fs";
+import { extname, join, normalize, resolve } from "node:path";
 import react from "@vitejs/plugin-react";
 import { playwright } from "@vitest/browser-playwright";
-import { defineConfig } from "vitest/config";
+import { defineConfig, type Plugin } from "vitest/config";
+
+/**
+ * 把 `resources/ocr` 挂在 `/ocr/*` 上,给端到端那条测试用。
+ *
+ * 那条测试要跑**真模型**(21.5MB ONNX + 12.8MB wasm):只有真跑一次,才能证明"这套资产 + 这版
+ * onnxruntime-web"在浏览器里真的能出字 —— 假引擎的测试证明不了这件事。
+ */
+function serveOcrAssets(): Plugin {
+  const root = resolve(import.meta.dirname, "resources/ocr");
+  const types: Record<string, string> = {
+    ".wasm": "application/wasm",
+    ".onnx": "application/octet-stream",
+    ".txt": "text/plain; charset=utf-8",
+    ".mjs": "text/javascript; charset=utf-8",
+    ".js": "text/javascript; charset=utf-8",
+  };
+  return {
+    name: "wordless-ocr-test-assets",
+    configureServer(server) {
+      server.middlewares.use((request, response, next) => {
+        // vite 的 dev server 会给动态 import 的 URL 挂上 `?import` —— 取路径前必须去掉 query,
+        // 否则 existsSync 永远找不到文件(端到端测试第一次跑就是这么 404 的)。
+        const url = (request.url ?? "").split("?")[0] ?? "";
+        if (!url.startsWith("/ocr/")) return next();
+        const file = join(root, normalize(decodeURIComponent(url.slice("/ocr/".length))).replace(/^(\.\.[/\\])+/, ""));
+        if (!file.startsWith(root) || !existsSync(file) || !statSync(file).isFile()) {
+          response.statusCode = 404;
+          response.end("not found");
+          return;
+        }
+        response.setHeader("content-type", types[extname(file)] ?? "application/octet-stream");
+        createReadStream(file).pipe(response);
+      });
+    },
+  };
+}
 
 export default defineConfig({
-  plugins: [react()],
+  plugins: [react(), serveOcrAssets()],
   optimizeDeps: {
     include: [
       "@lexical/react/LexicalComposer",
@@ -97,6 +135,9 @@ export default defineConfig({
       "test/design-cover.browser.test.tsx",
       // 封面这一层只能在真浏览器里验(IndexedDB + canvas)。
       "test/composer-attachments.browser.test.tsx",
+      // 端到端:真模型 + 真 wasm(慢,见文件头的说明)。
+      "test/ocr-engine.browser.test.tsx",
+      "test/notification-center.browser.test.tsx",
     ],
   },
 });

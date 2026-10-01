@@ -1,0 +1,27 @@
+{
+  "engine": "ocr-web@0.2.1",
+  "onnxruntimeWeb": "1.25.1",
+  "modelSet": "ppocrv5",
+  "license": "MIT (ocr-web / ONNX 模型转换) · Apache-2.0 (PP-OCRv5 原始模型来自 PaddleOCR)",
+  "comment": "ONNX 模型按 SHA256 锁定;wasm 与 JS 胶水**不从网上拉**,直接从 node_modules/onnxruntime-web 里拷 —— 版本必须与 JS 一致,分头拉两个版本是最典型的运行时崩法。**必须是 jsep 那一对**:这一版 ort-web 的默认 bundle 请求的就是 ort-wasm-simd-threaded.jsep.mjs/.wasm,换 CPU 版(12.8MB)它会直接 'Failed to fetch dynamically imported module' —— 端到端测试抓到的。升级 = 改这里 + 重打包。",
+  "mirror": "https://cdn.jsdelivr.net/gh/bent2685/ocr-web@v0.1.1/models/",
+  "mirrorEnv": "WORDLESS_OCR_MIRROR",
+  "files": {
+    "ppocrv5_det.onnx": {
+      "size": 4819576,
+      "sha256": "34c3923180271102580a1287bad09f57536a6813b512b4b2d5de29bf8cd9d81a"
+    },
+    "ppocrv5_rec.onnx": {
+      "size": 16557276,
+      "sha256": "18eda85c91de8f569c35e0e0e8d4b7177e8f0ef46a066d1f9d8ae04996867078"
+    },
+    "ppocrv5_dict.txt": {
+      "size": 74012,
+      "sha256": "d1979e9f794c464c0d2e0b70a7fe14dd978e9dc644c0e71f14158cdf8342af1b"
+    }
+  },
+  "runtimeFiles": {
+    "ort-wasm-simd-threaded.jsep.mjs": 46486,
+    "ort-wasm-simd-threaded.jsep.wasm": 25906828
+  }
+}
