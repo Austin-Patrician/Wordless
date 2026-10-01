@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
+import { existsSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
@@ -10,9 +11,30 @@ type CommandResult = { code: number | null; stdout: string; stderr: string };
 const testDirectory = dirname(fileURLToPath(import.meta.url));
 const skillRoot = join(testDirectory, "../resources/skills/data-analysis");
 
+/**
+ * 用哪个 Python 跑这些脚本。
+ *
+ * 优先**我们自己发的那份**(打包期准备在 `resources/python/<platform>-<arch>/`,见
+ * scripts/prepare-python-runtime.mjs):数据功能在生产里跑的就是它,所以这里也应当跑它 ——
+ * 否则我们验的是一个用户机器上可能根本不存在的解释器。没准备资产时退到系统上的 `python3`/`python`。
+ */
+function resolveInterpreter(): string | undefined {
+  const platformName = process.platform === "darwin" ? "mac" : process.platform === "win32" ? "win" : "linux";
+  const bundled = join(testDirectory, `../resources/python/${platformName}-${process.arch}`, process.platform === "win32" ? "python.exe" : "bin/python3");
+  if (existsSync(bundled)) return bundled;
+  for (const candidate of ["python3", "python"]) {
+    const found = spawnSync(candidate, ["--version"], { stdio: "ignore", windowsHide: true });
+    if (found.status === 0) return candidate;
+  }
+  return undefined;
+}
+
+const interpreter = resolveInterpreter();
+
 function runPython(script: string, args: string[]): Promise<CommandResult> {
+  if (!interpreter) throw new Error("no Python interpreter available");
   return new Promise((resolve) => {
-    const child = spawn("python", [join(skillRoot, "scripts", script), ...args], { cwd: skillRoot, windowsHide: true });
+    const child = spawn(interpreter, [join(skillRoot, "scripts", script), ...args], { cwd: skillRoot, windowsHide: true });
     let stdout = "";
     let stderr = "";
     child.stdout.on("data", (chunk: Buffer) => { stdout += chunk.toString(); });
@@ -22,7 +44,8 @@ function runPython(script: string, args: string[]): Promise<CommandResult> {
   });
 }
 
-test("data-analysis scripts inspect CSV data and render a validated report", async () => {
+test("data-analysis scripts inspect CSV data and render a validated report", async (context) => {
+  if (!interpreter) return context.skip("no Python interpreter available");
   const root = await mkdtemp(join(testDirectory, ".data-analysis-test-"));
   try {
     const input = join(root, "sales.csv");
@@ -61,7 +84,8 @@ test("data-analysis scripts inspect CSV data and render a validated report", asy
   }
 });
 
-test("materialize_data reports a stable dependency error or creates Parquet", async () => {
+test("materialize_data reports a stable dependency error or creates Parquet", async (context) => {
+  if (!interpreter) return context.skip("no Python interpreter available");
   const root = await mkdtemp(join(testDirectory, ".data-analysis-materialize-"));
   try {
     const input = join(root, "values.csv");
@@ -78,7 +102,8 @@ test("materialize_data reports a stable dependency error or creates Parquet", as
   }
 });
 
-test("data-analysis scripts validate and render source-grounded research evidence", async () => {
+test("data-analysis scripts validate and render source-grounded research evidence", async (context) => {
+  if (!interpreter) return context.skip("no Python interpreter available");
   const root = await mkdtemp(join(testDirectory, ".data-research-test-"));
   try {
     const manifest = join(root, "analysis-manifest.json");

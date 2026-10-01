@@ -199,3 +199,25 @@ export class NodeExecutionEnv implements ExecutionEnv {
   canonicalPath(path: string, signal?: AbortSignal): ReturnType<ExecutionEnv["canonicalPath"]>;
   exec(command: string, options?: { abortSignal?: AbortSignal; timeout?: number; onStdout?: (chunk: string) => void; onStderr?: (chunk: string) => void }): ReturnType<ExecutionEnv["exec"]>;
 }
+
+/** 命令解释器的种类(宿主用它向用户说清"现在跑的是什么")。 */
+export type ShellKind = "pwsh" | "powershell" | "cmd" | "bash" | "sh" | "other";
+
+export function shellKindOf(shellPath: string): ShellKind;
+
+/**
+ * 按平台解析一个可用的命令解释器。Windows 上是 pwsh → powershell → cmd,不是 bash;
+ * POSIX 上是 /bin/bash → PATH 上的 bash → sh。
+ */
+export function resolveShellConfig(options?: {
+  platform?: NodeJS.Platform;
+  customShellPath?: string;
+  fileExists?: (path: string) => Promise<boolean>;
+  findExecutable?: (command: string, platform: NodeJS.Platform) => Promise<string | null>;
+}): Promise<
+  | {
+      ok: true;
+      value: { shell: string; args: string[]; commandTransport?: "argv" | "stdin"; commandPrefix?: string };
+    }
+  | { ok: false; error: Error }
+>;

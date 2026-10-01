@@ -36,6 +36,7 @@ import { createMainWindow, updateTitleBarOverlays } from "./windows/main-window"
 import { createDesktopHostInfo } from "./platform/desktop-platform";
 import { ApplicationMenuController } from "./menu/application-menu";
 import { hydrateShellEnvironment } from "./environment/shell-environment";
+import { HostEnvironmentService } from "./environment/host-environment-service";
 import { DesktopUpdateService } from "./update/update-service";
 import { OfficeCliService } from "./office/office-cli-service";
 import { ElectronCredentialVault } from "./adapters/electron-credential-vault";
@@ -156,12 +157,24 @@ if (!hasSingleInstance) {
 app.whenReady().then(async () => {
   if (!hasSingleInstance) return;
   await hydrateShellEnvironment(hostInfo);
+  // Node 兜底(P2):没有可用 node 的机器上,把 Wordless 自带的那份放到 PATH 最前面(零字节 ——
+  // Electron 本身就是 Node)。刻意不 await:命令是逐次 spawn 时才读 PATH 的,用户在窗口里点第一条
+  // 消息之前它早就装好了,启动不该等它。探测与写入都吞错误(见 host-environment-service.ts)。
+  // 内置 Python(P4):打包进来的是"可重定位的一份 CPython",首启拷到用户目录再跑(见
+  // host-environment-service.seedPythonRuntime)。拷贝在第一次读环境事实时惰性发生,同样不阻塞启动。
+  const resourcesRoot = app.isPackaged ? process.resourcesPath : path.resolve(__dirname, "../../resources");
+  const hostEnvironment = new HostEnvironmentService({
+    binDirectory: path.join(userData.path, "bin"),
+    pythonVendorDirectory: path.join(resourcesRoot, "python", `${process.platform === "darwin" ? "mac" : process.platform === "win32" ? "win" : "linux"}-${process.arch}`),
+    runtimesDirectory: path.join(userData.path, "runtimes"),
+  });
+  void hostEnvironment.installNodeFallback();
   const appearanceAssets = new AppearanceAssetService(path.join(userData.path, "appearance", "backgrounds"));
   registerAppearanceProtocol(path.join(userData.path, "appearance", "backgrounds"));
   registerMediaProtocol(path.join(userData.path, "media-assets"));
   const presentationArtifactsRoot = path.join(userData.path, "presentation-artifacts");
   registerPresentationProtocol(presentationArtifactsRoot);
-  const dataAnalysis = new DesktopDataAnalysisService({ metadataRoot: path.join(userData.path, "analysis-metadata"), resourcesRoot: app.isPackaged ? process.resourcesPath : path.resolve(__dirname, "../../resources") });
+  const dataAnalysis = new DesktopDataAnalysisService({ metadataRoot: path.join(userData.path, "analysis-metadata"), resourcesRoot, hostEnvironment });
   registerAnalysisProtocol(dataAnalysis);
   // 设计画布的协议。设计包路径**不进 URL**,只进注册表 —— 于是"从 URL 构造一个逃出
   // 设计包的路径"在结构上不可能(见 design-url.ts)。
@@ -428,6 +441,7 @@ app.whenReady().then(async () => {
     cloudSync,
     office,
     dataAnalysis,
+    hostEnvironment,
     automation,
     mcpMarketplace: new McpRegistryService(userData.path),
     onboarding: new OnboardingService(userData.path),

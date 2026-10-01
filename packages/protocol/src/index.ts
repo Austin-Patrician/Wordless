@@ -2257,6 +2257,47 @@ export interface OfficeEngineHealth {
   bundled: boolean;
 }
 
+/** 命令解释器的种类。宿主用它向用户说清"现在跑的是什么"。 */
+export type HostShellKind = "pwsh" | "powershell" | "cmd" | "bash" | "sh" | "other";
+
+/**
+ * 这个运行时从哪来。
+ *
+ * `wordless` = 用的是 Wordless 内置的那份(Node 走 Electron 自带的,Python 走打包进来的
+ * python-build-standalone)。两边的差别对用户是可感的 —— Node 那份没有 npm、Python 那份不带第三方包
+ * —— 所以要能说清。
+ */
+export type HostRuntimeSource = "system" | "wordless" | "none";
+
+export type HostPythonDependency = "openpyxl" | "pyarrow" | "pandas";
+
+/**
+ * 宿主环境的事实(设置 → 环境面板读它,命令工具的失败提示由它派生)。
+ *
+ * 只有事实,没有建议:装什么、去哪装是界面的事(见 docs/architecture/host-environment.md)。
+ */
+export interface HostEnvironmentFacts {
+  platform: string;
+  shell: { kind: HostShellKind; executable: string } | null;
+  node: { found: boolean; version?: string; source: HostRuntimeSource };
+  python: {
+    found: boolean;
+    version?: string;
+    executable?: string;
+    source: HostRuntimeSource;
+    packages: Record<HostPythonDependency, boolean>;
+  };
+  probedAt: number;
+}
+
+/** 按需安装第三方包的结果(面板要显示成功/失败与原因)。 */
+export interface HostPythonProvisionResult {
+  ok: boolean;
+  /** 这次真的装了哪些包(已经装好时为[])。 */
+  installed: string[];
+  message?: string;
+}
+
 export type SessionWorkspaceTextFile =
   | { status: "available"; path: string; name: string; content: string }
   | { status: "unavailable"; reason: "binary" | "missing" | "too-large" };

@@ -17,7 +17,7 @@ const step = (anchors: string[]): OnboardingStep => ({
 });
 
 test("every step declares at least one anchor and a placement", () => {
-  assert.equal(ONBOARDING_STEPS.length, 7);
+  assert.equal(ONBOARDING_STEPS.length, 8);
   for (const entry of ONBOARDING_STEPS) {
     assert.ok(entry.anchors.length > 0, `${entry.id} needs an anchor`);
     assert.notEqual(entry.placement, "center");
@@ -116,4 +116,13 @@ test("cards never render outside the viewport for extreme anchors", () => {
       assert.ok(position.top >= 0 && position.top <= viewport.height, `${placement} top in range`);
     }
   }
+});
+
+// 环境这一步和 workspace 是同一类前置("发第一条消息之前要有"),所以排在它后面,并且
+// **有回退锚点**:欢迎页那一行只在"新建对话"页存在,用户从别的入口打开导览时得指到设置。
+test("the environment step follows the workspace step and can fall back to Settings", () => {
+  const ids = ONBOARDING_STEPS.map((step) => step.id);
+  assert.equal(ids[ids.indexOf("workspace") + 1], "environment");
+  const step = ONBOARDING_STEPS.find((entry) => entry.id === "environment");
+  assert.deepEqual(step?.anchors, ['[data-tour="welcome-environment"]', '[data-tour="sidebar-settings"]']);
 });

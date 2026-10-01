@@ -6,10 +6,16 @@ import { mkdir, readFile, readdir, realpath, stat, writeFile } from "node:fs/pro
 import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { spawn } from "node:child_process";
 import type { DataAnalysisService } from "@wordless/capability-data";
+import {
+  getHostEnvironmentService,
+  PythonUnavailableError,
+  type HostEnvironmentService,
+  type PythonDependency,
+  type PythonRuntime,
+} from "../environment/host-environment-service.ts";
+
 import type { AnalysisChartSummary, AnalysisDatasetSummary, AnalysisOutputFile, AnalysisResearchClaim, AnalysisResearchSource, AnalysisRunDescriptor, AnalysisSessionSnapshot, DataAnalysisCapabilitySnapshot } from "@wordless/protocol";
 
-type PythonRuntime = { command: string; args: string[]; version: string; dependencies: Record<string, boolean> };
-type PythonDependency = "openpyxl" | "pyarrow" | "pandas";
 type StoredRun = AnalysisRunDescriptor & { workspaceRoot: string };
 type StoredSession = { version: 1; runs: StoredRun[] };
 
@@ -84,11 +90,13 @@ export class DesktopDataAnalysisService implements DataAnalysisService {
   private readonly resourcesRoot: string;
   private readonly researchConfirmationTokens = new Map<string, string>();
   private readonly sessionMutationTails = new Map<string, Promise<void>>();
-  private pythonRuntimesPromise: Promise<PythonRuntime[]> | undefined;
+  /** Python 探测的事实来自宿主环境服务,这里不再自己探一份(否则面板与功能会各说各话)。 */
+  private readonly hostEnvironment: HostEnvironmentService;
 
-  constructor(options: { metadataRoot: string; resourcesRoot: string }) {
+  constructor(options: { metadataRoot: string; resourcesRoot: string; hostEnvironment?: HostEnvironmentService }) {
     this.metadataRoot = options.metadataRoot;
     this.resourcesRoot = options.resourcesRoot;
+    this.hostEnvironment = options.hostEnvironment ?? getHostEnvironmentService();
   }
 
   private async withSessionMutation<T>(sessionId: string, mutation: () => Promise<T>): Promise<T> {
@@ -107,7 +115,7 @@ export class DesktopDataAnalysisService implements DataAnalysisService {
   }
 
   async capabilities(): Promise<DataAnalysisCapabilitySnapshot> {
-    const runtime = (await this.pythonRuntimes())[0];
+    const runtime = (await this.hostEnvironment.pythonRuntimes())[0];
     return runtime
       ? { status: "ready", command: [runtime.command, ...runtime.args].join(" "), version: runtime.version, dependencies: runtime.dependencies, supportedFormats: [...SUPPORTED_EXTENSIONS].map((extension) => extension.slice(1)) }
       : { status: "missing", command: null, version: null, message: "Python 3 was not found. Install Python and restart Wordless. Packages are never installed automatically.", supportedFormats: [...SUPPORTED_EXTENSIONS].map((extension) => extension.slice(1)) };
@@ -557,74 +565,26 @@ export class DesktopDataAnalysisService implements DataAnalysisService {
     return join(this.resourcesRoot, "skills", "data-analysis", "scripts", name);
   }
 
+  /**
+   * 取一个满足依赖的 Python 运行时。
+   *
+   * 探测与选择都在宿主环境服务里(那是唯一真源);这里只负责把"缺什么"翻译成这个功能对用户说的话。
+   */
   private async requirePython(dependencies: PythonDependency[] = []): Promise<PythonRuntime> {
-    const runtimes = await this.pythonRuntimes();
-    const runtime = runtimes.find((candidate) => dependencies.every((dependency) => candidate.dependencies[dependency]));
-    if (!runtime) throw new Error(dependencies.length > 0 ? `${dependencies.join(" and ")} ${dependencies.length === 1 ? "is" : "are"} required for this data operation. Install the missing package in an existing Python environment and restart Wordless.` : "Python 3 is required for data analysis. Install Python and restart Wordless; Wordless will not install packages automatically.");
-    return runtime;
-  }
-
-  private async pythonRuntimes(): Promise<PythonRuntime[]> {
-    this.pythonRuntimesPromise ??= this.detectPython();
-    return await this.pythonRuntimesPromise;
-  }
-
-  private async detectPython(): Promise<PythonRuntime[]> {
-    const candidates = [
-      { command: "python", args: [] },
-      { command: "py", args: ["-3"] },
-      ...["3.14", "3.13", "3.12", "3.11", "3.10", "3.9"].map((version) => ({ command: "py", args: [`-${version}`] })),
-      { command: "python3", args: [] },
-    ];
-    const runtimes: PythonRuntime[] = [];
-    const identities = new Set<string>();
-    for (const candidate of candidates) {
-      try {
-        const version = (await this.runProcess(candidate.command, [...candidate.args, "--version"], process.cwd(), undefined, 5_000)).trim();
-        if (!/Python 3\./i.test(version)) continue;
-        const dependencyOutput = await this.runProcess(candidate.command, [...candidate.args, "-c", "import importlib.util,json,sys;print(json.dumps({'executable':sys.executable,'openpyxl':bool(importlib.util.find_spec('openpyxl')),'pyarrow':bool(importlib.util.find_spec('pyarrow')),'pandas':bool(importlib.util.find_spec('pandas'))}))"], process.cwd(), undefined, 5_000);
-        const detected = JSON.parse(dependencyOutput) as { executable?: string; openpyxl?: boolean; pyarrow?: boolean; pandas?: boolean };
-        const identity = detected.executable?.toLowerCase() ?? `${candidate.command}:${candidate.args.join(" ")}`;
-        if (identities.has(identity)) continue;
-        identities.add(identity);
-        runtimes.push({ ...candidate, version, dependencies: { openpyxl: detected.openpyxl === true, pyarrow: detected.pyarrow === true, pandas: detected.pandas === true } });
-      } catch {
-        // Try the next conventional Python command.
-      }
+    try {
+      return await this.hostEnvironment.requirePython(dependencies);
+    } catch (error) {
+      if (!(error instanceof PythonUnavailableError)) throw error;
+      // 措辞要点:说清"去哪点一次",而不是让用户自己去装 —— P4a 之后我们**自带** Python,缺的只是包,
+      // 而那个动作在「设置 → 环境」里是一键的(装进内置那份,不需要重启,探测每次都会重跑)。
+      throw new Error(error.dependencies.length > 0
+        ? `${error.dependencies.join(" and ")} ${error.dependencies.length === 1 ? "is" : "are"} required for this data operation. Install the data components once in Settings → Environment; Wordless does not install packages by itself.`
+        : "Python is required for data analysis. Wordless normally bundles it — check Settings → Environment.");
     }
-    return runtimes.sort((left, right) => Object.values(right.dependencies).filter(Boolean).length - Object.values(left.dependencies).filter(Boolean).length);
   }
 
   private async runPython(runtime: PythonRuntime, script: string, args: string[], cwd: string, signal: AbortSignal | undefined, timeoutMs: number): Promise<string> {
-    return await this.runProcess(runtime.command, [...runtime.args, script, ...args], cwd, signal, timeoutMs);
-  }
-
-  private async runProcess(command: string, args: string[], cwd: string, signal: AbortSignal | undefined, timeoutMs: number): Promise<string> {
-    return await new Promise((resolvePromise, reject) => {
-      const child = spawn(command, args, { cwd, env: { ...process.env, PYTHONIOENCODING: "utf-8", PYTHONUTF8: "1" }, windowsHide: true, stdio: ["ignore", "pipe", "pipe"] });
-      let stdout = "";
-      let stderr = "";
-      let settled = false;
-      const finish = (error?: Error) => {
-        if (settled) return;
-        settled = true;
-        clearTimeout(timer);
-        signal?.removeEventListener("abort", abort);
-        if (error) reject(error);
-        else resolvePromise(stdout);
-      };
-      const stop = () => {
-        if (process.platform === "win32" && child.pid) spawn("taskkill", ["/PID", String(child.pid), "/T", "/F"], { stdio: "ignore", windowsHide: true });
-        else child.kill("SIGKILL");
-      };
-      const abort = () => { stop(); finish(new Error("Data analysis operation cancelled")); };
-      const timer = setTimeout(() => { stop(); finish(new Error(`Data analysis operation timed out after ${Math.round(timeoutMs / 1000)} seconds`)); }, timeoutMs);
-      signal?.addEventListener("abort", abort, { once: true });
-      child.stdout.on("data", (chunk: Buffer) => { if (stdout.length < MAX_PROCESS_OUTPUT) stdout += chunk.toString(); });
-      child.stderr.on("data", (chunk: Buffer) => { if (stderr.length < MAX_PROCESS_OUTPUT) stderr += chunk.toString(); });
-      child.on("error", (error) => finish(error));
-      child.on("close", (code) => finish(code === 0 ? undefined : new Error(stderr.trim() || stdout.trim() || `${command} exited with code ${code}`)));
-    });
+    return await this.hostEnvironment.runPython(runtime, script, args, cwd, signal, timeoutMs);
   }
 
   private async discoverWorkspaceRuns(sessionId: string, workspaceRoot: string): Promise<void> {

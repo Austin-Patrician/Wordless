@@ -10,11 +10,55 @@ import {
 } from "@wordless/agent";
 import type { WorkspaceSearchProvider } from "@wordless/workspace-search";
 import { Type, type TSchema } from "typebox";
+import { commandFailureHint } from "./command-failure-hint.ts";
+
+export { commandFailureHint, type CommandFailureContext } from "./command-failure-hint.ts";
 
 type ToolDetails = Record<string, unknown>;
 
 const DEFAULT_BASH_TIMEOUT_SECONDS = 30;
 const MAX_BASH_TIMEOUT_SECONDS = 600;
+
+/**
+ * Windows 上命令工具跑的是 PowerShell,不是 bash —— 必须在模型读到的那句话里说清。
+ *
+ * 不写清的代价不是"少一条提示":模型会继续用 POSIX 写法,而 `&&` 在 Windows PowerShell 5.1 上是
+ * **语法错误**(7+ 才支持),`$VAR` 也读不到环境变量。那类错误比"这台机器没有 bash"更难查,因为它
+ * 长得像命令写错了。
+ */
+const WINDOWS_SHELL_NOTE =
+  "On Windows this runs PowerShell, not bash: separate commands with ';' ('&&' is a syntax error on Windows PowerShell 5.1) and read environment variables as $env:NAME.";
+
+/**
+ * 命令工具在模型眼里的第一句。
+ *
+ * `defineTool` 默认截取描述的第一句当 `promptSnippet`,而模型侧看到的正是这个名字加一句话的
+ * "Tool guidance" 列表 —— 所以平台差异必须落在这里,不能只写在完整描述里(那份是给 schema/UI 用的),
+ * 否则模型永远看不到。这也解释了为什么这里是独立函数:两种平台各自要一句话说清。
+ */
+export function commandToolSnippet(platform: NodeJS.Platform = process.platform): string {
+  return platform === "win32"
+    ? "Run a PowerShell command in the workspace; separate commands with ';' ('&&' fails on Windows PowerShell 5.1) and read environment variables as $env:NAME."
+    : "Run a shell command (bash) within the current workspace.";
+}
+
+export function commandToolDescription(platform: NodeJS.Platform = process.platform): string {
+  const base = `Run a shell command within the current workspace. Commands time out after ${DEFAULT_BASH_TIMEOUT_SECONDS} seconds by default. For an expected long-running command, set timeout explicitly up to ${MAX_BASH_TIMEOUT_SECONDS} seconds. If a command times out, narrow its scope first or retry it with a larger timeout.`;
+  return platform === "win32" ? `${base} ${WINDOWS_SHELL_NOTE}` : base;
+}
+
+/**
+ * 命令工具失败时,给模型的那一句额外说明。
+ *
+ * 只在**没有可用 shell** 时出现(现在只剩"自定义 shell 路径写错"这一种),而且它是这个错误码今天
+ * 唯一的出口:`shell_unavailable` 以前会在工具里原样抛出,模型只拿到"No bash shell found"这种既不
+ * 解释原因、也不说去哪修的话。
+ */
+export function commandToolUnavailableHint(error: { code?: string; message?: string }): string | undefined {
+  return error.code === "shell_unavailable"
+    ? "This machine has no usable command shell. On Windows Wordless uses pwsh or powershell; on macOS and Linux it uses bash or sh. If a custom shell path is configured in Settings → Environment, fix or clear it, then try again."
+    : undefined;
+}
 
 function textResult(text: string, details: ToolDetails = {}): AgentToolResult<ToolDetails> {
   return { content: [{ type: "text", text }], details };
@@ -143,7 +187,8 @@ export function createHeadlessCodingTools(env: ExecutionEnv, search?: WorkspaceS
   const bash = defineTool({
     name: "bash",
     label: "Run command",
-    description: `Run a shell command within the current workspace. Commands time out after ${DEFAULT_BASH_TIMEOUT_SECONDS} seconds by default. For an expected long-running command, set timeout explicitly up to ${MAX_BASH_TIMEOUT_SECONDS} seconds. If a command times out, narrow its scope first or retry it with a larger timeout.`,
+    description: commandToolDescription(),
+    promptSnippet: commandToolSnippet(),
     parameters: Type.Object({ command: Type.String(), timeout: Type.Optional(Type.Integer({ minimum: 1, maximum: MAX_BASH_TIMEOUT_SECONDS })) }),
     async execute(_id, input, signal, onUpdate) {
       const timeoutSeconds = input.timeout ?? DEFAULT_BASH_TIMEOUT_SECONDS;
@@ -154,13 +199,22 @@ export function createHeadlessCodingTools(env: ExecutionEnv, search?: WorkspaceS
         onChunk: (chunk) => onUpdate?.(textResult(chunk, { command: input.command, timeoutSeconds })),
       });
       if (!result.ok) {
-        if (!("code" in result.error) || result.error.code !== "timeout") throw result.error;
+        if (!("code" in result.error) || result.error.code !== "timeout") {
+          // 没有可用 shell 这条以前是原样抛出的:模型拿到一句既不解释也不指路的话。
+          const hint = commandToolUnavailableHint(result.error);
+          throw hint ? new Error(`${result.error.message}\n\n${hint}`) : result.error;
+        }
         throw new Error(
           `Command timed out after ${timeoutSeconds} seconds.\n\nThis timeout is retryable. Narrow the command scope first, or call bash again with a larger explicit timeout (maximum ${MAX_BASH_TIMEOUT_SECONDS} seconds).`,
         );
       }
       const output = result.value.output;
-      return textResult(output || `Command finished with exit code ${result.value.exitCode}`, {
+      // 只在失败时补一句"这台机器上为什么没有它"(成功路径零成本)。
+      const failureHint = commandFailureHint({ exitCode: result.value.exitCode, output });
+      const text = [output || `Command finished with exit code ${result.value.exitCode}`, failureHint]
+        .filter(Boolean)
+        .join("\n\n");
+      return textResult(text, {
         command: input.command,
         elapsedMs: Date.now() - startedAt,
         exitCode: result.value.exitCode,

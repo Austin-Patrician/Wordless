@@ -9,6 +9,7 @@ export type OnboardingStepId =
   | "model"
   | "skills-mcp"
   | "workspace"
+  | "environment"
   | "tasks-experts"
   | "settings";
 
@@ -45,6 +46,15 @@ export const ONBOARDING_STEPS: readonly OnboardingStep[] = [
     titleKey: "onboardingStepWorkspaceTitle",
     bodyKey: "onboardingStepWorkspaceBody",
     anchors: ['[data-tour="welcome-workspace"]', '[data-tour="side-workspaces"]'],
+    placement: "top",
+  },
+  {
+    // 紧跟在 workspace 之后:这两步是同一类前置("发第一条消息之前要有"):一个工作区、一个能跑命令的
+    // 环境。Python 刻意不在这步里劝装 —— 只有数据功能用它。
+    id: "environment",
+    titleKey: "onboardingStepEnvironmentTitle",
+    bodyKey: "onboardingStepEnvironmentBody",
+    anchors: ['[data-tour="welcome-environment"]', '[data-tour="sidebar-settings"]'],
     placement: "top",
   },
   {

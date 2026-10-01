@@ -22,13 +22,14 @@
     "prepare:officecli": "node scripts/prepare-officecli-assets.mjs",
     "update:officecli": "node scripts/update-officecli-lock.mjs",
     "sync:design-styles": "node scripts/sync-design-styles.mjs",
-    "build:desktop": "npm run prepare:officecli && npm run build:renderer && npm run build:electron",
+    "build:desktop": "npm run prepare:officecli && npm run prepare:python && npm run build:renderer && npm run build:electron",
     "dev:electron": "npm run prepare:officecli && node scripts/build-electron.mjs && node scripts/dev-electron.mjs",
     "test:host": "node --test test/*.test.ts",
     "test:thread-browser": "vitest run --config vitest.thread-browser.config.ts",
     "dist:mac": "npm run build:desktop && electron-builder --config electron-builder.yml --mac --publish never && npm run verify:packaged-design-build",
     "dist:mac:preview": "npm run build:desktop && CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --config electron-builder.yml --mac --publish never",
-    "dist:win": "npm run build:desktop && electron-builder --config electron-builder.yml --win --x64 --publish never && node scripts/verify-packaged-icon.mjs release/win-unpacked && npm run verify:packaged-design-build"
+    "dist:win": "npm run build:desktop && electron-builder --config electron-builder.yml --win --x64 --publish never && node scripts/verify-packaged-icon.mjs release/win-unpacked && npm run verify:packaged-design-build",
+    "prepare:python": "node scripts/prepare-python-runtime.mjs"
   },
   "dependencies": {
     "@ff-labs/fff-node": "0.10.1",

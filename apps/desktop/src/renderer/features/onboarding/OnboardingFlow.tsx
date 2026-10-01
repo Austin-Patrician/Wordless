@@ -13,6 +13,7 @@ import {
 } from "react";
 import { usePreferences } from "../../shared/preferences";
 import { useRuntime } from "../../shared/runtime";
+import { OnboardingEnvironment } from "./OnboardingEnvironment";
 import { OnboardingWelcome } from "./OnboardingWelcome";
 import {
   findOnboardingAnchor,
@@ -22,7 +23,7 @@ import {
   type HighlightRect,
 } from "./onboarding-steps";
 
-type OnboardingPhase = "idle" | "welcome" | "tour";
+type OnboardingPhase = "idle" | "welcome" | "environment" | "tour";
 
 type OnboardingContextValue = {
   /** True while the welcome screen or the tour is on screen. */
@@ -57,7 +58,8 @@ function stepLabel(template: string, current: number, total: number): string {
 
 /**
  * Runs the first-run guide: a welcome screen that collects language and theme,
- * followed by a spotlight tour of the main interface.
+ * then a page that checks the machine's environment, then a spotlight tour of
+ * the main interface.
  *
  * The guide is rendered as an overlay so it never has to reach into the
  * workbench's layout logic. The tour only reads anchor elements; when an anchor
@@ -100,7 +102,12 @@ export function OnboardingProvider({ children }: { children: ReactNode }) {
     void client?.completeOnboarding().catch(() => {});
   }, [client]);
 
+  /** 欢迎页之后先过环境那一页(可以跳过),再进高亮导览。 */
   const start = useCallback(() => {
+    setPhase("environment");
+  }, []);
+
+  const startTour = useCallback(() => {
     setStepIndex(0);
     setPhase("tour");
   }, []);
@@ -183,6 +190,9 @@ export function OnboardingProvider({ children }: { children: ReactNode }) {
     <OnboardingContext.Provider value={contextValue}>
       {children}
       {phase === "welcome" ? <OnboardingWelcome onSkip={finish} onStart={start} /> : null}
+      {phase === "environment" ? (
+        <OnboardingEnvironment onBack={() => setPhase("welcome")} onContinue={startTour} />
+      ) : null}
 
       {tourActive ? (
         <div className="fixed inset-0 z-[140]" role="dialog" aria-modal="true" aria-label={t("onboardingWelcomeTitle")}>

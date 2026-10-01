@@ -165,11 +165,8 @@ async function runCommand(
 	});
 }
 
-async function findBashOnPath(): Promise<string | null> {
-	const result =
-		process.platform === "win32"
-			? await runCommand("where", ["bash.exe"], 5000)
-			: await runCommand("which", ["bash"], 5000);
+async function findExecutableOnPath(command: string, platform: NodeJS.Platform): Promise<string | null> {
+	const result = await runCommand(platform === "win32" ? "where" : "which", [command], 5000);
 	if (result.status !== 0 || !result.stdout) return null;
 	const firstMatch = result.stdout.trim().split(/\r?\n/)[0];
 	return firstMatch && (await pathExists(firstMatch)) ? firstMatch : null;
@@ -179,50 +176,125 @@ interface ShellConfig {
 	shell: string;
 	args: string[];
 	commandTransport?: "argv" | "stdin";
+	/**
+	 * 拼在每条命令前面的若干行。
+	 *
+	 * 只用于 PowerShell 的编码前导(见 `WINDOWS_POWERSHELL_UTF8_PREFIX`):没有它,Windows 上
+	 * 中文输出会按系统代码页解码成乱码。
+	 */
+	commandPrefix?: string;
 }
+
+/**
+ * PowerShell 的编码前导。
+ *
+ * `[Console]::OutputEncoding` 决定子进程往管道里写什么编码;后两行让 `$OutputEncoding` 与
+ * `Get-Content` 也按 UTF-8 走。三行缺一条就会在某个方向上出现乱码(中文用户尤其)。
+ */
+const WINDOWS_POWERSHELL_UTF8_PREFIX = [
+	"[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)",
+	"$OutputEncoding = [System.Text.UTF8Encoding]::new($false)",
+	'$PSDefaultParameterValues["Get-Content:Encoding"] = "UTF8"',
+].join("\n");
+
+const WINDOWS_POWERSHELL_ARGS = ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command"];
 
 function isLegacyWslBashPath(path: string): boolean {
 	const normalized = path.replace(/\//g, "\\").toLowerCase();
 	return /^[a-z]:\\windows\\(?:system32|sysnative)\\bash\.exe$/.test(normalized);
 }
 
+/** 命令解释器的种类:宿主要用它给用户（和面板）说清"你现在跑的是什么"。 */
+export type ShellKind = "pwsh" | "powershell" | "cmd" | "bash" | "sh" | "other";
+
+export function shellKindOf(shellPath: string): ShellKind {
+	const name = shellPath.replace(/\\/g, "/").split("/").pop()?.toLowerCase() ?? "";
+	if (name === "pwsh" || name === "pwsh.exe") return "pwsh";
+	if (name === "powershell" || name === "powershell.exe") return "powershell";
+	if (name === "cmd" || name === "cmd.exe") return "cmd";
+	if (name === "bash" || name === "bash.exe") return "bash";
+	if (name === "sh" || name === "sh.exe") return "sh";
+	return "other";
+}
+
 function getBashShellConfig(shell: string): ShellConfig {
 	return isLegacyWslBashPath(shell) ? { shell, args: ["-s"], commandTransport: "stdin" } : { shell, args: ["-c"] };
 }
 
-async function getShellConfig(customShellPath?: string): Promise<Result<ShellConfig, ExecutionError>> {
-	if (customShellPath) {
-		if (await pathExists(customShellPath)) {
-			return ok(getBashShellConfig(customShellPath));
+function isPowerShellPath(shellPath: string): boolean {
+	const kind = shellKindOf(shellPath);
+	return kind === "pwsh" || kind === "powershell";
+}
+
+/**
+ * 用户显式指定的 shell 路径:是 PowerShell 就同样走 PowerShell 的参数与前导,其余当 POSIX 处理。
+ * (`-c` 两边都认:PowerShell 把 `-c` 当 `-Command` 的别名。)
+ */
+function getCustomShellConfig(shellPath: string): ShellConfig {
+	return isPowerShellPath(shellPath)
+		? { shell: shellPath, args: WINDOWS_POWERSHELL_ARGS, commandPrefix: WINDOWS_POWERSHELL_UTF8_PREFIX }
+		: getBashShellConfig(shellPath);
+}
+
+export interface ResolveShellOptions {
+	/** 默认取当前进程的平台;测试用它覆盖,免得为了断言 Windows 分支而真的跑在 Windows 上。 */
+	platform?: NodeJS.Platform;
+	customShellPath?: string;
+	fileExists?: (path: string) => Promise<boolean>;
+	findExecutable?: (command: string, platform: NodeJS.Platform) => Promise<string | null>;
+}
+
+/**
+ * 解析出一个可用的命令解释器。
+ *
+ * **Windows 上用 PowerShell,不是 bash。** Windows 自带的是 PowerShell 与 cmd;bash 要用户另装
+ * (Git for Windows / WSL)。早先这里在 win32 只找 Git Bash,找不到就报 `shell_unavailable` —— 那
+ * 等于给普通 Windows 用户立了一道必须自己跨的墙,而那道失败当时全仓没有任何出口。现在按
+ * `pwsh` → `powershell` → `cmd` 解析:三者都不需要用户安装,所以 Windows 上不再有"没有 shell"这一说。
+ *
+ * POSIX 侧不变:`/bin/bash` → PATH 上的 `bash` → `sh`,而且**不会**返回错误。
+ *
+ * `customShellPath` 由用户显式指定,所以写错时仍然报 `shell_unavailable`(这是它现在唯一的来源),
+ * 但消息里带上"去哪改"。
+ */
+export async function resolveShellConfig(options: ResolveShellOptions = {}): Promise<Result<ShellConfig, ExecutionError>> {
+	const platform = options.platform ?? process.platform;
+	const fileExists = options.fileExists ?? pathExists;
+	const findExecutable = options.findExecutable ?? findExecutableOnPath;
+
+	if (options.customShellPath) {
+		if (await fileExists(options.customShellPath)) {
+			return ok(getCustomShellConfig(options.customShellPath));
 		}
-		return err(new ExecutionError("shell_unavailable", `Custom shell path not found: ${customShellPath}`));
-	}
-	if (process.platform === "win32") {
-		const candidates: string[] = [];
-		const programFiles = process.env.ProgramFiles;
-		if (programFiles) candidates.push(`${programFiles}\\Git\\bin\\bash.exe`);
-		const programFilesX86 = process.env["ProgramFiles(x86)"];
-		if (programFilesX86) candidates.push(`${programFilesX86}\\Git\\bin\\bash.exe`);
-		for (const candidate of candidates) {
-			if (await pathExists(candidate)) {
-				return ok(getBashShellConfig(candidate));
-			}
-		}
-		const bashOnPath = await findBashOnPath();
-		if (bashOnPath) {
-			return ok(getBashShellConfig(bashOnPath));
-		}
-		return err(new ExecutionError("shell_unavailable", "No bash shell found"));
+		return err(
+			new ExecutionError(
+				"shell_unavailable",
+				`Custom shell path not found: ${options.customShellPath}\nFix the shell path in Settings → Environment, or clear it to use the system default.`,
+			),
+		);
 	}
 
-	if (await pathExists("/bin/bash")) {
+	if (platform === "win32") {
+		// PowerShell 优先:`pwsh` 是 7+(支持 `&&`),`powershell` 是系统自带的 5.1,两者都比 cmd 好用。
+		for (const candidate of ["pwsh.exe", "powershell.exe"]) {
+			const resolved = await findExecutable(candidate, platform);
+			if (resolved) {
+				return ok({ shell: resolved, args: WINDOWS_POWERSHELL_ARGS, commandPrefix: WINDOWS_POWERSHELL_UTF8_PREFIX });
+			}
+		}
+		// cmd.exe 一定在(System32 在 PATH 上),这里只是 PATH 被改坏时的兜底:否则又要变成"没有 shell"。
+		return ok({ shell: (await findExecutable("cmd.exe", platform)) ?? "cmd.exe", args: ["/d", "/s", "/c"] });
+	}
+
+	if (await fileExists("/bin/bash")) {
 		return ok(getBashShellConfig("/bin/bash"));
 	}
-	const bashOnPath = await findBashOnPath();
-	if (bashOnPath) {
-		return ok(getBashShellConfig(bashOnPath));
-	}
-	return ok({ shell: "sh", args: ["-c"] });
+	const bashOnPath = await findExecutable("bash", platform);
+	return ok(bashOnPath ? getBashShellConfig(bashOnPath) : { shell: "sh", args: ["-c"] });
+}
+
+async function getShellConfig(customShellPath?: string): Promise<Result<ShellConfig, ExecutionError>> {
+	return await resolveShellConfig({ customShellPath });
 }
 
 function getShellEnv(baseEnv?: NodeJS.ProcessEnv, extraEnv?: Record<string, string>): NodeJS.ProcessEnv {
@@ -410,7 +482,7 @@ export class NodeExecutionEnv implements ExecutionEnv {
 			await access(cwd, constants.F_OK);
 		} catch (error) {
 			const cause = toError(error);
-			return err(new ExecutionError("spawn_error", `Working directory does not exist: ${cwd}\nCannot execute bash commands.`, cause));
+			return err(new ExecutionError("spawn_error", `Working directory does not exist: ${cwd}\nCannot run shell commands.`, cause));
 		}
 
 		return await new Promise((resolvePromise) => {
@@ -472,9 +544,13 @@ export class NodeExecutionEnv implements ExecutionEnv {
 
 			try {
 				const commandFromStdin = shellConfig.value.commandTransport === "stdin";
+				// 前导(argv 与 stdin 两条传输都要带上,否则只有一条路径是干净的)。
+				const shellCommand = shellConfig.value.commandPrefix
+					? `${shellConfig.value.commandPrefix}\n${command}`
+					: command;
 				child = spawn(
 					shellConfig.value.shell,
-					commandFromStdin ? shellConfig.value.args : [...shellConfig.value.args, command],
+					commandFromStdin ? shellConfig.value.args : [...shellConfig.value.args, shellCommand],
 					{
 						cwd,
 						detached: process.platform !== "win32",
@@ -486,7 +562,7 @@ export class NodeExecutionEnv implements ExecutionEnv {
 				if (child.pid) this.activeChildPids.add(child.pid);
 				if (commandFromStdin) {
 					child.stdin?.on("error", () => {});
-					child.stdin?.end(command);
+					child.stdin?.end(shellCommand);
 				}
 			} catch (error) {
 				const cause = toError(error);

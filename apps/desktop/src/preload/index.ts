@@ -329,6 +329,12 @@ const wordlessBridge: DesktopBridge = {
     }),
   getOfficeEngineHealth: () =>
     ipcRenderer.invoke("wordless:presentation:health"),
+  getHostEnvironmentFacts: () =>
+    ipcRenderer.invoke("wordless:environment:facts"),
+  redetectHostEnvironment: () =>
+    ipcRenderer.invoke("wordless:environment:redetect"),
+  installHostPythonPackages: () =>
+    ipcRenderer.invoke("wordless:environment:install-python-packages"),
   listPresentationTemplates: () =>
     ipcRenderer.invoke("wordless:presentation:templates"),
   listPresentationArtifacts: (sessionId) =>

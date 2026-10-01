@@ -66,6 +66,8 @@ import type {
   DesktopMenuId,
   DesktopRelease,
   DesktopUpdateSnapshot,
+  HostEnvironmentFacts,
+  HostPythonProvisionResult,
   OfficeEngineHealth,
   OnboardingState,
   PresentationTemplate,
@@ -133,7 +135,7 @@ import type {
 } from "@wordless/protocol";
 import type { ToolApprovalMode } from "@wordless/domain";
 
-export const DESKTOP_BRIDGE_VERSION = 55;
+export const DESKTOP_BRIDGE_VERSION = 57;
 
 export interface DesktopBridge {
   readonly version: typeof DESKTOP_BRIDGE_VERSION;
@@ -485,6 +487,12 @@ export interface DesktopBridge {
   revealSessionArtifact(sessionId: string, artifactId: string): Promise<void>;
   saveSessionArtifactAs(sessionId: string, artifactId: string): Promise<void>;
   getOfficeEngineHealth(): Promise<OfficeEngineHealth>;
+  /** 宿主环境事实(设置 → 环境面板)。只读:面板不装任何东西。 */
+  getHostEnvironmentFacts(): Promise<HostEnvironmentFacts>;
+  /** 重新探测一次,并返回新的事实(显式操作,不受探测节流限制)。 */
+  redetectHostEnvironment(): Promise<HostEnvironmentFacts>;
+  /** 把数据功能要的第三方包按需装进**内置那份** Python(用户点一次;会联网)。 */
+  installHostPythonPackages(): Promise<HostPythonProvisionResult>;
   listPresentationTemplates(): Promise<PresentationTemplate[]>;
   listPresentationArtifacts(sessionId: string): Promise<ArtifactDescriptor[]>;
   createPresentationArtifact(
@@ -874,6 +882,9 @@ export const requiredMethods: Array<Exclude<keyof DesktopBridge, "version">> = [
   "revealSessionArtifact",
   "saveSessionArtifactAs",
   "getOfficeEngineHealth",
+  "getHostEnvironmentFacts",
+  "redetectHostEnvironment",
+  "installHostPythonPackages",
   "listPresentationTemplates",
   "listPresentationArtifacts",
   "createPresentationArtifact",

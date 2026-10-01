@@ -1,0 +1,15 @@
+Python (bundled runtime)
+========================
+
+Wordless ships a standalone CPython build so that ordinary users do not have to
+install Python themselves.
+
+- Distribution: python-build-standalone
+- Source: https://github.com/astral-sh/python-build-standalone
+- Copyright: Python Software Foundation and contributors; build scripts by Astral
+- License: Python Software Foundation License 2.0 (PSF-2.0)
+- License text: https://docs.python.org/3/license.html
+
+The runtime is copied into the user's data directory on first launch; the copy
+inside the application bundle is never modified in place. Packages installed
+into it by the user stay under that user directory.

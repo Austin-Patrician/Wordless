@@ -24,6 +24,10 @@ extraResources:
     to: skills
   - from: resources/officecli/${os}-${arch}
     to: officecli/${os}-${arch}
+  # 内置的可重定位 CPython(打包期准备,见 scripts/prepare-python-runtime.mjs)。
+  # 应用**不原地使用**它:首启拷到用户目录再跑,免得改坏签名/撞上不可写的安装目录。
+  - from: resources/python/${os}-${arch}
+    to: python/${os}-${arch}
   - from: resources/presentation-templates
     to: presentation-templates
   - from: resources/third-party-notices

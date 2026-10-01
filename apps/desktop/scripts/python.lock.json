@@ -1,0 +1,21 @@
+{
+  "release": "20260929",
+  "pythonVersion": "3.12.14",
+  "repository": "https://github.com/astral-sh/python-build-standalone",
+  "license": "PSF-2.0",
+  "comment": "3.12 而不是 3.13:数据功能要装的 pandas / pyarrow / numpy 在 3.12 上的 wheel 覆盖最稳(P4b)。升级 = 改这里 + 重打包,用户更新应用后首启自然换新版。",
+  "platforms": {
+    "mac-arm64": {
+      "asset": "cpython-3.12.14+20260929-aarch64-apple-darwin-install_only.tar.gz",
+      "sha256": "de6b8f94fa765639b423ea353ab340669704c7186f96ee3cab389dcfde770c3c"
+    },
+    "mac-x64": {
+      "asset": "cpython-3.12.14+20260929-x86_64-apple-darwin-install_only.tar.gz",
+      "sha256": "f51ec8a7fa0ede129a5e2e942a2a453ba4830adaca2289da4449390e42443292"
+    },
+    "win-x64": {
+      "asset": "cpython-3.12.14+20260929-x86_64-pc-windows-msvc-install_only.tar.gz",
+      "sha256": "28728baf30b65e263f0b25c5a85be8226e7ab0d212fbadd6a8f0f796139fa804"
+    }
+  }
+}
