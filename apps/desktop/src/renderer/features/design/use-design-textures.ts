@@ -37,13 +37,13 @@ export interface DesignTextures {
 }
 
 /**
- * 位图缓存键 = 帧 + 缩放档。
+ * 位图缓存键 = 设计路径 + 帧 + 缩放档。
  *
  * **刻意不带源指纹**:同一帧同一档只该有一个条目。带上代次会让"改一次源"多留一份位图,
  * 而那份永远用不到 —— 旧位图的价值是**在新位图到货之前顶一下**,不是留作历史。
  */
-export function textureKeyOf(frameId: string, bucket: number): string {
-  return `${frameId}@${bucket}`;
+export function textureKeyOf(designPath: string, frameId: string, bucket: number): string {
+  return `${designPath}\u0000${frameId}@${bucket}`;
 }
 
 export function useDesignTextures(input: {
@@ -82,12 +82,21 @@ export function useDesignTextures(input: {
     };
   }, [cache]);
 
+  const previousDesignPath = useRef<string | null>(null);
+  useEffect(() => {
+    if (previousDesignPath.current !== null && previousDesignPath.current !== designPath) {
+      cache.clear();
+      rasterizedRef.current.clear();
+    }
+    previousDesignPath.current = designPath;
+  }, [cache, designPath]);
+
   useEffect(() => {
     if (client === null || designPath === null || frames.length === 0) return;
 
     const missing = frames
-      .map((frame) => ({ frame, key: textureKeyOf(frame.id, bucket) }))
-      .filter((candidate) => rasterizedRef.current.get(candidate.key) !== sourceRevision);
+      .map((frame) => ({ frame, key: textureKeyOf(designPath, frame.id, bucket), requestKey: `${frame.id}@${bucket}` }))
+      .filter((candidate) => rasterizedRef.current.get(candidate.key) !== sourceRevision || !cache.has(candidate.key));
     if (missing.length === 0) return;
 
     const generation = generationRef.current + 1;
@@ -106,9 +115,12 @@ export function useDesignTextures(input: {
         for (const result of results) {
           // 失败的帧**不记代次**:它会在下一次清单变化时重试,而不是永远停在旧图上。
           if (!result.ok) continue;
+          const candidate = missing.find((item) => item.requestKey === result.key);
+          if (candidate === undefined) continue;
           const url = URL.createObjectURL(new Blob([result.bytes], { type: "image/jpeg" }));
-          cache.set(result.key, url, result.bytes.byteLength);
-          rasterizedRef.current.set(result.key, sourceRevision);
+          cache.set(candidate.key, url, result.bytes.byteLength, result.width * result.height);
+          if (!cache.has(candidate.key)) continue;
+          rasterizedRef.current.set(candidate.key, sourceRevision);
           stored += 1;
         }
         // 一批只同步一次节点 —— 逐张同步会让 40 帧的设计产生 40 次整图重排。
@@ -126,16 +138,17 @@ export function useDesignTextures(input: {
 
   const textures = useMemo(() => {
     const map = new Map<string, string>();
+    if (designPath === null) return map;
     for (const frame of frames) {
-      const url = cache.get(textureKeyOf(frame.id, bucket));
+      const key = textureKeyOf(designPath, frame.id, bucket);
+      const url = cache.get(key);
+      if (url === null) rasterizedRef.current.delete(key);
       if (url !== null) map.set(frame.id, url);
     }
     return map;
     // revision 进依赖:位图到货后要重新读一遍缓存。
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [bucket, cache, frames, revision]);
+  }, [bucket, cache, designPath, frames, revision]);
 
   return { textures, revision };
 }
-
-

@@ -16,11 +16,14 @@ export interface LruEntry {
   bytes: number;
   /** 最后一次被用到的时间戳(越大越新)。 */
   lastUsed: number;
+  /** 解码后的像素数。压缩字节无法代表浏览器实际占用。 */
+  pixels?: number;
 }
 
 export interface LruLimits {
   budgetBytes: number;
   maxEntries: number;
+  maxPixels?: number;
 }
 
 /**
@@ -35,6 +38,11 @@ export interface LruLimits {
 export function lruEvict(entries: readonly LruEntry[], limits: LruLimits): string[] {
   const budgetBytes = Number.isFinite(limits.budgetBytes) ? Math.max(0, limits.budgetBytes) : 0;
   const maxEntries = Number.isFinite(limits.maxEntries) ? Math.max(0, Math.floor(limits.maxEntries)) : 0;
+  const maxPixels = limits.maxPixels === undefined
+    ? Number.POSITIVE_INFINITY
+    : Number.isFinite(limits.maxPixels)
+      ? Math.max(0, limits.maxPixels)
+      : 0;
 
   const ordered = [...entries].sort((left, right) =>
     left.lastUsed === right.lastUsed ? left.key.localeCompare(right.key) : left.lastUsed - right.lastUsed,
@@ -43,12 +51,14 @@ export function lruEvict(entries: readonly LruEntry[], limits: LruLimits): strin
   const dropped: string[] = [];
   let bytes = ordered.reduce((total, entry) => total + safeBytes(entry.bytes), 0);
   let count = ordered.length;
+  let pixels = ordered.reduce((total, entry) => total + safePixels(entry.pixels), 0);
 
   for (const entry of ordered) {
-    if (bytes <= budgetBytes && count <= maxEntries) break;
+    if (bytes <= budgetBytes && count <= maxEntries && pixels <= maxPixels) break;
     dropped.push(entry.key);
     bytes -= safeBytes(entry.bytes);
     count -= 1;
+    pixels -= safePixels(entry.pixels);
   }
   return dropped;
 }
@@ -60,4 +70,8 @@ export function lruTotalBytes(entries: readonly LruEntry[]): number {
 
 function safeBytes(bytes: number): number {
   return Number.isFinite(bytes) && bytes > 0 ? bytes : 0;
+}
+
+function safePixels(pixels: number | undefined): number {
+  return pixels !== undefined && Number.isFinite(pixels) && pixels > 0 ? pixels : 0;
 }

@@ -177,6 +177,12 @@ export class ElectronOffscreenRaster implements RasterPort, OffscreenEvaluatePor
     for (const window of this.idle.splice(0)) this.destroyWindow(window);
   }
 
+  /** 设计画布关闭时立即释放空闲渲染进程,不必等待超时策略。 */
+  releaseIdle(): void {
+    this.idlePolicy.stop();
+    this.destroyIdleWindows();
+  }
+
   private async acquire(signal: AbortSignal): Promise<BrowserWindow | null> {
     for (;;) {
       if (this.disposed || signal.aborted) return null;

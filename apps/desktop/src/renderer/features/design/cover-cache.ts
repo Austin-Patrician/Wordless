@@ -22,10 +22,17 @@ const DATABASE = "wordless-design-covers";
 const STORE = "covers";
 const VERSION = 1;
 
+const COVER_CACHE_LIMITS = {
+  maxEntries: 128,
+  maxChars: 16 * 1024 * 1024,
+  maxItemChars: 512 * 1024,
+} as const;
+
 /** 内存镜像。进程内只读一次,之后命中它。 */
 const memory = new Map<string, string>();
-/** 已经查过 IDB 的 key(命中或未命中都算) —— 未命中也要记住,否则每次渲染都再查一遍。 */
-const probed = new Set<string>();
+let memoryChars = 0;
+/** 已经确认不存在的 key。命中项被淘汰后允许重新从 IDB 读取。 */
+const misses = new Map<string, true>();
 /** 正在查/正在写的 key,避免同一份设计被并发查两次。 */
 const inFlight = new Map<string, Promise<string | null>>();
 
@@ -78,18 +85,30 @@ async function withStore<T>(
  */
 export function readCover(designPath: string): Promise<string | null> {
   const cached = memory.get(designPath);
-  if (cached !== undefined) return Promise.resolve(cached);
-  if (probed.has(designPath)) return Promise.resolve(null);
+  if (cached !== undefined) {
+    memory.delete(designPath);
+    memory.set(designPath, cached);
+    return Promise.resolve(cached);
+  }
+  if (misses.has(designPath)) {
+    misses.delete(designPath);
+    misses.set(designPath, true);
+    return Promise.resolve(null);
+  }
   const pending = inFlight.get(designPath);
   if (pending !== undefined) return pending;
 
   const task = withStore<string | undefined>("readonly", (store) => store.get(designPath)).then((value) => {
     inFlight.delete(designPath);
-    probed.add(designPath);
     if (typeof value === "string" && value !== "") {
-      memory.set(designPath, value);
+      if (value.length <= COVER_CACHE_LIMITS.maxItemChars) remember(designPath, value);
+      else {
+        rememberMiss(designPath);
+        return null;
+      }
       return value;
     }
+    rememberMiss(designPath);
     return null;
   });
   inFlight.set(designPath, task);
@@ -98,15 +117,42 @@ export function readCover(designPath: string): Promise<string | null> {
 
 /** 写一份封面。失败什么也不做 —— 缓存不该把调用方拖下水。 */
 export async function writeCover(designPath: string, dataUrl: string): Promise<void> {
-  if (dataUrl === "") return;
-  memory.set(designPath, dataUrl);
-  probed.add(designPath);
+  if (dataUrl === "" || dataUrl.length > COVER_CACHE_LIMITS.maxItemChars) return;
+  remember(designPath, dataUrl);
+  misses.delete(designPath);
   await withStore("readwrite", (store) => store.put(dataUrl, designPath)).catch(() => undefined);
 }
 
 /** 测试用:清掉内存镜像(否则一个用例写了封面,下一个用例会看到它)。 */
 export function resetCoverCacheForTests(): void {
   memory.clear();
-  probed.clear();
+  memoryChars = 0;
+  misses.clear();
   inFlight.clear();
+}
+
+function remember(key: string, value: string): void {
+  const previous = memory.get(key);
+  if (previous !== undefined) memoryChars -= previous.length;
+  memory.delete(key);
+  memory.set(key, value);
+  memoryChars += value.length;
+  misses.delete(key);
+  while (memory.size > COVER_CACHE_LIMITS.maxEntries || memoryChars > COVER_CACHE_LIMITS.maxChars) {
+    const oldest = memory.keys().next().value;
+    if (typeof oldest !== "string") break;
+    const oldestValue = memory.get(oldest);
+    memory.delete(oldest);
+    if (oldestValue !== undefined) memoryChars -= oldestValue.length;
+  }
+}
+
+function rememberMiss(key: string): void {
+  misses.delete(key);
+  misses.set(key, true);
+  while (misses.size > COVER_CACHE_LIMITS.maxEntries * 2) {
+    const oldest = misses.keys().next().value;
+    if (typeof oldest !== "string") break;
+    misses.delete(oldest);
+  }
 }

@@ -4056,6 +4056,9 @@ export function ThreadView({
     void threadStore.start(initialPendingTurn);
     return () => {
       viewportStore.dispose();
+      // `release()` 而不是 `suspend()`:这一轮还在跑就先留着,否则切回来的那几秒里
+      // 在途助手消息的正文是空的(journal 里还没有它)。
+      threadStore.release();
     };
   }, [threadStore, viewportStore]);
 

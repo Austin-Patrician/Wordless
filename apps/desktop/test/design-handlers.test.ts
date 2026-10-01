@@ -160,3 +160,19 @@ test("请求 schema 拒绝多余的字段", () => {
   assert.equal(Value.Check(CreateDesignRequestSchema, { root: ROOT, name: "meadow", styleId: null }), true);
   assert.equal(Value.Check(CreateDesignRequestSchema, { root: ROOT, name: "meadow" }), false);
 });
+
+test("设计画布卸载时释放注入的主进程资源", () => {
+  let disposed = 0;
+  const designHandlers = createDesignHandlers(
+    new DesignStore({ fs: fixture() }),
+    {} as never,
+    {} as never,
+    undefined,
+    undefined,
+    undefined,
+    { dispose: () => { disposed += 1; } },
+  );
+
+  designHandlers.disposeResources();
+  assert.equal(disposed, 1);
+});

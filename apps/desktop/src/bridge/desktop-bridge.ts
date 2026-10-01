@@ -389,6 +389,7 @@ export interface DesktopBridge {
    * bitmap, so the two cannot drift apart.
    */
   setDesignLiveFrame(input: DesignLiveFrameRequestDto): Promise<boolean>;
+  disposeDesignResources(): Promise<void>;
   /** The built-in style catalog. Ships with the app — creating a design must not need the network. */
   listDesignStyles(): Promise<DesignStyleSummaryDto[]>;
   /** 一套风格的正文(示例页 + 规范)。按 id 现取,列表里只有 `hasDemo`。 */
@@ -825,6 +826,7 @@ export const requiredMethods: Array<Exclude<keyof DesktopBridge, "version">> = [
     "updateDesignFrameMeta",
     "rasterizeDesignFrames",
     "setDesignLiveFrame",
+    "disposeDesignResources",
     "listDesignStyles",
     "getDesignStyleDetail",
     "createDesign",

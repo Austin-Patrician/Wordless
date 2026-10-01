@@ -9,14 +9,19 @@ import {
 
 type SessionListener = (event: RuntimeEventEnvelope) => void;
 
+const MAX_CACHED_STORES = 32;
+
 /**
- * Keeps live projections alive while a different session is visible. Runtime
- * is a broadcast source, so one hub subscription is enough for all cached
- * sessions and avoids one IPC listener per mounted/unmounted ThreadView.
+ * 让已创建的 Store 实例在会话之间复用,但**不负责保活投影**:视图卸载时会调
+ * `release()`(不在运行就立刻释放历史投影,在运行则等这一轮跑完),所以这里缓存的主要是
+ * "实例 + 翻译函数",不是几份完整历史。
+ *
+ * Runtime 是广播源,所以整个应用只挂一个 IPC 订阅再分发,而不是每个 ThreadView 一个。
  */
 class RuntimeSessionStoreRegistry {
   private readonly client: RuntimeClient;
   private readonly stores = new Map<string, ThreadSessionStore>();
+  private readonly usage = new Map<string, number>();
   private readonly listeners = new Map<string, Set<SessionListener>>();
   private unsubscribe: (() => void) | null = null;
   private disposed = false;
@@ -33,6 +38,8 @@ class RuntimeSessionStoreRegistry {
     const existing = this.stores.get(sessionId);
     if (existing) {
       existing.setTranslate(translate);
+      this.usage.delete(sessionId);
+      this.usage.set(sessionId, Date.now());
       return existing;
     }
     const subscribe: ThreadRuntimeSubscribe = (listener) => {
@@ -53,6 +60,8 @@ class RuntimeSessionStoreRegistry {
       subscribe,
     );
     this.stores.set(sessionId, store);
+    this.usage.set(sessionId, Date.now());
+    this.evictOverflow();
     return store;
   }
 
@@ -63,7 +72,26 @@ class RuntimeSessionStoreRegistry {
     this.unsubscribe = null;
     for (const store of this.stores.values()) store.dispose();
     this.stores.clear();
+    this.usage.clear();
     this.listeners.clear();
+  }
+
+  /**
+   * 超出上限时淘汰**最久没被取用**的 store。
+   *
+   * 只淘汰**没有订阅**的那些:有订阅说明要么正被挂载的视图用着(`ThreadView` 的 effect 依赖
+   * 里只有 `threadStore`,不会重跑,所以被淘汰之后它再也不会收到通知),要么正在跑一轮。
+   * `dispose()` 会清空投影并关掉发布器,这两种情况都无法自愈 —— 宁可暂时超出上限。
+   */
+  private evictOverflow(): void {
+    for (const sessionId of [...this.usage.keys()]) {
+      if (this.stores.size <= MAX_CACHED_STORES) return;
+      if (this.listeners.has(sessionId)) continue;
+      this.usage.delete(sessionId);
+      this.listeners.delete(sessionId);
+      this.stores.get(sessionId)?.dispose();
+      this.stores.delete(sessionId);
+    }
   }
 
   private ensureRuntimeSubscription(): void {

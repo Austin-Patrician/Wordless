@@ -38,6 +38,7 @@ export const DESIGN_APPLY_STYLE_CHANNEL = "wordless:design:apply-style";
 export const DESIGN_UPDATE_FRAME_META_CHANNEL = "wordless:design:update-frame-meta";
 export const DESIGN_RASTERIZE_CHANNEL = "wordless:design:rasterize";
 export const DESIGN_LIVE_FRAME_CHANNEL = "wordless:design:live-frame";
+export const DESIGN_DISPOSE_RESOURCES_CHANNEL = "wordless:design:dispose-resources";
 export const DESIGN_STYLES_CHANNEL = "wordless:design:styles";
 export const DESIGN_STYLE_DETAIL_CHANNEL = "wordless:design:style-detail";
 export const DESIGN_CREATE_CHANNEL = "wordless:design:create";
@@ -161,5 +162,9 @@ export function registerDesignIpc(deps: DesignIpcDeps): void {
         bounds: { x: number; y: number; width: number; height: number } | null;
       },
     );
+  });
+
+  ipcMain.handle(DESIGN_DISPOSE_RESOURCES_CHANNEL, () => {
+    deps.handlers.disposeResources();
   });
 }

@@ -3,13 +3,17 @@ import test from "node:test";
 import type {
   ConversationMessage,
   RuntimeEventEnvelope,
+  SessionHistoryPage,
   SessionSnapshot,
   SessionViewSnapshot,
 } from "@wordless/protocol";
 import type { RuntimeClient } from "../src/renderer/bridge/runtime-client.ts";
 import { ThreadSessionStore } from "../src/renderer/features/thread/thread-session-store.ts";
 import type { AnimationFrameScheduler } from "../src/renderer/features/thread/thread-viewport-store.ts";
-import { getThreadSessionStore } from "../src/renderer/features/thread/thread-session-store-registry.ts";
+import {
+  disposeThreadSessionStores,
+  getThreadSessionStore,
+} from "../src/renderer/features/thread/thread-session-store-registry.ts";
 
 class TestFrames implements AnimationFrameScheduler {
   private callbacks = new Map<number, FrameRequestCallback>();
@@ -89,6 +93,19 @@ function envelope(sequence: number, event: RuntimeEventEnvelope["event"]): Runti
     timestamp: sequence,
     turnId: "turn:user",
   };
+}
+
+function registryHarness() {
+  const listeners = new Set<(event: RuntimeEventEnvelope) => void>();
+  const client = {
+    getSessionSnapshot: async () => fullSnapshot(),
+    getSessionView: async () => view(),
+    subscribe: (listener: (event: RuntimeEventEnvelope) => void) => {
+      listeners.add(listener);
+      return () => listeners.delete(listener);
+    },
+  } as unknown as RuntimeClient;
+  return { client, frames: new TestFrames(), listeners };
 }
 
 function harness(overrides: Partial<RuntimeClient> = {}) {
@@ -291,7 +308,129 @@ test("keeps unseen expert members live-only until their conversation is opened",
   store.dispose();
 });
 
-test("keeps a hidden session's live projection subscribed during session switching", async () => {
+test("keeps a running session live until the run finishes, then releases it", async () => {
+  // 视图卸载时那一轮还在跑:立刻挂起会把在途助手消息的正文一起丢掉 —— journal 里只有
+  // **已完成**的消息,`.text.delta` 本身不落盘,所以切回来会空到 `message.completed`。
+  const { emit, frames, store } = harness();
+  await store.start();
+  emit(envelope(1, { type: "run.started", runId: "run" }));
+  emit(envelope(2, {
+    type: "message.started",
+    message: { ...message("streaming-assistant", "assistant", ""), status: "streaming" },
+  }));
+  emit(envelope(3, { type: "message.text.delta", messageId: "streaming-assistant", delta: "写到一半" }));
+  frames.flush();
+
+  const text = () => {
+    const block = store.getMessage("streaming-assistant")?.blocks[0];
+    return block?.type === "text" ? block.text : null;
+  };
+  assert.equal(store.getMetadataSnapshot().isRunning, true);
+  assert.equal(text(), "写到一半");
+
+  store.release();
+
+  // 卸载之后到的增量仍然落进投影 —— 这正是"运行中先不挂起"换来的东西。
+  emit(envelope(4, { type: "message.text.delta", messageId: "streaming-assistant", delta: "，还有下半句" }));
+  frames.flush();
+  assert.equal(text(), "写到一半，还有下半句");
+
+  // 这一轮结束,这时才真的释放。
+  emit(envelope(5, { type: "session.idle" }));
+  await Promise.resolve();
+  assert.equal(store.getMetadataSnapshot().isRunning, false);
+  assert.equal(store.getMessageCount(), 0);
+});
+
+test("releases an idle session as soon as the view goes away", async () => {
+  const { store } = harness();
+  await store.start();
+  // 注意别在这里发 `message.started` —— 它自己就会把会话标成"在跑"(`isRunning: true`),
+  // 于是走的是上面那条"等跑完再释放"的路。空闲这件事只能用"没有任何运行事件"来表达。
+  assert.equal(store.getMetadataSnapshot().isRunning, false);
+  assert.ok(store.getMessageCount() > 0);
+
+  // 没有在跑的东西就直接释放,不必等到某个事件到来。
+  store.release();
+  assert.equal(store.getMessageCount(), 0);
+});
+
+test("drops a page that arrives after the view was released and reopened", async () => {
+  // 卸载瞬间在途的分页请求,可能在重新打开并把新投影装好之后才回来。它属于**上一份**投影,
+  // 混进去就是两份历史拼在一起。
+  let releasePage: ((page: SessionHistoryPage) => void) | null = null;
+  const withMore = {
+    ...view(),
+    history: { ...view().history, hasMoreBefore: true, nextBeforeCursor: "0" },
+  };
+  const { store } = harness({
+    getSessionHistoryPage: async () =>
+      await new Promise<SessionHistoryPage>((resolve) => {
+        releasePage = resolve;
+      }),
+    getSessionView: async () => withMore,
+  });
+  await store.start();
+  const before = store.getMessageCount();
+
+  const pending = store.loadOlder();
+  await Promise.resolve();
+  store.release();
+  await store.start();
+  assert.equal(store.getMessageCount(), before);
+
+  releasePage?.({
+    hasMoreAfter: false,
+    hasMoreBefore: false,
+    items: [{
+      type: "turn",
+      turn: {
+        anchorMessageId: "older",
+        id: "turn:older",
+        messages: [message("older", "user", "更早的一句")],
+        timestamp: 0,
+      },
+    }],
+    revision: "0",
+  });
+  assert.equal(await pending, 0, "这一页该被丢掉");
+  assert.equal(store.getMessageCount(), before, "旧页不能混进新投影");
+});
+
+test("never evicts a cached store that still has subscribers", async () => {
+  // 有订阅 = 要么正被挂载的视图用着(ThreadView 的 effect 只依赖 store 实例,不会重跑),
+  // 要么正在跑一轮。被淘汰的 store 会 `dispose()` —— 那两种情况都无法自愈。
+  const { listeners, frames, client } = registryHarness();
+  const live = getThreadSessionStore(client, "session-live", (key) => key, frames);
+  await live.start();
+
+  for (let index = 0; index < 40; index += 1)
+    getThreadSessionStore(client, `session-${index}`, (key) => key, frames);
+
+  // 视图卸载,再打开:必须还能重新水合(被淘汰过的 store 会直接早退,永远空着)。
+  live.suspend();
+  await live.start();
+  assert.ok(live.getMessageCount() > 0, "有订阅的 store 不该被淘汰");
+  assert.equal(listeners.size > 0, true);
+  disposeThreadSessionStores(client);
+});
+
+test("evicts an idle store once newer sessions take the slots", async () => {
+  const { frames, client } = registryHarness();
+  const idle = getThreadSessionStore(client, "session-idle", (key) => key, frames);
+  await idle.start();
+  idle.suspend();
+
+  for (let index = 0; index < 40; index += 1)
+    getThreadSessionStore(client, `session-${index}`, (key) => key, frames);
+
+  // 没人订阅的旧 store 该让位 —— 否则缓存会一直涨到退出。
+  await idle.start();
+  assert.equal(idle.getMessageCount(), 0);
+  disposeThreadSessionStores(client);
+});
+
+test("releases a hidden session projection and hydrates it when reopened", async () => {
   const listeners = new Set<(event: RuntimeEventEnvelope) => void>();
   const client = {
     getSessionSnapshot: async () => fullSnapshot(),
@@ -316,14 +455,30 @@ test("keeps a hidden session's live projection subscribed during session switchi
 
   const storeB = getThreadSessionStore(client, "session-b", (key) => key, frames);
   await storeB.start();
+  storeA.suspend();
   emit({ ...envelope(3, { type: "message.text.delta", messageId: "streaming-assistant", delta: " and after switch" }), sessionId: "session-a" });
   frames.flush();
 
-  const textBlock = storeA.getMessage("streaming-assistant")?.blocks[0];
-  assert.equal(textBlock?.type, "text");
-  assert.equal((textBlock as { text: string }).text, "before switch and after switch");
+  assert.equal(storeA.getMessageCount(), 0);
+  await storeA.start();
+  assert.equal(storeA.getMessage("assistant")?.id, "assistant");
   storeA.dispose();
   storeB.dispose();
+});
+
+test("suspending an active store cancels hydration from the old view", async () => {
+  let resolveView: ((value: SessionViewSnapshot) => void) | undefined;
+  const { store } = harness({
+    getSessionView: () => new Promise<SessionViewSnapshot>((resolve) => {
+      resolveView = resolve;
+    }),
+  });
+  const loading = store.start();
+  store.suspend();
+  resolveView?.(view());
+  await loading;
+  assert.equal(store.getMessageCount(), 0);
+  store.dispose();
 });
 
 test("marks a real gap and recovers atomically only after idle", async () => {

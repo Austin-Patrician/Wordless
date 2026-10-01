@@ -228,6 +228,13 @@ app.whenReady().then(async () => {
       designBuilds,
       designExporter,
       new ElectronDesignClipboard(),
+      {
+        dispose: () => {
+          rasterPool.cancelAll();
+          designRaster?.releaseIdle();
+          designViewHost?.dispose();
+        },
+      },
     ),
   });
   const officeResourcesPath = app.isPackaged ? process.resourcesPath : path.resolve(__dirname, "../../resources");

@@ -184,6 +184,8 @@ export class ThreadSessionStore {
   private disposed = false;
   private hydrating = false;
   private recoveryGeneration = 0;
+  /** 视图已经卸载,但当时这一轮还在跑 —— 跑完再释放(见 `release()`)。 */
+  private releaseWhenIdle = false;
   private runtimeInstanceId: string | null = null;
   private cursorRunId: string | undefined;
   private cursorSequence: number | null = null;
@@ -335,6 +337,9 @@ export class ThreadSessionStore {
 
   async start(initialPendingTurn?: PendingThreadTurn | null): Promise<void> {
     if (this.unsubscribeRuntime || this.disposed) return;
+    // 又有人看它了:撤掉上一次卸载时留下的"跑完就释放"。
+    this.releaseWhenIdle = false;
+    const generation = ++this.recoveryGeneration;
     this.hydrating = true;
     this.unsubscribeRuntime = this.runtimeSubscribe((event) => {
       if (event.sessionId !== this.sessionId || this.disposed) return;
@@ -343,7 +348,7 @@ export class ThreadSessionStore {
     });
     try {
       const view = await this.client.getSessionView(this.sessionId);
-      if (this.disposed) return;
+      if (this.disposed || generation !== this.recoveryGeneration) return;
       this.transaction(() => {
         this.installView(view, true);
         if (initialPendingTurn) this.addPendingTurn(initialPendingTurn);
@@ -352,7 +357,7 @@ export class ThreadSessionStore {
       this.hydrating = false;
       for (const event of buffered) this.acceptEnvelope(event);
     } catch (cause) {
-      if (this.disposed) return;
+      if (this.disposed || generation !== this.recoveryGeneration) return;
       this.hydrating = false;
       this.patchMetadata({
         error: cause instanceof Error ? cause.message : String(cause),
@@ -363,9 +368,28 @@ export class ThreadSessionStore {
     }
   }
 
-  dispose(): void {
-    this.disposed = true;
+  /**
+   * 视图卸载时调用:释放历史投影,但保留 Store 实例以便重新打开时复用。
+   *
+   * **运行中就先不释放,等这一轮跑完。** journal 里只有**已完成**的消息,流式的增量只存在于
+   * 这份投影里(`.text.delta` 事件本身不落盘),所以运行中一挂起,切回来那条助手消息的正文
+   * 会一直空到 `message.completed`。代价是"正在跑的那一条"在跑完之前仍占着内存 —— 至多几条,
+   * 而这一条恰好是用户切回来最想看见的。
+   */
+  release(): void {
+    if (this.disposed) return;
+    if (this.metadataSnapshot.isRunning) {
+      this.releaseWhenIdle = true;
+      return;
+    }
+    this.suspend();
+  }
+
+  /** 释放历史投影,但保留 Store 实例以便重新打开时复用。 */
+  suspend(): void {
+    if (this.disposed) return;
     this.recoveryGeneration += 1;
+    this.hydrating = false;
     this.unsubscribeRuntime?.();
     this.unsubscribeRuntime = null;
     if (this.deltaFrame !== null) this.scheduler.cancel(this.deltaFrame);
@@ -375,6 +399,38 @@ export class ThreadSessionStore {
     this.bufferedEvents.length = 0;
     for (const store of this.memberStores.values()) store.dispose();
     this.memberStores.clear();
+    this.seenEventIds.clear();
+    // 在途的分页请求可能在新投影装好之后才回来(见各处的 generation 守卫),这里的标记
+    // 一起清掉,免得一个旧请求的 finally 把新一轮的"正在装载"抹掉。
+    this.loadingBefore = false;
+    this.loadingAfter = false;
+    this.runtimeInstanceId = null;
+    this.cursorRunId = undefined;
+    this.cursorSequence = null;
+    this.clearProjection();
+    this.historySnapshot = EMPTY_HISTORY;
+    this.metadataSnapshot = {
+      ...this.metadataSnapshot,
+      contextUsage: undefined,
+      compactionError: undefined,
+      compactionTrigger: undefined,
+      error: null,
+      expertCollaboration: undefined,
+      extensions: [],
+      isCompacting: false,
+      isRunning: false,
+      loading: true,
+      modelRetry: undefined,
+      needsRehydrate: false,
+      session: null,
+      toolApprovalMode: "manual",
+      turnUsage: undefined,
+    };
+  }
+
+  dispose(): void {
+    this.suspend();
+    this.disposed = true;
     this.publisher.dispose();
   }
 
@@ -481,12 +537,15 @@ export class ThreadSessionStore {
     if (this.loadingBefore || !this.historySnapshot.hasMoreBefore || !this.historySnapshot.nextBeforeCursor)
       return 0;
     this.loadingBefore = true;
+    const generation = this.recoveryGeneration;
     try {
       const previousLength = this.timelineSnapshot.items.length;
       const page = await this.client.getSessionHistoryPage(this.sessionId, {
         before: this.historySnapshot.nextBeforeCursor,
         limit: 24,
       });
+      // 装载期间被挂起/重新水合过:这一页属于**上一份**投影,装进去就是混两份历史。
+      if (this.disposed || generation !== this.recoveryGeneration) return 0;
       this.transaction(() => this.installHistoryPage(page, "prepend"));
       return this.timelineSnapshot.items.length - previousLength;
     } finally {
@@ -498,12 +557,14 @@ export class ThreadSessionStore {
     if (this.loadingAfter || !this.historySnapshot.hasMoreAfter || !this.historySnapshot.nextAfterCursor)
       return 0;
     this.loadingAfter = true;
+    const generation = this.recoveryGeneration;
     try {
       const previousLength = this.timelineSnapshot.items.length;
       const page = await this.client.getSessionHistoryPage(this.sessionId, {
         after: this.historySnapshot.nextAfterCursor,
         limit: 24,
       });
+      if (this.disposed || generation !== this.recoveryGeneration) return 0;
       this.transaction(() => this.installHistoryPage(page, "append"));
       return this.timelineSnapshot.items.length - previousLength;
     } finally {
@@ -517,11 +578,13 @@ export class ThreadSessionStore {
    * branch must disappear instead of being merged.
    */
   async reload(): Promise<void> {
+    const generation = this.recoveryGeneration;
     const [snapshot, view] = await Promise.all([
       this.client.getSessionSnapshot(this.sessionId),
       this.client.getSessionView(this.sessionId),
     ]);
-    if (this.disposed) return;
+    // `installFullSnapshot` 是整份替换:它必须只作用于发起它的那一份投影。
+    if (this.disposed || generation !== this.recoveryGeneration) return;
     this.transaction(() => this.installFullSnapshot(snapshot, view));
   }
 
@@ -564,10 +627,12 @@ export class ThreadSessionStore {
       item.type !== "compaction" && item.turnId === turnId,
     );
     if (existing !== -1) return existing;
+    const generation = this.recoveryGeneration;
     const page = await this.client.getSessionHistoryPage(this.sessionId, {
       aroundTurnId: turnId,
       limit: 24,
     });
+    if (this.disposed || generation !== this.recoveryGeneration) return 0;
     this.installHistoryPage(page, "merge");
     return this.timelineSnapshot.items.findIndex((item) =>
       item.type !== "compaction" && item.turnId === turnId,
@@ -1338,9 +1403,22 @@ export class ThreadSessionStore {
       next[key as keyof ThreadMetadataSnapshot],
     ))) return;
     const loadingChanged = this.metadataSnapshot.loading !== next.loading;
+    const finishedRun = this.releaseWhenIdle && this.metadataSnapshot.isRunning && next.isRunning === false;
     this.metadataSnapshot = next;
     if (loadingChanged) this.publisher.publish("loading");
     this.publishMetadata();
+    /**
+     * 卸载时还在跑的那一轮结束了:现在释放。
+     *
+     * 推到微任务里做,而不是就地 `suspend()` —— 这里是事件分发的中间(还在发布器的事务里),
+     * 而 `suspend()` 会退订、清投影、清缓冲。微任务里再判一次标记:期间用户可能又把这个会话
+     * 打开了(`start()` 会把标记撤掉)。
+     */
+    if (finishedRun) {
+      queueMicrotask(() => {
+        if (this.releaseWhenIdle && !this.disposed) this.suspend();
+      });
+    }
   }
 
   private async rehydrateForRuntimeChange(): Promise<void> {

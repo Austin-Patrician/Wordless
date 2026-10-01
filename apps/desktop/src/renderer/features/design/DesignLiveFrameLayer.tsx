@@ -6,6 +6,8 @@ import { browserOcclusion } from "../browser/occlusion";
 import type { Camera } from "./camera.ts";
 import { liveFrameTarget } from "./live-frame.ts";
 
+let mountedLayers = 0;
+
 /**
  * 把焦点帧交给主进程的原生视图,并在不该有活体时交还给位图。
  *
@@ -42,6 +44,15 @@ export function DesignLiveFrameLayer({
 
   useEffect(() => browserOcclusion.subscribe(setOccluded), []);
 
+  /**
+   * 卸载时要用**当下**的设计路径,而卸载清理只依赖 `[bridge]`(否则换设计时清理会先跑一遍,
+   * 把新设计的活体一起交还)。所以路径走 latest-ref,和 `DesignWorkspace` 里那个同一个理由。
+   */
+  const designPathRef = useRef(designPath);
+  useEffect(() => {
+    designPathRef.current = designPath;
+  }, [designPath]);
+
   const camera: Camera = { x: transform[0], y: transform[1], zoom: transform[2] };
   const containerRect = containerRef.current?.getBoundingClientRect() ?? null;
 
@@ -68,7 +79,7 @@ export function DesignLiveFrameLayer({
   const key =
     target === null
       ? "none"
-      : `${target.frameId}:${target.bounds.x}:${target.bounds.y}:${target.bounds.width}:${target.bounds.height}`;
+      : `${designPath}:${target.frameId}:${target.bounds.x}:${target.bounds.y}:${target.bounds.width}:${target.bounds.height}`;
   const lastReported = useRef<string | null>(null);
 
   useEffect(() => {
@@ -90,10 +101,24 @@ export function DesignLiveFrameLayer({
 
   // 组件卸载(切走工作区、预览关闭)时把活体交还,否则原生视图会留在窗口上。
   useEffect(() => {
+    mountedLayers += 1;
     return () => {
-      void bridge.setDesignLiveFrame({ path: designPath, frameId: null, bounds: null }).catch(() => undefined);
+      mountedLayers = Math.max(0, mountedLayers - 1);
+      // 还有别的层挂在同一份设计上时什么都不做:旧写法在这里无条件上报 `frameId: null`,
+      // 而剩下那一层不会重发它的目标(键没变),于是活体白白消失到下次相机移动。
+      if (mountedLayers !== 0) return;
+      const path = designPathRef.current;
+      queueMicrotask(() => {
+        if (mountedLayers !== 0) return;
+        // 两条都发:第一条保证视图**摘下来**(即使释放那条 IPC 失败也不会留下一块浮在
+        // 界面上的原生视图),第二条把离屏窗口和活体一起销毁,把内存还给系统。
+        void bridge
+          .setDesignLiveFrame({ path, frameId: null, bounds: null })
+          .catch(() => undefined);
+        void Promise.resolve(bridge.disposeDesignResources?.()).catch(() => undefined);
+      });
     };
-  }, [bridge, designPath]);
+  }, [bridge]);
 
   return null;
 }

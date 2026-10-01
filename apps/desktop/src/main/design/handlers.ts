@@ -89,6 +89,8 @@ export interface DesignHandlers {
    * 至多一个 —— 宿主自身的形状就表达了这一点,所以这里没有 id 参数式的多路管理。
    */
   setLiveFrame(input: { path: string; frameId: string | null; bounds: DesignLiveBoundsDto | null }): Promise<boolean>;
+  /** 设计画布卸载时释放活体视图、在途光栅和空闲离屏窗口。 */
+  disposeResources(): void;
   /** 内置风格目录。给画廊画卡片用。 */
   listStyles(): Promise<DesignStyleSummaryDto[]>;
   /** 一套风格的正文(示例页 + 规范)。按 id 现取 —— 列里不带这两份大文本。 */
@@ -123,6 +125,8 @@ export function createDesignHandlers(
   exporter?: DesignExporter,
   /** 剪贴板。不注入就没有"复制"。 */
   clipboard?: DesignClipboard,
+  /** 设计画布关闭时释放主进程资源。 */
+  resources?: { dispose(): void },
 ): DesignHandlers {
   return {
     async listDesigns(input: { root: string }): Promise<DesignSummaryDto[]> {
@@ -383,10 +387,15 @@ export function createDesignHandlers(
       // URL 在主进程拼:渲染层拿到的是一份"帧 id → URL"的映射,它不该知道构造规则。
       const designId = store.registry.register(input.path);
       return await host.focus({
-        id: input.frameId,
+        // 同一个帧 id 可能存在于不同设计,宿主的复用键必须包含设计身份。
+        id: `${designId}:${input.frameId}`,
         url: designFrameUrl(designId, input.frameId),
         bounds: input.bounds,
       });
+    },
+
+    disposeResources(): void {
+      resources?.dispose();
     },
   };
 }

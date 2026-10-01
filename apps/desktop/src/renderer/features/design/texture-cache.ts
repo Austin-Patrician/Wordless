@@ -19,7 +19,7 @@ export interface TextureCacheOptions<THandle> {
 }
 
 export class TextureCache<THandle> {
-  private readonly entries = new Map<string, { handle: THandle; bytes: number; lastUsed: number }>();
+  private readonly entries = new Map<string, { handle: THandle; bytes: number; pixels: number; lastUsed: number }>();
   private readonly disposeHandle: (handle: THandle) => void;
   private readonly limits: LruLimits;
   private readonly now: () => number;
@@ -29,6 +29,7 @@ export class TextureCache<THandle> {
     this.limits = options.limits ?? {
       budgetBytes: DESIGN_CANVAS_BUDGETS.textureByteBudget,
       maxEntries: DESIGN_CANVAS_BUDGETS.maxTextures,
+      maxPixels: DESIGN_CANVAS_BUDGETS.texturePixelBudget,
     };
     this.now = options.now ?? (() => Date.now());
   }
@@ -43,6 +44,12 @@ export class TextureCache<THandle> {
     return total;
   }
 
+  get pixels(): number {
+    let total = 0;
+    for (const entry of this.entries.values()) total += entry.pixels;
+    return total;
+  }
+
   /**
    * 放入一张位图,并按 LRU 淘汰到预算内。
    *
@@ -51,10 +58,10 @@ export class TextureCache<THandle> {
    * 注意新条目自己也可能被立刻淘汰(单张就超过预算):那是有意的,宁可不缓存这一张,
    * 也不越过预算 —— 越过预算的后果是内存无上限增长,而单张放不下的后果只是这一帧反复重光栅。
    */
-  set(key: string, handle: THandle, bytes: number): void {
+  set(key: string, handle: THandle, bytes: number, pixels = 0): void {
     const existing = this.entries.get(key);
     if (existing !== undefined) this.disposeHandle(existing.handle);
-    this.entries.set(key, { handle, bytes: safeBytes(bytes), lastUsed: this.now() });
+    this.entries.set(key, { handle, bytes: safeBytes(bytes), pixels: safePixels(pixels), lastUsed: this.now() });
     this.evict();
   }
 
@@ -80,6 +87,7 @@ export class TextureCache<THandle> {
     const entries: LruEntry[] = [...this.entries].map(([key, entry]) => ({
       key,
       bytes: entry.bytes,
+      pixels: entry.pixels,
       lastUsed: entry.lastUsed,
     }));
     for (const key of lruEvict(entries, this.limits)) {
@@ -93,4 +101,8 @@ export class TextureCache<THandle> {
 
 function safeBytes(bytes: number): number {
   return Number.isFinite(bytes) && bytes > 0 ? bytes : 0;
+}
+
+function safePixels(pixels: number): number {
+  return Number.isFinite(pixels) && pixels > 0 ? pixels : 0;
 }

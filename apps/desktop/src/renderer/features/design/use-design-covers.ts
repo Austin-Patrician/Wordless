@@ -19,6 +19,16 @@ export function useDesignCovers(
   const paths = entries === null ? "" : entries.map((entry) => entry.design.path).join("\n");
 
   useEffect(() => {
+    const activePaths = new Set(paths === "" ? [] : paths.split("\n"));
+    setCovers((current) => {
+      let changed = false;
+      const next = new Map<string, string>();
+      for (const [path, cover] of current) {
+        if (activePaths.has(path)) next.set(path, cover);
+        else changed = true;
+      }
+      return changed ? next : current;
+    });
     if (paths === "") return;
     let active = true;
     for (const path of paths.split("\n")) {

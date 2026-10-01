@@ -214,6 +214,7 @@ import {
   historyCacheEvictions,
   historyRevision,
 } from "./history-cache.ts";
+import { createSingleFlightLoads, type LoadOutcome, type LoadState } from "./history-loader.ts";
 import { withModelRequestHeaders } from "./model-request-headers.ts";
 import { projectSessionTurnVersions } from "./session-branches.ts";
 import {
@@ -1530,6 +1531,15 @@ type CachedSessionHistory = {
   bytes: number;
   projection: SessionHistoryProjection;
   revision: string;
+  /**
+   * 整份快照(含 `messages`)。
+   *
+   * **曾经想把它瘦成"不含 messages"来省内存 —— 实测是 0**(2000 条消息、1000 条 20KB
+   * 工具输出:22.2MB → 22.2MB)。原因是 `createSessionHistoryProjection` 把**同一批消息
+   * 对象**装进了 `timeline[].turn.messages`,而工具输出的截断发生在出页时,所以缓存里那份
+   * 载荷是由 `projection` 持有的,丢字段只省下指针数组(约 8 字节/条)。
+   * 真要瘦身得让投影自己不留全文(投影时就截断 + 工具输出按需回读),那是另一件事。
+   */
   snapshot: SessionSnapshot;
 };
 
@@ -1546,6 +1556,12 @@ export class WordlessRuntime {
   private readonly usageReport: UsageReportService;
   private readonly listeners = new Set<(event: RuntimeEventEnvelope) => void>();
   private readonly historyCache = new Map<string, CachedSessionHistory>();
+  /**
+   * 在途装载(历史投影、会话快照各一)。单飞与"重读到稳定"都在 `history-loader.ts` 里 ——
+   * 那里写着为什么重读**不能**经由同一张表(自等待:永不返回,而且那条记录永久留在表里)。
+   */
+  private readonly historyLoads = createSingleFlightLoads<CachedSessionHistory>();
+  private readonly snapshotLoads = createSingleFlightLoads<SessionSnapshot>();
   private readonly artifactRevisions = new Map<string, string>();
   private readonly runs = new Map<string, ActiveRun>();
   private readonly approvalResolutions = new Map<string, Promise<void>>();
@@ -1638,6 +1654,9 @@ export class WordlessRuntime {
       active.driverSession.dispose();
     }
     this.runs.clear();
+    this.historyCache.clear();
+    this.historyLoads.clear();
+    this.snapshotLoads.clear();
     for (const controller of this.mediaOperations.values()) controller.abort();
     this.mediaOperations.clear();
     this.options.workspaceSearch.dispose();
@@ -2243,6 +2262,15 @@ export class WordlessRuntime {
   }
 
   async getSessionSnapshot(sessionId: string): Promise<SessionSnapshot> {
+    return await this.snapshotLoads.load(sessionId, (state) =>
+      this.buildSessionSnapshot(sessionId, state),
+    );
+  }
+
+  private async buildSessionSnapshot(
+    sessionId: string,
+    state: LoadState,
+  ): Promise<LoadOutcome<SessionSnapshot>> {
     const record = await this.ensureSessionModelForOpen(sessionId);
     const session = await openWordlessSession(record.journalPath);
     const entries = await session.getEntries();
@@ -2479,22 +2507,26 @@ export class WordlessRuntime {
       (message) => !recoveredFailureEntryIds.has(message.id),
     );
     return {
-      session: record,
-      messages: visibleMessages,
-      expertCollaboration: createExpertCollaborationSnapshot(
-        visibleMessages,
-        this.sessionExpertSnapshot(record),
-      ),
-      contextUsage,
-      turnUsage: calculateCurrentTurnUsage(visibleMessages),
-      contextCompactions,
-      isRunning: active?.kind === "prompt",
-      modelRetry: active?.modelRetry,
-      isCompacting: active?.isCompacting ?? false,
-      compactionTrigger: active?.compactionTrigger,
-      toolApprovalMode: record.toolApprovalMode,
-      extensions,
-      turnVersions: serializeTurnVersions(turnVersions),
+      value: {
+        session: record,
+        messages: visibleMessages,
+        expertCollaboration: createExpertCollaborationSnapshot(
+          visibleMessages,
+          this.sessionExpertSnapshot(record),
+        ),
+        contextUsage,
+        turnUsage: calculateCurrentTurnUsage(visibleMessages),
+        contextCompactions,
+        isRunning: active?.kind === "prompt",
+        modelRetry: active?.modelRetry,
+        isCompacting: active?.isCompacting ?? false,
+        compactionTrigger: active?.compactionTrigger,
+        toolApprovalMode: record.toolApprovalMode,
+        extensions,
+        turnVersions: serializeTurnVersions(turnVersions),
+      },
+      // 装载期间被失效:这一份可能缺了那条正在写的消息,交给装载器重读(有上限)。
+      stable: state.valid,
     };
   }
 
@@ -3620,7 +3652,7 @@ export class WordlessRuntime {
     if (!tip)
       throw new Error("The requested response version does not exist");
     await session.moveTo(tip);
-    this.historyCache.delete(sessionId);
+    this.invalidateHistoryCache(sessionId);
   }
 
   async cancelSession(sessionId: string): Promise<void> {
@@ -3758,8 +3790,15 @@ export class WordlessRuntime {
    * user has explicitly said they are done with them for now.
    */
   private closeArchivedSessionResources(sessionId: string): void {
-    this.historyCache.delete(sessionId);
+    this.invalidateHistoryCache(sessionId);
     this.artifactRevisions.delete(sessionId);
+  }
+
+  private invalidateHistoryCache(sessionId: string): void {
+    // 在途装载一起作废:它读的是写之前的状态,结果不作数,也不该再被共享。
+    this.historyLoads.invalidate(sessionId);
+    this.snapshotLoads.invalidate(sessionId);
+    this.historyCache.delete(sessionId);
   }
 
   setSessionAccess(
@@ -3824,7 +3863,7 @@ export class WordlessRuntime {
       next,
       interactionMode === "plan" ? "planning" : "off",
     );
-    this.historyCache.delete(sessionId);
+    this.invalidateHistoryCache(sessionId);
     return next;
   }
 
@@ -3880,7 +3919,7 @@ export class WordlessRuntime {
         appendCustomEntry(customType: string, data?: unknown): Promise<string>;
       }
     ).appendCustomEntry(CLARIFICATION_ANSWER_JOURNAL_TYPE, answer);
-    this.historyCache.delete(sessionId);
+    this.invalidateHistoryCache(sessionId);
     const submission: UserMessageSubmission = {
       messageId: randomUUID(),
       submittedAt: Date.now(),
@@ -3980,7 +4019,7 @@ export class WordlessRuntime {
       this.database.deleteMediaProject(sessionId);
     this.database.clearTaskSession(sessionId);
     this.database.deleteSession(sessionId);
-    this.historyCache.delete(sessionId);
+    this.invalidateHistoryCache(sessionId);
     this.artifactRevisions.delete(sessionId);
     if (session.workbenchId === "media-canvas")
       this.emitApp({ type: "media.project.changed", sessionId });
@@ -5640,7 +5679,7 @@ export class WordlessRuntime {
         isError: true,
       });
     }
-    this.historyCache.delete(sessionId);
+    this.invalidateHistoryCache(sessionId);
   }
 
   private async persistSubagentFileChanges(
@@ -5709,7 +5748,7 @@ export class WordlessRuntime {
         message: event.message,
       });
     if (event.type === "message.completed") {
-      this.historyCache.delete(sessionId);
+      this.invalidateHistoryCache(sessionId);
       void this.refreshContextUsage(sessionId, active);
     }
     if (event.type === "tool.started") {
@@ -5730,7 +5769,7 @@ export class WordlessRuntime {
         input: event.input,
         ...(event.source ? { source: event.source } : {}),
       });
-      this.historyCache.delete(sessionId);
+      this.invalidateHistoryCache(sessionId);
       this.emit(sessionId, active, event);
     }
     if (event.type === "tool.updated") {
@@ -5760,7 +5799,7 @@ export class WordlessRuntime {
         });
       }
       this.invalidateSessionWorkspaceSearch(sessionId);
-      this.historyCache.delete(sessionId);
+      this.invalidateHistoryCache(sessionId);
       this.emit(sessionId, active, event);
       if (this.requireSession(sessionId).workbenchId === "conversation")
         void this.refreshSessionArtifacts(sessionId, active);
@@ -5790,11 +5829,11 @@ export class WordlessRuntime {
       }
     }
     if (event.type === "approval.requested") {
-      this.historyCache.delete(sessionId);
+      this.invalidateHistoryCache(sessionId);
       this.emit(sessionId, active, event);
     }
     if (event.type === "approval.resolved") {
-      this.historyCache.delete(sessionId);
+      this.invalidateHistoryCache(sessionId);
       this.emit(sessionId, active, event);
     }
     if (event.type === "user-request.requested")
@@ -5810,7 +5849,7 @@ export class WordlessRuntime {
     if (event.type === "context.compaction.completed") {
       active.isCompacting = false;
       active.compactionTrigger = undefined;
-      this.historyCache.delete(sessionId);
+      this.invalidateHistoryCache(sessionId);
       this.emit(sessionId, active, event);
       void this.refreshContextUsage(sessionId, active);
     }
@@ -6127,7 +6166,7 @@ export class WordlessRuntime {
       await journal.appendThinkingLevelChange(thinkingLevel);
     const next = { ...session, model, thinkingLevel, updatedAt: Date.now() };
     this.database.upsertSession(next);
-    this.historyCache.delete(sessionId);
+    this.invalidateHistoryCache(sessionId);
     return next;
   }
 
@@ -6143,8 +6182,31 @@ export class WordlessRuntime {
       this.historyCache.set(sessionId, cached);
       return cached;
     }
+    return await this.historyLoads.load(sessionId, (state) =>
+      this.readSessionHistory(sessionId, state),
+    );
+  }
+
+  /**
+   * 读一次历史投影。
+   *
+   * 重读由装载器负责("同一个装载对象的下一轮"),这里只回答**这一份是否稳定**:读的过程中
+   * 没被失效,而且读前读后的修订号一致。
+   *
+   * 不稳定的那一份**不进缓存** —— 缓存是按修订号命中的,写进去就等于让后面的调用方读到一份
+   * 与 key 不符的投影。交给调用方是安全的:它要的就是一份历史,而这一份是当下最新的。
+   */
+  private async readSessionHistory(
+    sessionId: string,
+    state: LoadState,
+  ): Promise<LoadOutcome<CachedSessionHistory>> {
+    const record = this.requireSession(sessionId);
+    const details = await stat(record.journalPath);
+    const revision = historyRevision(details);
     const snapshot = await this.getSessionSnapshot(sessionId);
-    const next: CachedSessionHistory = {
+    const latestDetails = await stat(record.journalPath);
+    const latestRevision = historyRevision(latestDetails);
+    const history: CachedSessionHistory = {
       projection: createSessionHistoryProjection(
         snapshot.messages,
         snapshot.contextCompactions,
@@ -6156,16 +6218,21 @@ export class WordlessRuntime {
       ),
       revision,
       snapshot,
-      bytes: details.size * HISTORY_BYTES_PER_FILE_BYTE,
+      bytes: latestDetails.size * HISTORY_BYTES_PER_FILE_BYTE,
     };
+    const stable = state.valid && latestRevision === revision;
+    if (stable) this.writeHistoryCache(sessionId, history);
+    return { stable, value: history };
+  }
+
+  /** 写进缓存,并按纯函数给出的名单淘汰(策略本身在 `history-cache.ts`)。 */
+  private writeHistoryCache(sessionId: string, history: CachedSessionHistory): void {
     this.historyCache.delete(sessionId);
-    this.historyCache.set(sessionId, next);
-    // 淘汰策略是纯函数(`history-cache.ts`):这里只负责按它说的删。
+    this.historyCache.set(sessionId, history);
     const evictions = historyCacheEvictions(
       [...this.historyCache].map(([id, item]) => ({ sessionId: id, bytes: item.bytes })),
     );
     for (const id of evictions) this.historyCache.delete(id);
-    return next;
   }
 
   private requireEnabledModel(reference: ModelReference): EnabledModelRecord {

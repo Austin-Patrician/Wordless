@@ -66,3 +66,12 @@ test("总量计算与淘汰判定一致", () => {
   assert.deepEqual(lruEvict(entries, { budgetBytes: 500, maxEntries: 10 }), []);
   assert.deepEqual(lruEvict(entries, { budgetBytes: 499, maxEntries: 10 }), ["a"]);
 });
+
+test("解码像素超出预算时也按 LRU 淘汰", () => {
+
+  const entries = [entry("old", 1, 1), entry("new", 1, 2)].map((item, index) => ({
+    ...item,
+    pixels: index === 0 ? 60 : 50,
+  }));
+  assert.deepEqual(lruEvict(entries, { budgetBytes: 1000, maxEntries: 10, maxPixels: 100 }), ["old"]);
+});

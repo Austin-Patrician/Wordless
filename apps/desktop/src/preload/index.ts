@@ -187,6 +187,7 @@ const wordlessBridge: DesktopBridge = {
     ipcRenderer.invoke("wordless:design:rasterize", input satisfies DesignRasterRequestDto),
   setDesignLiveFrame: (input) =>
     ipcRenderer.invoke("wordless:design:live-frame", input satisfies DesignLiveFrameRequestDto),
+  disposeDesignResources: () => ipcRenderer.invoke("wordless:design:dispose-resources"),
   listDesignStyles: () => ipcRenderer.invoke("wordless:design:styles"),
   getDesignStyleDetail: (input) =>
     ipcRenderer.invoke("wordless:design:style-detail", input satisfies DesignStyleDetailRequestDto),
