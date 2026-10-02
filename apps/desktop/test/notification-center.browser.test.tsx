@@ -12,21 +12,24 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const getHostEnvironmentFacts = vi.fn();
 const openExternalUrl = vi.fn(async () => {});
-const client = { getHostEnvironmentFacts, openExternalUrl };
+let cloudSyncSnapshot: unknown = null;
+const getCloudSyncSnapshot = vi.fn(async () => cloudSyncSnapshot);
+const subscribeHost = vi.fn(() => () => {});
+const client = { getHostEnvironmentFacts, getCloudSyncSnapshot, openExternalUrl, subscribeHost };
 
-let updateSnapshot: unknown = null;
-
-vi.mock("../src/renderer/platform/desktop-update", () => ({
-  useOptionalUpdateSnapshot: () => updateSnapshot,
-}));
 vi.mock("../src/renderer/shared/runtime", () => ({
   useRuntime: () => ({ snapshot: null }),
   useRuntimeClient: () => client,
 }));
 
 const { messages } = await import("../src/renderer/shared/i18n.ts");
+const dismissNotice = vi.fn(async () => {});
 vi.mock("../src/renderer/shared/preferences", () => ({
-  usePreferences: () => ({ t: (key: string): string => (messages["zh-CN"] as Record<string, string>)[key] ?? key }),
+  usePreferences: () => ({
+    t: (key: string): string => (messages["zh-CN"] as Record<string, string>)[key] ?? key,
+    dismissedNotices: {},
+    dismissNotice,
+  }),
 }));
 
 const { NotificationCenter } = await import("../src/renderer/features/workbench/NotificationCenter.tsx");
@@ -45,10 +48,14 @@ const FACTS = {
 };
 
 async function press(element: HTMLElement): Promise<void> {
-  // Radix 的 Popover 需要指针事件,单纯 click 不展开。
   for (const type of ["pointerenter", "pointerdown", "pointerup", "click"]) {
     element.dispatchEvent(new MouseEvent(type, { bubbles: true, cancelable: true }));
   }
+}
+
+/** 面板是 Dialog:点触发器就挂载到 body 上。 */
+function panel(): HTMLElement | null {
+  return document.querySelector('[role="dialog"]');
 }
 
 describe("通知中心", () => {
@@ -61,8 +68,9 @@ describe("通知中心", () => {
     document.body.append(container);
     root = createRoot(container);
     onOpenSettings.mockClear();
-    updateSnapshot = null;
+    dismissNotice.mockClear();
     getHostEnvironmentFacts.mockReset();
+    cloudSyncSnapshot = null;
   });
 
   afterEach(() => {
@@ -88,7 +96,31 @@ describe("通知中心", () => {
     await act(async () => {
       await press(container.querySelector("button")!);
     });
+    expect(panel()).not.toBeNull();
     expect(document.body.textContent).toContain(zh("noticeEmpty"));
+  });
+
+  it("面板固定在右上角,而且列表自己滚动(条数再多也不把面板撑出屏幕)", async () => {
+    getHostEnvironmentFacts.mockResolvedValue({ ...FACTS, shell: null } as never);
+    await render();
+    await act(async () => {
+      await press(container.querySelector("button")!);
+    });
+
+    const dialog = panel()!;
+    // 位置:右上角固定,而不是"挂在触发图标上的浮层"。
+    expect(dialog.className).toContain("fixed");
+    expect(dialog.className).toContain("right-3");
+    expect(dialog.className).toContain("top-12");
+    expect(dialog.className).toContain("max-h-[min(460px,calc(100vh-5rem))]");
+    // 面板必须有**存在**的背景令牌:`bg-popover` 在 Wordless 的令牌表里不存在,用了等于透明,
+    // 面板与背景糊在一起(这一条就是这么被发现的)。
+    expect(dialog.className).toContain("bg-card");
+    expect(dialog.className).not.toContain("bg-popover");
+    // 卡片与面板要能分开:面板 card(白),卡片 muted(浅灰)。
+    expect(dialog.querySelector("li")?.className).toContain("bg-muted");
+    // 滚动落在列表上,不是整个面板。
+    expect(dialog.querySelector("ul")?.className).toContain("overflow-y-auto");
   });
 
   it("命令行缺失:角标是数字,点开是警告 + 通往设置", async () => {
@@ -112,28 +144,66 @@ describe("通知中心", () => {
     expect(onOpenSettings).toHaveBeenCalledWith("environment");
   });
 
-  it("有新版本:信息类提醒,通往「关于与更新」", async () => {
-    getHostEnvironmentFacts.mockResolvedValue(FACTS as never);
-    updateSnapshot = { state: "available", currentVersion: "0.1.0", availableVersion: "0.2.0" };
+  it("环境 + 云同步都有时角标是 2(更新不进这里 —— 它有自己的横幅)", async () => {
+    getHostEnvironmentFacts.mockResolvedValue({ ...FACTS, node: { found: false, source: "none" } } as never);
+    cloudSyncSnapshot = { enabled: true, status: "error", lastSyncAt: null, lastError: "boom", pendingCount: 0, conflicts: [], accountEmail: null };
     await render();
+    expect(badge()).toBe("2");
+  });
+});
 
-    expect(badge()).toBe("1");
+describe("已读(知道了)", () => {
+  let container: HTMLDivElement;
+  let root: Root;
+
+  beforeEach(() => {
+    container = document.createElement("div");
+    document.body.append(container);
+    root = createRoot(container);
+    dismissNotice.mockClear();
+    getHostEnvironmentFacts.mockReset();
+    cloudSyncSnapshot = null;
+    getHostEnvironmentFacts.mockResolvedValue({ ...FACTS, shell: null } as never);
+  });
+
+  afterEach(() => {
+    act(() => root.unmount());
+    container.remove();
+  });
+
+  it("每条通知有 icon-only 的「知道了」,点了就把 id + 内容指纹记下来", async () => {
+    await act(async () => {
+      root.render(<NotificationCenter onOpenSettings={vi.fn()} />);
+    });
     await act(async () => {
       await press(container.querySelector("button")!);
     });
-    expect(document.body.textContent).toContain("0.2.0");
 
-    const action = Array.from(document.querySelectorAll("button")).find((button) => (button.textContent ?? "").includes(zh("noticeOpenUpdate")));
+    const dismiss = document.querySelector(`[aria-label="${zh("noticeDismiss")}"]`);
+    expect(dismiss).not.toBeNull();
+    // 内容是空的(icon-only)才是 icon-only 按钮。
+    expect(dismiss?.textContent?.trim() ?? "").toBe("");
+
     await act(async () => {
-      await press(action!);
+      await press(dismiss as HTMLElement);
     });
-    expect(onOpenSettings).toHaveBeenCalledWith("about");
+    // 记的是"这一条 + 它的内容":内容变了下次会重新出现(判定见 app-notices 的 visibleNotices)。
+    expect(dismissNotice).toHaveBeenCalledTimes(1);
+    expect(dismissNotice.mock.calls[0]?.[0]).toBe("environment:incomplete");
+    expect(typeof dismissNotice.mock.calls[0]?.[1]).toBe("string");
   });
 
-  it("两件事都有时角标是 2", async () => {
-    getHostEnvironmentFacts.mockResolvedValue({ ...FACTS, node: { found: false, source: "none" } } as never);
-    updateSnapshot = { state: "available", currentVersion: "0.1.0", availableVersion: "0.2.0" };
-    await render();
-    expect(badge()).toBe("2");
+  it("头部有关闭按钮,而且**不是**那个会压住内容的默认绝对定位按钮", async () => {
+    await act(async () => {
+      root.render(<NotificationCenter onOpenSettings={vi.fn()} />);
+    });
+    await act(async () => {
+      await press(container.querySelector("button")!);
+    });
+    const close = document.querySelector(`[aria-label="${zh("noticeClose")}"]`);
+    expect(close).not.toBeNull();
+    const dialog = document.querySelector('[role="dialog"]')!;
+    // 头部那一行里就有关闭按钮:位置由布局决定,不会和内容重叠。
+    expect(dialog.firstElementChild?.contains(close)).toBe(true);
   });
 });

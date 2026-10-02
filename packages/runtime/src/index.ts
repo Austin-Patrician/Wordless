@@ -699,6 +699,7 @@ const DEFAULT_PREFERENCES = (defaultWorkspaceRoot: string): AppPreferences => ({
     cache: true,
     granularity: "text",
   },
+  dismissedNotices: {},
 });
 
 function connectionSecretId(connectionId: string): string {

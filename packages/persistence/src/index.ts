@@ -9,7 +9,7 @@ import {
   type SessionStorage,
   type SessionTreeEntry,
 } from "@wordless/agent";
-import { normalizeShortcutBindings, normalizeSidebarPreferences } from "@wordless/domain";
+import { normalizeDismissedNotices, normalizeShortcutBindings, normalizeSidebarPreferences } from "@wordless/domain";
 import type {
   AppPreferences,
   AutomationRun,
@@ -97,6 +97,7 @@ export class WordlessDatabase {
           ...defaults.ocr,
           ...(typeof stored.ocr === "object" && stored.ocr !== null && !Array.isArray(stored.ocr) ? stored.ocr : {}),
         },
+        dismissedNotices: normalizeDismissedNotices(stored.dismissedNotices ?? defaults.dismissedNotices),
         security: {
           ...defaults.security,
           ...(typeof stored.security === "object" && stored.security !== null && !Array.isArray(stored.security) ? stored.security : {}),

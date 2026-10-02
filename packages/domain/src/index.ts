@@ -1439,6 +1439,23 @@ export function normalizeOcrPreferences(value: unknown): OcrPreferences {
   };
 }
 
+/**
+ * 已"知道了"的通知:id → **内容指纹**。
+ *
+ * 存指纹而不是布尔:同一条通知**内容变了**(新的错误原文、版本号变了)就该重新出现 —— 否则
+ * 用户忽略过一次旧错误,之后所有新错误都会被一起吞掉。
+ */
+export type DismissedNotices = Record<string, string>;
+
+export function normalizeDismissedNotices(value: unknown): DismissedNotices {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return {};
+  const entries = Object.entries(value as Record<string, unknown>).filter(
+    (entry): entry is [string, string] => typeof entry[1] === "string" && entry[0].length > 0 && entry[0].length <= 200,
+  );
+  // 上限是防呆:这是一份"忽略过的东西"的名单,不该无限长。
+  return Object.fromEntries(entries.slice(-50));
+}
+
 export interface AppPreferences {
   locale: "zh-CN" | "en-US";
   theme: "light" | "dark" | "system";
@@ -1454,6 +1471,7 @@ export interface AppPreferences {
   shortcuts: ShortcutPreferences;
   sidebar: SidebarPreferences;
   ocr: OcrPreferences;
+  dismissedNotices: DismissedNotices;
 }
 
 /** Languages offered for translation; the label is resolved by the interface locale. */

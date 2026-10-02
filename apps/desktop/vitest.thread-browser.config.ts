@@ -138,6 +138,8 @@ export default defineConfig({
       // 端到端:真模型 + 真 wasm(慢,见文件头的说明)。
       "test/ocr-engine.browser.test.tsx",
       "test/notification-center.browser.test.tsx",
+      // 工具图标映射(漏一条映射是静默的:那行工具会变成通用扳手)。
+      "test/tool-icon-map.browser.test.tsx",
     ],
   },
 });

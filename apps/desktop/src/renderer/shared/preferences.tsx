@@ -4,6 +4,7 @@ import type { Locale, ThemeMode } from "./models";
 import { useRuntime } from "./runtime";
 import {
   normalizeShortcutBindings,
+  normalizeDismissedNotices,
   normalizeOcrPreferences,
   normalizeSidebarPreferences,
   SIDEBAR_PINNED_LIMIT_DEFAULT,
@@ -12,6 +13,7 @@ import {
   type SecurityPreferences,
   type ShortcutBindings,
   type ShortcutPreferences,
+  type DismissedNotices,
   type OcrPreferences,
   type SidebarPreferences,
   type TranslationPreferences,
@@ -40,6 +42,7 @@ const defaultShortcuts: ShortcutPreferences = { bindings: {} };
 /** Nothing arranged yet: the sidebar falls back to its built-in split. */
 const defaultSidebar: SidebarPreferences = { layout: { pinned: [], more: [] }, pinnedLimit: SIDEBAR_PINNED_LIMIT_DEFAULT };
 const defaultOcr: OcrPreferences = { cache: true, granularity: "text" };
+const defaultDismissed: DismissedNotices = {};
 
 type Preferences = {
   locale: Locale;
@@ -53,6 +56,7 @@ type Preferences = {
   shortcuts: ShortcutPreferences;
   sidebar: SidebarPreferences;
   ocr: OcrPreferences;
+  dismissedNotices: DismissedNotices;
   setLocale: (locale: Locale) => void;
   setTheme: (theme: ThemeMode) => void;
   setFontScale: (fontScale: number) => void;
@@ -68,6 +72,8 @@ type Preferences = {
   setSidebar: (sidebar: SidebarPreferences) => Promise<void>;
   /** 文字识别的选项(缓存开关、输出粒度)。 */
   setOcr: (ocr: OcrPreferences) => Promise<void>;
+  /** 把一条通知标记为"知道了"(`id` → 内容指纹;内容变了会重新出现)。 */
+  dismissNotice: (id: string, fingerprint: string) => Promise<void>;
   t: (key: MessageKey) => string;
 };
 
@@ -86,6 +92,7 @@ export function PreferencesProvider({ children }: { children: ReactNode }) {
   const [shortcuts, setShortcutPreferences] = useState<ShortcutPreferences>(defaultShortcuts);
   const [sidebar, setSidebarPreferences] = useState<SidebarPreferences>(defaultSidebar);
   const [ocr, setOcrPreferences] = useState<OcrPreferences>(defaultOcr);
+  const [dismissedNotices, setDismissedNotices] = useState<DismissedNotices>(defaultDismissed);
 
   useEffect(() => {
     if (!snapshot) return;
@@ -100,6 +107,7 @@ export function PreferencesProvider({ children }: { children: ReactNode }) {
     setShortcutPreferences(snapshot.preferences.shortcuts ?? defaultShortcuts);
     setSidebarPreferences(snapshot.preferences.sidebar ?? defaultSidebar);
     setOcrPreferences(normalizeOcrPreferences(snapshot.preferences.ocr));
+    setDismissedNotices(normalizeDismissedNotices(snapshot.preferences.dismissedNotices));
   }, [snapshot]);
 
   useEffect(() => {
@@ -134,6 +142,7 @@ export function PreferencesProvider({ children }: { children: ReactNode }) {
       security,
       appearance,
       ocr,
+      dismissedNotices,
       translation,
       shortcuts,
       sidebar,
@@ -178,6 +187,11 @@ export function PreferencesProvider({ children }: { children: ReactNode }) {
         const nextShortcuts: ShortcutPreferences = { bindings: normalizeShortcutBindings(nextBindings) };
         setShortcutPreferences(nextShortcuts);
         if (snapshot && client) await client.setPreferences({ ...snapshot.preferences, shortcuts: nextShortcuts });
+      },
+      dismissNotice: async (id, fingerprint) => {
+        const next = normalizeDismissedNotices({ ...dismissedNotices, [id]: fingerprint });
+        setDismissedNotices(next);
+        if (snapshot && client) await client.setPreferences({ ...snapshot.preferences, dismissedNotices: next });
       },
       setOcr: async (nextOcr) => {
         // 与 sidebar 同一条纪律:先规范化再落盘,界面渲染的和磁盘上的是同一个形状。

@@ -41,6 +41,7 @@ import designStyleApplyIcon from "../../../icons/common-icons/design_style_apply
 import designStyleListIcon from "../../../icons/common-icons/design_style_list.svg";
 import deepThinkingIcon from "../../../icons/common-icons/深度思考.svg";
 import editIcon from "../../../icons/common-icons/edit.svg";
+import extractTextFromImageIcon from "../../../icons/common-icons/extract_text_from_image.svg";
 import findIcon from "../../../icons/common-icons/find.svg";
 import folderIcon from "../../../icons/common-icons/floder.svg";
 import grepIcon from "../../../icons/common-icons/grep.svg";
@@ -56,7 +57,6 @@ import researchValidateIcon from "../../../icons/common-icons/research_validate.
 import planIcon from "../../../icons/common-icons/plan.svg";
 import updatePlanIcon from "../../../icons/common-icons/update-plan.svg";
 import writeIcon from "../../../icons/common-icons/Write.svg";
-import extractTextFromImageIcon from "../../../icons/common-icons/extract_text_from_image.svg";
 import terminalBashIcon from "../../../icons/common-icons/terminal-bash.svg";
 import { ConnectorIcon } from "../../shared/ConnectorIcon";
 import {
