@@ -1,9 +1,10 @@
-import { access, chmod, mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { access, chmod, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { execFile as execFileCallback } from "node:child_process";
 import { createHash } from "node:crypto";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
+import { renameDirectory } from "./rename-directory.mjs";
 
 /**
  * 打包期把一份**可重定位的 CPython** 放进 `resources/python/<platform>-<arch>/`。
@@ -143,9 +144,11 @@ try {
   }
 
   await rm(directory, { recursive: true, force: true });
-  await mkdir(new URL(`python/${key}/`, resources), { recursive: true });
+  // 只建**父目录**:目标目录本身必须不存在 —— Windows 的 rename 不能覆盖已存在的目录
+  // (先 mkdir 再 rename 上去必然 EPERM,详见 rename-directory.mjs)。
+  await mkdir(new URL("python/", resources), { recursive: true });
   // 顶层 `python/` 目录去掉,让落盘结构就是 `<dir>/bin/python3`(与 POSIX 约定一致)。
-  await rename(extracted, fileURLToPath(directory));
+  await renameDirectory(extracted, fileURLToPath(directory));
   if (platform !== "win32") await chmod(interpreter, 0o755);
 
   // 解压出来的东西**当场跑一次**:宁可在这里失败,也不要让用户拿到一棵跑不起来的树。

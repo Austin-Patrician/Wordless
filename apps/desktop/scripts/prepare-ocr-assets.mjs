@@ -1,10 +1,11 @@
-import { access, mkdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
+import { access, mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { execFile as execFileCallback } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { renameDirectory } from "./rename-directory.mjs";
 import { promisify } from "node:util";
 
 /**
@@ -236,8 +237,8 @@ try {
   await rm(modelsDirectory, { recursive: true, force: true });
   await rm(ortDirectory, { recursive: true, force: true });
   await mkdir(new URL("ocr/", resources), { recursive: true });
-  await rename(join(staging, "models"), fileURLToPath(modelsDirectory));
-  await rename(join(staging, "ort"), fileURLToPath(ortDirectory));
+  await renameDirectory(join(staging, "models"), fileURLToPath(modelsDirectory));
+  await renameDirectory(join(staging, "ort"), fileURLToPath(ortDirectory));
   await rm(missingFile, { force: true });
   await writeFile(versionFile, `${lock.modelSet}:${lock.engine}:${lock.onnxruntimeWeb}\n`, "utf8");
   console.log(`Prepared OCR assets (${lock.modelSet}) with onnxruntime-web ${installed} from ${fromDirectory ? "a local directory" : mirror}.`);
