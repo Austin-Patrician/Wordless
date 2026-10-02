@@ -26,6 +26,8 @@ apps/desktop/resources/python/*
 !apps/desktop/resources/python/.gitkeep
 apps/desktop/resources/ocr/*
 !apps/desktop/resources/ocr/.gitkeep
+# 打包期中转(见 prepare-*-assets 脚本:必须和目标同卷,所以落在 resources/ 下)
+apps/desktop/resources/.build-staging-*/
 
 # Local high-resolution sources; optimized website models are committed from public/glb.
 apps/website/assets/glb-source/

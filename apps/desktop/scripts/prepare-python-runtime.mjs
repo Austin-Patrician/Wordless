@@ -1,7 +1,6 @@
 import { access, chmod, mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { execFile as execFileCallback } from "node:child_process";
 import { createHash } from "node:crypto";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
@@ -114,7 +113,16 @@ async function downloadTo(destination) {
   await writeFile(destination, Buffer.from(await response.arrayBuffer()));
 }
 
-const staging = join(tmpdir(), `wordless-python-${key}-${Date.now()}`);
+// 中转目录必须和目标**在同一个卷**上。
+//
+// Windows 上 `rename` 落到 MoveFileEx(带 MOVEFILE_REPLACE_EXISTING、不带
+// MOVEFILE_COPY_ALLOWED),跨卷直接返回 ERROR_NOT_SAME_DEVICE → Node 报 `EXDEV`。
+// GitHub 的 windows runner 恰好是这种布局:工作区在 `D:`、`TEMP` 在 `C:`,于是
+// `tmpdir()` 里的解压结果搬不到 `resources/` 下(2026-10 的 Windows 构建就是这么挂的)。
+//
+// 所以中转放在 `resources/` 下 —— 和 prepare-officecli-assets.mjs 同一个理由,
+// 顺便也不再往 runner 那块较小的 C: 卷上写 68MB。
+const staging = join(fileURLToPath(resources), `.build-staging-python-${key}-${Date.now()}`);
 await mkdir(staging, { recursive: true });
 try {
   const archive = fromArchive
@@ -141,7 +149,9 @@ try {
   if (platform !== "win32") await chmod(interpreter, 0o755);
 
   // 解压出来的东西**当场跑一次**:宁可在这里失败,也不要让用户拿到一棵跑不起来的树。
-  const { stdout } = await execFile(interpreter.pathname, ["--version"], { timeout: 30_000 });
+  // `URL.pathname` 在 Windows 上会带一个前导斜杠(`/D:/…/python.exe`),那不是合法的
+  // 可执行路径 —— 转原生路径必须用 fileURLToPath。
+  const { stdout } = await execFile(fileURLToPath(interpreter), ["--version"], { timeout: 30_000 });
   if (!stdout.includes(lock.pythonVersion)) {
     throw new Error(`Bundled Python reported "${stdout.trim()}", expected ${lock.pythonVersion}`);
   }

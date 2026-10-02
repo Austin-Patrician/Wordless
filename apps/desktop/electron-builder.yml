@@ -20,14 +20,26 @@ asarUnpack:
   - node_modules/@tailwindcss/**/*
   - node_modules/lightningcss*/**/*
 extraResources:
+  # `__pycache__` / `.pyc` 是**运行时产物**,不是资产的一部分:内置 Python 树在开发机上跑过一次
+  # 就会长出几千个 .pyc(实测一个本地包因此从 68MB 涨到 313MB),而 CI 全新解压出来是干净的 ——
+  # 不排掉的话"同一个 commit 本地打的包和 CI 打的包不一样大"。技能目录里那两个 .pyc 也一样。
+  # 排掉之后 Python 首次 import 时自己重编译,没有功能损失。
   - from: resources/skills
     to: skills
+    filter:
+      - "**/*"
+      - "!**/__pycache__/**"
+      - "!**/*.pyc"
   - from: resources/officecli/${os}-${arch}
     to: officecli/${os}-${arch}
   # 内置的可重定位 CPython(打包期准备,见 scripts/prepare-python-runtime.mjs)。
   # 应用**不原地使用**它:首启拷到用户目录再跑,免得改坏签名/撞上不可写的安装目录。
   - from: resources/python/${os}-${arch}
     to: python/${os}-${arch}
+    filter:
+      - "**/*"
+      - "!**/__pycache__/**"
+      - "!**/*.pyc"
   # 内置的文字识别资产(打包期准备,见 scripts/prepare-ocr-assets.mjs)。模型与 wasm 必须
   # 能被渲染器按路径直读,所以放在 asar 外。
   - from: resources/ocr

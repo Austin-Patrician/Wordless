@@ -3,7 +3,6 @@ import { execFile as execFileCallback } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
 import { createRequire } from "node:module";
-import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { promisify } from "node:util";
@@ -189,7 +188,12 @@ if (skip) {
   process.exit(0);
 }
 
-const staging = join(tmpdir(), `wordless-ocr-${Date.now()}`);
+// 同 prepare-python-runtime.mjs:中转目录跟着目标走,不用 `tmpdir()` ——
+// Windows 上跨卷 `rename` 会 EXDEV(工作区在 D:、TEMP 在 C:)。
+//
+// 也不能放进 `resources/ocr/` 里:electron-builder 是**整目录**拷 `resources/ocr` 的,
+// 一次崩溃留下的中转会被原样打进包里。
+const staging = join(fileURLToPath(resources), `.build-staging-ocr-${Date.now()}`);
 await mkdir(staging, { recursive: true });
 try {
   let installed;

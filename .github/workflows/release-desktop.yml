@@ -109,10 +109,11 @@ jobs:
           WORDLESS_GOOGLE_CLIENT_SECRET: ${{ secrets.GOOGLE_OAUTH_CLIENT_SECRET }}
           WORDLESS_SKILLSMP_API_KEY: ${{ secrets.SKILLSMP_API_KEY }}
         run: |
-          node scripts/prepare-officecli-assets.mjs --platform darwin --arch ${{ matrix.arch }}
-          npm run build:renderer
-          npm run build:electron
+          # 用 build:desktop 而不是手写 prepare/renderer/electron 三步:内置 Python、OCR 资产、
+          # OCR 运行器都在里面。手写清单漏过它们(mac 包曾经因此少了文字识别和内置 Python)。
+          npm run build:desktop
           npx electron-builder --config electron-builder.yml --mac --${{ matrix.arch }} --publish never
+          npm run verify:packaged-assets -- release/mac${{ matrix.arch == 'arm64' && '-arm64' || '' }}
           npm run verify:packaged-fff -- release/mac${{ matrix.arch == 'arm64' && '-arm64' || '' }}
       - uses: actions/upload-artifact@v4
         with:
