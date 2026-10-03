@@ -1,0 +1,36 @@
+{
+  "name": "@wordless/web-client",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "build": "vite build",
+    "check": "tsc -p tsconfig.json --noEmit",
+    "dev": "vite",
+    "preview": "vite preview",
+    "test": "node --test test/*.test.ts"
+  },
+  "dependencies": {
+    "@wordless/remote-control": "0.0.0",
+    "@wordless/ui-kit": "0.0.0",
+    "highlight.js": "11.11.1",
+    "katex": "0.16.47",
+    "lucide-react": "1.24.0",
+    "mermaid": "11.16.0",
+    "react": "19.2.7",
+    "react-dom": "19.2.7",
+    "react-markdown": "10.1.0",
+    "rehype-katex": "7.0.1",
+    "remark-gfm": "4.0.1",
+    "remark-math": "6.0.0"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "4.3.2",
+    "@types/react": "19.2.17",
+    "@types/react-dom": "19.2.3",
+    "@vitejs/plugin-react": "6.0.3",
+    "tailwindcss": "4.3.2",
+    "typescript": "5.9.3",
+    "vite": "8.1.4"
+  }
+}

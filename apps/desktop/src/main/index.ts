@@ -52,7 +52,17 @@ import { configureHttpDispatcher } from "./network/http-dispatcher";
 import { applyDesktopProxy, proxyRulesFromEnvironment } from "./proxy/proxy-runtime";
 import { DesktopProxyStore } from "./proxy/proxy-store";
 import { registerProxyIpc } from "./ipc/register-proxy-ipc";
+import { createRuntimeSessionSurface } from "./remote/session-surface";
+import { RemoteAccessService } from "./remote/remote-access-service";
+import { createRemoteAccessStore } from "./remote/remote-access-store";
+import { createRelayMailbox } from "./remote/relay-mailbox";
 import { registerNotificationDefaultsIpc, registerNotificationIpc } from "./ipc/register-notification-ipc";
+import { registerRemoteIpc } from "./ipc/register-remote-ipc";
+import { hostname } from "node:os";
+// `ws` 是 CJS 包:主进程被打成 single-file CJS 时,命名导入曾经是 undefined。
+// 默认导入拿到的是类本身,而 `nodeWebSocketFactory` 三种形状都能吃。
+import WebSocket from "ws";
+import { WebSocketTransport, nodeWebSocketFactory, sha256Hex } from "@wordless/remote-control";
 import { WebhookManager } from "./notifications/webhook/manager";
 import { getProvider, isSupportedKind } from "./notifications/webhook/providers/registry.ts";
 import {
@@ -84,6 +94,7 @@ const userData = prepareUserDataPath();
 app.setPath("userData", userData.path);
 
 let runtime: ReturnType<typeof createDesktopRuntime> | undefined;
+let remoteAccess: RemoteAccessService | undefined;
 let office: OfficeCliService | undefined;
 /** 设计包读写。协议与 IPC 都经它拿注册表,所以必须是同一个实例。 */
 let designStore: DesignStore | undefined;
@@ -299,6 +310,7 @@ app.whenReady().then(async () => {
   const officeResourcesPath = app.isPackaged ? process.resourcesPath : path.resolve(__dirname, "../../resources");
   office = new OfficeCliService({ artifactsRoot: presentationArtifactsRoot, resourcesPath: officeResourcesPath });
   const credentialVault = new ElectronCredentialVault(path.join(userData.path, "credentials.json"));
+  const remoteAccessStore = createRemoteAccessStore({ userDataPath: userData.path, vault: credentialVault });
   const accountNetworkSession = session.fromPartition("wordless-account-network");
   // Chromium networking ignores the proxy environment variables, so each session
   // the app browses through is told explicitly. The two browser partitions are
@@ -442,14 +454,13 @@ app.whenReady().then(async () => {
   await cloudSync.initialize();
   // Everything platform-specific is injected, so the service itself has no
   // Electron import and its rules are testable with fakes.
-  notifications = new DesktopNotificationService(
-    createDesktopNotificationHost({
-      // Late-bound: the window is created further down.
-      getWindow: () => mainWindow,
-      sendHostEvent,
-      sessionTitle: (sessionId) => runtime?.getSnapshot().sessions.find((session) => session.id === sessionId)?.title,
-    }),
-  );
+  const notificationHost = createDesktopNotificationHost({
+    // Late-bound: the window is created further down.
+    getWindow: () => mainWindow,
+    sendHostEvent,
+    sessionTitle: (sessionId) => runtime?.getSnapshot().sessions.find((session) => session.id === sessionId)?.title,
+  });
+  notifications = new DesktopNotificationService(notificationHost);
   registerDesktopNotificationIpc({ notifications });
   // Built before the subscription below, which reads it on every preference change.
   const applicationMenu = new ApplicationMenuController(hostInfo, runtime.getSnapshot().preferences.shortcuts.bindings);
@@ -518,6 +529,51 @@ app.whenReady().then(async () => {
   // instead of blocking the window.
   registerNotificationIpc({ manager: webhookManager });
   registerNotificationDefaultsIpc({ readDefaults, saveDefaults });
+
+  // 远程访问(浏览器客户端配对):偏好进文件、密钥进系统凭据库、每台设备一条中继链路。
+  // 没开的时候它什么都不做 —— 不开端口、不连中继、不订阅运行时。
+  remoteAccess = new RemoteAccessService({
+    surface: createRuntimeSessionSurface({
+      runtime: runtime!,
+      // 与渲染层收到的是同一份事件流,所以远端看到的就是本机看到的。
+      events: { subscribe: (listener) => runtime!.subscribe((envelope) => listener(envelope)) },
+    }),
+    // 设备 id 是"机器名 + 数据目录"的哈希:稳定、可复现,而且**不把机器名交给中继**。
+    // 机器名本身作为展示名发出去(手机要显示"我的电脑")—— 它属于中继可见的元数据,见文档 §6。
+    deviceId: sha256Hex(`${hostname()}:${userData.path}`).slice(0, 16),
+    deviceName: hostname(),
+    readPreferences: () => remoteAccessStore.readPreferences(),
+    writePreferences: (update) => remoteAccessStore.writePreferences(update),
+    secrets: remoteAccessStore.secrets,
+    createTransport: (url, protocols) =>
+      new WebSocketTransport({ url, protocols: [...protocols], factory: nodeWebSocketFactory(WebSocket) }),
+    mailbox: createRelayMailbox(),
+    defaultRelayBaseUrl: process.env.WORDLESS_REMOTE_RELAY ?? undefined,
+    // 有设备接上来就弹一次系统通知。
+    //
+    // 这里**刻意不判断窗口是否在前台**:远程接入是一件安全相关的事,而它很罕见 ——
+    // 用户宁可偶尔多看一眼,也不要不知道自己的电脑正在被远程使用。
+    onDeviceConnected: ({ name }) => {
+      // 通知是"顺带说一声",不是这条链路的一部分:弹不出来(无通知权限、测试环境)也不能影响配对本身。
+      try {
+        if (!notificationHost.notificationsSupported()) return;
+        const notification = notificationHost.createNotification({
+          title: "有设备正在远程使用这台电脑",
+          body: `${name.length === 0 ? "一台手机" : name} 已连接。如果不是你,请到「设置 → 远程连接」解除配对。`,
+        });
+        notification.onClick(() => showWindow());
+        notification.show();
+      } catch (error) {
+        console.error("[remote] 系统通知失败:", error);
+      }
+    },
+  });
+  registerRemoteIpc({ service: remoteAccess });
+  // 先读偏好再开始服务:在那之前 getState() 只能给出默认值。
+  void remoteAccess.start().catch((error: unknown) => {
+    // 原始错误(含栈)打到终端:「设置页那一句」给用户看,这一行给我们查。
+    console.error("[remote] 启动失败:", error);
+  });
   // macOS AppKit synchronously redraws NSStatusItem replicants when the app
   // becomes active or display metrics change. That redraw runs on the main
   // thread and is the source of the focus-return hitch, so the Dock remains
@@ -549,6 +605,8 @@ app.on("window-all-closed", () => {
 });
 
 app.on("before-quit", (event) => {
+  // 断开远端链路,并把未领取的邀请撤回(它只在内存里,进程结束即作废)。
+  void remoteAccess?.stop().catch(() => undefined);
   if (disposing) return;
   event.preventDefault();
   disposing = true;

@@ -25,6 +25,7 @@ export function NotificationCenter({ onOpenSettings }: { onOpenSettings: (page?:
   const client = useRuntimeClient();
   const [environment, setEnvironment] = useState<HostEnvironmentFacts | null>(null);
   const [cloudSync, setCloudSync] = useState<CloudSyncSnapshot | null>(null);
+  const [remoteOnlineDevices, setRemoteOnlineDevices] = useState(0);
   const [open, setOpen] = useState(false);
 
   // 环境事实取一次(与设置页同一来源;宿主那边有节流缓存,代价很小)。取不到就当作"还不知道",
@@ -66,7 +67,31 @@ export function NotificationCenter({ onOpenSettings }: { onOpenSettings: (page?:
   }, [client]);
 
   // 用户"知道了"的那些先摘掉(内容变了会自动回来,见 `visibleNotices`)。
-  const notices = visibleNotices(collectAppNotices({ environment, cloudSync }, t), dismissedNotices);
+  // 远程访问:只关心"有几台在线",所以拉一次状态就够(设备上下线时主进程会弹系统通知)。
+  useEffect(() => {
+    const read = client.getRemoteAccessState;
+    if (typeof read !== "function") return;
+    let active = true;
+    const load = async (): Promise<void> => {
+      try {
+        const state = await read();
+        if (active) setRemoteOnlineDevices(state.devices.filter((device) => device.online).length);
+      } catch {
+        // 读不到就当没有 —— 铃铛不该因为一个来源失败而多出一条假消息。
+      }
+    };
+    void load();
+    const timer = setInterval(() => void load(), 15_000);
+    return () => {
+      active = false;
+      clearInterval(timer);
+    };
+  }, [client]);
+
+  const notices = visibleNotices(
+    collectAppNotices({ environment, cloudSync, remoteAccessOnlineDevices: remoteOnlineDevices }, t),
+    dismissedNotices,
+  );
 
   return (
     <Dialog onOpenChange={setOpen} open={open}>

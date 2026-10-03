@@ -41,7 +41,7 @@ import type {
   UserPromptPart,
   WorkspaceRecord,
 } from "@wordless/domain";
-import type { SessionUsageSnapshot } from "@wordless/protocol";
+import type { RemoteAccessState, RemoteRelayProbeResult, SessionUsageSnapshot } from "@wordless/protocol";
 import type {
   AgentExtensionSnapshot,
   JsonObject,
@@ -152,6 +152,23 @@ export interface DesktopBridge {
   loginGoogle(): Promise<AccountSnapshot>;
   logoutGoogle(): Promise<void>;
   getCloudSyncSnapshot(): Promise<CloudSyncSnapshot>;
+  /** 远程访问的当前状态(开关、中继地址、邀请、已配对设备)。 */
+  getRemoteAccessState(): Promise<RemoteAccessState>;
+  /**
+   * 状态变化时的推送(手机连上、二维码被领取、设备掉线……)。
+   *
+   * 返回退订函数。**设置页必须用它**:只靠打开时取一次,界面会永远停在旧状态。
+   */
+  onRemoteAccessChanged(listener: (state: RemoteAccessState) => void): () => void;
+  setRemoteAccessEnabled(enabled: boolean): Promise<RemoteAccessState>;
+  /** 传 undefined 表示"用回默认中继"。 */
+  setRemoteRelayUrl(relayBaseUrl?: string): Promise<RemoteAccessState>;
+  /** 探一次中继:在生成二维码之前就知道地址通不通。 */
+  testRemoteRelay(relayBaseUrl?: string): Promise<RemoteRelayProbeResult>;
+  createRemoteInvite(): Promise<RemoteAccessState>;
+  withdrawRemoteInvite(): Promise<RemoteAccessState>;
+  revokeRemoteDevice(deviceId: string): Promise<RemoteAccessState>;
+
   enableCloudSync(
     strategy?: CloudSyncInitialStrategy,
   ): Promise<CloudSyncSnapshot>;
@@ -769,6 +786,14 @@ export const requiredMethods: Array<Exclude<keyof DesktopBridge, "version">> = [
   "logoutGoogle",
   "getCloudSyncSnapshot",
   "enableCloudSync",
+  "getRemoteAccessState",
+  "onRemoteAccessChanged",
+  "setRemoteAccessEnabled",
+  "setRemoteRelayUrl",
+  "testRemoteRelay",
+  "createRemoteInvite",
+  "withdrawRemoteInvite",
+  "revokeRemoteDevice",
   "disableCloudSync",
   "syncCloudNow",
   "resolveCloudSyncConflict",

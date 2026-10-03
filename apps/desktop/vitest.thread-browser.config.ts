@@ -125,6 +125,13 @@ export default defineConfig({
       "test/design-canvas.browser.test.tsx",
       "test/design-live-frame-release.browser.test.tsx",
       "test/environment-settings.browser.test.tsx",
+    "test/remote-access-settings.browser.test.tsx",
+      // 网页端线程的渲染冒烟:白屏就是渲染时抛异常,而网页端此前没有渲染测试。
+      "test/remote-web-thread.browser.test.tsx",
+      // 外壳的页面切换:主题 hook 写错位置会让"连上之后"白屏,这一条守它。
+      "test/remote-web-app.browser.test.tsx",
+      // 网页端 markdown 的公式与图表:只能在真浏览器里验(KaTeX 排版 + mermaid 懒加载真渲染)。
+      "test/remote-web-markdown.browser.test.tsx",
       "test/onboarding-environment.browser.test.tsx",
       "test/design-style-strip.browser.test.tsx",
       "test/design-workspace.browser.test.tsx",

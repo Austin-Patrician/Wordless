@@ -4,6 +4,7 @@ import {
   type DesktopBridge,
 } from "../bridge/desktop-bridge";
 import type {
+  RemoteAccessState,
   WebhookCreateInputDto,
   WebhookIdRequestDto,
   WebhookSetEnabledRequestDto,
@@ -57,6 +58,23 @@ const wordlessBridge: DesktopBridge = {
   logoutGoogle: () => ipcRenderer.invoke("wordless:account:logout"),
   getCloudSyncSnapshot: () =>
     ipcRenderer.invoke("wordless:cloud-sync:snapshot"),
+  // 远程访问:浏览器客户端配对与设备管理(见 main/remote/、docs/architecture/remote-access.md)。
+  getRemoteAccessState: () => ipcRenderer.invoke("wordless:remote:state"),
+  // 主进程推过来的最新状态(手机连上、二维码被领取……):界面据此立刻更新,不用轮询。
+  onRemoteAccessChanged: (listener: (state: RemoteAccessState) => void) => {
+    const handler = (_event: unknown, state: RemoteAccessState) => listener(state);
+    ipcRenderer.on("wordless:remote:changed", handler);
+    return () => {
+      ipcRenderer.removeListener("wordless:remote:changed", handler);
+    };
+  },
+  setRemoteAccessEnabled: (enabled) => ipcRenderer.invoke("wordless:remote:set-enabled", { enabled }),
+  setRemoteRelayUrl: (relayBaseUrl) => ipcRenderer.invoke("wordless:remote:set-relay-url", { relayBaseUrl }),
+  testRemoteRelay: (relayBaseUrl) => ipcRenderer.invoke("wordless:remote:test-relay", { relayBaseUrl }),
+  createRemoteInvite: () => ipcRenderer.invoke("wordless:remote:create-invite"),
+  withdrawRemoteInvite: () => ipcRenderer.invoke("wordless:remote:withdraw-invite"),
+  revokeRemoteDevice: (deviceId) => ipcRenderer.invoke("wordless:remote:revoke-device", { deviceId }),
+
   enableCloudSync: (strategy) =>
     ipcRenderer.invoke("wordless:cloud-sync:enable", strategy ?? "merge"),
   disableCloudSync: () => ipcRenderer.invoke("wordless:cloud-sync:disable"),

@@ -3647,6 +3647,23 @@ export class WordlessRuntime {
    * Makes a previously generated retry version the active session branch.
    * `version` is 1-based, in creation order.
    */
+  /**
+   * 每一轮的**回复版本**(重做过几次、现在看的是第几版)。
+   *
+   * 供远端使用:网页端要在回复底下摆"2/3"那种切换。单独一个方法而不是让它去读会话快照 ——
+   * 快照会顺带把上下文、工具、专家协作全建一遍,而这里只要版本。
+   */
+  async getSessionTurnVersions(sessionId: string): Promise<Record<string, { active: number; total: number }>> {
+    const record = this.requireSession(sessionId);
+    const session = await openWordlessSession(record.journalPath);
+    const versions = projectSessionTurnVersions(await session.getEntries(), await session.getLeafId());
+    const result: Record<string, { active: number; total: number }> = {};
+    for (const [messageId, entry] of versions) {
+      result[messageId] = { active: entry.active, total: entry.tips.length };
+    }
+    return result;
+  }
+
   async selectSessionTurnVersion(
     sessionId: string,
     messageId: string,
@@ -5197,6 +5214,37 @@ export class WordlessRuntime {
       updatedAt: Date.now(),
     });
     this.rememberEntryModel(session.entryId, model);
+    // 会话元数据变了要说一声。本机界面靠 IPC 的返回值更新,但**远端只能靠事件** ——
+    // 少了这一行,手机上会一直显示旧模型(用户看到的是"模型名在撒谎")。
+    this.emitApp({ type: "sessions.changed" });
+  }
+
+  /**
+   * 这个会话**能换成哪些模型**。
+   *
+   * 供远端使用:手机上要给出可选项,而选项必须和本机换模型时的判断一致 ——
+   * 否则远端会看到一个"选了必然被拒"的清单。规则取自 `isAvailableSessionModel`
+   * (供应商已配置 + 与这个会话的工作类型兼容 + 运行时真的有这个模型),再加"已启用"。
+   *
+   * 返回的是领域记录:调用方自己决定透出哪些字段(远端只该看到 id 与显示名)。
+   */
+  listSelectableSessionModels(sessionId: string): EnabledModelRecord[] {
+    const session = this.requireSession(sessionId);
+    const entry = this.getEntry(session.entryId);
+    return this.toLegacyEnabledModels(this.modelConfiguration.snapshot())
+      .filter(
+        (model) =>
+          model.enabled &&
+          this.isAvailableSessionModel(
+            { connectionId: model.connectionId, modelId: model.modelId },
+            entry,
+          ),
+      )
+      .sort(
+        (left, right) =>
+          left.connectionId.localeCompare(right.connectionId) ||
+          left.displayName.localeCompare(right.displayName),
+      );
   }
 
   async setSessionThinkingLevel(

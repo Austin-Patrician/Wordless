@@ -43,6 +43,9 @@ export const NATIVE_ASAR_UNPACK = [
 
 export const RUNTIME_EXTERNALS = [
   { id: "undici", match: "exact", shippedBy: "undici" },
+  // `ws` 是 CJS 包:内联进 single-file CJS 时,它的命名导入会变成 undefined(踩过)。
+  // 外化之后主进程在运行时 require 它 —— 与 apps/relay 里已经正常工作的那条路径一致。
+  { id: "ws", match: "exact", shippedBy: "ws" },
   { id: "sharp", match: "package", shippedBy: "sharp" },
   // `@img/*` 是 sharp 的平台原生包，随 sharp 一起进来。
   { id: "@img", match: "package", shippedBy: "sharp" },

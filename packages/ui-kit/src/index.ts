@@ -1,3 +1,4 @@
+export { ProviderIcon } from "./components/provider-icon";
 export { Button } from "./components/button";
 export {
   ContextMenu,

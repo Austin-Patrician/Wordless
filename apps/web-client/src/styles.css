@@ -1,0 +1,107 @@
+/* 桌面端的设计 token 直接拿过来用:颜色、字体、圆角、明暗主题都在这一份里。 */
+@import "@wordless/ui-kit/styles.css";
+
+/*
+ * 关掉移动端浏览器的**字体放大**。
+ *
+ * 手机浏览器会给"宽块里的文字"自动放大(Chrome 的 font boosting / Safari 的 text autosizing),
+ * 于是同一段 11px 的输出,在手机上看起来比桌面端大 —— 用户会觉得"网页端字号不一样"(真实抱怨)。
+ * 我们的字号是照桌面端定的,所以这里明确说"别动它"。
+ */
+html {
+	-webkit-text-size-adjust: 100%;
+	text-size-adjust: 100%;
+}
+
+/* 本应用自己的组件也要被 Tailwind 扫描到(ui-kit 的 tokens 只扫它自己的 components)。 */
+@source "./**/*.{ts,tsx}";
+
+/*
+ * 新内容进场。
+ *
+ * **只给刚出现的那一条**(正在发送 / 正在写),不给整段历史 —— 否则打开一个长会话时
+ * 满屏都在动,看起来像卡了而不是活了。`prefers-reduced-motion` 下直接关掉。
+ */
+@keyframes wordless-message-in {
+	from {
+		opacity: 0;
+		transform: translateY(4px);
+	}
+	to {
+		opacity: 1;
+		transform: none;
+	}
+}
+
+.message-enter {
+	animation: wordless-message-in 180ms ease-out;
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.message-enter {
+		animation: none;
+	}
+}
+
+/* 实时状态文字(「正在执行命令」……)—— **照抄桌面端**(app.css 里同名类):文字自己会"呼吸"。
+   两端同一套,免得手机上和电脑上看起来是两个东西。 */
+@keyframes wordless-assistant-status-shimmer {
+	from {
+		background-position: 100% 0;
+	}
+
+	to {
+		background-position: -100% 0;
+	}
+}
+
+.assistant-run-status-shimmer {
+	display: inline-block;
+	background: linear-gradient(100deg, #a9a9a2 24%, #a9a9a2 42%, #68784f 48%, #f3f5df 53%, #68784f 58%, #a9a9a2 64%, #a9a9a2 82%);
+	background-clip: text;
+	background-position: 100% 0;
+	background-size: 250% 100%;
+	color: transparent;
+	-webkit-background-clip: text;
+	animation: wordless-assistant-status-shimmer 2.4s ease-in-out infinite;
+}
+
+[data-theme="dark"] .assistant-run-status-shimmer {
+	background-image: linear-gradient(100deg, #8b8b84 24%, #8b8b84 42%, #b5cf76 48%, #fbffe2 53%, #b5cf76 58%, #8b8b84 64%, #8b8b84 82%);
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.assistant-run-status-shimmer {
+		animation: none;
+		background-position: 50% 0;
+	}
+}
+
+/* 工具输出与代码块的滚动条:细一点、淡一点。
+   手机上那条横杠太抢眼 —— 它是"这里还能滚"的提示,不该比内容还显眼。 */
+.message-code-scroll {
+	scrollbar-width: thin;
+	scrollbar-color: rgba(104, 104, 96, 0.2) transparent;
+}
+
+.message-code-scroll::-webkit-scrollbar {
+	width: 4px;
+	height: 4px;
+}
+
+.message-code-scroll::-webkit-scrollbar-thumb {
+	border-radius: 999px;
+	background: rgba(104, 104, 96, 0.2);
+}
+
+.message-code-scroll::-webkit-scrollbar-thumb:hover {
+	background: rgba(104, 104, 96, 0.34);
+}
+
+[data-theme="dark"] .message-code-scroll {
+	scrollbar-color: rgba(210, 216, 193, 0.16) transparent;
+}
+
+[data-theme="dark"] .message-code-scroll::-webkit-scrollbar-thumb {
+	background: rgba(210, 216, 193, 0.16);
+}

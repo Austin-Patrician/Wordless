@@ -1,0 +1,23 @@
+{
+  "name": "@wordless/relay",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "start": "node src/main.ts",
+    "test": "node --test test/*.test.ts",
+    "check": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@wordless/remote-control": "0.0.0",
+    "ws": "8.21.0"
+  },
+  "devDependencies": {
+    "@types/ws": "8.18.1",
+    "typescript": "5.9.3"
+  },
+  "exports": {
+    ".": "./src/main.ts",
+    "./server": "./src/server.ts"
+  }
+}

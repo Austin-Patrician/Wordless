@@ -2693,7 +2693,8 @@ function AssistantMessageBody({
   );
 }
 
-const USER_MESSAGE_COLLAPSED_HEIGHT = 72;
+/** 折叠起来只留这么多行(三行 × 卡片自己的 24px 行高 = 原来那个 72px)。 */
+const USER_MESSAGE_COLLAPSED_LINES = 3;
 
 /**
  * Retry control for one assistant response.
@@ -2815,28 +2816,40 @@ function CollapsibleUserMessage({
   const contentRef = useRef<HTMLDivElement>(null);
   const [expanded, setExpanded] = useState(false);
   const [truncated, setTruncated] = useState(false);
-  const measure = useCallback(() => {
-    const element = contentRef.current;
-    if (!element) return;
-    setTruncated(element.scrollHeight > USER_MESSAGE_COLLAPSED_HEIGHT + 1);
-  }, []);
+  // 折的是**超过三行的那部分**:留着的是整行。硬截到某个像素高会把第四行切一半,看上去像被盖住了。
+  const clamped = !expanded && truncated;
 
   useLayoutEffect(() => {
+    // 换了内容就重新量:先把"折"放开,这一帧量到的才是真实高度。
     setExpanded(false);
-    measure();
+    setTruncated(false);
+  }, [contentKey]);
+
+  useLayoutEffect(() => {
     const element = contentRef.current;
     if (!element) return;
+    // 折着的时候不量 —— 量到的是折后的高度,会让"要不要折"来回抖。
+    if (clamped) return;
+    const measure = () => {
+      const lineHeight = Number.parseFloat(
+        window.getComputedStyle(element).lineHeight,
+      );
+      // 行高读不出来时按卡片自己的 24px 算。
+      const limit =
+        (Number.isFinite(lineHeight) ? lineHeight : 24) *
+        USER_MESSAGE_COLLAPSED_LINES;
+      setTruncated(element.scrollHeight > limit + 1);
+    };
+    measure();
     const observer = new ResizeObserver(measure);
     observer.observe(element);
     return () => observer.disconnect();
-  }, [contentKey, measure]);
+  }, [clamped, contentKey]);
 
   return (
     <div>
       <div
-        className={
-          !expanded && truncated ? "max-h-[72px] overflow-hidden" : undefined
-        }
+        className={clamped ? "line-clamp-3" : undefined}
         ref={contentRef}
       >
         {children}

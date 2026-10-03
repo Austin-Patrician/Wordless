@@ -2551,6 +2551,58 @@ export interface RuntimeEventEnvelope {
   event: RuntimeEvent;
 }
 
+/// Remote access (browser client pairing)
+///
+/// These are **output-only** shapes: the renderer reads them to draw the remote-access
+/// settings page. Inputs (enable, relay URL, device id) are three scalars validated at
+/// the IPC boundary in `main/remote/handlers.ts`, so they need no schema here — the
+/// `additionalProperties: false` treatment above exists for structured payloads.
+
+export interface RemoteAccessInviteView {
+  /** 配对 id(每台设备一个房间)。 */
+  pairingId: string;
+  code: string;
+  /** 展示用的样子:`K7Q2-9MXD`。 */
+  formattedCode: string;
+  password: string;
+  /** 二维码里装的东西(连接码 + 密码)。 */
+  qrText: string;
+  expiresAt: number;
+  /** 邀请是否已经放上中继;没放上时界面不该显示二维码(否则它会在手机镜头下变化)。 */
+  status: "ready" | "failed";
+}
+
+export interface RemoteAccessDeviceView {
+  id: string;
+  name: string;
+  createdAt: number;
+  lastSeenAt?: number;
+  online: boolean;
+  /**
+   * 已经有过手机来领取过这次配对。
+   *
+   * 它和 `online` 是两件事:刚生成二维码、还没人扫的那台设备**不是"不在线"**,而是"还在等"。
+   * 混为一谈会让用户以为自己的手机连不上。
+   */
+  paired: boolean;
+}
+
+/** 中继探测结果:`detail` 是给人看的一句话(成功说版本,失败说地址与原因)。 */
+export interface RemoteRelayProbeResult {
+  ok: boolean;
+  detail: string;
+}
+
+export interface RemoteAccessState {
+  enabled: boolean;
+  relayBaseUrl?: string;
+  defaultRelayBaseUrl?: string;
+  connection: "off" | "connecting" | "online";
+  invite?: RemoteAccessInviteView;
+  devices: RemoteAccessDeviceView[];
+  error?: string;
+}
+
 /// Message push (group-robot webhooks)
 ///
 /// Wire shapes for the Settings page only. The agent-facing side is a capability

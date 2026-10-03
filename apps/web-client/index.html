@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="light">
+	<head>
+		<meta charset="utf-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+		<meta name="color-scheme" content="light dark" />
+		<meta name="theme-color" content="#f8f8f6" />
+		<title>Wordless 远程</title>
+		<script>
+			/*
+			 * 主题必须在**首帧之前**定下来。
+			 *
+			 * 交给 React 去设的话,手机上会先闪一下亮色再变暗 —— 夜里看非常刺眼。
+			 * 所以这一段是内联的、同步的,而且**不依赖任何模块**:它必须早于样式与脚本。
+			 * 规则与 `src/theme.ts` 一致(那里是唯一的真相,这里只是它的首帧副本)。
+			 */
+			(function () {
+				var preference = "system";
+				try {
+					var stored = localStorage.getItem("wordless.remote.theme");
+					if (stored === "light" || stored === "dark" || stored === "system") preference = stored;
+				} catch (error) {
+					/* 存储不可用(隐私模式):按跟随系统处理 */
+				}
+				var dark =
+					preference === "dark" ||
+					(preference === "system" && window.matchMedia("(prefers-color-scheme: dark)").matches);
+				var theme = dark ? "dark" : "light";
+				document.documentElement.dataset.theme = theme;
+				var meta = document.querySelector('meta[name="theme-color"]');
+				if (meta) meta.setAttribute("content", dark ? "#141511" : "#f8f8f6");
+			})();
+		</script>
+	</head>
+	<body>
+		<div id="root"></div>
+		<script type="module" src="/src/main.tsx"></script>
+	</body>
+</html>

@@ -64,6 +64,13 @@ export interface AppNotice {
 export interface AppNoticeContext {
   environment: HostEnvironmentFacts | null;
   cloudSync: CloudSyncSnapshot | null;
+  /**
+   * 远程访问:有几台设备正连着这台电脑。
+   *
+   * 用**数量**而不是整个状态对象:铃铛只关心"现在有没有人在远程用我"这一个判断,
+   * 把它缩到最小,来源就是纯函数、测试也不需要造一整份远程状态。
+   */
+  remoteAccessOnlineDevices?: number;
 }
 
 export type AppNoticeTranslator = (key: MessageKey) => string;
@@ -221,4 +228,33 @@ export function visibleNotices(notices: readonly AppNotice[], dismissed: Readonl
 }
 
 /** 注册表:新来源加在这里。顺序只影响同语气同权重时的先后。 */
-export const APP_NOTICE_SOURCES: readonly AppNoticeSource[] = [environmentNoticeSource, cloudSyncNoticeSource];
+/**
+ * 远程访问:**有设备正连着**时说一句。
+ *
+ * 这一条同时承担"可见"的责任:远端能做什么是用户在设置里授权的,但"现在有人在用"必须随时看得见 ——
+ * 所以它进铃铛(应用级),而且主进程那边还会弹一次系统通知(见 `remote-access-service.ts`)。
+ */
+export const remoteAccessNoticeSource: AppNoticeSource = {
+  id: "remote-access",
+  read(context, t) {
+    const online = context.remoteAccessOnlineDevices ?? 0;
+    if (online <= 0) return [];
+    return [
+      {
+        id: "remote-access:in-use",
+        source: "remote-access",
+        tone: "info",
+        title: t("noticeRemoteAccessTitle").replace("{count}", String(online)),
+        body: t("noticeRemoteAccessBody"),
+        actionLabel: t("noticeOpenRemoteAccess"),
+        action: { kind: "settings", page: "remoteAccess" },
+      },
+    ];
+  },
+};
+
+export const APP_NOTICE_SOURCES: readonly AppNoticeSource[] = [
+  environmentNoticeSource,
+  cloudSyncNoticeSource,
+  remoteAccessNoticeSource,
+];

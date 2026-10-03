@@ -6,6 +6,7 @@ import {
   collectAppNotices,
   environmentNoticeSource,
   noticeFingerprint,
+  remoteAccessNoticeSource,
   visibleNotices,
   type AppNotice,
   type AppNoticeSource,
@@ -88,8 +89,8 @@ describe("云同步来源", () => {
 });
 
 describe("收集器与来源模型", () => {
-  it("注册表里是环境与云同步 —— **更新不在**这里(它有自己的家,见下)", () => {
-    assert.deepEqual(APP_NOTICE_SOURCES.map((source) => source.id), ["environment", "cloud-sync"]);
+  it("注册表里是环境、云同步与远程访问 —— **更新不在**这里(它有自己的家,见下)", () => {
+    assert.deepEqual(APP_NOTICE_SOURCES.map((source) => source.id), ["environment", "cloud-sync", "remote-access"]);
   });
 
   it("更新刻意不进铃铛:它已经有一个更强的家(DesktopChrome 的横幅,能原地下载/重启、带进度)", () => {
@@ -108,6 +109,23 @@ describe("收集器与来源模型", () => {
     const first: AppNoticeSource = { id: "a", read: () => [notice({ id: "same", source: "a" })] };
     const second: AppNoticeSource = { id: "b", read: () => [notice({ id: "same", source: "b" })] };
     assert.equal(collectAppNotices({ environment: null, cloudSync: null }, t, [first, second]).length, 1);
+  });
+
+  it("有设备在远程使用这台电脑时说一句,并指向设置里的远程连接", () => {
+    const [only] = remoteAccessNoticeSource.read({ environment: null, cloudSync: null, remoteAccessOnlineDevices: 1 }, t);
+    assert.equal(only?.id, "remote-access:in-use");
+    assert.equal(only?.tone, "info");
+    assert.match(only?.title ?? "", /1/);
+    assert.deepEqual(only?.action, { kind: "settings", page: "remoteAccess" });
+    // 两台设备时标题里的数字要跟着变。
+    const [two] = remoteAccessNoticeSource.read({ environment: null, cloudSync: null, remoteAccessOnlineDevices: 2 }, t);
+    assert.match(two?.title ?? "", /2/);
+  });
+
+  it("没有设备在线时一个字都不说", () => {
+    assert.deepEqual(remoteAccessNoticeSource.read({ environment: null, cloudSync: null, remoteAccessOnlineDevices: 0 }, t), []);
+    // 还没读到状态(字段缺席)时也不说 —— 不能因为"不知道"就报警。
+    assert.deepEqual(remoteAccessNoticeSource.read({ environment: null, cloudSync: null }, t), []);
   });
 
   it("某个来源抛错时,其余来源照常显示 —— 铃铛不该被一个坏来源带崩", () => {
