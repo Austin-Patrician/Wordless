@@ -4,6 +4,7 @@ import {
 	checkAttachment,
 } from "@wordless/remote-control";
 import { settleSent, type SentState } from "./composer";
+import { isUnsupportedMethod } from "./workspace-search";
 import {
 	applyStream,
 	upsertLiveTool,
@@ -40,6 +41,10 @@ import {
 	type RemoteUserRequest as RemoteUserRequestType,
 	type RemoteSessionMessage,
 	type RemoteSessionSummary,
+	type RemoteModeOption,
+	type RemoteWorkspaceOption,
+	type RemoteDesignStyleOption,
+	type RemoteWorkspaceReference,
 } from "@wordless/remote-control";
 
 /**
@@ -95,6 +100,19 @@ export interface RemoteClientState {
 	readonly sessions: readonly RemoteSession[];
 	/** 新建会话页的选项(打开那一页时取一次)。 */
 	readonly entries?: readonly RemoteEntryOption[];
+	/** 新建页最上面那一栏(日常工作 / 写代码 / 创作)。 */
+	readonly modes?: readonly RemoteModeOption[];
+	/**
+	 * 新建会话时能选哪些模型。
+	 *
+	 * 与 `models` **分开存**:那个是"这个会话能换成哪些"(随会话打开而变),
+	 * 这个是"这台机器上已启用的全部"(新建页还没有会话)。
+	 */
+	readonly catalogModels?: readonly RemoteModelOption[];
+	/** 新建会话时能选的工作目录(代码 / 数据分析这类必须先挑一个)。 */
+	readonly workspaces?: readonly RemoteWorkspaceOption[];
+	/** 新建会话时能选的设计风格(只有设计那一类用得上)。 */
+	readonly designStyles?: readonly RemoteDesignStyleOption[];
 	/** 正在新建(界面上禁用按钮,避免连点建出两个会话)。 */
 	readonly creating?: boolean;
 	/**
@@ -124,8 +142,6 @@ export interface RemoteClientState {
 	readonly approvals: readonly RemoteApproval[];
 	/** 等用户回答的提问(不回答的话那一轮就停在那儿)。 */
 	readonly requests: readonly RemoteUserRequestType[];
-	/** 下一次发送要用的技能(在「+」里选,发出去之后清空 —— 与桌面端一样,技能是**每一轮**的事)。 */
-	readonly pendingSkillIds: readonly string[];
 	/** 已经传完、随下一条消息发出去的附件。 */
 	readonly attachments: readonly RemotePendingAttachment[];
 	/** 这个会话能换成哪些模型。**缺席 = 这台机器不支持远端换模型**(不是空清单)。 */
@@ -160,7 +176,6 @@ export const INITIAL_REMOTE_STATE: RemoteClientState = {
 	sending: false,
 	approvals: [],
 	requests: [],
-	pendingSkillIds: [],
 	attachments: [],
 	waitingForApproval: false,
 	truncated: false,
@@ -370,19 +385,31 @@ export class RemoteClient {
 	 * 气泡先画出来并标成**发送中** —— 本机确认之前,它不能看起来像"已经发出去了";
 	 * 失败时保留文本并标成失败,让用户能重试(而不是让他重打一遍)。
 	 */
-	async send(text: string): Promise<void> {
+	async send(
+		text: string,
+		references: readonly RemoteWorkspaceReference[] = [],
+		skillIds: readonly string[] = [],
+	): Promise<void> {
 		const sessionId = this.state.sessionId;
 		const trimmed = text.trim();
-		if (!sessionId || trimmed.length === 0) return;
+		// **只有 token、没有正文**是合法的(与桌面端一样:挑一个文件 / 点一个技能就是在问"用这个")。
+		if (!sessionId || (trimmed.length === 0 && references.length === 0 && skillIds.length === 0)) return;
 		const at = Date.now();
-		const optimistic: RemoteMessage = { role: "user", text: trimmed, at, pending: true };
+		const optimistic: RemoteMessage = {
+			role: "user",
+			text: trimmed,
+			at,
+			pending: true,
+			// 引用**当场就画出来**:它已经定了,不必等本机回话。
+			...(references.length === 0 ? {} : { blocks: referenceBlocks(references) }),
+		};
 		this.setState({
 			...this.state,
 			messages: [...this.state.messages, optimistic],
 			sending: true,
 			error: undefined,
 		});
-		await this.deliver(sessionId, trimmed, at);
+		await this.deliver(sessionId, trimmed, at, references, skillIds);
 	}
 
 	/** 重发一条失败的消息:把它重新标成"发送中",而不是再插一条新的。 */
@@ -398,12 +425,22 @@ export class RemoteClient {
 			sending: true,
 			error: undefined,
 		});
-		await this.deliver(sessionId, message.text, at);
+		/*
+			重发时**把引用从那条消息自己身上读回来**。
+			
+			少了这一步,第一次发送失败之后引用已经被清空了 —— 用户点"重试",发出去的是一句
+			没有引用的正文,而模型那边就再也看不到那个文件了(用户完全看不出来)。
+		*/
+		await this.deliver(sessionId, message.text, at, workspaceReferencesOf(message.blocks));
 	}
 
-	private async deliver(sessionId: string, text: string, at: number): Promise<void> {
-		// 技能是**每一轮**的事:选好之后随这一轮发出去,发完就清空(与桌面端一样)。
-		const skillIds = this.state.pendingSkillIds;
+	private async deliver(
+		sessionId: string,
+		text: string,
+		at: number,
+		references: readonly RemoteWorkspaceReference[] = [],
+		skillIds: readonly string[] = [],
+	): Promise<void> {
 		const attachments = this.state.attachments;
 		const result = await this.request("session.prompt", {
 			sessionId,
@@ -411,11 +448,10 @@ export class RemoteClient {
 				text,
 				...(skillIds.length === 0 ? {} : { skillIds }),
 				...(attachments.length === 0 ? {} : { attachments: attachments.map((entry) => ({ uploadId: entry.uploadId })) }),
+				...(references.length === 0 ? {} : { references }),
 			},
 		});
-		if (skillIds.length > 0 || attachments.length > 0) {
-			this.setState({ ...this.state, pendingSkillIds: [], attachments: [] });
-		}
+		if (attachments.length > 0) this.setState({ ...this.state, attachments: [] });
 		if (result.success) {
 			this.setState({ ...this.state, sending: false, messages: settleSent(this.state.messages, at, { pending: false }) });
 			return;
@@ -441,13 +477,21 @@ export class RemoteClient {
 					entries?: readonly RemoteEntryOption[];
 					connectors?: readonly RemoteConnectorSummary[];
 					skills?: readonly RemoteSkillOption[];
+					workspaces?: readonly RemoteWorkspaceOption[];
+					designStyles?: readonly RemoteDesignStyleOption[];
+					modes?: readonly RemoteModeOption[];
+					models?: readonly RemoteModelOption[];
 			  }
 			| undefined;
 		this.setState({
 			...this.state,
 			entries: payload?.entries ?? [],
+			modes: payload?.modes ?? [],
+			catalogModels: payload?.models ?? [],
 			availableConnectors: payload?.connectors ?? [],
 			skills: payload?.skills ?? [],
+			workspaces: payload?.workspaces ?? [],
+			designStyles: payload?.designStyles ?? [],
 		});
 	}
 
@@ -463,6 +507,10 @@ export class RemoteClient {
 		/** 这一轮用哪些技能 / 连哪些连接器:与第一条消息一起发(与桌面端 WelcomeView 同一条路)。 */
 		readonly skillIds?: readonly string[];
 		readonly connectorIds?: readonly string[];
+		/** 工作目录(代码 / 数据分析这类必须给)。 */
+		readonly workspaceId?: string;
+		/** 设计风格(只有设计那一类用得上)。 */
+		readonly designStyleId?: string;
 	}): Promise<{ readonly ok: boolean; readonly message?: string }> {
 		this.setState({ ...this.state, creating: true });
 		const result = await this.request("session.create", { payload: input });
@@ -647,6 +695,35 @@ export class RemoteClient {
 		await this.request("session.attachment", { payload: { phase: "abort", uploadId } });
 	}
 
+	/**
+	 * 在**这个会话的工作区**里搜文件与目录(输入框里的 `@`)。
+	 *
+	 * 只读:不改任何状态,也不进"发送中"那条状态机 —— 用户一边打字一边搜,不该让发送键跟着变。
+	 * 结果**不进客户端状态**:它是"这一刻那个下拉框里摆什么",而不是会话的一部分
+	 * (进了状态就得决定"什么时候清掉",而那种问题最后都会变成"下拉框里是上一个会话的文件")。
+	 */
+	async searchWorkspaceFiles(query: string): Promise<{
+		readonly ok: boolean;
+		readonly entries?: readonly RemoteWorkspaceReference[];
+		readonly message?: string;
+		/** 本机不认识这个方法(老版本桌面端):调用方据此不再摆选择器。 */
+		readonly unsupported?: boolean;
+	}> {
+		const sessionId = this.state.sessionId;
+		if (!sessionId) return { ok: false, message: "还没有打开会话" };
+		const result = await this.request("session.workspace-files", { sessionId, payload: { query } });
+		if (!result.success) {
+			return {
+				ok: false,
+				message: result.error?.message ?? "搜不到工作区文件",
+				...(isUnsupportedMethod(result.error) ? { unsupported: true } : {}),
+			};
+		}
+		const entries = (result.payload as { entries?: readonly RemoteWorkspaceReference[] } | undefined)?.entries ?? [];
+		return { ok: true, entries };
+	}
+
+
 	/** 读这个会话的**总计**用量(桌面端用量详情里的"会话统计")。 */
 	async sessionUsage(): Promise<{
 		readonly ok: boolean;
@@ -718,10 +795,6 @@ export class RemoteClient {
 		return { ok: true };
 	}
 
-	/** 选这一轮用哪些技能(发出去之后自动清空)。 */
-	setPendingSkills(skillIds: readonly string[]): void {
-		this.setState({ ...this.state, pendingSkillIds: [...skillIds] });
-	}
 
 	async abort(): Promise<void> {
 		const sessionId = this.state.sessionId;
@@ -1029,6 +1102,29 @@ export function browserDeviceName(): string {
 
 /** 供测试用:造一把新的手机身份密钥。 */
 export const newPhoneIdentity = generateIdentityKeyPair;
+
+/**
+ * 引用 → 消息块(乐观画出来的那条用户消息用)。
+ *
+ * id 在这里是**这一端自己编的**:本机稍后回来的那条消息有自己的 id,整条消息会被它替换掉,
+ * 所以这个 id 只需要在"本机回话之前"这一段里够用。
+ */
+function referenceBlocks(references: readonly RemoteWorkspaceReference[]): readonly RemoteMessageBlockType[] {
+	return references.map((reference, index) => ({
+		type: "workspace-reference" as const,
+		id: `pending-${index}-${reference.path}`,
+		path: reference.path,
+		name: reference.name,
+		kind: reference.kind,
+	}));
+}
+
+/** 从消息块里读回引用(重发时用)。 */
+function workspaceReferencesOf(blocks: readonly RemoteMessageBlockType[] | undefined): readonly RemoteWorkspaceReference[] {
+	return (blocks ?? []).flatMap((block) =>
+		block.type === "workspace-reference" ? [{ path: block.path, name: block.name, kind: block.kind }] : [],
+	);
+}
 
 /** Blob → base64(去掉 data URL 的前缀,本机收的是裸 base64)。 */
 function blobToBase64(blob: Blob): Promise<string> {

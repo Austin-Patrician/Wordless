@@ -20,6 +20,18 @@ asarUnpack:
   - node_modules/@tailwindcss/**/*
   - node_modules/lightningcss*/**/*
 extraResources:
+  # 局域网模式要托管的网页客户端。**必须随包发布**:打包版用户没有 npm,
+  # 不能让他"先构建一次"(见 docs/architecture/remote-deployment.md §2.3)。
+  # 主进程按 process.resourcesPath/web-client 找它。
+  - from: ../web-client/dist
+    to: web-client
+    filter:
+      - "**/*"
+  # 远程部署用的中继单文件(自包含:服务器上不装 npm 依赖)。见 scripts/build-relay-bundle.mjs。
+  - from: resources/relay
+    to: relay
+    filter:
+      - "**/*"
   # `__pycache__` / `.pyc` 是**运行时产物**,不是资产的一部分:内置 Python 树在开发机上跑过一次
   # 就会长出几千个 .pyc(实测一个本地包因此从 68MB 涨到 313MB),而 CI 全新解压出来是干净的 ——
   # 不排掉的话"同一个 commit 本地打的包和 CI 打的包不一样大"。技能目录里那两个 .pyc 也一样。

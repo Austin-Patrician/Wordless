@@ -2,6 +2,7 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { ThreadView } from "../../web-client/src/thread-view";
+import { INITIAL_REMOTE_STATE } from "../../web-client/src/remote-client";
 import wordlessBrandIcon from "../../web-client/src/icons/common-icons/wordless-brand.svg";
 
 /**
@@ -19,6 +20,14 @@ beforeEach(() => {
 	container = document.createElement("div");
 	document.body.append(container);
 	root = createRoot(container);
+	sentMessages = [];
+	createdSessions = [];
+	/*
+		草稿是**按会话存进 `localStorage`** 的(那是产品行为,不是测试细节)。
+		不清掉的话,上一个用例打的字会出现在下一个用例的输入框里 —— 而"再打一遍同样的字"
+		不会触发 `onChange`(值没变),于是选择器不弹,测试莫名其妙地失败。
+	*/
+	localStorage.clear();
 });
 
 afterEach(() => {
@@ -33,36 +42,45 @@ const message = (overrides: Record<string, unknown> = {}) => ({
 	...overrides,
 });
 
+/**
+ * 客户端状态。
+ *
+ * **从 `INITIAL_REMOTE_STATE` 出发**,而不是在这里另抄一份字段清单:抄一份的话,客户端每加一个
+ * 字段,这里就漏一个,而漏掉的表现是"测试里白屏"(视图读到 `undefined.length`)——
+ * 那正是这份文件存在的理由,不该由它自己制造。
+ */
 const state = (overrides: Record<string, unknown> = {}) => ({
-	phase: "online",
+	...INITIAL_REMOTE_STATE,
+	phase: "online" as const,
 	sessions: [{ id: "s1", title: "修一下登录页", updatedAt: 1_700_000_000_000, running: false }],
 	sessionId: "s1",
-	messages: [],
-	running: false,
-	sending: false,
-	waitingForApproval: false,
-	truncated: false,
-	approvals: [],
-	requests: [],
-	pendingSkillIds: [],
-	attachments: [],
 	activity: undefined,
 	...overrides,
 });
 
-const render = (
+const threadProps = (
 	overrides: Record<string, unknown> = {},
 	onSetModel = async () => ({ ok: true }),
 	onRetryTurn = async () => ({ ok: true }),
 	onOpenSession: (sessionId: string) => void = () => undefined,
+	onSearchWorkspaceFiles: (query: string) => Promise<{
+		ok: boolean;
+		entries?: readonly { path: string; name: string; kind: "file" | "directory" }[];
+		message?: string;
+		unsupported?: boolean;
+	}> = async () => ({ ok: true, entries: [] }),
 ) => {
 	const clientState = state(overrides);
-	const props = {
+	return {
 		state: clientState,
 		// 新建页的选项来自 state(与 app.tsx 一样把它透给 ThreadView)。
 		entries: clientState.entries,
 		onOpenSession,
-		onSend: () => undefined,
+		onSend: (
+			text: string,
+			references: readonly { path: string; name: string; kind: "file" | "directory" }[],
+			skillIds: readonly string[],
+		) => void sentMessages.push({ text, references, skillIds }),
 		onAbort: () => undefined,
 		onRefresh: () => undefined,
 		onSetModel,
@@ -71,15 +89,98 @@ const render = (
 		onRetry: () => undefined,
 		onRetryTurn,
 		onLoadEntries: () => undefined,
-		onCreateSession: async () => ({ ok: true }),
+		onCreateSession: async (entryId: string, text: string, options?: Record<string, unknown>) => {
+			createdSessions.push({ entryId, text, ...options });
+			return { ok: true };
+		},
+		onSearchWorkspaceFiles,
 		onDismissError: () => undefined,
 		theme: "system" as const,
 		onThemeChange: () => undefined,
 		onDisconnect: () => undefined,
 	};
+};
+
+const render = (
+	overrides: Record<string, unknown> = {},
+	onSetModel = async () => ({ ok: true }),
+	onRetryTurn = async () => ({ ok: true }),
+	onOpenSession: (sessionId: string) => void = () => undefined,
+	onSearchWorkspaceFiles: (query: string) => Promise<{
+		ok: boolean;
+		entries?: readonly { path: string; name: string; kind: "file" | "directory" }[];
+		message?: string;
+		unsupported?: boolean;
+	}> = async () => ({ ok: true, entries: [] }),
+) => {
+	const props = threadProps(overrides, onSetModel, onRetryTurn, onOpenSession, onSearchWorkspaceFiles);
 	act(() => root.render(<ThreadView {...(props as never)} />));
 	return container;
 };
+
+/** 用**同一个 root** 再渲染一次:验"状态变了之后界面怎么变"(流式 → 完成)。 */
+const rerender = (overrides: Record<string, unknown> = {}) => {
+	const props = threadProps(overrides);
+	act(() => root.render(<ThreadView {...(props as never)} />));
+	return container;
+};
+
+/** 新建会话时交给客户端的东西(入口 / 第一条消息 / 目录 / 风格)。 */
+let createdSessions: Array<Record<string, unknown>> = [];
+
+/** 发出去的消息(正文 + 引用):用来分辨"这一下回车是选了文件还是发了消息"。 */
+let sentMessages: Array<{
+	text: string;
+	references: readonly { path: string; name: string; kind: "file" | "directory" }[];
+	skillIds: readonly string[];
+}> = [];
+
+/**
+ * 等一个条件成立(最多等 `timeoutMs`)。
+ *
+ * 懒加载那一块什么时候到,不由测试说了算 —— 所以"等条件"而不是"等一个固定时长":
+ * 后者在机器忙的时候会变成一条时好时坏的测试(这条已经踩过一次)。
+ */
+const waitFor = async (check: () => boolean, timeoutMs = 3_000): Promise<boolean> => {
+	const deadline = Date.now() + timeoutMs;
+	while (Date.now() < deadline) {
+		if (check()) return true;
+		await act(async () => {
+			await new Promise((resolve) => setTimeout(resolve, 50));
+		});
+	}
+	return check();
+};
+
+/**
+ * 往输入框里打字。
+ *
+ * 输入框现在是**编辑器**(Lexical),不是 textarea —— 所以走"聚焦 + `execCommand("insertText")`"
+ * 这条**真实的输入路径**:浏览器真的往 DOM 里插字,Lexical 再从 DOM 同步回模型
+ * (上一版是绕开 React 的 value setter 直接塞 textarea,那种做法在这里没有对应物)。
+ */
+const typeInto = async (editable: HTMLElement, value: string) => {
+	await act(async () => {
+		editable.focus();
+		await new Promise((resolve) => setTimeout(resolve, 0));
+	});
+	await act(async () => {
+		document.execCommand("insertText", false, value);
+		await new Promise((resolve) => setTimeout(resolve, 0));
+	});
+	// 防抖 120ms:等它过去,请求才真的发出去。
+	await act(async () => {
+		await new Promise((resolve) => setTimeout(resolve, 200));
+	});
+};
+
+/**
+ * 输入框(编辑器)本体。
+ *
+ * 用 `[contenteditable]` 而不是 `[contenteditable="true"]`:禁用时 Lexical 把它设成 `"false"`,
+ * 而"这一页能不能打字"本身也是要验的东西(选择器只认"有没有这个元素")。
+ */
+const editorOf = (dom: HTMLElement): HTMLElement => dom.querySelector<HTMLElement>("[contenteditable]")!;
 
 describe("网页端线程渲染", () => {
 	it("空会话:能渲染,不抛异常", () => {
@@ -397,7 +498,6 @@ describe("网页端线程渲染", () => {
 		const dom = render({
 			sessions: [{ id: "s1", title: "修一下登录页", updatedAt: 1, running: false, interactionMode: "default" }],
 			skills: [{ id: "k1", name: "写周报", description: "按模板写" }],
-			pendingSkillIds: ["k1"],
 		});
 		const more = [...dom.querySelectorAll("button")].find((button) => button.getAttribute("aria-label") === "更多");
 		act(() => more?.click());
@@ -409,7 +509,8 @@ describe("网页端线程渲染", () => {
 			"计划",
 			"澄清",
 		]);
-		expect(dom.textContent).toContain("写周报");
+		// 技能不在这里挂芯片了:它是输入框里的 `$技能` token,这个入口只是**打开选择器**(见 P30)。
+		expect(dom.textContent).toContain("用技能…");
 	});
 
 	it("有提问时:出现表单,四种字段都在,必填没填时不能提交", () => {
@@ -454,7 +555,7 @@ describe("网页端线程渲染", () => {
 		expect(labels).toContain("下一版");
 	});
 
-	it("「+」里技能与连接器是**用来添加的 select** + 可删的小块", () => {
+	it("「+」里连接器是**用来添加的 select** + 可删的小块(技能已经改走输入框里的 token)", () => {
 		const dom = render({
 			sessions: [
 				{
@@ -474,24 +575,21 @@ describe("网页端线程渲染", () => {
 				{ id: "s1", name: "写周报" },
 				{ id: "s2", name: "写日报" },
 			],
-			pendingSkillIds: ["s1"],
 		});
 		const more = [...dom.querySelectorAll("button")].find((button) => button.getAttribute("aria-label") === "更多");
 		act(() => more?.click());
-		const skillSelect = [...dom.querySelectorAll("button")].find(
-			(button) => button.getAttribute("aria-label") === "技能",
-		);
 		const connectorSelect = [...dom.querySelectorAll("button")].find(
 			(button) => button.getAttribute("aria-label") === "连接器",
 		);
-		expect(skillSelect).toBeDefined();
 		expect(connectorSelect).toBeDefined();
+		// 技能那一条只剩"打开选择器"(它不再在这里挂芯片 —— 芯片长在输入框里)。
+		expect(dom.textContent).toContain("用技能…");
 		// 已选的那一个在下面的小块里,并且**不会**再出现在"添加"的选项里(避免重复添加)。
 		const removeLabels = [...dom.querySelectorAll("button")].map((button) => button.getAttribute("aria-label") ?? "");
-		expect(removeLabels).toContain("移除 写周报");
-		act(() => skillSelect?.click());
-		expect([...dom.querySelectorAll('[role="option"]')].map((option) => option.textContent)).not.toContain("写周报");
-		expect([...dom.querySelectorAll('[role="option"]')].map((option) => option.textContent)).toContain("写日报");
+		expect(removeLabels).toContain("移除 GitHub");
+		act(() => connectorSelect?.click());
+		expect([...dom.querySelectorAll('[role="option"]')].map((option) => option.textContent)).not.toContain("GitHub");
+		expect([...dom.querySelectorAll('[role="option"]')].map((option) => option.textContent)).toContain("Notion");
 	});
 
 	it("连接器:只连了 1 个时,底下就 1 个小块,其余 3 个回到选项里(用户报过)", () => {
@@ -671,7 +769,7 @@ describe("网页端线程渲染", () => {
 
 		// 没选会话时进的是**新建页**(以前这里只有一句"从左边选一个会话")。
 		const noSession = render({ sessionId: undefined, sessions: [] });
-		expect(noSession.textContent).toContain("今天想做什么");
+		expect(noSession.textContent).toContain("你的通用 Agent 工作台");
 	});
 
 	it("带用量、模型清单、工具活动:能渲染", () => {
@@ -764,15 +862,15 @@ describe("网页端线程渲染", () => {
 			sessionId: undefined,
 			entries: [
 				{ id: "general-work", name: "通用工作", description: "日常写作、研究与综合任务。", iconKey: "sparkles", available: true },
-				{ id: "code-development", name: "代码开发", description: "理解、实现与调试代码。", iconKey: "code", available: false, note: "这类会话要先选一个工作目录;手机上还不能选,请在电脑上新建。" },
+				// 本机说这类现在建不了(比如模型不可用)—— 照实说原因,而不是让用户点一下才知道。
+				{ id: "code-development", name: "代码开发", description: "理解、实现与调试代码。", iconKey: "code", available: false, note: "这台电脑上还没有可用的模型。" },
 			],
 		});
-		expect(dom.textContent).toContain("今天想做什么");
+		expect(dom.textContent).toContain("你的通用 Agent 工作台");
 		expect(dom.textContent).toContain("通用工作");
-		// 不能建的那一类:**照实说原因**,而不是让用户点一下才知道。
-		expect(dom.textContent).toContain("手机上还不能选");
-		const disabled = [...dom.querySelectorAll("button")].find((button) => button.textContent?.includes("代码开发"));
-		expect(disabled?.hasAttribute("disabled")).toBe(true);
+		// 不能建的那一类:芯片是虚线的,原因写在 `title` 里(手机上长按看得到)。
+		const blocked = [...dom.querySelectorAll("button")].find((button) => button.textContent?.includes("代码开发"));
+		expect(blocked?.getAttribute("title")).toContain("还没有可用的模型");
 	});
 
 	it("新建页**没有自己的输入框**:第一句话写在底部那个(它还能选模型)", async () => {
@@ -786,12 +884,11 @@ describe("网页端线程渲染", () => {
 			async () => ({ ok: true }),
 			async () => ({ ok: true }),
 		);
-		expect(dom.querySelectorAll("textarea")).toHaveLength(1);
+		expect(dom.querySelectorAll('[contenteditable="true"]')).toHaveLength(1);
 		expect(dom.textContent).toContain("在下面写下第一句话");
 		// 底部那个在新建状态下是**可用**的(以前没会话就禁用)。
-		const textarea = dom.querySelector("textarea");
-		expect(textarea?.hasAttribute("disabled")).toBe(false);
-		expect(textarea?.getAttribute("placeholder")).toContain("写下第一句话");
+		expect(editorOf(dom).getAttribute("contenteditable")).toBe("true");
+		expect(dom.textContent).toContain("写下第一句话就开始");
 		expect(calls.length).toBe(0);
 	});
 
@@ -899,13 +996,13 @@ describe("网页端线程渲染", () => {
 		act(() => {
 			[...dom.querySelectorAll("button")].find((button) => button.textContent?.includes("新建"))?.click();
 		});
-		expect(dom.textContent).toContain("今天想做什么");
+		expect(dom.textContent).toContain("你的通用 Agent 工作台");
 		// 再点回那一个会话
 		act(() => {
 			[...dom.querySelectorAll("button")].find((button) => button.textContent?.includes("修一下登录页"))?.click();
 		});
 		expect(opened).toEqual(["s1"]);
-		expect(dom.textContent).not.toContain("今天想做什么");
+		expect(dom.textContent).not.toContain("你的通用 Agent 工作台");
 	});
 
 	it("切换会话时有加载态:列表那一行转圈,正文区说「正在打开会话…」,而且不给发", () => {
@@ -920,7 +1017,7 @@ describe("网页端线程渲染", () => {
 		expect(dom.textContent).toContain("正在打开会话…");
 		expect(dom.querySelector('[aria-label="正在打开"]')).toBeTruthy();
 		// 打开中不给发:这一页的技能 / 连接器 / 模型还是上一个会话的。
-		expect((dom.querySelector("textarea") as HTMLTextAreaElement | null)?.disabled).toBe(true);
+		expect(editorOf(dom).getAttribute("contenteditable")).toBe("false");
 	});
 
 	it("新建页**不受别的会话影响**:那边在跑,这边的发送键还是发送键", () => {
@@ -1227,5 +1324,829 @@ describe("网页端线程渲染", () => {
 		});
 		expect(modelButton(unknown)?.querySelector("img")).toBeNull();
 		expect(modelButton(unknown)?.querySelector("svg")).not.toBeNull();
+	});
+});
+
+describe("深度思考的展开规则(P29)", () => {
+	/** 一条正在流式的助手消息:思考已经流出来一段。 */
+	const streamingMessage = (overrides: Record<string, unknown> = {}) => ({
+		role: "assistant" as const,
+		text: "",
+		at: 2,
+		streaming: true,
+		blocks: [{ type: "reasoning", text: "先看看这个函数在哪儿被调用" }],
+		...overrides,
+	});
+
+	const thinking = (dom: HTMLElement) => dom.querySelector('[aria-label="深度思考"]');
+	const thinkingText = (dom: HTMLElement) => dom.textContent?.includes("先看看这个函数") ?? false;
+
+	it("正在流式:思考**自动展开**(那时候它是唯一看得见的进度)", () => {
+		const dom = render({ messages: [streamingMessage()] });
+		expect(thinking(dom)?.getAttribute("aria-expanded")).toBe("true");
+		expect(thinkingText(dom)).toBe(true);
+	});
+
+	it("答完之后:**自动收起**(答案出来了,思考退到幕后)", () => {
+		const dom = render({ messages: [streamingMessage()] });
+		expect(thinkingText(dom)).toBe(true);
+		// 完成帧一到,`streaming` 就变成 false(客户端那边就是这么标的)。
+		rerender({ messages: [streamingMessage({ streaming: false })] });
+		expect(thinking(dom)?.getAttribute("aria-expanded")).toBe("false");
+		expect(thinkingText(dom)).toBe(false);
+	});
+
+	it("用户自己收起过:**不再自己弹开**(别跟用户抢)", async () => {
+		const dom = render({ messages: [streamingMessage()] });
+		await act(async () => {
+			thinking(dom)?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+		});
+		expect(thinkingText(dom)).toBe(false);
+		// 后面还有思考流进来(还是同一条流式消息):它不该又自己弹开。
+		rerender({
+			messages: [
+				streamingMessage({ blocks: [{ type: "reasoning", text: "先看看这个函数在哪儿被调用,再看它的返回值" }] }),
+			],
+		});
+		expect(thinkingText(dom)).toBe(false);
+	});
+
+	it("历史里的思考:默认就是收起的(只有正在流的那一段才自动展开)", () => {
+		const dom = render({
+			messages: [
+				{ role: "assistant", text: "答案在这", at: 2, blocks: [{ type: "reasoning", text: "先看看这个函数" }] },
+			],
+		});
+		expect(thinking(dom)?.getAttribute("aria-expanded")).toBe("false");
+		expect(thinkingText(dom)).toBe(false);
+	});
+
+	it("用户点开历史里的思考:看得到正文(它仍然是可折叠的块,不是一段裸文本)", async () => {
+		const dom = render({
+			messages: [
+				{ role: "assistant", text: "答案在这", at: 2, blocks: [{ type: "reasoning", text: "先看看这个函数" }] },
+			],
+		});
+		await act(async () => {
+			thinking(dom)?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+		});
+		expect(thinkingText(dom)).toBe(true);
+	});
+});
+
+describe("新建会话页:为手机重排(P31 / P32)", () => {
+	const MODES = [
+		{ id: "everyday", name: "日常工作", iconKey: "sparkles" },
+		{ id: "code", name: "写代码", iconKey: "code" },
+		{ id: "create", name: "创作", iconKey: "palette" },
+	];
+	const ENTRIES = [
+		{ id: "general-work", name: "通用工作", description: "聊天、写作、查资料", available: true, mode: "everyday" },
+		{ id: "presentation", name: "演示文稿", description: "做一份演示", available: true, mode: "everyday" },
+		{
+			id: "code-development",
+			name: "代码开发",
+			description: "在某个目录里改代码",
+			available: true,
+			mode: "code",
+			requiresWorkspace: true,
+		},
+		{
+			id: "design-page",
+			name: "设计页面",
+			description: "做一版界面",
+			available: true,
+			mode: "create",
+			acceptsDesignStyle: true,
+		},
+	];
+	const WORKSPACES = [
+		{ id: "w1", name: "登录页重构", available: true },
+		{ id: "w2", name: "已经没了的目录", available: false },
+	];
+	const STYLES = [
+		{ id: "precise-dark", name: "深色精密", tagline: "密集、克制", vibe: "dark" as const },
+		{ id: "calm-light", name: "明亮克制", tagline: "留白承担层级", vibe: "light" as const },
+	];
+
+	/** 新建页(没有会话)。 */
+	const newSessionPage = (overrides: Record<string, unknown> = {}) =>
+		render({
+			sessionId: undefined,
+			modes: MODES,
+			entries: ENTRIES,
+			workspaces: WORKSPACES,
+			designStyles: STYLES,
+			...overrides,
+		});
+
+	const clickByText = async (dom: HTMLElement, text: string) => {
+		const button = [...dom.querySelectorAll("button")].find((candidate) => candidate.textContent?.includes(text));
+		await act(async () => {
+			button?.click();
+			await new Promise((resolve) => setTimeout(resolve, 0));
+		});
+	};
+
+	/** 一个类型/分栏那一行(名字就是它的全部文字)。 */
+	const rowOf = (dom: HTMLElement, text: string) =>
+		[...dom.querySelectorAll("button")].find((candidate) => candidate.textContent?.trim() === text) as
+			| HTMLButtonElement
+			| undefined;
+
+	it("欢迎语:与桌面端同一句(标题 + 一句话)", () => {
+		const dom = newSessionPage();
+		expect(dom.textContent).toContain("Wordless");
+		expect(dom.textContent).toContain("你的通用 Agent 工作台。");
+	});
+
+	it("**先分栏,再摆类型**:一次只看一栏(六种铺一屏的时代过去了)", () => {
+		const dom = newSessionPage();
+		for (const mode of ["日常工作", "写代码", "创作"]) expect(rowOf(dom, mode)).toBeDefined();
+		// 默认在「日常工作」这一栏:底下只有这一栏的类型。
+		expect(dom.textContent).toContain("通用工作");
+		expect(dom.textContent).toContain("演示文稿");
+		expect(dom.textContent).not.toContain("代码开发");
+		expect(dom.textContent).not.toContain("设计页面");
+	});
+
+	it("换一栏:底下换成那一栏的类型,并且**选中这一栏的第一个**(与桌面端 changeMode 同一条)", async () => {
+		const dom = newSessionPage();
+		await clickByText(dom, "写代码");
+		expect(dom.textContent).toContain("代码开发");
+		expect(dom.textContent).not.toContain("通用工作");
+		// 需要目录的那一类还没选目录 —— 所以这一栏底下暂时没有可选的,提示如实说。
+		expect(dom.textContent).toContain("要先选一个工作目录");
+	});
+
+	it("工作类型是**竖着的一列**(横着一条会滑出去,而「能滑」这件事看不出来)", () => {
+		const dom = newSessionPage();
+		const column = rowOf(dom, "通用工作")?.parentElement;
+		// Tailwind 不在测试环境里,量不了布局,所以这里钉的是"容器是竖排"这件事本身。
+		expect(column?.className).toContain("flex-col");
+		expect(column?.className).not.toContain("overflow-x");
+		expect(column?.contains(rowOf(dom, "演示文稿") ?? null)).toBe(true);
+		// 没选中的那些不摆说明 —— 说明只跟着选中的那一个走。
+		expect(dom.textContent).not.toContain("做一份演示");
+		expect(dom.textContent).toContain("聊天、写作、查资料");
+	});
+
+	it("点另一个类型:说明跟着换", async () => {
+		const dom = newSessionPage();
+		await clickByText(dom, "演示文稿");
+		expect(dom.textContent).toContain("做一份演示");
+		expect(dom.textContent).not.toContain("聊天、写作、查资料");
+	});
+
+	it("需要目录的那一类:点它**直接打开目录选择**(而不是一个点不动的按钮)", async () => {
+		const dom = newSessionPage();
+		await clickByText(dom, "写代码");
+		await clickByText(dom, "代码开发");
+		// 抽屉开了,而且**说清为什么**(用户点它就是因为点不动)。
+		const sheet = dom.querySelector('[aria-label="工作目录"]');
+		expect(sheet).not.toBeNull();
+		expect(sheet?.textContent).toContain("要先选一个工作目录");
+		// 里面是能选的目录 —— 被删掉的那个不列(不摆一个选了会失败的选项)。
+		expect(sheet?.textContent).toContain("登录页重构");
+		expect(sheet?.textContent).not.toContain("已经没了的目录");
+	});
+
+	it("选好目录之后:那一类变成可点,而且那一行写着选的是哪个目录", async () => {
+		const dom = newSessionPage();
+		await clickByText(dom, "写代码");
+		await clickByText(dom, "代码开发");
+		await clickByText(dom, "登录页重构");
+		await clickByText(dom, "代码开发");
+		expect(rowOf(dom, "代码开发")?.getAttribute("aria-pressed")).toBe("true");
+		expect(dom.textContent).toContain("登录页重构");
+	});
+
+	it("设计风格:只有**设计那一类**摆那一枚芯片,点开才是选项", async () => {
+		const dom = newSessionPage();
+		expect(dom.textContent).not.toContain("风格");
+		await clickByText(dom, "创作");
+		await clickByText(dom, "设计页面");
+		expect(dom.textContent).toContain("由它自己定");
+		await clickByText(dom, "风格");
+		expect(dom.querySelector('[aria-label="设计风格"]')).not.toBeNull();
+		expect(dom.textContent).toContain("深色精密");
+	});
+
+	it("选好目录与风格之后:新建会话把它们一起带上", async () => {
+		const dom = newSessionPage();
+		// 顺序与界面上的提示一致:先选目录(那一类才点得动),再选工作类型。
+		await clickByText(dom, "写代码");
+		await clickByText(dom, "代码开发");
+		await clickByText(dom, "登录页重构");
+		await clickByText(dom, "代码开发");
+		const editable = editorOf(dom);
+		await typeInto(editable, "看一下这个仓库");
+		await act(async () => {
+			editable.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
+			await new Promise((resolve) => setTimeout(resolve, 0));
+		});
+		expect(createdSessions.at(-1)).toEqual({
+			entryId: "code-development",
+			text: "看一下这个仓库",
+			skillIds: [],
+			connectorIds: [],
+			workspaceId: "w1",
+		});
+	});
+
+	it("设计那一类:选中的风格随第一条消息发出去", async () => {
+		const dom = newSessionPage();
+		await clickByText(dom, "创作");
+		await clickByText(dom, "设计页面");
+		await clickByText(dom, "风格");
+		await clickByText(dom, "深色精密");
+		const editable = editorOf(dom);
+		await typeInto(editable, "做一个落地页");
+		await act(async () => {
+			editable.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
+			await new Promise((resolve) => setTimeout(resolve, 0));
+		});
+		expect(createdSessions.at(-1)).toEqual({
+			entryId: "design-page",
+			text: "做一个落地页",
+			skillIds: [],
+			connectorIds: [],
+			designStyleId: "precise-dark",
+		});
+	});
+});
+
+describe("composer 的四处报错(P33)", () => {
+	const SKILLS = [
+		{ id: "s1", name: "写周报", description: "按模板写" },
+		{ id: "s2", name: "写日报", description: "一句话总结" },
+	];
+	const MODELS = [
+		{ connectionId: "anthropic", modelId: "claude-sonnet-4", displayName: "Claude Sonnet 4" },
+		{ connectionId: "openai", modelId: "gpt-5", displayName: "GPT-5" },
+	];
+
+	it("**只挑了技能**时占位符要让开(以前它会压在刚插进来的 token 上)", async () => {
+		const dom = render({ skills: SKILLS });
+		const editable = editorOf(dom);
+		expect(dom.textContent).toContain("说点什么…");
+		// 从「+」点技能插一枚(正文一个字都没有)。
+		await act(async () => {
+			[...dom.querySelectorAll("button")].find((button) => button.getAttribute("aria-label") === "更多")?.click();
+			await new Promise((resolve) => setTimeout(resolve, 0));
+		});
+		await act(async () => {
+			[...dom.querySelectorAll("button")].find((button) => button.textContent?.includes("用技能…"))?.click();
+			await new Promise((resolve) => setTimeout(resolve, 0));
+		});
+		await act(async () => {
+			[...dom.querySelectorAll('[role="option"]')]
+				.find((node) => node.textContent?.includes("写周报"))
+				?.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }));
+			await new Promise((resolve) => setTimeout(resolve, 0));
+		});
+		expect(dom.querySelector("[data-composer-skill]")).not.toBeNull();
+		// 占位符**必须让开** —— 不然它就压在 token 上(用户报过)。
+		expect(dom.textContent).not.toContain("说点什么…");
+		expect(editable.getAttribute("contenteditable")).toBe("true");
+	});
+
+	it("技能选择器**关得掉**(从「+」进来的那一路没有查询串,以前只能选一个才关得上)", async () => {
+		const dom = render({ skills: SKILLS });
+		await act(async () => {
+			[...dom.querySelectorAll("button")].find((button) => button.getAttribute("aria-label") === "更多")?.click();
+			await new Promise((resolve) => setTimeout(resolve, 0));
+		});
+		await act(async () => {
+			[...dom.querySelectorAll("button")].find((button) => button.textContent?.includes("用技能…"))?.click();
+			await new Promise((resolve) => setTimeout(resolve, 0));
+		});
+		expect(dom.querySelector('[aria-label="技能"]')).not.toBeNull();
+		// 一个明确的关掉按钮(手机上没有 Esc)。
+		const close = dom.querySelector('[aria-label="关闭技能"]') as HTMLButtonElement | null;
+		expect(close).not.toBeNull();
+		await act(async () => {
+			close?.click();
+			await new Promise((resolve) => setTimeout(resolve, 0));
+		});
+		expect(dom.querySelector('[aria-label="技能"]')).toBeNull();
+		// 而且**什么都没插进来**(关掉就是关掉)。
+		expect(dom.querySelector("[data-composer-skill]")).toBeNull();
+	});
+
+	it("「+」里的技能入口:是**一枚小按钮**(与「添加附件」同一种),不是占满整行的一条", async () => {
+		const dom = render({ skills: SKILLS });
+		await act(async () => {
+			[...dom.querySelectorAll("button")].find((button) => button.getAttribute("aria-label") === "更多")?.click();
+			await new Promise((resolve) => setTimeout(resolve, 0));
+		});
+		const skill = [...dom.querySelectorAll("button")].find((button) => button.textContent?.includes("用技能…"));
+		const attach = [...dom.querySelectorAll("button")].find((button) => button.textContent?.includes("添加附件"));
+		expect(skill).toBeDefined();
+		expect(attach).toBeDefined();
+		// 同一个操作行里、同一种形状(都是 outline 小按钮)。
+		expect(skill?.parentElement).toBe(attach?.parentElement);
+		expect(skill?.className).toBe(attach?.className);
+	});
+
+	it("「+」里的几个 select **各自有间距**(不能再被塞进 `display: contents` 的壳里)", async () => {
+		const dom = render({
+			sessions: [{ id: "s1", title: "修一下登录页", updatedAt: 1, running: false, interactionMode: "default" }],
+			skills: SKILLS,
+			availableConnectors: [{ id: "c1", name: "GitHub", enabled: true }],
+		});
+		await act(async () => {
+			[...dom.querySelectorAll("button")].find((button) => button.getAttribute("aria-label") === "更多")?.click();
+			await new Promise((resolve) => setTimeout(resolve, 0));
+		});
+		const rows = [...dom.querySelectorAll("[data-setting-row]")];
+		expect(rows.map((row) => row.getAttribute("data-setting-row"))).toEqual(["模式", "访问权限", "工具确认", "连接器"]);
+		/*
+			根因:上一版把前三个包在 `display: contents` 的 span 里,指望外层 `space-y-4` 顺手管住它们 ——
+			可 `space-y` 只认**直接子节点**,于是三个框上下贴在一起。
+			所以这里钉的是:它们同一个父节点,那个父节点**自带间距**、而且**不是 `contents`**。
+			(Tailwind 不在测试环境里,量不了真实间距,只能钉住这条规则本身。)
+		*/
+		const group = rows[0]?.parentElement;
+		expect(rows[1]?.parentElement).toBe(group);
+		expect(group?.className).toContain("space-y");
+		expect(group?.className).not.toContain("contents");
+	});
+
+	it("新建页**能选模型**:清单来自目录(这台机器上已启用的那些)", async () => {
+		const dom = render({ sessionId: undefined, catalogModels: MODELS, entries: [] });
+		const model = [...dom.querySelectorAll("button")].find((button) =>
+			(button.getAttribute("aria-label") ?? "").startsWith("模型"),
+		);
+		expect(model).toBeDefined();
+		expect(model?.hasAttribute("disabled")).toBe(false);
+		await act(async () => {
+			model?.click();
+			await new Promise((resolve) => setTimeout(resolve, 0));
+		});
+		const sheet = dom.querySelector('[aria-label="换模型"]');
+		expect(sheet).not.toBeNull();
+		expect(sheet?.textContent).toContain("Claude Sonnet 4");
+		expect(sheet?.textContent).toContain("不选就由电脑按工作类型自动挑一个");
+	});
+});
+
+describe("`$` 引用技能(P30)", () => {
+	const SKILLS = [
+		{ id: "s1", name: "写周报", description: "按模板写" },
+		{ id: "s2", name: "写日报", description: "一句话总结" },
+	];
+
+	/** 挑技能那一行。 */
+	const pickSkill = async (dom: HTMLElement, name: string) => {
+		const option = [...dom.querySelectorAll('[role="option"]')].find((node) =>
+			(node.textContent ?? "").includes(name),
+		)!;
+		await act(async () => {
+			option.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }));
+		});
+	};
+
+	it("敲下 $ 就摆出技能选择器(而且**不问本机** —— 目录本来就在手上)", async () => {
+		const calls: string[] = [];
+		const dom = render(
+			{ skills: SKILLS },
+			undefined,
+			undefined,
+			undefined,
+			async (query) => {
+				calls.push(query);
+				return { ok: true, entries: [] };
+			},
+		);
+		await typeInto(editorOf(dom), "写一个 $");
+		expect(dom.querySelector('[aria-label="技能"]')).not.toBeNull();
+		const options = [...dom.querySelectorAll('[role="option"]')].map((node) => node.textContent ?? "");
+		expect(options).toHaveLength(2);
+		expect(options[0]).toContain("写周报");
+		// 技能是本地过滤:一次文件搜索都不该发出去。
+		expect(calls).toEqual([]);
+	});
+
+	it("按名字过滤(`$日报`)", async () => {
+		const dom = render({ skills: SKILLS });
+		await typeInto(editorOf(dom), "$日报");
+		const options = [...dom.querySelectorAll('[role="option"]')].map((node) => node.textContent ?? "");
+		expect(options).toHaveLength(1);
+		expect(options[0]).toContain("写日报");
+	});
+
+	it("选一个:那段 `$…` 换成编辑器里的一枚**技能 token**", async () => {
+		const dom = render({ skills: SKILLS });
+		await typeInto(editorOf(dom), "写一个 $周报");
+		await pickSkill(dom, "写周报");
+		const token = dom.querySelector("[data-composer-skill]");
+		expect(token?.textContent).toContain("写周报");
+		// 那段 `$周报` 已经被它替换掉了。
+		expect(editorOf(dom).textContent).not.toContain("$周报");
+		expect(dom.querySelector('[aria-label="技能"]')).toBeNull();
+	});
+
+	it("发出去的是**正文 + 技能 id**:正文里没有技能名(token 不是文字)", async () => {
+		const dom = render({ skills: SKILLS });
+		const editable = editorOf(dom);
+		await typeInto(editable, "帮我 $周报");
+		await pickSkill(dom, "写周报");
+		await act(async () => {
+			editable.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
+			await new Promise((resolve) => setTimeout(resolve, 0));
+		});
+		expect(sentMessages).toHaveLength(1);
+		expect(sentMessages[0]?.text).toBe("帮我");
+		expect(sentMessages[0]?.skillIds).toEqual(["s1"]);
+	});
+
+	it("退格能删掉技能 token(与文件引用同一套)", async () => {
+		const dom = render({ skills: SKILLS });
+		const editable = editorOf(dom);
+		await typeInto(editable, "$周报");
+		await pickSkill(dom, "写周报");
+		expect(dom.querySelector("[data-composer-skill]")).not.toBeNull();
+		await act(async () => {
+			editable.dispatchEvent(new KeyboardEvent("keydown", { key: "Backspace", bubbles: true, cancelable: true }));
+			await new Promise((resolve) => setTimeout(resolve, 0));
+		});
+		expect(dom.querySelector("[data-composer-skill]")).toBeNull();
+	});
+
+	it("「+」→用技能…:打开的**是同一个选择器**(两个入口,同一枚 token)", async () => {
+		const dom = render({ skills: SKILLS });
+		const more = [...dom.querySelectorAll("button")].find((button) => button.getAttribute("aria-label") === "更多");
+		await act(async () => {
+			more?.click();
+			await new Promise((resolve) => setTimeout(resolve, 0));
+		});
+		const entry = [...dom.querySelectorAll("button")].find((button) => button.textContent?.includes("用技能…"));
+		await act(async () => {
+			entry?.click();
+			await new Promise((resolve) => setTimeout(resolve, 0));
+		});
+		expect(dom.querySelector('[aria-label="技能"]')).not.toBeNull();
+		await pickSkill(dom, "写日报");
+		// 插进来的是**输入框里的 token**(而不是"挂在别处的一串选中状态")。
+		expect(dom.querySelector("[data-composer-skill]")?.textContent).toContain("写日报");
+	});
+});
+
+describe("`@` 搜工作区文件(P28)", () => {
+	const ENTRIES = [
+		{ path: "src/renderer/features/thread/Composer.tsx", name: "Composer.tsx", kind: "file" as const },
+		{ path: "src/renderer", name: "renderer", kind: "directory" as const },
+	];
+
+	const search = (calls: string[]) => async (query: string) => {
+		calls.push(query);
+		return { ok: true, entries: ENTRIES };
+	};
+
+	/** 挑一行(点的是**文件**那一行:目录排在前面,不能拿第一行)。 */
+	const pickFile = async (dom: HTMLElement) => {
+		const option = [...dom.querySelectorAll('[role="option"]')].find((node) =>
+			(node.textContent ?? "").includes("Composer.tsx"),
+		)!;
+		await act(async () => {
+			option.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }));
+		});
+	};
+
+	it("敲下 @ 就摆出选择器:文件与目录都在里面", async () => {
+		const calls: string[] = [];
+		const dom = render({}, undefined, undefined, undefined, search(calls));
+		await typeInto(editorOf(dom), "看一下 @");
+		expect(calls).toContain("");
+		const list = dom.querySelector('[aria-label="工作区文件"]');
+		expect(list).not.toBeNull();
+		// 目录排在前面(找文件时先缩范围),而且路径完整显示。
+		const options = [...list!.querySelectorAll('[role="option"]')].map((node) => node.textContent ?? "");
+		expect(options).toHaveLength(2);
+		expect(options[0]).toContain("renderer");
+		expect(options[1]).toContain("Composer.tsx");
+	});
+
+	it("名字与目录**分成两段**:不再是那条被截断的长路径", async () => {
+		const dom = render({}, undefined, undefined, undefined, search([]));
+		await typeInto(editorOf(dom), "@");
+		const row = [...dom.querySelectorAll('[role="option"]')].find((node) =>
+			(node.textContent ?? "").includes("Composer.tsx"),
+		)!;
+		// 两段各说各的:名字(要认的那一个)与目录(用来区分同名文件的)。
+		const spans = [...row.querySelectorAll("span")].map((node) => node.textContent ?? "");
+		expect(spans).toContain("Composer.tsx");
+		expect(spans).toContain("src/renderer/features/thread");
+		// 而且**不是**一整条被截断的路径(那是用户说的"看着有点乱")。
+		expect(spans.some((text) => text.includes("…") && text.includes("Composer.tsx"))).toBe(false);
+	});
+
+	it("文件类型图标**按需加载**出来(与桌面端同一份表)", async () => {
+		// 图标表是动态 import 进来的(约 59KB gzip,不用 `@` 的人不该为它付费),
+		// 所以这里**等条件成立**,而不是等一个固定时长 —— 跑整个浏览器套件时那块 chunk
+		// 什么时候到不确定,写死 200ms 会变成一条时好时坏的测试。
+		// 顺带把"子路径导出有没有接对"也钉住:接错了这一步永远等不到。
+		const dom = render({}, undefined, undefined, undefined, search([]));
+		await typeInto(editorOf(dom), "@");
+		const rows = [...dom.querySelectorAll('[role="option"]')];
+		expect(rows).toHaveLength(2);
+		expect(await waitFor(() => rows.every((row) => row.querySelector("svg") !== null))).toBe(true);
+	});
+
+	it("搜出来的东西是**这个会话的工作区**里的:查询原样发给本机", async () => {
+		const calls: string[] = [];
+		const dom = render({}, undefined, undefined, undefined, search(calls));
+		await typeInto(editorOf(dom), "@Composer");
+		expect(calls.at(-1)).toBe("Composer");
+	});
+
+	it("打字时**防抖**:一个字一个请求的话,手机就是台打字机", async () => {
+		const calls: string[] = [];
+		const dom = render({}, undefined, undefined, undefined, search(calls));
+		const editable = editorOf(dom);
+		await act(async () => {
+			editable.focus();
+			await new Promise((resolve) => setTimeout(resolve, 0));
+		});
+		// 连着敲三下(每一下之间几乎不停),只该发出最后一次。
+		// 每一下单独一个 `act`:Lexical 要先把 DOM 的变化同步回模型,下一句才接得上。
+		for (const value of ["@a", "p", "p"]) {
+			await act(async () => {
+				document.execCommand("insertText", false, value);
+				await new Promise((resolve) => setTimeout(resolve, 0));
+			});
+		}
+		await act(async () => {
+			await new Promise((resolve) => setTimeout(resolve, 200));
+		});
+		expect(calls).toEqual(["app"]);
+	});
+
+	it("选一条:那段 `@…` 换成编辑器里的**一枚 token**(不是几个字)", async () => {
+		const dom = render({}, undefined, undefined, undefined, search([]));
+		await typeInto(editorOf(dom), "看一下 @Composer");
+		await pickFile(dom);
+		// token 是编辑器里的一个**节点**:它有自己的 DOM(图标 + 名字),而不是一段文字。
+		const token = dom.querySelector("[data-composer-token]");
+		expect(token?.textContent).toContain("Composer.tsx");
+		expect(token?.getAttribute("title")).toBe("src/renderer/features/thread/Composer.tsx");
+		// 正文里那段 `@Composer` 已经被它替换掉了。
+		expect(editorOf(dom).textContent).not.toContain("@Composer");
+		// 选完选择器收起来(不然它会一直挡着输入框上方那一片)。
+		expect(dom.querySelector('[aria-label="工作区文件"]')).toBeNull();
+	});
+
+	it("选完之后**接着打字**:字落在 token 后面,而不是钻进 token 里", async () => {
+		const dom = render({}, undefined, undefined, undefined, search([]));
+		const editable = editorOf(dom);
+		await typeInto(editable, "@Composer");
+		await pickFile(dom);
+		await typeInto(editable, "这个文件");
+		// token 还在(打字不会把它吃掉),而且那几个字真的进了输入框。
+		expect(dom.querySelector("[data-composer-token]")).not.toBeNull();
+		expect(editable.textContent).toContain("这个文件");
+	});
+
+	it("退格能删掉紧挨着的那枚 token(否则它在输入框里**删不掉** —— 用户报过)", async () => {
+		const dom = render({}, undefined, undefined, undefined, search([]));
+		const editable = editorOf(dom);
+		await typeInto(editable, "看一下 @Composer");
+		await pickFile(dom);
+		expect(dom.querySelector("[data-composer-token]")).not.toBeNull();
+		await act(async () => {
+			editable.dispatchEvent(new KeyboardEvent("keydown", { key: "Backspace", bubbles: true, cancelable: true }));
+			await new Promise((resolve) => setTimeout(resolve, 0));
+		});
+		expect(dom.querySelector("[data-composer-token]")).toBeNull();
+		// 前面的正文**一个字没动**(删的是 token,不是"往前删一个字符")。
+		expect(editable.textContent).toContain("看一下");
+	});
+
+	it("方向键挪到 token 上再按退格:也删得掉(它是可选中的节点)", async () => {
+		const dom = render({}, undefined, undefined, undefined, search([]));
+		const editable = editorOf(dom);
+		await typeInto(editable, "@Composer");
+		await pickFile(dom);
+		expect(dom.querySelector("[data-composer-token]")).not.toBeNull();
+		// 左方向键把光标挪到 token **前面**,Delete 删掉右边那一枚。
+		for (const key of ["ArrowLeft", "Delete"]) {
+			await act(async () => {
+				editable.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true }));
+				await new Promise((resolve) => setTimeout(resolve, 0));
+			});
+		}
+		expect(dom.querySelector("[data-composer-token]")).toBeNull();
+	});
+
+	it("输入框里**只有一枚 token** 时:退格也删得掉(用户挑完文件什么都没打就是这样)", async () => {
+		const dom = render({}, undefined, undefined, undefined, search([]));
+		const editable = editorOf(dom);
+		await typeInto(editable, "@Composer");
+		await pickFile(dom);
+		// 挑完之后正文是空的,光标落在 token 后面(那里连一个可删的字符都没有)。
+		expect(editable.textContent?.trim()).toBe("Composer.tsx");
+		await act(async () => {
+			editable.dispatchEvent(new KeyboardEvent("keydown", { key: "Backspace", bubbles: true, cancelable: true }));
+			await new Promise((resolve) => setTimeout(resolve, 0));
+		});
+		expect(dom.querySelector("[data-composer-token]")).toBeNull();
+	});
+
+	it("删掉 token 之后:那条消息里就没有引用了(正文照发)", async () => {
+		const dom = render({}, undefined, undefined, undefined, search([]));
+		const editable = editorOf(dom);
+		await typeInto(editable, "看一下 @Composer");
+		await pickFile(dom);
+		await act(async () => {
+			editable.dispatchEvent(new KeyboardEvent("keydown", { key: "Backspace", bubbles: true, cancelable: true }));
+			await new Promise((resolve) => setTimeout(resolve, 0));
+		});
+		await act(async () => {
+			editable.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
+			await new Promise((resolve) => setTimeout(resolve, 0));
+		});
+		expect(sentMessages).toHaveLength(1);
+		expect(sentMessages[0]?.references).toEqual([]);
+	});
+
+	it("发出去的是**正文 + 引用两份**:正文里没有文件名", async () => {
+		const dom = render({}, undefined, undefined, undefined, search([]));
+		const editable = editorOf(dom);
+		await typeInto(editable, "看一下 @Composer");
+		await pickFile(dom);
+		await act(async () => {
+			editable.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
+			await new Promise((resolve) => setTimeout(resolve, 0));
+		});
+		// 引用走**结构**(本机拿到的是路径),正文里不该混进 `Composer.tsx` 这段字 ——
+		// 否则模型会看到两遍,而用户删掉 token 之后那一段还会阴魂不散。
+		expect(sentMessages).toHaveLength(1);
+		expect(sentMessages[0]?.text).toBe("看一下");
+		expect(sentMessages[0]?.references).toEqual([
+			{ path: "src/renderer/features/thread/Composer.tsx", name: "Composer.tsx", kind: "file" },
+		]);
+	});
+
+	it("回车选中高亮那条 —— 而不是把消息发出去", async () => {
+		const dom = render({}, undefined, undefined, undefined, search([]));
+		const editable = editorOf(dom);
+		await typeInto(editable, "@");
+		const enter = new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true });
+		await act(async () => {
+			editable.dispatchEvent(enter);
+			await new Promise((resolve) => setTimeout(resolve, 0));
+		});
+		// 有东西可挑:这一下属于选择器 —— 消息**不该**发出去,而 token 该插进来。
+		expect(sentMessages).toEqual([]);
+		expect(dom.querySelector("[data-composer-token]")).not.toBeNull();
+	});
+
+	it("一条都没搜到时:回车照旧是发送(「按了没反应」是最难判断的状态)", async () => {
+		const dom = render({}, undefined, undefined, undefined, async () => ({ ok: true, entries: [] }));
+		const editable = editorOf(dom);
+		await typeInto(editable, "@没有这个文件");
+		await act(async () => {
+			editable.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
+			await new Promise((resolve) => setTimeout(resolve, 0));
+		});
+		// 没有可挑的:回车**不该被吞掉** —— 它要落到"发送"那一条路上(与桌面端逐字一致)。
+		expect(sentMessages).toHaveLength(1);
+		expect(dom.querySelector("[data-composer-token]")).toBeNull();
+	});
+
+	it("方向键在列表里移动(第一下往下就是第二行)", async () => {
+		const dom = render({}, undefined, undefined, undefined, search([]));
+		const editable = editorOf(dom);
+		await typeInto(editable, "@");
+		await act(async () => {
+			editable.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true, cancelable: true }));
+			await new Promise((resolve) => setTimeout(resolve, 0));
+		});
+		await act(async () => {
+			editable.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
+			await new Promise((resolve) => setTimeout(resolve, 0));
+		});
+		// 第一条是目录(排序把目录放前面),往下一次就是那个文件。
+		expect(dom.querySelector("[data-composer-token]")?.textContent).toContain("Composer.tsx");
+	});
+
+	it("Esc 收起来,而且**同样的查询**不再自己弹回来", async () => {
+		const dom = render({}, undefined, undefined, undefined, search([]));
+		const editable = editorOf(dom);
+		await typeInto(editable, "@Composer");
+		expect(dom.querySelector('[aria-label="工作区文件"]')).not.toBeNull();
+		await act(async () => {
+			editable.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
+			await new Promise((resolve) => setTimeout(resolve, 0));
+		});
+		expect(dom.querySelector('[aria-label="工作区文件"]')).toBeNull();
+		// 光标动一下(同一段查询):它不该自己弹回来。
+		await act(async () => {
+			editable.dispatchEvent(new Event("select", { bubbles: true }));
+			await new Promise((resolve) => setTimeout(resolve, 0));
+		});
+		expect(dom.querySelector('[aria-label="工作区文件"]')).toBeNull();
+	});
+
+	it("一条都没搜到:说清是没搜到,而不是摆一个空框", async () => {
+		const dom = render({}, undefined, undefined, undefined, async () => ({ ok: true, entries: [] }));
+		await typeInto(editorOf(dom), "@没有这个文件");
+		expect(dom.querySelector('[aria-label="工作区文件"]')?.textContent).toContain("没有找到");
+	});
+
+	it("新建会话那一页:不摆选择器(那里的搜索是**按会话**做的,而这一页还没有会话)", async () => {
+		const calls: string[] = [];
+		// 没有会话 = 新建页;工作类型可选(所以输入框是能打字的,不是被禁掉的那一种)。
+		const dom = render(
+			{ sessionId: undefined, entries: [{ id: "general-work", available: true }] },
+			undefined,
+			undefined,
+			undefined,
+			search(calls),
+		);
+		await typeInto(editorOf(dom), "@a");
+		expect(calls).toEqual([]);
+		expect(dom.querySelector('[aria-label="工作区文件"]')).toBeNull();
+	});
+
+	it("老版本桌面端(不认识这个方法):不再摆选择器,也不影响发消息", async () => {
+		const dom = render({}, undefined, undefined, undefined, async () => ({
+			ok: false,
+			message: "unsupported method: session.workspace-files",
+			unsupported: true,
+		}));
+		const editable = editorOf(dom);
+		await typeInto(editable, "@a");
+		expect(dom.querySelector('[aria-label="工作区文件"]')).toBeNull();
+		// 正文还是用户打的那几个字(没有因为搜不了就被清掉)。
+		expect(editable.textContent).toBe("@a");
+		expect(editable.getAttribute("contenteditable")).toBe("true");
+	});
+
+	it("空输入框不留草稿(存储里那条规矩是「空 = 删掉这一条」)", async () => {
+		localStorage.setItem("wordless.remote.drafts", JSON.stringify({ s1: "wordless-composer-v1:{\"root\":{}}" }));
+		const dom = render({}, undefined, undefined, undefined, search([]));
+		// 一个空输入框,占位符必须在(草稿是"序列化后的状态",那串 JSON 非空 —— 不能按它判断有没有内容)。
+		expect(dom.textContent).toContain("说点什么…");
+		await typeInto(editorOf(dom), "嗨");
+		await act(async () => {
+			editorOf(dom).dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
+			await new Promise((resolve) => setTimeout(resolve, 0));
+		});
+		// 发完清空:存储里不该留下一条空草稿。
+		expect(localStorage.getItem("wordless.remote.drafts") ?? "").not.toContain("嗨");
+	});
+
+	it("草稿里存的是**整份编辑器状态**:刷新回来 token 还在", async () => {
+		// 第一趟:打一句话、挑一个文件 —— 拿到写进草稿的那串东西。
+		const first = render({}, undefined, undefined, undefined, search([]));
+		const editable = editorOf(first);
+		await typeInto(editable, "看一下 @Composer");
+		await pickFile(first);
+		const saved = localStorage.getItem("wordless.remote.drafts");
+		expect(saved).toContain("wordless-composer-v1:");
+
+		// 第二趟:另起一个 root(相当于刷新了页面)—— 草稿从存储里读回来,token 应该还在,
+		// 而不是变回几个字(`@Composer.tsx` 那种"看着像引用、其实只是文字"的状态)。
+		act(() => root.unmount());
+		first.remove();
+		container = document.createElement("div");
+		document.body.append(container);
+		root = createRoot(container);
+		const second = render({}, undefined, undefined, undefined, search([]));
+		expect(second.querySelector("[data-composer-token]")?.textContent).toContain("Composer.tsx");
+	});
+
+	it("用户消息里的引用画成芯片(否则手机上看不见自己 @ 了什么)", () => {
+		const dom = render({
+			messages: [
+				{
+					role: "user",
+					text: "看一下这个",
+					at: 1,
+					blocks: [
+						{ type: "workspace-reference", id: "r1", path: "src/app.tsx", name: "app.tsx", kind: "file" },
+						{ type: "text", text: "看一下这个" },
+					],
+				},
+			],
+		});
+		expect(dom.textContent).toContain("app.tsx");
+		expect(dom.textContent).toContain("看一下这个");
+	});
+
+	it("只有引用、没有正文的消息:气泡不空(靠芯片撑起来)", () => {
+		const dom = render({
+			messages: [
+				{
+					role: "user",
+					text: "",
+					at: 1,
+					blocks: [{ type: "workspace-reference", id: "r1", path: "src/app.tsx", name: "app.tsx", kind: "file" }],
+				},
+			],
+		});
+		expect(dom.textContent).toContain("app.tsx");
 	});
 });

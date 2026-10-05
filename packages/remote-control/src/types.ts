@@ -151,6 +151,14 @@ export type RemoteRequestMethod =
 	 * 为什么走这条路而不是另开一个 HTTP 上传口:那条路上中继能看到明文,端到端加密就白做了。
 	 */
 	| "session.attachment"
+	/**
+	 * 在**这个会话的工作区**里搜文件与目录(输入框里的 `@`)。
+	 *
+	 * 只读:搜出来的东西不改任何状态,所以它在"正在回复"时也能用(与桌面端一样)。
+	 * 本机侧复用桌面端那套**已经建好索引**的工作区搜索 —— 每敲一个字都去遍历一遍目录,
+	 * 在手机上会变成"输入框比人还慢"。
+	 */
+	| "session.workspace-files"
 	| "session.resync"
 	| "diagnostics.snapshot";
 
@@ -177,6 +185,24 @@ export type RemoteAttachmentPhase =
 /** 发消息时引用已上传的附件(按 uploadId)。 */
 export interface RemoteAttachmentReference {
 	readonly uploadId: string;
+}
+
+/**
+ * 一条工作区引用。
+ *
+ * **搜出来的结果与发出去时引用的东西是同一个形状** —— 刻意如此:两端各写一份的话,
+ * "搜得到的"与"发得出去的"迟早会不一样(多一个字段、少一条校验),而那种不一致
+ * 只有用户点下去才会发现。
+ *
+ * 只有三样:相对路径、显示名、是不是目录。桌面端那边的 `WorkspaceFileEntry` 还带体积与修改时间,
+ * 那两个字段在这一条链路上没有任何用途 —— 不发的数据不会泄漏,也不用校验。
+ */
+export interface RemoteWorkspaceReference {
+	/** **工作区相对路径**(不是绝对路径):本机侧就是按相对路径去查的,绝对路径既不必要也不该出去。 */
+	readonly path: string;
+	/** 显示名(文件名或目录名)。 */
+	readonly name: string;
+	readonly kind: "file" | "directory";
 }
 
 export interface RemoteResponse {
@@ -394,6 +420,13 @@ export type RemoteConnectionEvent =
 export type RemoteMessageBlock =
 	| { readonly type: "text"; readonly text: string }
 	| { readonly type: "reasoning"; readonly text: string }
+	/**
+	 * 用户消息里的一条**工作区引用**(他在输入框里用 `@` 挑的那个文件)。
+	 *
+	 * 桌面端的用户消息里它是一枚芯片。远端原来把它整条丢掉 —— 于是"我明明 @ 了一个文件"
+	 * 在手机上看不见,而那条消息的正文里也没有它(正文是用户打的字,引用不在里面)。
+	 */
+	| { readonly type: "workspace-reference"; readonly id: string; readonly path: string; readonly name: string; readonly kind: "file" | "directory" }
 	| {
 			readonly type: "tool";
 			readonly callId: string;
@@ -759,15 +792,69 @@ export function isRemoteThinkingLevel(value: unknown): value is RemoteThinkingLe
  * `available` 为假的不摆出来:入口存在、但这个 profile 的驱动还没配好 ——
  * 点了必然失败,而"宁可不给"是这台机器上一条固定的纪律。
  */
+/**
+ * 新建页最上面那一栏(日常工作 / 写代码 / 创作)。
+ *
+ * 由本机给名字与图标 key(与入口同一张表)—— 远端不自己写一份,否则本机添一个模式时
+ * 远端那一栏会少一格,而用户只会觉得"这里怎么怪怪的"。
+ */
+export interface RemoteModeOption {
+	readonly id: string;
+	readonly name: string;
+	readonly iconKey?: string;
+}
+
 export interface RemoteEntryOption {
 	readonly id: string;
 	readonly name: string;
 	readonly description?: string;
 	readonly iconKey?: string;
+	/** 属于哪一栏(`RemoteModeOption.id`)。远端据此分组。 */
+	readonly mode?: string;
 	/** 现在能不能在远端建这类会话。 */
 	readonly available: boolean;
 	/** 不能建时的一句原因(界面照它说,而不是让用户猜)。 */
 	readonly note?: string;
+	/**
+	 * 这一类**必须先选一个工作目录**(代码、数据分析)。
+	 *
+	 * 单独给一个字段,而不是"把 available 标成 false 再加一句 note":那样用户看到的是
+	 * "手机上不能建",而实际上**能** —— 只要先挑一个目录。远端据此把入口先摆着,
+	 * 等目录选好再让它可点(与桌面端 WelcomeView 同一条规则)。
+	 */
+	readonly requiresWorkspace?: boolean;
+	/**
+	 * 这一类**可以选一套设计风格**(只有设计那一类)。
+	 *
+	 * 由本机说,而不是让远端拿 `workbenchId` 自己去判断:那是本机的内部分类,
+	 * 远端照着它写死一份的话,本机添一类新入口时远端不会跟着动。
+	 */
+	readonly acceptsDesignStyle?: boolean;
+}
+
+/**
+ * 新建会话时能选的工作目录。
+ *
+ * 只有 id 与名字 —— **没有路径**:远端不需要知道 `/Users/…`,而且那本来就不该出去。
+ */
+export interface RemoteWorkspaceOption {
+	readonly id: string;
+	readonly name: string;
+	/** 目录还在不在(被删掉 / 移走的那些不该能被选中)。 */
+	readonly available: boolean;
+}
+
+/**
+ * 新建会话时能选的**设计风格**。
+ *
+ * 只给 id / 名字 / 一句话 / 明暗:那套 `theme.css` 有好几 KB,而远端只是**把选择说出来** ——
+ * 真正落到设计包里的活由本机的 agent 干(与桌面端 WelcomeView 同一条路)。
+ */
+export interface RemoteDesignStyleOption {
+	readonly id: string;
+	readonly name: string;
+	readonly tagline: string;
+	readonly vibe: "light" | "dark";
 }
 
 /** 远端可以选的模型。**只给显示所需的三样**,不给供应商地址、不给密钥。 */

@@ -137,6 +137,49 @@ import type { ToolApprovalMode } from "@wordless/domain";
 
 export const DESKTOP_BRIDGE_VERSION = 57;
 
+/**
+ * 只读探测的结果(**整份**)。
+ *
+ * 单独定义成一份类型是刻意的:它是"计划据此做决定"的输入,而**每个字段都要往下传** ——
+ * 以前只传了 node 那两项,于是"nginx 在跑"到不了计划,计划永远按 Caddy 走(真实抱怨)。
+ * 以后探测里加一项,只改这一份类型,链路自动跟上。
+ */
+/** 卸载的两档:`stop` 可逆,`remove` 不可逆(所以界面上要先确认)。 */
+export type RemoteUninstallScope = "stop" | "remove";
+
+/** 撤下来的计划(与部署那份同一形状:`id` + 命令 + sudo + 在哪儿跑)。 */
+export interface RemoteUninstallPlan {
+  readonly steps: readonly { readonly id: string; readonly command: string; readonly sudo: boolean; readonly target: "local" | "server" }[];
+  readonly skipped: readonly { readonly id: string; readonly reason: string }[];
+  readonly warnings: readonly { readonly key: string; readonly detail?: string }[];
+  /** 这台服务器上没有我们的部署(界面据此说清,而不是摆一排点了没反应的按钮)。 */
+  readonly nothingToDo: boolean;
+}
+
+export interface DeployProbeFacts {
+  readonly system?: string;
+  readonly user?: string;
+  readonly sudo?: boolean;
+  readonly arch?: string;
+  readonly node?: { readonly present: boolean; readonly version?: string; readonly major?: number };
+  readonly distro?: { readonly id?: string; readonly version?: string };
+  readonly caddy?: boolean;
+  readonly caddyActive?: boolean;
+  readonly nginx?: boolean;
+  readonly nginxActive?: boolean;
+  readonly deployDirExists?: boolean;
+  /** 服务器上那一版(读 `${目录}/version.json`;读不出来 = 上次部署比"记版本"更早,一定是旧的)。 */
+  readonly deployedVersion?: string;
+  /** 卸载要看这四项:服务单元、服务是否活着、我们写的 nginx 站点、Caddyfile 里我们那一段。 */
+  readonly serviceExists?: boolean;
+  readonly serviceActive?: boolean;
+  readonly nginxSiteExists?: boolean;
+  readonly caddyBlockExists?: boolean;
+  readonly listeningPorts?: readonly number[];
+  readonly aptBusy?: boolean;
+  readonly sudoNoPassword?: boolean;
+}
+
 export interface DesktopBridge {
   readonly version: typeof DESKTOP_BRIDGE_VERSION;
   getHostInfo(): Promise<DesktopHostInfo>;
@@ -161,6 +204,106 @@ export interface DesktopBridge {
    */
   onRemoteAccessChanged(listener: (state: RemoteAccessState) => void): () => void;
   setRemoteAccessEnabled(enabled: boolean): Promise<RemoteAccessState>;
+  /**
+   * 准备远程部署包:把中继单文件与网页客户端复制到一个用户找得到的地方。
+   *
+   * 教程里那句 `scp` 必须指向**真实存在的路径** —— 让用户自己去安装目录里翻是不现实的。
+   */
+  prepareRemoteDeployBundle(): Promise<{ ok: boolean; dir?: string; error?: string }>;
+  /** 取部署步骤(教程档渲染它;将来的自动部署跑同一份命令)。 */
+  getRemoteDeployPlan(input: {
+    server: string;
+    user: string;
+    domain?: string;
+    /** 探测结果(**整份**带过去):跳过哪些步骤、走哪条反代路线都由它决定。 */
+    facts?: DeployProbeFacts;
+    /** 中继在服务器上监听的端口(默认 8787)。 */
+    relayPort?: number;
+    /** 对外端口(默认 443,走 Caddy)。 */
+    publicPort?: number;
+  }): Promise<{
+    steps: Array<{ id: string; command: string; sudo: boolean; target: "local" | "server" }>;
+    /** 走哪条反向代理路线(nginx 在跑就走 nginx —— 它多半占着 80/443)。 */
+    proxy?: "caddy" | "nginx";
+    /** 跳过了哪些步骤、为什么(界面照实说,别让它悄悄消失)。旧版本可能没有。 */
+    skipped?: Array<{ id: string; reason: string }>;
+    /** 不拦路、但要说出来的事(发行版不对、端口被占、已经部署过)。 */
+    warnings?: Array<{ key: string; detail?: string }>;
+    relayBaseUrl: string;
+    secure: boolean;
+    healthUrl: string;
+  }>;
+  /**
+   * 自动部署:只读探测 → 预览 → 逐步执行。
+   *
+   * 用的就是 `getRemoteDeployPlan` 那一份命令(预览即所跑)。密码**只用于这一次连接**:
+   * 不落盘、不进日志、不进命令行。
+   */
+  probeRemoteDeploy(input: {
+    server: string;
+    user: string;
+    port?: number;
+    /** 中继端口(默认 8787):一起测,免得"端口被占"要等部署到一半才发现。 */
+    relayPort?: number;
+    password?: string;
+  }): Promise<{
+    ok: boolean;
+    findings: string[];
+    /** 结构化的探测结果:计划据此跳过步骤、选路线。 */
+    facts: DeployProbeFacts;
+    error?: string;
+  }>;
+  runRemoteDeploy(input: {
+    server: string;
+    user: string;
+    domain?: string;
+    /** 探测结果(**整份**带过来):跳过哪些步骤、走哪条反代路线都由它决定。 */
+    facts?: DeployProbeFacts;
+    /** SSH 端口(默认 22)。 */
+    port?: number;
+    /** 中继在服务器上监听的端口(默认 8787)。 */
+    relayPort?: number;
+    /** 对外端口(默认 443)。 */
+    publicPort?: number;
+    password?: string;
+  }): Promise<{ ok: boolean; failedStep?: string; error?: string }>;
+  cancelRemoteDeploy(): Promise<{ ok: boolean }>;
+  /**
+   * 把部署**撤下来**:`stop` = 停服务(保留文件与配置,可逆);`remove` = 卸载(删文件、摘配置)。
+   *
+   * 计划只包含**探测到确实存在**的东西 —— 卸载是删东西,不能照着脚本盲删一遍。
+   */
+  getRemoteUninstallPlan(input: {
+    scope: RemoteUninstallScope;
+    /** 中继端口(默认 8787):自检用它确认"没人再监听了"。 */
+    relayPort?: number;
+    /** 探测结果(**整份**带过来):要删哪几样由它决定。 */
+    facts?: DeployProbeFacts;
+  }): Promise<RemoteUninstallPlan>;
+  runRemoteUninstall(input: {
+    server: string;
+    user: string;
+    scope: RemoteUninstallScope;
+    port?: number;
+    relayPort?: number;
+    facts?: DeployProbeFacts;
+    password?: string;
+    /** 服务器上没东西可撤时**不连服务器**,并把这件事如实带回来(界面据此说清楚,而不是说"已完成")。 */
+  }): Promise<{ ok: boolean; failedStep?: string; error?: string; nothingToDo?: boolean }>;
+  /** 部署进度(哪一步在跑、跑到哪了、失败时那一步的输出)。 */
+  onRemoteDeployProgress(
+    listener: (progress: { index: number; id: string; status: "running" | "done" | "failed"; output?: string }) => void,
+  ): () => void;
+  /** 切换接入方式:局域网(本机起中继)或远程(自己部署的中继)。 */
+  setRemoteMode(mode: "lan" | "remote"): Promise<RemoteAccessState>;
+  /**
+   * 局域网模式的总开关:**一键** —— 在本机起中继、托管网页客户端、自动填地址并开启。
+   *
+   * 起不来(还没构建网页客户端、端口全被占)时**不开启**,并在状态里带回原因。
+   */
+  setRemoteLanMode(enabled: boolean): Promise<RemoteAccessState>;
+  /** 换一个网卡地址(多网卡时用户挑的那一个)。 */
+  setRemoteLanAddress(address: string): Promise<RemoteAccessState>;
   /** 传 undefined 表示"用回默认中继"。 */
   setRemoteRelayUrl(relayBaseUrl?: string): Promise<RemoteAccessState>;
   /** 探一次中继:在生成二维码之前就知道地址通不通。 */
@@ -789,6 +932,17 @@ export const requiredMethods: Array<Exclude<keyof DesktopBridge, "version">> = [
   "getRemoteAccessState",
   "onRemoteAccessChanged",
   "setRemoteAccessEnabled",
+  "setRemoteMode",
+  "prepareRemoteDeployBundle",
+  "getRemoteDeployPlan",
+  "probeRemoteDeploy",
+  "runRemoteDeploy",
+  "cancelRemoteDeploy",
+  "getRemoteUninstallPlan",
+  "runRemoteUninstall",
+  "onRemoteDeployProgress",
+  "setRemoteLanMode",
+  "setRemoteLanAddress",
   "setRemoteRelayUrl",
   "testRemoteRelay",
   "createRemoteInvite",

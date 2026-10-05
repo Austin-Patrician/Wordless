@@ -98,6 +98,17 @@ describe("探测", () => {
 		assert.match(result.detail, /不要带路径/);
 	});
 
+	it("服务器上的中继是**旧版协议**:直接说清要重新部署一次(否则只会看到一句 unsupported version)", async () => {
+		// 协议版本是握手时逐个校验、要求完全相等的 —— 对不上不是"可能有点小问题",是**一定连不上**。
+		const result = await probeRelay("wss://relay.example.com", {
+			fetchImpl: respond({ status: "ok", protocolVersion: 1 }),
+		});
+		assert.equal(result.ok, false);
+		assert.match(result.detail, /旧版/);
+		assert.match(result.detail, /v1/);
+		assert.match(result.detail, /重新部署/);
+	});
+
 	it("返回的不是中继(状态码/内容不对)也要说清", async () => {
 		const badStatus = await probeRelay("ws://relay.example", { fetchImpl: respond({}, 502) });
 		assert.equal(badStatus.ok, false);

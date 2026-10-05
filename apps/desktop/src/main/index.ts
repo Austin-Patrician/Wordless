@@ -52,12 +52,14 @@ import { configureHttpDispatcher } from "./network/http-dispatcher";
 import { applyDesktopProxy, proxyRulesFromEnvironment } from "./proxy/proxy-runtime";
 import { DesktopProxyStore } from "./proxy/proxy-store";
 import { registerProxyIpc } from "./ipc/register-proxy-ipc";
+import { DESIGN_STYLES } from "./design/style-catalog.ts";
 import { createRuntimeSessionSurface } from "./remote/session-surface";
 import { RemoteAccessService } from "./remote/remote-access-service";
 import { createRemoteAccessStore } from "./remote/remote-access-store";
 import { createRelayMailbox } from "./remote/relay-mailbox";
 import { registerNotificationDefaultsIpc, registerNotificationIpc } from "./ipc/register-notification-ipc";
 import { registerRemoteIpc } from "./ipc/register-remote-ipc";
+import { sendToRendererWindow } from "./renderer-window";
 import { hostname } from "node:os";
 // `ws` 是 CJS 包:主进程被打成 single-file CJS 时,命名导入曾经是 undefined。
 // 默认导入拿到的是类本身,而 `nodeWebSocketFactory` 三种形状都能吃。
@@ -118,6 +120,24 @@ const hostInfo = createDesktopHostInfo();
 let mainWindow: BrowserWindow | undefined;
 const hasSingleInstance = app.requestSingleInstanceLock();
 
+/**
+ * 把事件发给**应用窗口**(晚绑定:`mainWindow` 在启动后才建出来)。
+ *
+ * 为什么不用 `BrowserWindow.getAllWindows()`:那个列表里还有**辅助窗口** ——
+ * OCR 运行器、设计离屏栅格池。它们**不订阅**这些事件,而且**开了又关**;一个正在关掉的窗口,
+ * 它的渲染帧已经没了,这时候 `send` 就是那句 `Render frame was disposed …`(用户报过)。
+ * 事件本来只有应用窗口要,那就只发给它 —— 顺带把这类报错从源头上消掉。
+ *
+ * 检查本身在 `renderer-window.ts`:那是"能不能发"的唯一一处。
+ */
+function sendToAppWindow(channel: string, payload: unknown): void {
+  // 退出中:**一个字都不再发**。这一段时间里窗口正在被拆(而且 `runtime.dispose()` 还会
+  // 冒出最后几条事件)—— 往一个正在拆的帧发,就是那句 "Render frame was disposed"。
+  // 退出时也没有人需要这些事件了。
+  if (quitting) return;
+  sendToRendererWindow(mainWindow, channel, payload);
+}
+
 function showWindow(): void {
   if (!mainWindow || mainWindow.isDestroyed()) return;
   if (mainWindow.isMinimized()) mainWindow.restore();
@@ -170,7 +190,7 @@ if (!hasSingleInstance) {
   });
   app.on("open-url", (event, url) => {
     event.preventDefault();
-    for (const window of BrowserWindow.getAllWindows()) window.webContents.send("wordless:host-event", { type: "deep-link", url });
+    sendToAppWindow("wordless:host-event", { type: "deep-link", url });
   });
 }
 
@@ -344,7 +364,7 @@ app.whenReady().then(async () => {
   // their very first invocation.
   const proxyActive = await applyDesktopProxy(await proxyStore.read(), proxyDeps);
   const sendHostEvent = (event: import("@wordless/protocol").DesktopHostEvent) => {
-    for (const window of BrowserWindow.getAllWindows()) window.webContents.send("wordless:host-event", event);
+    sendToAppWindow("wordless:host-event", event);
   };
   account = new GoogleAccountService({
     clientId: process.env.WORDLESS_GOOGLE_CLIENT_ID?.trim() || __WORDLESS_GOOGLE_CLIENT_ID__,
@@ -364,7 +384,7 @@ app.whenReady().then(async () => {
     onChange: (state) => {
       // The toolbar needs to follow navigations the page starts itself (a link
       // click, a redirect), not just the ones the user typed.
-      if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send("wordless:browser:state", state);
+      sendToAppWindow("wordless:browser:state", state);
     },
   });
   runtime = createDesktopRuntime(
@@ -437,7 +457,7 @@ app.whenReady().then(async () => {
     deleteSession: async (sessionId) => await runtime!.deleteSession(sessionId, async (record) => await office!.releaseSession(record.id, record.runtimeRootPath)),
     emit: (event) => {
       const envelope: import("@wordless/protocol").RuntimeEventEnvelope = { protocolVersion: 1, runtimeInstanceId: "desktop-automation", eventId: crypto.randomUUID(), sessionId: null, sequence: Date.now(), timestamp: Date.now(), event };
-      for (const window of BrowserWindow.getAllWindows()) window.webContents.send("wordless:event", envelope);
+      sendToAppWindow("wordless:event", envelope);
     },
     // Synchronous by contract: this runs on the run-completion path, where a webhook
     // waiting on its 30s timeout would delay the run appearing as finished.
@@ -473,7 +493,7 @@ app.whenReady().then(async () => {
       // The menu shows accelerators, so it has to follow a rebound key.
       applicationMenu.applyShortcutBindings(preferences.shortcuts.bindings);
     }
-    for (const window of BrowserWindow.getAllWindows()) window.webContents.send("wordless:event", event);
+    sendToAppWindow("wordless:event", event);
   });
   const updateService = new DesktopUpdateService(sendHostEvent);
   updateService.initialize();
@@ -537,6 +557,15 @@ app.whenReady().then(async () => {
       runtime: runtime!,
       // 与渲染层收到的是同一份事件流,所以远端看到的就是本机看到的。
       events: { subscribe: (listener) => runtime!.subscribe((envelope) => listener(envelope)) },
+      // 设计风格:一份静态目录(与画廊用的是同一份),远端只是"把选择说出来"。
+      // 只给 id / 名字 / 一句话 / 明暗 —— 那套 theme.css 有好几 KB,而且手机上不画真示例页。
+      designStyles: () =>
+        DESIGN_STYLES.map((style) => ({
+          id: style.id,
+          name: style.name,
+          tagline: style.tagline,
+          vibe: style.vibe,
+        })),
     }),
     // 设备 id 是"机器名 + 数据目录"的哈希:稳定、可复现,而且**不把机器名交给中继**。
     // 机器名本身作为展示名发出去(手机要显示"我的电脑")—— 它属于中继可见的元数据,见文档 §6。
@@ -548,6 +577,19 @@ app.whenReady().then(async () => {
     createTransport: (url, protocols) =>
       new WebSocketTransport({ url, protocols: [...protocols], factory: nodeWebSocketFactory(WebSocket) }),
     mailbox: createRelayMailbox(),
+    /**
+     * 局域网模式:在**本进程内**起中继,并把网页客户端托管出去。
+     *
+     * 网页客户端目录有两条来源:开发版指向仓库里的构建产物,打包版指向随包发布的 `web-client`
+     * (见 `electron-builder.yml` 的 extraResources)—— 打包版用户没有 npm,不能让他"先构建一次"。
+     */
+    lan: {
+      resolveWebRoot: () =>
+        app.isPackaged
+          ? path.join(process.resourcesPath, "web-client")
+          : path.resolve(__dirname, "../../../web-client/dist"),
+      logger: (line) => process.stdout.write(`[lan] ${line}\n`),
+    },
     defaultRelayBaseUrl: process.env.WORDLESS_REMOTE_RELAY ?? undefined,
     // 有设备接上来就弹一次系统通知。
     //
@@ -568,7 +610,30 @@ app.whenReady().then(async () => {
       }
     },
   });
-  registerRemoteIpc({ service: remoteAccess });
+  /**
+   * 部署包的两条路径。
+   *
+   * 中继单文件随包发布(`resources/relay/relay.mjs`,见 `scripts/build-relay-bundle.mjs`),
+   * 网页客户端与局域网模式用的是**同一份**产物 —— 两处指向同一个目录,升级时一起变。
+   */
+  const webClientDir = app.isPackaged
+    ? path.join(process.resourcesPath, "web-client")
+    : path.resolve(__dirname, "../../../web-client/dist");
+  registerRemoteIpc({
+    service: remoteAccess,
+    // 事件只发给应用窗口(辅助窗口不订阅,而且随时在关) —— 见 `renderer-window.ts`。
+    getWindow: () => mainWindow,
+    paths: {
+      // 这一版是哪一版:写进服务器的 version.json,并和服务器上那一版比对。
+      version: app.getVersion(),
+      relayBundlePath: app.isPackaged
+        ? path.join(process.resourcesPath, "relay", "relay.mjs")
+        : path.resolve(__dirname, "../../resources/relay/relay.mjs"),
+      webClientDir,
+      // 用户要找得到它:固定放"下载"里,教程里那句 scp 直接指这里。
+      deployBundleDir: path.join(app.getPath("downloads"), "wordless-deploy"),
+    },
+  });
   // 先读偏好再开始服务:在那之前 getState() 只能给出默认值。
   void remoteAccess.start().catch((error: unknown) => {
     // 原始错误(含栈)打到终端:「设置页那一句」给用户看,这一行给我们查。

@@ -608,4 +608,39 @@ describe("过大的载荷不该以整条链路陪葬", () => {
 	});
 
 });
+
+	it("握手还没结束就 close():那一次拒绝**不能**变成未处理的 promise 拒绝", async () => {
+		/**
+		 * 真实踩到过:切换接入方式时先停旧的链路,而那条链路正好还在握手 ——
+		 * `close()` 拒绝了握手 promise,而 `connect()` 还没把它交回调用方,
+		 * 于是这次拒绝没有任何人接:主进程日志被刷满,调用方的 await 也跟着崩。
+		 */
+		const rejections: unknown[] = [];
+		const onRejection = (reason: unknown) => rejections.push(reason);
+		process.on("unhandledRejection", onRejection);
+		try {
+			const connection = new RemoteConnection({ role: "desktop", deviceId: "d1", deviceName: "电脑" });
+			// 链路能建起来,但**握手还没完成** —— 正是"关掉一条正在握手的连接"那一刻。
+			const transport = {
+				connect: async () => {
+					await new Promise((resolve) => setTimeout(resolve, 0));
+				},
+				close: async () => undefined,
+				send: async () => undefined,
+			};
+			// 立刻挂上处理器:调用方在生产代码里也是这么做的(`startHost` 的 .catch)。
+			const settled = connection.connect(transport as never).then(
+				() => "ok" as const,
+				(error: unknown) => error,
+			);
+			await connection.close("切换接入方式");
+			await new Promise((resolve) => setTimeout(resolve, 5));
+			assert.deepEqual(rejections, [], "不该有未处理的拒绝");
+			// 调用方仍然拿得到失败(它自己会 catch 掉,不会变成未处理拒绝)。
+			const outcome = await settled;
+			assert.notEqual(outcome, "ok", "关掉之后不该报告连接成功");
+		} finally {
+			process.off("unhandledRejection", onRejection);
+		}
+	});
 });

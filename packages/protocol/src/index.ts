@@ -2577,6 +2577,15 @@ export interface RemoteAccessDeviceView {
   name: string;
   createdAt: number;
   lastSeenAt?: number;
+  /**
+   * 这台手机是在**哪一种接入方式**下配对的。
+   *
+   * 界面要按它分开展示:局域网配对的手机连的是本机中继(同一个 WiFi 才行),
+   * 远程配对的连的是服务器上那个 —— 混在一张列表里,用户根本分不出哪台是哪台。
+   *
+   * `undefined` = 早先配对的、当时没记(老数据):界面单独一组放,不猜。
+   */
+  mode?: "lan" | "remote";
   online: boolean;
   /**
    * 已经有过手机来领取过这次配对。
@@ -2593,14 +2602,54 @@ export interface RemoteRelayProbeResult {
   detail: string;
 }
 
+/**
+ * 局域网模式的状态。
+ *
+ * "一键"要能一眼看出**做到哪一步了**:服务起没起来、端口是哪个、手机该打开哪个地址、
+ * 网页客户端在不在。少任何一条,用户就只能靠"扫码打不开"来猜。
+ */
+export interface RemoteLanStatus {
+  /** 本机的局域网服务正在监听。 */
+  running: boolean;
+  port?: number;
+  /** 本机可用的局域网地址(**不替用户挑**:虚拟网卡很常见,挑错就是"手机打不开")。 */
+  addresses: RemoteLanAddress[];
+  /** 用户选中的那一个(没选时界面按第一个作为默认)。 */
+  selectedAddress?: string;
+  /** 网页客户端的构建产物就绪吗。没就绪时不会起服务,并在 `error` 里说明原因。 */
+  webClientReady: boolean;
+  /** 想用的端口被别人占了、实际换了一个 —— 界面要说出来,否则用户以为端口设置没生效。 */
+  portChanged?: boolean;
+  error?: string;
+}
+
+export interface RemoteLanAddress {
+  /** 形如 `192.168.1.9`。 */
+  address: string;
+  /** 网卡名(`en0` / `WLAN`),多网卡时帮用户认出来是哪一个。 */
+  name: string;
+}
+
 export interface RemoteAccessState {
   enabled: boolean;
+  /**
+   * 用户选的接入方式。
+   *
+   * - `lan`:局域网 —— 本机起中继、托管网页客户端,手机在同一个 WiFi 里扫码;
+   * - `remote`:远程 —— 连一台自己部署的中继(服务器 / 隧道)。
+   *
+   * **两种方式的地址分开存**:切到局域网会改写"当前中继地址",如果只有一个字段,
+   * 用户原来填的远程地址就被覆盖掉了(切回来发现要重填)。
+   */
+  mode: "lan" | "remote";
   relayBaseUrl?: string;
   defaultRelayBaseUrl?: string;
   connection: "off" | "connecting" | "online";
   invite?: RemoteAccessInviteView;
   devices: RemoteAccessDeviceView[];
   error?: string;
+  /** 局域网模式的当前状态;undefined = 这份构建没有局域网能力(旧版本的本机)。 */
+  lan?: RemoteLanStatus;
 }
 
 /// Message push (group-robot webhooks)

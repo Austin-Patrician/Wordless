@@ -33,6 +33,10 @@ import {
 	type RemoteRequestResult,
 	type RemoteThinkingLevel,
 	type RemoteTransport,
+	type RemoteModeOption,
+	type RemoteWorkspaceOption,
+	type RemoteDesignStyleOption,
+	type RemoteWorkspaceReference,
 } from "@wordless/remote-control";
 
 /**
@@ -56,6 +60,8 @@ export interface RemoteSessionSurface {
 	/** 新建会话时能选哪些工作类型(桌面端"今天想做什么"那一排)。 */
 	listCatalog(): Promise<{
 		readonly entries: readonly RemoteEntryOption[];
+		/** 新建页最上面那一栏(日常工作 / 写代码 / 创作):只发真有入口的那些。 */
+		readonly modes: readonly RemoteModeOption[];
 		readonly connectors: readonly { readonly id: string; readonly name: string; readonly enabled: boolean }[];
 		readonly skills: readonly { readonly id: string; readonly name: string; readonly description?: string }[];
 	}>;
@@ -68,11 +74,20 @@ export interface RemoteSessionSurface {
 		readonly interactionMode?: "default" | "plan" | "clarify";
 		readonly skillIds?: readonly string[];
 		readonly connectorIds?: readonly string[];
+		/** 工作目录:需要它的入口**必须**给(本机会校验它存在且可用)。 */
+		readonly workspaceId?: string;
+		/** 设计风格:只有设计那一类用得上(与桌面端 WelcomeView 同一条路)。 */
+		readonly designStyleId?: string;
 	}): Promise<RemoteSessionSummary | undefined>;
 	listSessions(): Promise<readonly RemoteSessionSummary[]>;
 	openSession(sessionId: string): Promise<RemoteSessionDetail | undefined>;
 	historyPage(sessionId: string, cursor?: string): Promise<RemoteHistoryPage>;
 	retryTurn(sessionId: string, messageId: string): Promise<void>;
+	/**
+	 * 发一轮。`skillIds` 决定这一轮用哪些技能;附件走 `options`(与运行时同形 ——
+	 * 运行时本来就收 base64 附件,所以不需要另造一条传输路径);
+	 * `references` 是用户在输入框里 `@` 挑的工作区文件。
+	 */
 	prompt(
 		sessionId: string,
 		text: string,
@@ -83,6 +98,7 @@ export interface RemoteSessionSurface {
 			readonly size: number;
 			readonly base64: string;
 		}[],
+		references?: readonly RemoteWorkspaceReference[],
 	): Promise<void>;
 	abort(sessionId: string, text?: never): Promise<void>;
 	/** 改权限(访问权限 / 工具确认)。 */
@@ -115,6 +131,14 @@ export interface RemoteSessionSurface {
 		requestId: string,
 		resolution: { readonly status: "submitted" | "cancelled"; readonly answers?: Record<string, unknown> },
 	): Promise<void>;
+	/**
+	 * 在这个会话的工作区里搜文件与目录(输入框里的 `@`)。
+	 *
+	 * **只读**,所以"正在回复"时也能用(与桌面端一样:那一轮在跑,不影响用户先把下一句话写好)。
+	 * 查询串由本机交给**已经建好索引**的工作区搜索,远端不做任何过滤 —— 过滤规则(忽略哪些目录、
+	 * 隐藏文件怎么算)只应该有一份,放在本机。
+	 */
+	searchWorkspaceFiles(sessionId: string, query: string): Promise<readonly RemoteWorkspaceReference[]>;
 	/** 换模型。返回**分类好的结果**而不是异常 —— 远端要区分"等它说完"和"这个模型用不了"。 */
 	setModel(
 		sessionId: string,
@@ -186,6 +210,19 @@ export interface RemoteHostServiceOptions {
 }
 
 const DEFAULT_INVITE_TTL_MS = 10 * 60_000;
+/**
+ * `@` 搜出来的最多几条。
+ *
+ * 与桌面端同一个量级(它取 50):一次按键给回来的东西必须**能一眼扫完** ——
+ * 手机上滚三屏还没到底,那就不叫"搜到了"。本机侧也有一道夹取,这里再夹一次。
+ */
+const MAX_WORKSPACE_RESULTS = 50;
+/** 查询串最多这么长。再长已经不是"找文件",是误粘贴。 */
+const MAX_WORKSPACE_QUERY_CHARS = 200;
+/** 一条消息最多带这么多引用。 */
+const MAX_WORKSPACE_REFERENCES = 20;
+/** 单个路径 / 名字的长度上限(与协议里的 id 上限同一个量级)。 */
+const MAX_WORKSPACE_REFERENCE_CHARS = 512;
 // 能力声明:远端据此知道"这台机器允许我做什么"。b 档只放行"换模型";
 // 权限模式(c 档)是安全边界,必须另立一项,不能借这一项顺带放行。
 const CAPABILITIES = {
@@ -498,11 +535,26 @@ export class RemoteHostService {
 			}
 			case "session.prompt": {
 				if (sessionId === undefined) return missingSession();
-				const text = readText(request.payload);
-				if (text === undefined) {
-					return { success: false, error: { code: "invalid_frame", message: "prompt text is required", retryable: false } };
+				const text = readPromptText(request.payload);
+				if (text === "invalid") {
+					return { success: false, error: { code: "invalid_frame", message: "prompt text must be a string", retryable: false } };
 				}
 				const skillIds = readSkillIds(request.payload);
+				// 引用:形状不对就**整条拒掉**,而不是丢掉那一条继续发 —— 少一个文件而用户不知道,
+				// 比报错糟得多(与附件同一条纪律)。
+				const references = readWorkspaceReferences(request.payload);
+				if (references === "too_many") {
+					return {
+						success: false,
+						error: { code: "invalid_frame", message: `一条消息最多带 ${MAX_WORKSPACE_REFERENCES} 个文件引用`, retryable: false },
+					};
+				}
+				if (references === "invalid") {
+					return {
+						success: false,
+						error: { code: "invalid_frame", message: "references must be a list of { path, name, kind }", retryable: false },
+					};
+				}
 				// 附件:把已上传的分片交回本机(引用不上就直接拒,而不是悄悄少发一个文件)。
 				const attachments = this.resolveAttachments(readAttachmentReferences(request.payload));
 				if (attachments === "unknown") {
@@ -511,7 +563,17 @@ export class RemoteHostService {
 						error: { code: "not_found", message: "有附件没传完或已经过期,请重新发送", retryable: false },
 					};
 				}
-				await this.options.surface.prompt(sessionId, text, skillIds, attachments);
+				/*
+					**正文可以为空** —— 但那时候必须有引用或附件撑着。
+					
+					一条只挑了文件、一个字都没打的消息是合法的(桌面端也允许:挑一个文件就是在问
+					"这个怎么了")。但**三者都空**的消息没有意义,仍然拒掉 —— 那是调用方搞错了,
+					不是用户在说话。
+				*/
+				if (text.trim().length === 0 && references.length === 0 && attachments.length === 0) {
+					return { success: false, error: { code: "invalid_frame", message: "prompt text is required", retryable: false } };
+				}
+				await this.options.surface.prompt(sessionId, text, skillIds, attachments, references);
 				return { success: true, payload: { accepted: true } };
 			}
 			case "session.mode": {
@@ -555,6 +617,19 @@ export class RemoteHostService {
 				const result = this.handleAttachment(request.payload);
 				if (result.ok) return { success: true, payload: result.payload };
 				return { success: false, error: { code: result.code, message: result.message, retryable: false } };
+			}
+			case "session.workspace-files": {
+				if (sessionId === undefined) return missingSession();
+				const query = readWorkspaceQuery(request.payload);
+				if (query === undefined) {
+					return {
+						success: false,
+						error: { code: "invalid_frame", message: "query must be a string", retryable: false },
+					};
+				}
+				const entries = await this.options.surface.searchWorkspaceFiles(sessionId, query);
+				// 本机给的条数**再夹一次**:上限只有一处会漂,而漂了就是"手机上滚不到头"。
+				return { success: true, payload: { entries: entries.slice(0, MAX_WORKSPACE_RESULTS) } };
 			}
 			case "session.usage": {
 				if (sessionId === undefined) return missingSession();
@@ -893,6 +968,19 @@ function readText(payload: unknown): string | undefined {
 }
 
 /**
+ * 消息正文。
+ *
+ * 与 `readText` 的差别只有一处:**空串是合法值**。一条只挑了工作区文件、一个字都没打的消息
+ * 就是这样(与桌面端一样),所以这里不能把"空"当成"没有" —— 那会把合法的消息说成非法。
+ * 但"根本不是字符串"仍然要拒:那说明调用方搞错了,不是用户在说话。
+ */
+function readPromptText(payload: unknown): string | "invalid" {
+	if (typeof payload !== "object" || payload === null) return "invalid";
+	const text = (payload as { text?: unknown }).text;
+	return typeof text === "string" ? text : "invalid";
+}
+
+/**
  * 权限补丁。
  *
  * **严格按白名单取值**:认不出来的值不猜(猜错等于替用户放宽了权限)。
@@ -1010,6 +1098,48 @@ function readSkillIds(payload: unknown): readonly string[] | undefined {
 	return skillIds.filter((entry): entry is string => typeof entry === "string" && entry.length > 0);
 }
 
+/**
+ * `@` 的查询串。
+ *
+ * **空串是合法值**(意思是"还没打字,给我看这个工作区里有什么"),所以这里不能用
+ * `readText` 那一套"空就是没有"的判断 —— 那会让刚敲下 `@` 的那一刻什么都不发生。
+ * 长度必须封顶:查询串会一路交给本机的搜索,而单帧可以到 1.5M 字符。
+ */
+function readWorkspaceQuery(payload: unknown): string | undefined {
+	if (typeof payload !== "object" || payload === null) return undefined;
+	const query = (payload as { query?: unknown }).query;
+	if (typeof query !== "string") return undefined;
+	return query.slice(0, MAX_WORKSPACE_QUERY_CHARS);
+}
+
+/**
+ * 随消息一起发的工作区引用。
+ *
+ * 与附件同一条纪律:**形状不对就整条拒**,不做"尽量理解"。猜错一个路径等于让模型去读另一个文件,
+ * 而用户完全看不出来 —— 那种错比一次明确的失败贵得多。
+ */
+function readWorkspaceReferences(payload: unknown): readonly RemoteWorkspaceReference[] | "invalid" | "too_many" {
+	if (typeof payload !== "object" || payload === null) return [];
+	const value = (payload as { references?: unknown }).references;
+	if (value === undefined) return [];
+	if (!Array.isArray(value)) return "invalid";
+	// 超量单独给一句人话:它和"形状不对"不是一回事,而用户看到的消息要能照着做。
+	if (value.length > MAX_WORKSPACE_REFERENCES) return "too_many";
+	const references: RemoteWorkspaceReference[] = [];
+	for (const entry of value) {
+		if (typeof entry !== "object" || entry === null) return "invalid";
+		const record = entry as { path?: unknown; name?: unknown; kind?: unknown };
+		if (record.kind !== "file" && record.kind !== "directory") return "invalid";
+		if (!isUsableReferenceText(record.path) || !isUsableReferenceText(record.name)) return "invalid";
+		references.push({ path: record.path, name: record.name, kind: record.kind });
+	}
+	return references;
+}
+
+function isUsableReferenceText(value: unknown): value is string {
+	return typeof value === "string" && value.length > 0 && value.length <= MAX_WORKSPACE_REFERENCE_CHARS;
+}
+
 /** 重做哪一轮:`{ messageId }`。 */
 function readMessageId(payload: unknown): string | undefined {
 	if (typeof payload !== "object" || payload === null) return undefined;
@@ -1064,11 +1194,18 @@ function readCreateSession(
 	const connectorIds = Array.isArray(record.connectorIds)
 		? record.connectorIds.filter((id): id is string => typeof id === "string" && id.length > 0)
 		: [];
+	// 工作目录与设计风格:认不出来的值当"没给"(而不是整条拒)—— 与上面技能/连接器同一条规矩,
+	// 真正该不该给由**会话面**判断(它才知道这个入口需不需要目录)。
+	const workspaceId = typeof record.workspaceId === "string" && record.workspaceId.length > 0 ? record.workspaceId : undefined;
+	const designStyleId =
+		typeof record.designStyleId === "string" && record.designStyleId.length > 0 ? record.designStyleId : undefined;
 	return {
 		entryId,
 		text: text.trim(),
 		...(skillIds.length === 0 ? {} : { skillIds }),
 		...(connectorIds.length === 0 ? {} : { connectorIds }),
+		...(workspaceId === undefined ? {} : { workspaceId }),
+		...(designStyleId === undefined ? {} : { designStyleId }),
 		...(selection === undefined
 			? {}
 			: { model: { connectionId: selection.connectionId, modelId: selection.modelId } }),

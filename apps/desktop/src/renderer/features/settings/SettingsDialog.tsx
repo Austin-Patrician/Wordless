@@ -20,6 +20,7 @@ import { AboutUpdatesSettings } from "./AboutUpdatesSettings";
 import { DataPrivacySettings } from "./DataPrivacySettings";
 import { NotificationsSettings } from "./NotificationsSettings";
 import { useShortcutScope } from "../../shared/shortcuts/use-shortcut-scope";
+import { useBrowserOcclusion } from "../browser/use-occlusion";
 
 export type SettingsPage = "general" | "models" | "assistant" | "shortcuts" | "usage" | "sessionHistory" | "security" | "personalization" | "dataPrivacy" | "notifications" | "environment" | "remoteAccess" | "about";
 
@@ -40,9 +41,34 @@ export function SettingsDialog({ initialPage = "general", onOpenSession, open, o
     if (open) setPage(initialPage);
   }, [initialPage, open]);
 
+  /**
+   * Esc 关掉设置。
+   *
+   * 这是**每个模态都该有的那一条出路**:鼠标点不到关闭按钮时(见下面那条遮挡说明),
+   * 用户至少还有一条确定能用的路。仓库里手写的模态(侧栏的删除确认、绕过审批确认、
+   * 卸载确认)都各自处理了 Esc,设置这一层反而漏了。
+   */
+  useEffect(() => {
+    if (!open) return;
+    const onKeyDown = (event: KeyboardEvent): void => {
+      if (event.key === "Escape") onOpenChange(false);
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [onOpenChange, open]);
+
   // Settings is modal, so the global shortcuts must not run behind it: pressing
   // the key for "new task" while reading a preference should not start one.
   useShortcutScope({ active: open, claim: () => false, exclusive: true, id: "settings-dialog", kind: "modal" });
+
+  /**
+   * **声明遮挡**:内嵌浏览器那张原生视图永远画在所有 DOM 之上,和 `z-index` 无关。
+   *
+   * 不声明的话,设置弹窗右侧那一条会被它压住 —— 右上角的**关闭按钮正好在那条里**,
+   * 于是"看得见、点不到"(真实反馈)。这里原来是靠采样兜底的:而采样是**概率性的**
+   * (网格点落在被压住的那一小块之外就发现不了),所以设置这种"盖住一大片"的弹窗必须自己说。
+   */
+  useBrowserOcclusion(open, "dialog");
 
   if (!open) return null;
 

@@ -1,10 +1,12 @@
 import { BrowserWindow, Menu, type MenuItemConstructorOptions } from "electron";
 import type { DesktopCommand, DesktopHostInfo, DesktopMenuId } from "@wordless/protocol";
 import type { ShortcutBindings } from "@wordless/domain";
+import { sendToRendererWindow } from "../renderer-window";
 import { buildApplicationMenu, buildMenuItems, menuShortcutSignature, type MenuTemplateOptions } from "./menu-template";
 
 function emitCommand(command: DesktopCommand): void {
-  BrowserWindow.getFocusedWindow()?.webContents.send("wordless:host-event", { type: "command", command });
+  // 焦点窗口也可能正在关(菜单命令与关窗撞上):走同一个"能不能发"的判断。
+  sendToRendererWindow(BrowserWindow.getFocusedWindow() ?? undefined, "wordless:host-event", { type: "command", command });
 }
 
 export class ApplicationMenuController {

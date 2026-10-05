@@ -1,4 +1,7 @@
 import assert from "node:assert/strict";
+import { mkdtemp, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, it } from "node:test";
 import {
 	RelayCore,
@@ -15,6 +18,7 @@ import {
 	type RemoteAccessPreferences,
 	type RemoteSecretStore,
 } from "../src/main/remote/remote-access-service.ts";
+import { createRemoteAccessStore } from "../src/main/remote/remote-access-store.ts";
 import type { RemoteSessionSurface } from "../src/main/remote/host-service.ts";
 
 /**
@@ -43,7 +47,7 @@ const createSecrets = (): RemoteSecretStore & { readonly map: Map<string, string
 	};
 };
 
-const setup = async (options: { readonly enabled?: boolean } = {}) => {
+const setup = async (options: { readonly enabled?: boolean; readonly lanWebRoot?: string } = {}) => {
 	let preferences: RemoteAccessPreferences = {
 		...EMPTY_REMOTE_ACCESS_PREFERENCES,
 		enabled: options.enabled ?? true,
@@ -84,6 +88,20 @@ const setup = async (options: { readonly enabled?: boolean } = {}) => {
 		},
 		defaultRelayBaseUrl: "ws://127.0.0.1:8787",
 		onDeviceConnected: (device) => connected.push(device),
+		// 局域网那一档:真起一个中继,但地址列表注入 —— 否则用例会跟着这台机器的网卡跑。
+		...(options.lanWebRoot === undefined
+			? {}
+			: {
+					lan: {
+						resolveWebRoot: () => options.lanWebRoot,
+						port: 0,
+						// 两个地址:一个用来默认,一个用来验"换网卡"(真实机器上多网卡很常见)。
+						listAddresses: () => [
+							{ address: "192.168.1.9", name: "en0" },
+							{ address: "10.8.0.2", name: "utun3" },
+						],
+					},
+				}),
 	});
 	return { service, relay, secrets, mailbox, written, connected, preferences: () => preferences };
 };
@@ -189,6 +207,34 @@ describe("配对与设备", () => {
 		assert.equal(first.devices[0].id, second.devices[0].id);
 		// 但邀请本身是新的:旧的连接码必须失效。
 		assert.notEqual(first.invite?.code, second.invite?.code);
+	});
+
+	it("配对时**记下是哪一档**:界面按它把设备分成「局域网配的」与「远程配的」", async () => {
+		// 真实反馈:一张列表里两种设备混在一起,用户分不出哪台是哪台 —— 而它们的行为根本不同。
+		const remote = await setup();
+		await remote.service.start();
+		await remote.service.createInvite();
+		assert.equal(remote.service.getState().devices[0]?.mode, "remote");
+
+		// 局域网那一档(起真中继、地址列表注入)。
+		const lan = await setup({ lanWebRoot: "/tmp/web-client" });
+		await lan.service.setLanMode(true);
+		await lan.service.createInvite();
+		assert.equal(lan.service.getState().devices[0]?.mode, "lan");
+	});
+
+	it("切档之后再生成二维码:**复用的那台要跟着改方式**(否则会被归错组)", async () => {
+		// 上一轮生成、还没被领取的二维码,切档之后再点一次生成 —— 那时二维码指向的是**新那一档**的中继,
+		// 记录里还写着旧方式就会把它归错组(界面按这个分组)。
+		const rig = await setup({ lanWebRoot: "/tmp/web-client" });
+		await rig.service.start();
+		const first = await rig.service.createInvite();
+		assert.equal(rig.service.getState().devices[0]?.mode, "remote", "默认按远程");
+		await rig.service.setLanMode(true);
+		const second = await rig.service.createInvite();
+		// 还是同一台(复用:这次运行里创建、还没人领取),但方式改了。
+		assert.equal(second.devices[0]?.id, first.devices[0]?.id);
+		assert.equal(second.devices[0]?.mode, "lan");
 	});
 
 	it("还没被领取的设备标成未配对,领取之后标成已配对", async () => {
@@ -370,4 +416,175 @@ describe("中继地址", () => {
 		assert.equal(service.getState().relayBaseUrl, "wss://relay.example");
 		assert.equal(written.at(-1)?.relayBaseUrl, "wss://relay.example");
 	});
+
+describe("局域网模式(一键)", () => {
+	it("打开:起服务 + 自动填地址 + 开启,而且地址就是**手机要打开的那个**", async () => {
+		const root = await mkdtemp(join(tmpdir(), "wordless-lan-"));
+		await writeFile(join(root, "index.html"), "<!doctype html>ok");
+		const rig = await setup({ enabled: false, lanWebRoot: root });
+		const state = await rig.service.setLanMode(true);
+		try {
+			assert.equal(state.lan?.running, true);
+			assert.ok(state.lan?.port, "要有端口");
+			// 中继地址 = 局域网地址 + 端口:二维码、网页地址、本机连接三者一致。
+			assert.equal(state.relayBaseUrl, `ws://192.168.1.9:${state.lan?.port}`);
+			assert.equal(state.lan?.selectedAddress, "192.168.1.9");
+			assert.equal(state.enabled, true, "一键 = 起服务 + 开启");
+		} finally {
+			await rig.service.setLanMode(false);
+		}
+		assert.equal(rig.service.getState().enabled, false);
+	});
+
+	it("没构建网页客户端时**不开启**,并把原因带回来", async () => {
+		// 宁可不给:打开了却什么都没发生,比明确说"还没有网页客户端"糟得多。
+		const rig = await setup({ enabled: false, lanWebRoot: join(tmpdir(), "wordless-missing-xyz") });
+		const state = await rig.service.setLanMode(true);
+		assert.equal(state.lan?.running, false);
+		assert.equal(state.enabled, false);
+		assert.match(state.error ?? "", /网页客户端/);
+	});
+
+	it("换一个网卡地址:中继地址跟着换(否则二维码指向的还是旧地址)", async () => {
+		const root = await mkdtemp(join(tmpdir(), "wordless-lan-"));
+		await writeFile(join(root, "index.html"), "<!doctype html>ok");
+		const rig = await setup({ enabled: false, lanWebRoot: root });
+		const started = await rig.service.setLanMode(true);
+		try {
+			const port = started.lan?.port;
+			const state = await rig.service.setLanAddress("10.8.0.2");
+			assert.equal(state.relayBaseUrl, `ws://10.8.0.2:${port}`);
+			assert.equal(state.lan?.selectedAddress, "10.8.0.2");
+		} finally {
+			await rig.service.setLanMode(false);
+		}
+	});
+
+	it("地址不在本机网卡列表里:拒绝,而不是写一个连不上的地址", async () => {
+		const root = await mkdtemp(join(tmpdir(), "wordless-lan-"));
+		await writeFile(join(root, "index.html"), "<!doctype html>ok");
+		const rig = await setup({ enabled: false, lanWebRoot: root });
+		const started = await rig.service.setLanMode(true);
+		try {
+			const state = await rig.service.setLanAddress("8.8.8.8");
+			assert.equal(state.lan?.selectedAddress, "192.168.1.9", "还是原来那个");
+			assert.match(state.error ?? "", /网卡/);
+		} finally {
+			await rig.service.setLanMode(false);
+		}
+	});
+});
+
+describe("接入方式两档", () => {
+	it("切到局域网:当前地址改成局域网地址;切回远程:**原来填的地址还在**", async () => {
+		// 只有一个地址字段的话,切一次模式就把用户填的远程地址冲掉了 —— 切回来发现要重填。
+		const root = await mkdtemp(join(tmpdir(), "wordless-lan-"));
+		await writeFile(join(root, "index.html"), "<!doctype html>ok");
+		const rig = await setup({ enabled: false, lanWebRoot: root });
+		await rig.service.setRelayBaseUrl("wss://relay.example.com");
+		const remote = await rig.service.setMode("remote");
+		assert.equal(remote.mode, "remote");
+		assert.equal(remote.relayBaseUrl, "wss://relay.example.com");
+
+		const lan = await rig.service.setMode("lan");
+		assert.equal(lan.mode, "lan");
+		assert.match(lan.relayBaseUrl ?? "", /^ws:\/\/192\.168\.1\.9:\d+$/, "当前地址换成了局域网地址");
+
+		const back = await rig.service.setMode("remote");
+		assert.equal(back.relayBaseUrl, "wss://relay.example.com", "用户填的远程地址必须还在");
+		// 局域网服务要停掉:留着它会在用户切走之后还占着端口。
+		assert.equal(back.lan?.running, false);
+	});
+
+	it("局域网起不来时:保留这一档 + 保留原有地址,并说清原因", async () => {
+		// 不静默回退:用户要么去修(构建一次网页客户端),要么自己切回远程 —— 而不是发现设置被改了。
+		const rig = await setup({ enabled: false, lanWebRoot: join(tmpdir(), "wordless-missing-abc") });
+		await rig.service.setRelayBaseUrl("wss://relay.example.com");
+		const state = await rig.service.setMode("lan");
+		assert.equal(state.mode, "lan");
+		assert.equal(state.relayBaseUrl, "wss://relay.example.com", "原有地址不动");
+		assert.equal(state.lan?.running, false);
+		assert.match(state.error ?? "", /网页客户端/);
+	});
+
+	it("老用户(填过远程地址、没存过模式)不会被悄悄切到局域网", async () => {
+		const root = await mkdtemp(join(tmpdir(), "wordless-lan-"));
+		await writeFile(join(root, "index.html"), "<!doctype html>ok");
+		const rig = await setup({ enabled: false, lanWebRoot: root });
+		await rig.service.setRelayBaseUrl("wss://relay.example.com");
+		assert.equal(rig.service.getState().mode, "remote");
+	});
+});
+
+describe("切换接入方式时正在握手的链路(真实抱怨的那一次)", () => {
+	it("停掉一条**还在握手**的链路:切换要正常返回,不能把整个切换带崩", async () => {
+		/**
+		 * 现场:`setMode` → `stop()` → `host.stop()` → `connection.close()`,
+		 * 而那条链路正好还在握手 —— 握手 promise 被拒绝,`connect()` 还没来得及把它交回调用方,
+		 * 于是这次拒绝没有任何人接:未处理的 promise 拒绝刷满主进程日志。
+		 */
+		const root = await mkdtemp(join(tmpdir(), "wordless-lan-"));
+		await writeFile(join(root, "index.html"), "<!doctype html>ok");
+		const rig = await setup({ enabled: true, lanWebRoot: root });
+		// 先配一台设备(它的链路会一直停在"握手中":对端手机不在)。
+		await rig.service.createInvite();
+		await claimFirstDevice(rig);
+		const before = rig.service.getState();
+		assert.equal(before.devices.length, 1, "要有一台设备");
+		// 手机在配对流程里连上过;这里只要"这条链路还活着"就够了 —— 关键是在**它还没断**的时候切模式。
+		assert.ok(before.connection !== "off", `链路要在活动状态(现在是 ${before.connection})`);
+
+		const rejections: unknown[] = [];
+		const onRejection = (reason: unknown) => rejections.push(reason);
+		process.on("unhandledRejection", onRejection);
+		try {
+			const state = await rig.service.setMode("remote");
+			await new Promise((resolve) => setTimeout(resolve, 10));
+			assert.equal(state.mode, "remote", "档位要真的切过去");
+			assert.deepEqual(rejections, [], "不该有未处理的 promise 拒绝");
+		} finally {
+			process.off("unhandledRejection", onRejection);
+		}
+	});
+});
+
+describe("接入方式要**真的落盘**(真实抱怨的那一次)", () => {
+	it("用真存储走一遍:切到远程之后,状态与磁盘上都是远程", async () => {
+		/**
+		 * 这一条是补"假存储比真存储宽容"的洞。
+		 *
+		 * 之前的用例用一份内存里的偏好对象当存储,它**什么字段都留得住** ——
+		 * 而真实的存储层只认它自己那份清单:内存里加了 `mode` 却忘了加进清单,
+		 * 写进去就被丢掉,下一次写回来 `current` 里已经没有 `mode` 了,
+		 * 于是档位切过去又弹回来(用户看到的"抖动一下然后没反应")。
+		 */
+		const directory = await mkdtemp(join(tmpdir(), "wordless-remote-store-"));
+		const secrets = createSecrets();
+		const vault = {
+			read: async (id: string) => secrets.map.get(id),
+			write: async (id: string, value: string) => void secrets.map.set(id, value),
+			delete: async (id: string) => void secrets.map.delete(id),
+		};
+		const store = createRemoteAccessStore({ userDataPath: directory, vault });
+		const service = new RemoteAccessService({
+			surface,
+			deviceId: "desk-1",
+			deviceName: "我的电脑",
+			readPreferences: () => store.readPreferences(),
+			writePreferences: (update) => store.writePreferences(update),
+			secrets: store.secrets,
+			createTransport: () => {
+				throw new Error("这一条不连中继");
+			},
+			mailbox: { publish: async () => undefined, withdraw: async () => undefined },
+		});
+		await service.start();
+		// 先填一个远程地址(用户做过的那一步),再切档。
+		await service.setRelayBaseUrl("wss://relay.example.com");
+		const state = await service.setMode("remote");
+		assert.equal(state.mode, "remote", "状态里要是远程");
+		assert.equal((await store.readPreferences()).mode, "remote", "磁盘上也要是远程");
+		assert.equal((await store.readPreferences()).remoteRelayBaseUrl, "wss://relay.example.com");
+	});
+});
 });

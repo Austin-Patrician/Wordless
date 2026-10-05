@@ -4,6 +4,7 @@ import type { DesktopMenuId } from "@wordless/protocol";
 import { useRuntime } from "../../shared/runtime";
 import { useDesktopHost } from "../../platform/desktop-host";
 import { useDesktopUpdate } from "../../platform/desktop-update";
+import { useBrowserOcclusion } from "../browser/use-occlusion";
 import type { SettingsPage } from "../settings/SettingsDialog";
 
 type DesktopChromeProps = {
@@ -51,7 +52,10 @@ export function DesktopChrome({ onNewThread, onOpenSettings }: DesktopChromeProp
 function UpdateNotice({ onViewDetails }: { onViewDetails: () => void }) {
   const update = useDesktopUpdate();
   const snapshot = update.snapshot;
-  if (!snapshot || update.dismissed || !["available", "downloading", "ready", "error"].includes(snapshot.state)) return null;
+  const visible = Boolean(snapshot) && !update.dismissed && ["available", "downloading", "ready", "error"].includes(snapshot?.state ?? "");
+  // 这条提示是**内联的 fixed 浮层**(不是 portal):内嵌浏览器那张原生视图会盖住它。
+  useBrowserOcclusion(visible, "toast");
+  if (!visible || !snapshot) return null;
 
   const downloading = snapshot.state === "downloading";
   const ready = snapshot.state === "ready";

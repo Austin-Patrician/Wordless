@@ -121,6 +121,49 @@ function harness(options: {
   };
 }
 
+const envelope = (
+  event: RuntimeEventEnvelope["event"],
+  runId?: string,
+  sequence = 1,
+): RuntimeEventEnvelope => ({
+  event,
+  eventId: `event-${Math.random()}`,
+  protocolVersion: 1 as RuntimeEventEnvelope["protocolVersion"],
+  runtimeInstanceId: "runtime",
+  ...(runId === undefined ? {} : { runId }),
+  // 序号必须**递增**:同一个 (runId, sequence) 会被 store 当成重复事件丢掉。
+  sequence,
+  sessionId: "session",
+  timestamp: 1,
+});
+
+it("切走再切回、然后这一轮结束:**不能**把正开着的会话挂起(界面会停在 Loading session)", async () => {
+  // 真实踩到:一轮还在跑时切到别的会话(视图卸载 → 记下"跑完就释放"),再切回来
+  // (`start()` 因为**已经订阅着**而早退,于是那条撤销被漏掉),等这一轮结束时 store 被挂起,
+  // `session` 置空 —— 界面显示 "Loading session",而且不切走就回不来。
+  const { store, emit } = harness({
+    snapshot: snapshot([user("user-1"), assistant("assistant-1")]),
+    view: turnView(undefined),
+  });
+  await store.start();
+  emit(envelope({ type: "run.started", runId: "run-1" }, "run-1"));
+  expect(store.getMetadataSnapshot().isRunning).toBe(true);
+
+  // 切走:视图卸载。跑着呢,所以只是记下"跑完就释放"。
+  store.release();
+  // 切回来:视图重新挂载。**这一句必须把那个标记撤掉**(即使 store 已经装载过)。
+  await store.start();
+
+  // 这一轮结束。事件要带**同一个 runId**:不带的话 store 会当成别的运行的事件丢掉,
+  // 于是这条用例会变成"什么都没发生也通过"(写这条时真的踩到了)。
+  emit(envelope({ type: "session.idle" }, "run-1", 2));
+  expect(store.getMetadataSnapshot().isRunning).toBe(false);
+  await Promise.resolve();
+  await Promise.resolve();
+  expect(store.getMetadataSnapshot().session).not.toBeNull();
+  store.dispose();
+});
+
 it("surfaces retry versions of a turn on the assistant row", async () => {
   const { store } = harness({
     snapshot: snapshot([user("user-1"), assistant("assistant-2")]),

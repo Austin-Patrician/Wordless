@@ -1,9 +1,16 @@
 /**
- * 文件图标映射工具
- * 返回内联的 SVG 字符串，用于支持 vite-plugin-singlefile 打包
+ * 文件图标映射:**扩展名 / 文件名 → 一段 SVG**。
+ *
+ * 桌面端与网页端共用这一份(见 `file-icon-data.ts` 的说明)。网页端的输入框里 `@` 一个文件、
+ * 桌面端的文件树与附件芯片 —— 它们认出来的是同一个图标,因为查的是同一张表。
+ *
+ * 三档优先级,与用户脑子里的顺序一致:
+ * 1. **文件名**(`package.json`、`Dockerfile`、`.gitignore`……)比扩展名准;
+ * 2. **测试文件**(`*.test.tsx`)单独一档 —— 它看扩展名只是 TypeScript;
+ * 3. **扩展名**;都不认识就给通用文件图标,**不猜**。
  */
 
-import * as icons from './icons';
+import * as icons from "./file-icon-data.ts";
 
 /**
  * 根据文件扩展名获取图标 SVG

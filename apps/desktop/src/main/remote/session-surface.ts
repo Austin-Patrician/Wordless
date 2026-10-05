@@ -1,5 +1,6 @@
+import { formatPromptWithSkillReferences } from "@wordless/agent-driver-sdk";
 import { summarizeUsageMessages, type PromptSessionOptions } from "@wordless/domain";
-import { entryCopy } from "./entry-copy.ts";
+import { MODE_COPY, entryCopy } from "./entry-copy.ts";
 import { isRemoteThinkingLevel, sha256Hex } from "@wordless/remote-control";
 import type {
 	RemoteHistoryPage,
@@ -52,8 +53,13 @@ export interface RuntimeSessionRecordLike {
 export interface RuntimeMessageBlockLike {
 	readonly type: string;
 	readonly text?: string;
+	/** 引用块才有(`workspace-reference`):用户消息里 `@` 挑的文件。 */
+	readonly id?: string;
+	readonly path?: string;
+	readonly kind?: string;
 	/** 工具块才有。 */
 	readonly callId?: string;
+	/** 工具名;引用块用它当显示名(两边同名字段,读的地方各自按 `type` 区分)。 */
 	readonly name?: string;
 	readonly state?: string;
 	readonly input?: unknown;
@@ -108,8 +114,13 @@ export interface RemoteRuntimePort {
 	getSnapshot(): {
 		readonly sessions: readonly RuntimeSessionRecordLike[];
 		readonly runningSessionIds: readonly string[];
-		/** 空间列表:远端据此把会话分区(只读 id 与名字,不读路径)。 */
-		readonly workspaces?: readonly { readonly id: string; readonly name: string }[];
+		/** 空间列表:远端据此把会话分区、并在新建页里**选工作目录**(只读 id 与名字,不读路径)。 */
+		readonly workspaces?: readonly {
+			readonly id: string;
+			readonly name: string;
+			/** 目录还在不在(被删 / 移走的不该能被选中)。 */
+			readonly availability?: string;
+		}[];
 		/** 工作类型(新建会话页的"今天想做什么")。 */
 		readonly entries?: readonly {
 			readonly id: string;
@@ -182,6 +193,13 @@ export interface RemoteRuntimePort {
 		sessionId: string,
 		selection: { readonly kind: "expert" | "team"; readonly id: string; readonly version: string } | null,
 	): Promise<unknown> | unknown;
+	/**
+	 * 在这个会话的工作区里搜文件与目录(输入框里的 `@`)。
+	 *
+	 * 桌面端输入框用的是**同一个方法** —— 于是两端的"搜得到什么"永远一致
+	 * (忽略规则、索引缓存、目录优先这些行为都不需要各写一份)。
+	 */
+	searchSessionWorkspace(sessionId: string, query: string): Promise<readonly RuntimeWorkspaceEntryLike[]>;
 	/** 回答一次提问(提交答案,或取消)。 */
 	resolveUserRequest(
 		sessionId: string,
@@ -242,6 +260,18 @@ export interface RuntimeModelRecordLike {
 }
 
 /**
+ * 工作区搜索给回来的一条。
+ *
+ * 只读这三样:相对路径、显示名、是不是目录。运行时那份还带体积与修改时间 ——
+ * 这一条链路上没有任何用途,所以**不读、也不发**。
+ */
+export interface RuntimeWorkspaceEntryLike {
+	readonly path: string;
+	readonly name: string;
+	readonly kind: "file" | "directory";
+}
+
+/**
  * 换模型的结果。
  *
  * **刻意不用异常表达失败**:远端需要的不是"出错了",而是"是哪种错" ——
@@ -266,6 +296,18 @@ export interface RuntimeEnvelopeLike {
 
 export interface RuntimeSessionSurfaceOptions {
 	readonly runtime: RemoteRuntimePort;
+	/**
+	 * 设计风格目录(新建设计会话时能选哪些)。
+	 *
+	 * 由主进程直接给:风格库是一份**静态目录**(`design/style-catalog.ts`),与运行时无关 ——
+	 * 绕一圈从运行时拿,只会多一层什么都不做的转手。
+	 */
+	readonly designStyles?: () => readonly {
+		readonly id: string;
+		readonly name: string;
+		readonly tagline: string;
+		readonly vibe: "light" | "dark";
+	}[];
 	readonly events: RuntimeEventStreamPort;
 	/** 流式节流用。默认 `Date.now`;测试注入它就不必等真实时间。 */
 	readonly now?: () => number;
@@ -748,6 +790,7 @@ export function createRuntimeSessionSurface(options: RuntimeSessionSurfaceOption
 	return {
 		listCatalog: async () => {
 			const catalogSnapshot = runtime.getSnapshot();
+			const names = nameIndexes(catalogSnapshot);
 			return {
 				entries: (catalogSnapshot.entries ?? [])
 				// `internal` 的那些不是"今天想做什么"(媒体工作台按 id 取它们建会话,但不该摆在新建页)。
@@ -756,8 +799,10 @@ export function createRuntimeSessionSurface(options: RuntimeSessionSurfaceOption
 					const copy = entryCopy(entry.labelKey ?? entry.id, entry.descriptionKey ?? "");
 					/**
 					 * 代码 / 数据分析这两类**必须有工作目录**(运行时会拒绝没有目录的请求)。
-					 * 远端还不能选目录(那要先把工作区列表透出去),所以这里如实标成不可用 +
-					 * 一句原因 —— 而不是摆一个点了必然失败的入口。
+					 *
+					 * 目录列表已经透出去了,所以这里**不再把它标成不可用** —— 而是带上
+					 * `requiresWorkspace`,由远端决定"先摆着,等目录选好再让它可点"
+					 * (与桌面端 WelcomeView 同一条规则:能不能建取决于目录选没选)。
 					 */
 					const needsWorkspace = entry.workbenchId === "code" || entry.workbenchId === "analysis";
 					return {
@@ -765,10 +810,12 @@ export function createRuntimeSessionSurface(options: RuntimeSessionSurfaceOption
 						name: copy.name,
 						description: copy.description,
 						...(entry.iconKey === undefined ? {} : { iconKey: entry.iconKey }),
-						available: entry.availability === "available" && !needsWorkspace,
-						...(needsWorkspace && entry.availability === "available"
-							? { note: "这类会话要先选一个工作目录;手机上还不能选,请在电脑上新建。" }
-							: {}),
+						// 属于哪一栏:远端据此把类型分组(与桌面端 WelcomeView 同一处判断)。
+						...(entry.mode === undefined ? {} : { mode: entry.mode }),
+						available: entry.availability === "available",
+						...(needsWorkspace ? { requiresWorkspace: true } : {}),
+						// 设计风格只有设计这一类能用 —— **由本机说**,远端不拿 workbenchId 自己判断。
+						...(entry.workbenchId === "ui-preview" ? { acceptsDesignStyle: true } : {}),
 					};
 				})
 					// 不可用的排在后面:先看到能用的。
@@ -789,6 +836,55 @@ export function createRuntimeSessionSurface(options: RuntimeSessionSurfaceOption
 								},
 							],
 				),
+				/**
+				 * 模式(那一栏)。**只发真有入口的那些** —— 摆一个点进去空空的标签页,
+				 * 用户只会以为坏了(与"不摆一个点了会失败的选项"同一条纪律)。
+				 */
+				modes: MODE_COPY.filter((mode) =>
+					(catalogSnapshot.entries ?? []).some((entry) => entry.mode === mode.id && entry.internal !== true),
+				).map((mode) => ({ id: mode.id, name: mode.name, iconKey: mode.iconKey })),
+				// 工作目录:只给 id、名字与"还在不在" —— 路径不出本机。
+				workspaces: (catalogSnapshot.workspaces ?? []).map((workspace) => ({
+					id: workspace.id,
+					name: workspace.name,
+					available: workspace.availability === undefined || workspace.availability === "available",
+				})),
+				designStyles: (options.designStyles?.() ?? []).map((style) => ({
+					id: style.id,
+					name: style.name,
+					tagline: style.tagline,
+					vibe: style.vibe,
+				})),
+				/**
+				 * 模型:已启用的那些。
+				 *
+				 * 与"这个会话能换成哪些模型"**不是同一份**:那份要按会话的入口筛,而新建页还没有会话。
+				 * 这里给的是**这台机器上已启用的全部模型**(与桌面端 WelcomeView 的模型选择器同一份来源),
+				 * 到底能不能用由 `session.create` 在运行时校验 —— 桌面端也是这个规矩。
+				 */
+				// (运行时给的那份**本来就只含已启用的对话模型** —— 不用再筛一遍。)
+				models: (catalogSnapshot.models ?? [])
+					.map((model) => {
+						const providerName = names.connections.get(model.connectionId);
+						const identity = names.providerIdentities.get(model.connectionId);
+						const supported = (model.capabilities?.supportedThinkingLevels ?? []).filter(isRemoteThinkingLevel);
+						return {
+							connectionId: model.connectionId,
+							modelId: model.modelId,
+							displayName: model.displayName,
+							...(providerName === undefined ? {} : { providerName }),
+							...(identity === undefined ? {} : identity),
+							...(model.capabilities?.supportsReasoning === undefined
+								? {}
+								: { supportsReasoning: model.capabilities.supportsReasoning }),
+							...(supported.length === 0 ? {} : { supportedThinkingLevels: supported }),
+						};
+					})
+					.sort(
+						(left, right) =>
+							left.connectionId.localeCompare(right.connectionId) ||
+							left.displayName.localeCompare(right.displayName),
+					),
 			};
 		},
 
@@ -796,24 +892,51 @@ export function createRuntimeSessionSurface(options: RuntimeSessionSurfaceOption
 			const snapshot = runtime.getSnapshot();
 			const entry = (snapshot.entries ?? []).find((candidate) => candidate.id === input.entryId);
 			// 入口不认识、或本机说它现在不可用:如实回 undefined(远端据此说"这个入口现在用不了")。
-			const needsWorkspace = entry?.workbenchId === "code" || entry?.workbenchId === "analysis";
-			if (!entry || entry.availability !== "available" || entry.internal === true || needsWorkspace)
-				return undefined;
+			if (!entry || entry.availability !== "available" || entry.internal === true) return undefined;
+			/**
+			 * 工作目录:远端可以选了(见 `listCatalog`),所以这里**只认两种情形** ——
+			 * 要么这个入口本来就不需要目录,要么给了一个**存在且可用**的目录。
+			 * 认不出来的 id 一律当"没给":猜一个目录等于替用户把活干在别的地方。
+			 */
+			const needsWorkspace = entry.workbenchId === "code" || entry.workbenchId === "analysis";
+			const available = (snapshot.workspaces ?? []).filter(
+				(workspace) => workspace.availability === undefined || workspace.availability === "available",
+			);
+			const workspaceId =
+				input.workspaceId === undefined
+					? undefined
+					: available.find((workspace) => workspace.id === input.workspaceId)?.id;
+			if (needsWorkspace && workspaceId === undefined) return undefined;
+			/**
+			 * 设计风格:只有设计这一类用得上(与桌面端 WelcomeView 同一处判断)。
+			 *
+			 * 它**不落盘**,只往首条消息里放一条 `design-style` 标记 —— 真正的应用由本机的 agent
+			 * 把 `styleId` 交给 `design_create`。别的入口传了就当没传(而不是整条拒掉)。
+			 */
+			const designStyleId =
+				entry.workbenchId === "ui-preview" && input.designStyleId !== undefined
+					? (options.designStyles?.() ?? []).find((style) => style.id === input.designStyleId)?.id
+					: undefined;
 			const record = await runtime.createAndPrompt(
 				{
 					// 运行时会校验"入口属于这个模式",所以模式必须跟着入口走。
 					mode: entry.mode ?? "everyday",
 					entryId: entry.id,
-					// 目录与权限:**不替用户决定**。目录给 null(这类入口本来就不需要),
-					// 权限用最保守的那一档(与桌面端默认一致)。
-					workspaceId: null,
+					// 权限**不替用户决定**:用最保守的那一档(与桌面端默认一致)。
+					workspaceId: workspaceId ?? null,
 					accessLevel: "default",
 					model: input.model ?? null,
 					...(input.thinkingLevel === undefined ? {} : { thinkingLevel: input.thinkingLevel }),
 					...(input.interactionMode === undefined ? {} : { interactionMode: input.interactionMode }),
 					...(input.connectorIds === undefined ? {} : { connectorIds: [...input.connectorIds] }),
 				},
-				input.text,
+				// 风格标记与技能一样,都是**随首条消息**发出去的一段结构(与桌面端 WelcomeView 同一条路)。
+				designStyleId === undefined
+					? input.text
+					: formatPromptWithSkillReferences([
+							{ type: "text" as const, text: input.text },
+							{ type: "design-style" as const, styleId: designStyleId },
+						]),
 				// 技能是"这一轮用哪些" —— 与第一条消息一起发(与桌面端 WelcomeView 同一条路)。
 				input.skillIds === undefined ? [] : [...input.skillIds],
 			);
@@ -972,12 +1095,28 @@ export function createRuntimeSessionSurface(options: RuntimeSessionSurfaceOption
 			await runtime.retrySessionTurn(id, messageId);
 		},
 
-		prompt: async (sessionId, text, skillIds, attachments) => {
+		prompt: async (sessionId, text, skillIds, attachments, references) => {
 			const id = realId(sessionId);
 			if (!id) throw new Error(`unknown session: ${sessionId}`);
 			await runtime.promptSession(
 				id,
-				text,
+				/*
+					引用**不拼进用户打的字里**,而是按桌面端同一份序列化器变成标记
+					(桌面端走的是 `formatPromptWithSkillReferences(parts)`,这里走的是同一个函数)。
+					好处是两端在模型那边长得**逐字一样**:正文归正文,引用归引用,
+					于是"这条消息引用了哪个文件"不是靠模型去正文里猜,而是它直接读得到的一段事实。
+				*/
+				formatPromptWithSkillReferences(
+					[
+						{ type: "text" as const, text },
+						...(references ?? []).map((reference) => ({
+							type: "workspace-reference" as const,
+							path: reference.path,
+							name: reference.name,
+							kind: reference.kind,
+						})),
+					],
+				),
 				skillIds === undefined ? [] : [...skillIds],
 				undefined,
 				attachments === undefined
@@ -993,6 +1132,16 @@ export function createRuntimeSessionSurface(options: RuntimeSessionSurfaceOption
 							})),
 						},
 			);
+		},
+
+		searchWorkspaceFiles: async (sessionId, query) => {
+			const id = realId(sessionId);
+			if (!id) throw new Error(`unknown session: ${sessionId}`);
+			const entries = await runtime.searchSessionWorkspace(id, query);
+			return entries
+				// 只留这一条链路上真用得着的三样。运行时的形状里有体积与修改时间,这里不读也不发。
+				.map((entry) => ({ path: entry.path, name: entry.name, kind: entry.kind }))
+				.filter((entry) => entry.path.length > 0 && entry.name.length > 0);
 		},
 
 		abort: async (sessionId) => {
@@ -1087,6 +1236,26 @@ function blocksFrom(blocks: readonly RuntimeMessageBlockLike[]): RemoteMessageBl
 		}
 		if (block.type === "reasoning" && typeof block.text === "string" && block.text.length > 0) {
 			mapped.push({ type: "reasoning", text: clampBlock(block.text) });
+			continue;
+		}
+		/*
+			用户消息里 `@` 挑的文件。
+			
+			少了这一条,手机上那条消息只剩用户打的字 —— 引用**从界面上消失**,而模型那边是收到了的。
+			两端不一致里最难查的一种:用户以为没发出去,模型却按"读了那个文件"回答。
+		*/
+		if (block.type === "workspace-reference") {
+			const path = typeof block.path === "string" ? block.path : "";
+			const name = typeof block.name === "string" && block.name.length > 0 ? block.name : path;
+			const kind = block.kind === "directory" ? "directory" : "file";
+			if (path.length === 0) continue;
+			mapped.push({
+				type: "workspace-reference",
+				id: typeof block.id === "string" && block.id.length > 0 ? block.id : path,
+				path: clampBlock(path),
+				name: clampBlock(name),
+				kind,
+			});
 			continue;
 		}
 		if (block.type === "tool") {

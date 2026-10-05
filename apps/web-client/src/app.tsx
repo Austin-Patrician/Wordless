@@ -106,7 +106,7 @@ export function App() {
 		<ThreadView
 			state={state}
 			onOpenSession={(sessionId) => void client.openSession(sessionId)}
-			onSend={(text) => void client.send(text)}
+			onSend={(text, references, skillIds) => void client.send(text, references, skillIds)}
 			onAbort={() => void client.abort()}
 			onRefresh={() => void client.listSessions()}
 			// 部分 mock(测试里)与旧版本可能没有这两个方法 —— 缺了就当"这台机器还不支持新建会话",
@@ -132,12 +132,12 @@ export function App() {
 			onSetConnectors={(ids) => client.setConnectors(ids)}
 			onSetMode={(mode) => client.setMode(mode)}
 			onResolveApproval={(approvalId, approved) => client.resolveApproval(approvalId, approved)}
-			onSetPendingSkills={(skillIds) => client.setPendingSkills(skillIds)}
 			onAnswerRequest={(requestId, resolution) => client.answerRequest(requestId, resolution)}
 			onCompact={() => client.compact()}
 			onLoadSessionUsage={() => client.sessionUsage()}
 			onUploadAttachment={(file) => client.uploadAttachment(file)}
 			onRemoveAttachment={(uploadId) => client.removeAttachment(uploadId)}
+			onSearchWorkspaceFiles={(query) => client.searchWorkspaceFiles(query)}
 			onSelectVersion={(messageId, version) => client.selectVersion(messageId, version)}
 			onSetExpert={(selection) => client.setExpert(selection)}
 			theme={theme}

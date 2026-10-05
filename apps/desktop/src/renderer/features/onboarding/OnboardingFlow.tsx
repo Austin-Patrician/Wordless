@@ -12,6 +12,7 @@ import {
   type ReactNode,
 } from "react";
 import { usePreferences } from "../../shared/preferences";
+import { useBrowserOcclusion } from "../browser/use-occlusion";
 import { useRuntime } from "../../shared/runtime";
 import { OnboardingEnvironment } from "./OnboardingEnvironment";
 import { OnboardingWelcome } from "./OnboardingWelcome";
@@ -185,6 +186,9 @@ export function OnboardingProvider({ children }: { children: ReactNode }) {
     () => ({ active: phase !== "idle", replay }),
     [phase, replay],
   );
+
+  // 引导的三屏都是内联的全屏浮层(不是 portal):内嵌浏览器那张原生视图会从它们中间透出来。
+  useBrowserOcclusion(phase !== "idle", "dialog");
 
   return (
     <OnboardingContext.Provider value={contextValue}>

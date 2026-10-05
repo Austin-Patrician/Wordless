@@ -242,7 +242,20 @@ export async function startRelayServer(options: RelayServerOptions = {}): Promis
 
 	const port = options.port ?? 8787;
 	const host = options.host ?? "127.0.0.1";
-	await new Promise<void>((resolve) => server.listen(port, host, () => resolve()));
+	/**
+	 * 监听失败要**拒绝**,不能挂着。
+	 *
+	 * 原来这里只处理成功:端口被占用时 `listen` 抛出的 `error` 事件没人接,于是
+	 * (1) 这个 promise 永远不 settle(调用方一直等下去),(2) 未处理的 `error` 事件把进程掀掉。
+	 * 桌面端的局域网模式正是靠"端口被占用就换一个"重试的 —— 没有这条就重试不起来。
+	 */
+	await new Promise<void>((resolve, reject) => {
+		server.once("error", reject);
+		server.listen(port, host, () => {
+			server.off("error", reject);
+			resolve();
+		});
+	});
 	const address = server.address();
 	const actualPort = typeof address === "object" && address !== null ? address.port : port;
 	return {

@@ -70,6 +70,31 @@ const wordlessBridge: DesktopBridge = {
   },
   setRemoteAccessEnabled: (enabled) => ipcRenderer.invoke("wordless:remote:set-enabled", { enabled }),
   setRemoteRelayUrl: (relayBaseUrl) => ipcRenderer.invoke("wordless:remote:set-relay-url", { relayBaseUrl }),
+  setRemoteMode: (mode) => ipcRenderer.invoke("wordless:remote:set-mode", { mode }),
+  // 远程部署的教程档:部署包 + 步骤(见 docs/architecture/remote-deployment.md §3.1)。
+  prepareRemoteDeployBundle: () => ipcRenderer.invoke("wordless:remote:prepare-deploy-bundle"),
+  getRemoteDeployPlan: (input) => ipcRenderer.invoke("wordless:remote:deploy-plan", input),
+  // 自动部署:只读探测 → 预览(就是上面那份计划)→ 逐步执行 → 自检。密码只用于这一次连接。
+  probeRemoteDeploy: (input) => ipcRenderer.invoke("wordless:remote:deploy-probe", input),
+  runRemoteDeploy: (input) => ipcRenderer.invoke("wordless:remote:deploy-run", input),
+  cancelRemoteDeploy: () => ipcRenderer.invoke("wordless:remote:deploy-cancel"),
+  // 撤下来:停服务(可逆)/ 卸载(删文件、摘配置)。计划只包含探测到确实存在的东西。
+  getRemoteUninstallPlan: (input) => ipcRenderer.invoke("wordless:remote:uninstall-plan", input),
+  runRemoteUninstall: (input) => ipcRenderer.invoke("wordless:remote:uninstall-run", input),
+  onRemoteDeployProgress: (listener) => {
+    // 进度来自主进程,形状与别处的 changed 事件同一套做法(显式标类型,免得多一个 import)。
+    const handler = (
+      _event: unknown,
+      progress: { index: number; id: string; status: "running" | "done" | "failed"; output?: string },
+    ) => listener(progress);
+    ipcRenderer.on("wordless:remote:deploy-progress", handler);
+    return () => {
+      ipcRenderer.removeListener("wordless:remote:deploy-progress", handler);
+    };
+  },
+  // 局域网模式:一键起服务 + 填地址 + 开启(见 docs/architecture/remote-deployment.md)。
+  setRemoteLanMode: (enabled) => ipcRenderer.invoke("wordless:remote:set-lan-mode", { enabled }),
+  setRemoteLanAddress: (address) => ipcRenderer.invoke("wordless:remote:set-lan-address", { address }),
   testRemoteRelay: (relayBaseUrl) => ipcRenderer.invoke("wordless:remote:test-relay", { relayBaseUrl }),
   createRemoteInvite: () => ipcRenderer.invoke("wordless:remote:create-invite"),
   withdrawRemoteInvite: () => ipcRenderer.invoke("wordless:remote:withdraw-invite"),

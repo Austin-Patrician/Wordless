@@ -61,6 +61,7 @@ const REQUEST_METHODS: readonly RemoteRequestMethod[] = [
 	"session.version",
 	"session.expert",
 	"session.attachment",
+	"session.workspace-files",
 	"session.resync",
 	"diagnostics.snapshot",
 	// 新建会话:先取一份"能用的东西"(工作类型 / 连接器 / 技能),再把第一条消息和入口一起发过去

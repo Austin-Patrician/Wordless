@@ -5,7 +5,9 @@
   "type": "module",
   "exports": {
     ".": "./src/index.ts",
-    "./styles.css": "./src/styles/tokens.css"
+    "./styles.css": "./src/styles/tokens.css",
+    "./file-icons": "./src/lib/file-icons.ts",
+    "./file-type-icon": "./src/components/file-type-icon.tsx"
   },
   "scripts": {
     "check": "tsc -p tsconfig.json --noEmit"

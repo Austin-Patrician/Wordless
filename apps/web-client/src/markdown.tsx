@@ -311,13 +311,10 @@ const CodeBlock = memo(function CodeBlock({
 		[code, highlight, language],
 	);
 	const copy = useCallback(async () => {
-		try {
-			await navigator.clipboard.writeText(code);
-			setCopied(true);
-			setTimeout(() => setCopied(false), 1_500);
-		} catch {
-			// 剪贴板不可用不算错误:代码本身就在屏幕上,可以手选。
-		}
+		// 兜底见 `writeClipboard`:局域网(非安全上下文)下 `navigator.clipboard` 是 undefined。
+		if (!(await writeClipboard(code))) return;
+		setCopied(true);
+		setTimeout(() => setCopied(false), 1_500);
 	}, [code]);
 
 	return (
@@ -361,17 +358,49 @@ const CodeBlock = memo(function CodeBlock({
 	);
 });
 
+/**
+ * 写剪贴板 —— **带兜底**。
+ *
+ * 局域网模式下手机打开的是 `http://192.168.x.x`,而 `navigator.clipboard` 只在**安全上下文**里可用,
+ * 所以在那里它是 `undefined`:不兜底的话,"复制"按钮点了没反应(而且不报错,因为异常被吞了)。
+ * 兜底用老办法(临时 textarea + `execCommand`),它不需要安全上下文;两条都不行时返回 false,
+ * 由调用方给出"长按选择"的提示 —— 而不是假装复制成功。
+ */
+export async function writeClipboard(text: string): Promise<boolean> {
+	try {
+		if (typeof navigator !== "undefined" && navigator.clipboard !== undefined) {
+			await navigator.clipboard.writeText(text);
+			return true;
+		}
+	} catch {
+		// 落到下面的兜底
+	}
+	try {
+		if (typeof document === "undefined") return false;
+		const node = document.createElement("textarea");
+		node.value = text;
+		// 不能 display:none(那样选不中),挪到屏幕外即可。
+		node.setAttribute("readonly", "");
+		node.style.position = "fixed";
+		node.style.top = "-1000px";
+		node.style.opacity = "0";
+		document.body.appendChild(node);
+		node.select();
+		const ok = document.execCommand("copy");
+		document.body.removeChild(node);
+		return ok;
+	} catch {
+		return false;
+	}
+}
+
 /** 助手消息底部的动作行:复制整条回答(与桌面端同位置、同尺寸)。 */
 export function MessageActions({ text }: { readonly text: string }) {
 	const [copied, setCopied] = useState(false);
 	const copy = useCallback(async () => {
-		try {
-			await navigator.clipboard.writeText(text);
-			setCopied(true);
-			setTimeout(() => setCopied(false), 1_500);
-		} catch {
-			// 同上:不可用就不是错误。
-		}
+		if (!(await writeClipboard(text))) return;
+		setCopied(true);
+		setTimeout(() => setCopied(false), 1_500);
 	}, [text]);
 
 	// 只给按钮本身:尺寸与底部其他图标一致(28px),外层排布交给调用方。

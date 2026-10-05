@@ -26,6 +26,9 @@ apps/desktop/resources/python/*
 !apps/desktop/resources/python/.gitkeep
 apps/desktop/resources/ocr/*
 !apps/desktop/resources/ocr/.gitkeep
+# 中继单文件是**构建产物**(scripts/build-relay-bundle.mjs),不进仓库。
+apps/desktop/resources/relay/*
+!apps/desktop/resources/relay/.gitkeep
 # 打包期中转(见 prepare-*-assets 脚本:必须和目标同卷,所以落在 resources/ 下)
 apps/desktop/resources/.build-staging-*/
 

@@ -316,6 +316,13 @@ describe("请求方法白名单", () => {
 		"session.version",
 		"session.expert",
 		"session.attachment",
+		"session.usage",
+		"session.version",
+		"session.expert",
+		"session.user-request",
+		"catalog.list",
+		"session.create",
+		"session.workspace-files",
 		"session.resync",
 		"diagnostics.snapshot",
 	] as const;

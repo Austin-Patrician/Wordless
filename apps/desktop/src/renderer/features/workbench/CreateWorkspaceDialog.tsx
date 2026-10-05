@@ -2,6 +2,7 @@ import { Button } from "@wordless/ui-kit";
 import { X } from "lucide-react";
 import { useEffect, useState } from "react";
 import { usePreferences } from "../../shared/preferences";
+import { useBrowserOcclusion } from "../browser/use-occlusion";
 
 type CreateWorkspaceDialogProps = {
   onCreate: (name: string) => Promise<void>;
@@ -17,6 +18,9 @@ export function CreateWorkspaceDialog({ onCreate, onOpenChange, open }: CreateWo
   useEffect(() => {
     if (!open) setName("");
   }, [open]);
+
+  // 内联的 fixed 浮层(不是 portal):内嵌浏览器那张原生视图会盖住它,所以要自己声明。
+  useBrowserOcclusion(open, "dialog");
 
   if (!open) return null;
 

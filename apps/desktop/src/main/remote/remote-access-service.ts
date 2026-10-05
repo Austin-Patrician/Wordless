@@ -1,4 +1,5 @@
 import type {
+	RemoteLanStatus,
 	RemoteAccessDeviceView as ProtocolRemoteAccessDeviceView,
 	RemoteAccessInviteView as ProtocolRemoteAccessInviteView,
 	RemoteAccessState as ProtocolRemoteAccessState,
@@ -12,6 +13,7 @@ import {
 	type RemoteLogger,
 	type RemoteTransport,
 } from "@wordless/remote-control";
+import { LanHost, type LanHostOptions } from "./lan-host.ts";
 import {
 	RemoteHostService,
 	type RemoteInvite,
@@ -45,12 +47,27 @@ export interface RemotePairedDevice {
 	 * 身份在**派生会话密钥之前**就会被比对。
 	 */
 	readonly mobileIdentityKey?: string;
+	/**
+	 * 这台手机是在**哪一种接入方式**下配对的(见 `RemoteAccessDeviceView.mode`)。
+	 *
+	 * 旧数据里没有这一项 —— 界面会把它单独放一组("没记下配对方式"),而不是猜一个。
+	 */
+	readonly mode?: "lan" | "remote";
 }
 
 export interface RemoteAccessPreferences {
 	readonly enabled: boolean;
+	/**
+	 * 接入方式。缺省时按"有没有填过远程地址"推:填过就是远程(老用户),没填过就是局域网。
+	 */
+	readonly mode?: "lan" | "remote";
+	/** **当前生效**的中继地址(局域网模式下由网卡地址 + 端口算出来)。 */
 	readonly relayBaseUrl?: string;
+	/** 用户自己填的**远程**中继地址。与上面分开存,否则切一次模式就把人填的地址冲掉了。 */
+	readonly remoteRelayBaseUrl?: string;
 	readonly devices: readonly RemotePairedDevice[];
+	/** 局域网模式下用户选中的那一个本机地址(多网卡时由用户挑)。 */
+	readonly lanAddress?: string;
 }
 
 export const EMPTY_REMOTE_ACCESS_PREFERENCES: RemoteAccessPreferences = { enabled: false, devices: [] };
@@ -97,6 +114,13 @@ export interface RemoteAccessServiceOptions {
 	 * 而它很罕见 —— 用户宁可偶尔多看一眼,也不要不知道自己的电脑正在被远程使用。
 	 */
 	readonly onDeviceConnected?: (device: { readonly deviceId: string; readonly name: string }) => void;
+	/**
+	 * 局域网模式:**在主进程里把中继起起来,并把网页客户端托管出去**。
+	 *
+	 * 不给这个选项时(测试、或还没接线的宿主)状态里就没有 `lan` 那一块 —— 界面据此不显示这一档,
+	 * 而不是显示一个点了没反应的开关。
+	 */
+	readonly lan?: Omit<LanHostOptions, "port"> & { readonly port?: number };
 }
 
 interface DeviceRuntime {
@@ -112,10 +136,12 @@ export class RemoteAccessService {
 	private identity: RemoteIdentityKeyPair;
 	private invite: { readonly deviceId: string; readonly view: RemoteAccessInviteView } | undefined;
 	private lastError: string | undefined;
+	private readonly lan: LanHost | undefined;
 	private listeners = new Set<() => void>();
 
 	constructor(options: RemoteAccessServiceOptions) {
 		this.options = options;
+		this.lan = options.lan === undefined ? undefined : new LanHost(options.lan);
 		this.identity = options.loadIdentity?.() ?? generateIdentityKeyPair();
 		if (!options.loadIdentity?.()) options.saveIdentity?.(this.identity);
 	}
@@ -139,7 +165,16 @@ export class RemoteAccessService {
 		this.notify();
 	}
 
+	/**
+	 * 停掉所有链路。
+	 *
+	 * **拆链路的失败不算"停不下来"**:传输层关不掉(对端没回 close、socket 已经断了)不该让
+	 * "关闭远程接入"或"切换接入方式"这件事失败 —— 用户要的是"停掉",而链路已经不可用了。
+	 * 所以这里一律吞掉错误,只保证状态被清干净。
+	 */
 	async stop(): Promise<void> {
+		// 局域网服务也是"没开就不做":停的时候一起停,免得退出应用之后端口还占着。
+		await this.lan?.stop().catch(() => undefined);
 		for (const device of this.devices.values()) await device.host.stop().catch(() => undefined);
 		this.devices.clear();
 		this.invite = undefined;
@@ -150,13 +185,16 @@ export class RemoteAccessService {
 		const online = [...this.devices.values()].some((device) => device.host.state === "online");
 		return {
 			enabled: this.preferences.enabled,
+			mode: this.mode(),
 			...(this.relayBaseUrl() === undefined ? {} : { relayBaseUrl: this.relayBaseUrl() }),
 			...(this.options.defaultRelayBaseUrl === undefined
 				? {}
 				: { defaultRelayBaseUrl: this.options.defaultRelayBaseUrl }),
 			connection: !this.preferences.enabled ? "off" : online ? "online" : "connecting",
 			...(this.invite === undefined ? {} : { invite: this.invite.view }),
+			...(this.lan === undefined ? {} : { lan: this.lanStatus() }),
 			devices: this.preferences.devices.map((device) => ({
+				// `...device` 已经带上 `mode`:界面按它把设备分成"局域网配的/远程配的"两组。
 				...device,
 				online: this.devices.get(device.id)?.host.state === "online",
 				paired: device.mobileIdentityKey !== undefined,
@@ -177,14 +215,145 @@ export class RemoteAccessService {
 		const trimmed = relayBaseUrl?.trim();
 		this.preferences = await this.options.writePreferences((current) => {
 			// 清空要**真的把字段删掉**,否则"覆盖"一直留着,回不到默认中继。
-			const { relayBaseUrl: _previous, ...rest } = current;
-			return trimmed === undefined || trimmed.length === 0 ? rest : { ...rest, relayBaseUrl: trimmed };
+			const { remoteRelayBaseUrl: _previousRemote, relayBaseUrl: _previous, ...rest } = current;
+			const next = trimmed === undefined || trimmed.length === 0 ? rest : { ...rest, remoteRelayBaseUrl: trimmed };
+			// 远程地址只在**远程模式**下生效;局域网模式下的当前地址由网卡地址算出来,别被这里冲掉。
+			return this.mode() === "remote" ? { ...next, ...(trimmed === undefined ? {} : { relayBaseUrl: trimmed }) } : next;
 		});
 		// 换中继意味着现有链路的目标变了:重连一次,而不是让它们继续连旧地址。
 		await this.stop();
 		if (this.preferences.enabled) await this.bringUpDevices();
 		this.notify();
 		return this.getState();
+	}
+
+	/**
+	 * 切换接入方式。
+	 *
+	 * 两个方向都要**收尾干净**:切到远程要把局域网服务停掉(否则退出这个页面它还占着端口),
+	 * 切到局域网要把服务起起来并改写成局域网地址。
+	 *
+	 * 局域网起不来时**不静默回退**:保留用户选的这一档,把原因显示出来,并保留原有的中继地址 ——
+	 * 这样他要么修好(构建一次网页客户端),要么自己切回远程,而不是发现"设置被改了"。
+	 */
+	async setMode(mode: "lan" | "remote"): Promise<RemoteAccessState> {
+		this.preferences = await this.options.writePreferences((current) => ({ ...current, mode }));
+		if (mode === "remote") {
+			await this.lan?.stop();
+			this.preferences = await this.options.writePreferences((current) => {
+				const { relayBaseUrl: _lanAddress, ...rest } = current;
+				return {
+					...rest,
+					...(current.remoteRelayBaseUrl === undefined ? {} : { relayBaseUrl: current.remoteRelayBaseUrl }),
+				};
+			});
+			this.lastError = undefined;
+		} else {
+			const started = await this.applyLanAddress();
+			if (!started) return this.getState();
+		}
+		await this.stop();
+		// 拉起链路失败(密钥丢了、中继连不上)由 `bringUpDevices` 记进 `lastError`,
+		// 不该让"切换接入方式"这个动作失败 —— 档位已经切过去了。
+		if (this.preferences.enabled) await this.bringUpDevices().catch(() => undefined);
+		this.notify();
+		return this.getState();
+	}
+
+	/**
+	 * 局域网模式的总开关 —— **一键**就是这一下。
+	 *
+	 * 顺序是刻意的:先把服务起起来,**成功之后**才写地址、才开启。
+	 * 起不来(没构建网页客户端 / 端口全被占)就原样把原因带回去,**不开启** ——
+	 * 宁可不给,也不给一个"打开了但什么都没发生"的开关。
+	 */
+	async setLanMode(enabled: boolean): Promise<RemoteAccessState> {
+		if (this.lan === undefined) return this.getState();
+		if (!enabled) {
+			await this.lan.stop();
+			return this.setEnabled(false);
+		}
+		// 按了局域网这个开关,就是在说"我要用局域网":模式一起写进去 ——
+		// 否则"当前地址已经是局域网地址,而模式还写着远程",下一步切模式时又会把地址改回去。
+		this.preferences = await this.options.writePreferences((current) => ({ ...current, mode: "lan" }));
+		if (!(await this.applyLanAddress())) {
+			this.notify();
+			return this.getState();
+		}
+		return this.setEnabled(true);
+	}
+
+	/**
+	 * 起局域网服务并把**当前中继地址**改成局域网地址。成功返回 true。
+	 *
+	 * 中继地址就是**手机要打开的那个地址**:桌面端自己也连它(中继绑在所有网卡上),
+	 * 于是二维码、网页地址、本机连接三者永远一致 —— 这是"手机绝不能用 127.0.0.1"的落地方式。
+	 */
+	private async applyLanAddress(): Promise<boolean> {
+		if (this.lan === undefined) return false;
+		const status = await this.lan.start();
+		if (!status.running) {
+			this.lastError = status.error ?? "局域网服务起不来。";
+			return false;
+		}
+		const address = this.preferences.lanAddress ?? status.addresses[0]?.address;
+		if (address === undefined) {
+			await this.lan.stop();
+			this.lastError = "这台机器上没找到可用的局域网地址(检查一下网络连接)。";
+			return false;
+		}
+		this.preferences = await this.options.writePreferences((current) => ({
+			...current,
+			lanAddress: address,
+			relayBaseUrl: `ws://${address}:${status.port ?? 0}`,
+		}));
+		this.lastError = undefined;
+		return true;
+	}
+
+	/** 当前接入方式:存过就用存的,没存过按"有没有填过远程地址"推(老用户不该被悄悄切走)。 */
+	private mode(): "lan" | "remote" {
+		if (this.preferences.mode !== undefined) return this.preferences.mode;
+		if (this.preferences.remoteRelayBaseUrl !== undefined) return "remote";
+		if (this.options.defaultRelayBaseUrl !== undefined) return "remote";
+		return this.lan === undefined ? "remote" : "lan";
+	}
+
+	/** 换一个网卡地址:重连一次(现有链路的目标变了),服务本身不用重启。 */
+	async setLanAddress(address: string): Promise<RemoteAccessState> {
+		if (this.lan === undefined) return this.getState();
+		const status = this.lan.getStatus();
+		if (!status.addresses.some((entry) => entry.address === address)) {
+			this.lastError = "这个地址不在本机当前的网卡列表里。";
+			this.notify();
+			return this.getState();
+		}
+		this.preferences = await this.options.writePreferences((current) => ({ ...current, lanAddress: address }));
+		if (status.running && this.mode() === "lan") {
+			this.preferences = await this.options.writePreferences((current) => ({
+				...current,
+				relayBaseUrl: `ws://${address}:${status.port ?? 0}`,
+			}));
+			await this.stop();
+			if (this.preferences.enabled) await this.bringUpDevices();
+		}
+		this.lastError = undefined;
+		this.notify();
+		return this.getState();
+	}
+
+	private lanStatus(): RemoteLanStatus {
+		const status = this.lan?.getStatus();
+		if (status === undefined) return { running: false, addresses: [], webClientReady: false };
+		return {
+			running: status.running,
+			...(status.port === undefined ? {} : { port: status.port }),
+			addresses: [...status.addresses],
+			...(this.preferences.lanAddress === undefined ? {} : { selectedAddress: this.preferences.lanAddress }),
+			webClientReady: status.webClientReady,
+			...(status.portChanged ? { portChanged: true } : {}),
+			...(status.error === undefined ? {} : { error: status.error }),
+		};
 	}
 
 	/**
@@ -212,6 +381,18 @@ export class RemoteAccessService {
 		);
 		if (reusable) {
 			const [deviceId, device] = reusable;
+			/**
+			 * 复用的那台**要跟着改配对方式**:上一轮在局域网档生成、没被领取的二维码,
+			 * 用户切到远程档再点一次生成 —— 那时二维码指向的是服务器上的中继,
+			 * 记录里还写着"局域网"就会把它归错组(界面按这个分组)。
+			 */
+			const mode = this.mode();
+			if (this.preferences.devices.find((entry) => entry.id === deviceId)?.mode !== mode) {
+				this.preferences = await this.options.writePreferences((current) => ({
+					...current,
+					devices: current.devices.map((entry) => (entry.id === deviceId ? { ...entry, mode } : entry)),
+				}));
+			}
 			const invite = await device.host.createInvite();
 			this.invite = { deviceId, view: { ...invite, status: "ready" } };
 			this.notify();
@@ -225,6 +406,8 @@ export class RemoteAccessService {
 			name: "",
 			createdAt: now,
 			mobileSecretHash: sha256Hex(mobileSecret),
+			// 记下**现在**是哪一档:手机随后连的就是这一档的中继(见 `RemoteAccessDeviceView.mode`)。
+			mode: this.mode(),
 		};
 		this.preferences = await this.options.writePreferences((current) => ({
 			...current,

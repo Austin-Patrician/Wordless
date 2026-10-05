@@ -51,6 +51,12 @@ interface FakeSurface extends RemoteSessionSurface {
 	readonly compacted: string[];
 	readonly versionPicks: Array<Record<string, unknown>>;
 	readonly expertPicks: Array<Record<string, unknown>>;
+	readonly referencePrompts: Array<readonly { readonly path: string; readonly name: string; readonly kind: "file" | "directory" }[]>;
+	readonly workspaceSearches: Array<{ readonly sessionId: string; readonly query: string }>;
+	/** 搜工作区时本机给回来的那几条(用例自己定)。 */
+	workspaceResults: readonly { readonly path: string; readonly name: string; readonly kind: "file" | "directory" }[];
+	/** 每一次新建会话交给本机的入参。 */
+	readonly createdSessions: Array<Record<string, unknown>>;
 	emit(event: RemoteSurfaceEvent): void;
 }
 
@@ -74,12 +80,22 @@ const createFakeSurface = (): FakeSurface => {
 	const attachmentPrompts: Array<
 		readonly { readonly name: string; readonly mediaType: string; readonly size: number; readonly base64: string }[]
 	> = [];
+	/** 每一次发消息带的工作区引用(远端 `@` 挑的那些)。 */
+	const referencePrompts: Array<readonly { readonly path: string; readonly name: string; readonly kind: "file" | "directory" }[]> = [];
+	/** 每一次工作区搜索:`{ sessionId, query }`。 */
+	const workspaceSearches: Array<{ readonly sessionId: string; readonly query: string }> = [];
 	const compacted: string[] = [];
 	const versionPicks: Array<Record<string, unknown>> = [];
 	const expertPicks: Array<Record<string, unknown>> = [];
+	const createdSessions: Array<Record<string, unknown>> = [];
 	const surface: FakeSurface = {
 		prompts,
 		aborts,
+		createdSessions,
+		createSession: async (input) => {
+			createdSessions.push(input);
+			return { id: "s1", title: "新的", updatedAt: 1, running: false };
+		},
 		modelRequests,
 		permissionPatches,
 		connectorPatches,
@@ -107,6 +123,12 @@ const createFakeSurface = (): FakeSurface => {
 			};
 		},
 		attachmentPrompts,
+		referencePrompts,
+		workspaceSearches,
+		workspaceResults: [
+			{ path: "src/app.tsx", name: "app.tsx", kind: "file" as const },
+			{ path: "src", name: "src", kind: "directory" as const },
+		],
 		compacted,
 		versionPicks,
 		expertPicks,
@@ -119,6 +141,10 @@ const createFakeSurface = (): FakeSurface => {
 		skillIdsByPrompt,
 		resolveApproval: async (sessionId, approvalId, approved, feedback) => {
 			approvalDecisions.push({ sessionId, approvalId, approved, ...(feedback === undefined ? {} : { feedback }) });
+		},
+		searchWorkspaceFiles: async (sessionId, query) => {
+			workspaceSearches.push({ sessionId, query });
+			return surface.workspaceResults;
 		},
 		setMode: async (sessionId, mode) => {
 			modePatches.push({ sessionId, mode });
@@ -147,10 +173,11 @@ const createFakeSurface = (): FakeSurface => {
 					}
 				: undefined,
 		historyPage: async () => ({ messages: [{ role: "assistant" as const, text: "在", at: 2 }] }),
-		prompt: async (sessionId, text, skillIds, attachments) => {
+		prompt: async (sessionId, text, skillIds, attachments, references) => {
 			prompts.push({ sessionId, text });
 			skillIdsByPrompt.push(skillIds);
 			attachmentPrompts.push(attachments === undefined ? [] : [...attachments]);
+			referencePrompts.push(references === undefined ? [] : [...references]);
 		},
 		abort: async (sessionId) => {
 			aborts.push(sessionId);
@@ -932,6 +959,159 @@ describe("会话统计(P14)", () => {
 		assert.equal(payload.chat?.totalTokens, 13_023);
 		assert.equal(payload.unmeasuredCalls, 2);
 		assert.ok(surface.usageReads.includes("s1"));
+	});
+});
+
+describe("新建会话时选目录与设计风格(P31)", () => {
+	it("工作目录与设计风格**原样交给本机**(认不出来的值当没给,由会话面判断该不该要)", async () => {
+		const { phone, surface } = await connect();
+		await payloadOf(phone, "session.create", {
+			payload: {
+				entryId: "code-development",
+				text: "看一下这个仓库",
+				workspaceId: "w1",
+				designStyleId: "precise-dark",
+			},
+		});
+		assert.deepEqual(surface.createdSessions.at(-1), {
+			entryId: "code-development",
+			text: "看一下这个仓库",
+			workspaceId: "w1",
+			designStyleId: "precise-dark",
+		});
+	});
+
+	it("没给就不带(而不是塞一个空串 —— 那会被当成「给了一个空目录」)", async () => {
+		const { phone, surface } = await connect();
+		await payloadOf(phone, "session.create", { payload: { entryId: "general-work", text: "你好" } });
+		assert.deepEqual(surface.createdSessions.at(-1), { entryId: "general-work", text: "你好" });
+	});
+});
+
+describe("`@` 搜工作区文件(P28)", () => {
+	it("查什么、在哪个会话里查:原样交给本机", async () => {
+		const { phone, surface } = await connect();
+		const payload = (await payloadOf(phone, "session.workspace-files", {
+			sessionId: "s1",
+			payload: { query: "app" },
+		})) as { entries?: readonly unknown[] };
+		assert.deepEqual(surface.workspaceSearches, [{ sessionId: "s1", query: "app" }]);
+		// 只发三样:相对路径、显示名、是不是目录(体积与修改时间不发)。
+		assert.deepEqual(payload.entries, [
+			{ path: "src/app.tsx", name: "app.tsx", kind: "file" },
+			{ path: "src", name: "src", kind: "directory" },
+		]);
+	});
+
+	it("空查询是合法值:刚敲下 @ 就该有东西出来", async () => {
+		const { phone, surface } = await connect();
+		await payloadOf(phone, "session.workspace-files", { sessionId: "s1", payload: { query: "" } });
+		assert.deepEqual(surface.workspaceSearches, [{ sessionId: "s1", query: "" }]);
+	});
+
+	it("查询串不是字符串:拒掉", async () => {
+		const { phone, surface } = await connect();
+		const result = await phone.sendRequest("session.workspace-files", { sessionId: "s1", payload: { query: 42 } });
+		assert.equal(result.error?.code, "invalid_frame");
+		assert.deepEqual(surface.workspaceSearches, []);
+	});
+
+	it("没有 sessionId:拒掉(搜索必须知道「在哪个工作区里」)", async () => {
+		const { phone } = await connect();
+		const result = await phone.sendRequest("session.workspace-files", { payload: { query: "app" } });
+		assert.equal(result.error?.code, "invalid_frame");
+	});
+
+	it("超长的查询串被截断(单帧可以到 1.5M 字符,不能整条塞给搜索)", async () => {
+		const { phone, surface } = await connect();
+		await payloadOf(phone, "session.workspace-files", { sessionId: "s1", payload: { query: "x".repeat(5_000) } });
+		assert.equal(surface.workspaceSearches[0]?.query.length, 200);
+	});
+
+	it("条数封顶:本机给再多也不超过 50", async () => {
+		const { phone, surface } = await connect();
+		surface.workspaceResults = Array.from({ length: 80 }, (_value, index) => ({
+			path: `src/f${index}.ts`,
+			name: `f${index}.ts`,
+			kind: "file" as const,
+		}));
+		const payload = (await payloadOf(phone, "session.workspace-files", {
+			sessionId: "s1",
+			payload: { query: "f" },
+		})) as { entries?: readonly unknown[] };
+		assert.equal(payload.entries?.length, 50);
+	});
+
+	it("引用随消息一起交给本机(形状原样)", async () => {
+		const { phone, surface } = await connect();
+		await payloadOf(phone, "session.prompt", {
+			sessionId: "s1",
+			payload: {
+				text: "看一下这个",
+				references: [{ path: "src/app.tsx", name: "app.tsx", kind: "file" }],
+			},
+		});
+		assert.deepEqual(surface.referencePrompts.at(-1), [{ path: "src/app.tsx", name: "app.tsx", kind: "file" }]);
+	});
+
+	it("只有引用、没有正文:能发(挑一个文件就是在问「这个怎么了」)", async () => {
+		const { phone, surface } = await connect();
+		await payloadOf(phone, "session.prompt", {
+			sessionId: "s1",
+			payload: { text: "", references: [{ path: "src/app.tsx", name: "app.tsx", kind: "file" }] },
+		});
+		assert.deepEqual(surface.referencePrompts.at(-1), [{ path: "src/app.tsx", name: "app.tsx", kind: "file" }]);
+		assert.equal(surface.prompts.at(-1)?.text, "");
+	});
+
+	it("正文、引用、附件**三者都空**:仍然拒掉(那是调用方搞错了,不是用户在说话)", async () => {
+		const { phone, surface } = await connect();
+		const result = await phone.sendRequest("session.prompt", { sessionId: "s1", payload: { text: "   " } });
+		assert.equal(result.error?.code, "invalid_frame");
+		assert.deepEqual(surface.prompts, []);
+	});
+
+	it("正文根本不是字符串:拒掉", async () => {
+		const { phone } = await connect();
+		const result = await phone.sendRequest("session.prompt", {
+			sessionId: "s1",
+			payload: { text: 42, references: [{ path: "src/app.tsx", name: "app.tsx", kind: "file" }] },
+		});
+		assert.equal(result.error?.code, "invalid_frame");
+	});
+
+	it("不发引用时是空数组(而不是 undefined:调用方少写一个分支)", async () => {
+		const { phone, surface } = await connect();
+		await payloadOf(phone, "session.prompt", { sessionId: "s1", payload: { text: "你好" } });
+		assert.deepEqual(surface.referencePrompts.at(-1), []);
+	});
+
+	it("引用形状不对:整条拒掉,而不是丢掉那一条继续发", async () => {
+		const { phone, surface } = await connect();
+		for (const references of [
+			[{ path: "src/app.tsx", name: "app.tsx", kind: "symlink" }],
+			[{ path: "", name: "app.tsx", kind: "file" }],
+			[{ path: "src/app.tsx", kind: "file" }],
+			[{ path: "x".repeat(600), name: "app.tsx", kind: "file" }],
+			"src/app.tsx",
+		]) {
+			const result = await phone.sendRequest("session.prompt", {
+				sessionId: "s1",
+				payload: { text: "看一下这个", references },
+			});
+			assert.equal(result.error?.code, "invalid_frame");
+		}
+		// 超过上限单独一句**人话**(它和"形状不对"不是一回事,而用户要能照着做)。
+		const tooMany = await phone.sendRequest("session.prompt", {
+			sessionId: "s1",
+			payload: {
+				text: "看一下这些",
+				references: Array.from({ length: 21 }, (_value, index) => ({ path: `f${index}.ts`, name: `f${index}.ts`, kind: "file" })),
+			},
+		});
+		assert.match(tooMany.error?.message ?? "", /最多带 20 个文件引用/);
+		// 一条都没发出去 —— 半个引用比一次明确的失败糟得多。
+		assert.deepEqual(surface.referencePrompts, []);
 	});
 });
 

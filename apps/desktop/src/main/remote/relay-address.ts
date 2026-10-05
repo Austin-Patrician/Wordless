@@ -8,6 +8,8 @@
  * - **探测**:点一下就真的去问中继的 `/health`,而不是等生成二维码时才失败。
  */
 
+import { REMOTE_PROTOCOL_VERSION } from "@wordless/remote-control";
+
 /** 中继的默认端口。改这里等于改 `apps/relay/src/main.ts` 的默认值。 */
 export const DEFAULT_RELAY_PORT = 8787;
 
@@ -99,6 +101,20 @@ export async function probeRelay(
 		}
 		const body = (await response.json()) as { status?: unknown; protocolVersion?: unknown };
 		if (body.status !== "ok") return { ok: false, detail: `${address.httpUrl} 回的内容不像中继的健康检查` };
+		/**
+		 * **协议版本对不上 = 那条链路上跑的是旧版中继**(升级部署最硬的冲突)。
+		 *
+		 * 中继的协议版本是握手时**逐个校验**的(`assertVersion` 要求完全相等),
+		 * 所以对不上不是"可能有点小问题",而是**一定连不上**。这句话要说出根因与做法 ——
+		 * 否则用户看到的是握手时一句 `unsupported protocol version`,那完全看不出"去重新部署一次"。
+		 */
+		const remote = Number(body.protocolVersion);
+		if (Number.isFinite(remote) && remote !== REMOTE_PROTOCOL_VERSION) {
+			return {
+				ok: false,
+				detail: `${address.httpUrl} 上的中继是旧版(协议 v${remote},这台电脑要 v${REMOTE_PROTOCOL_VERSION})—— 去「自动部署(SSH)」重新部署一次就会更新`,
+			};
+		}
 		return { ok: true, detail: `可以连接(${address.httpUrl},协议 v${String(body.protocolVersion ?? "?")})` };
 	} catch (error) {
 		const reason = error instanceof Error && error.message.length > 0 ? `(${error.message})` : "";

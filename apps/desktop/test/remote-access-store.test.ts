@@ -177,8 +177,66 @@ describe("IPC 边界", () => {
 		});
 		// 真实装配里 `start()` 在应用启动时跑完才可能收到 IPC;这里照做,否则读到的只是默认值。
 		await service.start();
-		return createRemoteAccessHandlers(service);
+		return createRemoteAccessHandlers(service, {
+			relayBundlePath: "/tmp/relay.mjs",
+			webClientDir: "/tmp/web-client",
+			deployBundleDir: "/tmp/wordless-deploy",
+		});
 	};
+
+	it("探测结果**整份**进计划:nginx 在跑就走 nginx 路线(这是真实抱怨的那一条)", async () => {
+		// 以前这条链路上只传了 node 那两项,于是"nginx 在跑"到不了计划,计划永远按 Caddy 走。
+		const handlers = await buildService();
+		const plan = await handlers.deployPlan({
+			server: "1.2.3.4",
+			user: "ubuntu",
+			domain: "relay.example.com",
+			facts: { nginx: true, nginxActive: true, listeningPorts: [80, 443] },
+		});
+		assert.equal(plan.proxy, "nginx");
+		assert.equal(plan.steps.some((step) => step.id === "InstallCaddy"), false);
+		assert.equal(plan.steps.some((step) => step.id === "NginxSite"), true);
+	});
+
+	it("探测结果缺字段/类型不对:当没探测过,不让计划崩", async () => {
+		const handlers = await buildService();
+		const plan = await handlers.deployPlan({
+			server: "1.2.3.4",
+			user: "ubuntu",
+			domain: "relay.example.com",
+			facts: { nginx: "yes", listeningPorts: "80", node: null },
+		});
+		assert.equal(plan.proxy, "caddy");
+	});
+
+	it("卸载:scope 收值域,而且**只删探到的**", async () => {
+		const handlers = await buildService();
+		// `remove` 是不可逆的那一档:不能让一个拼错的字符串意外走到它。
+		await assert.rejects(() => handlers.uninstallPlan({ scope: "delete-everything" }), /stop 或 remove/);
+		await assert.rejects(() => handlers.uninstallPlan({}), /stop 或 remove/);
+		const plan = await handlers.uninstallPlan({
+			scope: "remove",
+			facts: { serviceExists: true, deployDirExists: true },
+		});
+		assert.deepEqual(
+			plan.steps.map((step) => step.id),
+			["StopService", "RemoveUnit", "RemoveDir", "VerifyRemoved"],
+		);
+		// 没探到 nginx 站点 / Caddy 那一段 → 那两步**不出现**(不猜、不盲删)。
+		assert.equal(plan.steps.some((step) => step.id === "RemoveNginxSite"), false);
+		assert.equal(plan.steps.some((step) => step.id === "RemoveCaddyBlock"), false);
+	});
+
+	it("没什么可卸时**不连服务器**:跑一串空命令只会给出一堆绿勾", async () => {
+		const handlers = await buildService();
+		// 这里没有注入假的 ssh:真去连的话会挂在这里 —— 所以这条同时守着"早退"。
+		// 而且**不能只说 ok**:界面会据此显示"已完成",而那句话在这里是假的。
+		assert.deepEqual(await handlers.uninstallRun({ scope: "remove", facts: { serviceExists: false } }), {
+			ok: true,
+			nothingToDo: true,
+		});
+		assert.deepEqual(await handlers.uninstallRun({ scope: "stop", facts: {} }), { ok: true, nothingToDo: true });
+	});
 
 	it("读状态不需要载荷", async () => {
 		const handlers = await buildService();
@@ -244,5 +302,77 @@ describe("IPC 边界", () => {
 		const handlers = await buildService();
 		const state = await handlers.withdrawInvite();
 		assert.equal(state.invite, undefined);
+	});
+	describe("落盘形状", () => {
+		it("**填满**一份偏好:存进去再读回来必须逐字段一样", async () => {
+			/**
+			 * 这一条是防"加了字段忘了存"的。
+			 *
+			 * 真实踩到过:内存里的 `RemoteAccessPreferences` 加了 `mode` / `remoteRelayBaseUrl`,
+			 * 而落盘形状没跟着加 —— 写进去就被丢掉,读回来又变回旧值。
+			 * 症状是"切换接入方式时档位抖动一下又弹回去",而日志里什么都看不出来。
+			 */
+			await withTempDir(async (path) => {
+				const store = createRemoteAccessStore({ userDataPath: path, vault: createVault() });
+				const full: RemoteAccessPreferences = {
+					enabled: true,
+					mode: "remote",
+					relayBaseUrl: "wss://relay.example.com",
+					remoteRelayBaseUrl: "wss://relay.example.com",
+					// 设备上的 `mode` 也要留住:界面按它把"局域网配的"和"远程配的"分开展示。
+					devices: [
+						{
+							id: "d1",
+							name: "家里的手机",
+							createdAt: 1,
+							mobileSecretHash: "a".repeat(64),
+							mode: "lan",
+						},
+					],
+				};
+				await store.writePreferences(() => full);
+				assert.deepEqual(await store.readPreferences(), full);
+
+				// 再写一次(切模式时服务会连写几次):第二次的 `current` 来自**磁盘**,不是内存。
+				const second = await store.writePreferences((current) => {
+					assert.equal(current.mode, "remote", "第二次读到的 current 必须带着上一次写的字段");
+					return { ...current, enabled: false };
+				});
+				assert.equal(second.mode, "remote");
+				assert.equal(second.remoteRelayBaseUrl, "wss://relay.example.com");
+			});
+		});
+
+		it("设备上拼错的 mode:只丢那一个字段,不丢整台设备(那台手机本身是好的)", async () => {
+			await withTempDir(async (path) => {
+				await writeFile(
+					join(path, "remote-access.json"),
+					`${JSON.stringify({
+						version: 1,
+						enabled: true,
+						devices: [
+							{ id: "d1", name: "手机", createdAt: 1, mobileSecretHash: "a".repeat(64), mode: "banana" },
+						],
+					})}\n`,
+					"utf8",
+				);
+				const store = createRemoteAccessStore({ userDataPath: path, vault: createVault() });
+				const preferences = await store.readPreferences();
+				assert.equal(preferences.devices.length, 1, "设备要留着");
+				assert.equal(preferences.devices[0]?.mode, undefined, "拼错的方式当「没记下」,不猜");
+			});
+		});
+
+		it("认不出来的取值丢掉(而不是把坏数据带进连接流程)", async () => {
+			await withTempDir(async (path) => {
+				await writeFile(
+					join(path, "remote-access.json"),
+					JSON.stringify({ version: 1, enabled: true, mode: "lan-tunnel", devices: [] }),
+					"utf8",
+				);
+				const store = createRemoteAccessStore({ userDataPath: path, vault: createVault() });
+				assert.equal((await store.readPreferences()).mode, undefined);
+			});
+		});
 	});
 });

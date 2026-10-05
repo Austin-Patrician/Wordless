@@ -235,7 +235,12 @@ const createStream = () => {
 const setup = () => {
 	const runtime = createFakeRuntime();
 	const { stream, emit } = createStream();
-	const surface = createRuntimeSessionSurface({ runtime, events: stream });
+	const surface = createRuntimeSessionSurface({
+		runtime,
+		events: stream,
+		// 设计风格目录由主进程直接给(它是一份静态目录,不经过运行时)。
+		designStyles: () => [{ id: "precise-dark", name: "深色精密", tagline: "密集、克制", vibe: "dark" as const }],
+	});
 	return { runtime, surface, emit };
 };
 
@@ -726,20 +731,56 @@ describe("换模型(b 档)", () => {
 		assert.equal(JSON.stringify(opened?.models).includes("http"), false);
 	});
 
-	it("新建会话页的那一份:不摆 internal 的入口,需要工作目录的如实标不可用", async () => {
+	it("新建会话页的那一份:不摆 internal 的入口,需要工作目录的**标出来**(而不是标成不可用)", async () => {
 		const { surface } = setup();
 		const { entries } = await surface.listCatalog();
 		assert.deepEqual(
-			entries.map((entry) => [entry.id, entry.name, entry.available]),
+			entries.map((entry) => [entry.id, entry.name, entry.available, entry.requiresWorkspace ?? false]),
 			[
-				["general-work", "通用工作", true],
-				// 代码 / 数据分析必须有工作目录,而远端还不能选 —— 如实标不可用 + 一句原因。
-				["code-development", "代码开发", false],
+				// 代码开发必须有工作目录 —— 远端**现在能选目录了**(见 `workspaces`),
+				// 所以入口本身是可用的,只是要等用户挑一个目录(界面据此先摆着)。
+				["code-development", "代码开发", true, true],
+				["general-work", "通用工作", true, false],
 			],
 		);
-		assert.match(entries[1]?.note ?? "", /工作目录/);
 		// `internal` 的那个(媒体工作台按 id 取它建会话)不该出现在新建页。
 		assert.equal(entries.some((entry) => entry.id === "image-generation"), false);
+	});
+
+	it("新建会话页带上**分栏**:只发真有入口的那些(空标签页比没有更糟)", async () => {
+		const { surface } = setup();
+		const { entries, modes } = await surface.listCatalog();
+		// 夹具里只有 everyday 与 code 两个模式有入口,create 不该出现。
+		assert.deepEqual(modes, [
+			{ id: "everyday", name: "日常工作", iconKey: "sparkles" },
+			{ id: "code", name: "写代码", iconKey: "code" },
+		]);
+		// 每个入口自己带着属于哪一栏(远端据此分组)。
+		assert.deepEqual(entries.map((entry) => entry.mode), ["code", "everyday"]);
+	});
+
+	it("新建会话页带上**能选的模型**(与「这个会话能换哪些」不是同一份:那份要按入口筛)", async () => {
+		const { surface } = setup();
+		const catalog = await surface.listCatalog();
+		// 只给显示需要的几样 + 能力(思考档位按值域收一道)—— 不给地址、不给密钥。
+		assert.deepEqual(
+			catalog.models.map((model) => [model.connectionId, model.modelId, model.displayName]),
+			[
+				["anthropic", "claude-sonnet-4", "Claude Sonnet 4"],
+				["openai", "gpt-5", "GPT-5"],
+			],
+		);
+	});
+
+	it("新建会话页也带上**能选的工作目录**与**设计风格**(与桌面端 WelcomeView 同一份来源)", async () => {
+		const { surface } = setup();
+		const catalog = await surface.listCatalog();
+		// 只给 id / 名字 / 还在不在 —— **路径不出本机**。
+		assert.deepEqual(catalog.workspaces, [{ id: "w1", name: "登录页重构", available: true }]);
+		// 设计风格:只给 id / 名字 / 一句话 / 明暗(那套 theme.css 好几 KB,手机不画真示例页)。
+		assert.deepEqual(catalog.designStyles, [
+			{ id: "precise-dark", name: "深色精密", tagline: "密集、克制", vibe: "dark" },
+		]);
 	});
 
 	it("新建会话页也带上连接器与技能(它们本来就是\"这一轮怎么干活\"的一部分)", async () => {
@@ -748,6 +789,37 @@ describe("换模型(b 档)", () => {
 		// 连接器只列**已启用**的(与"这个会话能连什么"同一份判断)。
 		assert.deepEqual(catalog.connectors.map((connector) => connector.id), ["c1"]);
 		assert.deepEqual(catalog.skills.map((skill) => skill.name), ["周报"]);
+	});
+
+	it("新建会话:**带工作目录**(代码这一类必须有,本机校验它存在且可用)", async () => {
+		const { runtime, surface } = setup();
+		const [general] = (await surface.listSessions()).slice(0, 1);
+		assert.ok(general);
+		const created = await surface.createSession({
+			entryId: "code-development",
+			text: "看一下这个仓库",
+			workspaceId: "w1",
+		});
+		assert.ok(created, "给了可用目录就该建得出来");
+		assert.equal(runtime.created.at(-1)?.draft.workspaceId, "w1");
+	});
+
+	it("需要目录的那一类:**没给目录就不建**(而不是随便挑一个)", async () => {
+		const { runtime, surface } = setup();
+		assert.equal(await surface.createSession({ entryId: "code-development", text: "看一下" }), undefined);
+		// 给一个本机不认识的 id 也一样 —— 猜一个目录等于把活干在别的地方。
+		assert.equal(
+			await surface.createSession({ entryId: "code-development", text: "看一下", workspaceId: "没有这个目录" }),
+			undefined,
+		);
+		assert.deepEqual(runtime.created, []);
+	});
+
+	it("设计风格:**随首条消息**发出去(与桌面端 WelcomeView 同一条路)", async () => {
+		const { runtime, surface } = setup();
+		// 认不出来的风格 id 当"没选"(而不是整条拒掉)。
+		await surface.createSession({ entryId: "general-work", text: "做个页面", designStyleId: "没有这个风格" });
+		assert.equal(runtime.created.at(-1)?.prompt, "做个页面");
 	});
 
 	it("新建会话:两条路合成一次调用(入口 + 第一条消息),并回读新会话的摘要", async () => {
@@ -1309,6 +1381,165 @@ describe("审批、模式、技能(P9)", () => {
 		const [listed] = await surface.listSessions();
 		await surface.prompt(listed.id, "写一份", ["s1"]);
 		assert.deepEqual(prompts, [{ sessionId: "s1", prompt: "写一份", skillIds: ["s1"] }]);
+	});
+});
+
+describe("`@` 工作区文件(P28)", () => {
+	it("搜的是**这个会话**的工作区,而且只回三样", async () => {
+		const runtime = createFakeRuntime();
+		const queries: Array<{ sessionId: string; query: string }> = [];
+		const { stream } = createStream();
+		const surface = createRuntimeSessionSurface({
+			runtime: {
+				...runtime,
+				searchSessionWorkspace: async (sessionId, query) => {
+					queries.push({ sessionId, query });
+					return [
+						{ path: "src/app.tsx", name: "app.tsx", kind: "file" as const, size: 1234, modifiedAt: 1 },
+						{ path: "src", name: "src", kind: "directory" as const, size: 0, modifiedAt: 0 },
+					];
+				},
+			},
+			events: stream,
+		});
+		const [listed] = await surface.listSessions();
+		const entries = await surface.searchWorkspaceFiles(listed.id, "app");
+		assert.deepEqual(queries, [{ sessionId: "s1", query: "app" }]);
+		// 体积与修改时间不发 —— 这一条链路上没人用它们。
+		assert.deepEqual(entries, [
+			{ path: "src/app.tsx", name: "app.tsx", kind: "file" },
+			{ path: "src", name: "src", kind: "directory" },
+		]);
+	});
+
+	it("路径或名字空的条目直接丢掉(发出去也画不出东西)", async () => {
+		const runtime = createFakeRuntime();
+		const { stream } = createStream();
+		const surface = createRuntimeSessionSurface({
+			runtime: {
+				...runtime,
+				searchSessionWorkspace: async () => [
+					{ path: "", name: "空的", kind: "file" as const },
+					{ path: "ok.ts", name: "", kind: "file" as const },
+					{ path: "ok.ts", name: "ok.ts", kind: "file" as const },
+				],
+			},
+			events: stream,
+		});
+		const [listed] = await surface.listSessions();
+		assert.deepEqual(await surface.searchWorkspaceFiles(listed.id, ""), [{ path: "ok.ts", name: "ok.ts", kind: "file" }]);
+	});
+
+	it("引用不拼进正文,而是变成与桌面端同一份标记", async () => {
+		const runtime = createFakeRuntime();
+		const prompts: string[] = [];
+		const { stream } = createStream();
+		const surface = createRuntimeSessionSurface({
+			runtime: { ...runtime, promptSession: async (_sessionId, prompt) => void prompts.push(prompt) },
+			events: stream,
+		});
+		const [listed] = await surface.listSessions();
+		await surface.prompt(listed.id, "看一下这个", [], undefined, [
+			{ path: "src/app.tsx", name: "app.tsx", kind: "file" },
+		]);
+		const prompt = prompts[0] ?? "";
+		// 正文还是正文(用户打的字没有被改写)。
+		assert.match(prompt, /^看一下这个/);
+		// 引用是一段**给程序读的**编码 JSON,桌面端序列化器就是这个格式。
+		const marker = /<wordless-workspace-reference>([^<]*)<\/wordless-workspace-reference>/.exec(prompt);
+		assert.ok(marker, "引用必须以标记形式出现");
+		const parsed = JSON.parse(decodeURIComponent(marker?.[1] ?? "")) as Record<string, unknown>;
+		assert.equal(parsed.version, 1);
+		assert.equal(parsed.path, "src/app.tsx");
+		assert.equal(parsed.name, "app.tsx");
+		assert.equal(parsed.kind, "file");
+	});
+
+	it("没有引用时不留下任何标记(老路径逐字不变)", async () => {
+		const runtime = createFakeRuntime();
+		const prompts: string[] = [];
+		const { stream } = createStream();
+		const surface = createRuntimeSessionSurface({
+			runtime: { ...runtime, promptSession: async (_sessionId, prompt) => void prompts.push(prompt) },
+			events: stream,
+		});
+		const [listed] = await surface.listSessions();
+		await surface.prompt(listed.id, "你好");
+		assert.equal(prompts[0], "你好");
+	});
+
+	it("用户消息里的引用块会被映射出去(否则手机上看不见自己 @ 了什么)", async () => {
+		const runtime = createFakeRuntime();
+		const { stream } = createStream();
+		const surface = createRuntimeSessionSurface({
+			runtime: {
+				...runtime,
+				// 打开会话走的是**单独那一页历史**(不是快照里的整段),所以要改这一边。
+				getSessionHistoryPage: async () => ({
+					items: [
+						{
+							type: "turn" as const,
+							turn: {
+								messages: [
+									{
+										role: "user" as const,
+										timestamp: 1,
+										blocks: [
+											{ type: "workspace-reference", id: "ref-1", path: "src/app.tsx", name: "app.tsx", kind: "file" },
+											{ type: "text", text: "看一下这个" },
+										],
+									},
+								],
+							},
+						},
+					],
+				}),
+			},
+			events: stream,
+		});
+		const [listed] = await surface.listSessions();
+		const detail = await surface.openSession(listed.id);
+		const blocks = detail?.messages[0]?.blocks ?? [];
+		assert.deepEqual(blocks[0], {
+			type: "workspace-reference",
+			id: "ref-1",
+			path: "src/app.tsx",
+			name: "app.tsx",
+			kind: "file",
+		});
+	});
+
+	it("认不出的引用块(没有路径)整块丢掉,而不是画一枚空芯片", async () => {
+		const runtime = createFakeRuntime();
+		const { stream } = createStream();
+		const surface = createRuntimeSessionSurface({
+			runtime: {
+				...runtime,
+				getSessionHistoryPage: async () => ({
+					items: [
+						{
+							type: "turn" as const,
+							turn: {
+								messages: [
+									{
+										role: "user" as const,
+										timestamp: 1,
+										blocks: [
+											{ type: "workspace-reference", id: "ref-1", name: "没有路径" },
+											{ type: "text", text: "正文" },
+										],
+									},
+								],
+							},
+						},
+					],
+				}),
+			},
+			events: stream,
+		});
+		const [listed] = await surface.listSessions();
+		const detail = await surface.openSession(listed.id);
+		assert.deepEqual(detail?.messages[0]?.blocks, [{ type: "text", text: "正文" }]);
 	});
 });
 

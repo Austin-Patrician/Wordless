@@ -31,14 +31,39 @@ import {
 	WifiOff,
 	X,
 } from "lucide-react";
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import {
+	useCallback,
+	useEffect,
+	useLayoutEffect,
+	useMemo,
+	useRef,
+	useState,
+	type KeyboardEvent as ReactKeyboardEvent,
+	type ReactNode,
+} from "react";
+import { FileTypeIcon } from "./file-type-icon";
 import { MessageActions, MessageMarkdown } from "./markdown";
-import type { PlannedMessage } from "./tool-groups";
+import type { PlannedMessage, WorkspaceReferenceBlock } from "./tool-groups";
 import type { RemoteClientState, RemoteSession } from "./remote-client";
-import type { RemoteEntryOption } from "@wordless/remote-control";
+import type {
+	RemoteDesignStyleOption,
+	RemoteEntryOption,
+	RemoteModeOption,
+	RemoteWorkspaceOption,
+	RemoteWorkspaceReference,
+} from "@wordless/remote-control";
 import { isNearBottom, jumpButtonView, nextUnseenCount, scrollBehaviorForSessionChange } from "./scroll-model";
 import { ATTACHMENT_MAX_BYTES, ATTACHMENT_MAX_FILES } from "@wordless/remote-control";
-import { clampComposerHeight, draftFor, readDrafts, writeDraft, type DraftMap } from "./composer";
+import { draftFor, readDrafts, shortWorkspacePath, skillIconText, writeDraft, type DraftMap } from "./composer";
+import { ComposerEditor, type ComposerEditorHandle, type ComposerEditorValue } from "./composer-editor";
+import {
+	WORKSPACE_SEARCH_DEBOUNCE_MS,
+	createWorkspaceSearchCache,
+	isStaleSearch,
+	orderWorkspaceMatches,
+	workspacePathParts,
+	workspaceSearchKey,
+} from "./workspace-search";
 import {
 	ACCESS_OPTIONS,
 	APPROVAL_OPTIONS,
@@ -116,12 +141,12 @@ export function ThreadView({
 	onSetConnectors,
 	onSetMode,
 	onResolveApproval,
-	onSetPendingSkills,
 	onAnswerRequest,
 	onCompact,
 	onLoadSessionUsage,
 	onUploadAttachment,
 	onRemoveAttachment,
+	onSearchWorkspaceFiles,
 	onSelectVersion,
 	onSetExpert,
 	theme,
@@ -134,7 +159,17 @@ export function ThreadView({
 }: {
 	readonly state: RemoteClientState;
 	readonly onOpenSession: (sessionId: string) => void;
-	readonly onSend: (text: string) => void;
+	/**
+	 * 发一条消息。
+	 *
+	 * `references` 与 `skillIds` 都是编辑器里那些行内 token(`@文件` / `$技能`)——
+	 * 与正文一起发出去;正文里没有它们的名字(token 不是文字)。
+	 */
+	readonly onSend: (
+		text: string,
+		references: readonly RemoteWorkspaceReference[],
+		skillIds: readonly string[],
+	) => void;
 	readonly onAbort: () => void;
 	readonly onRefresh: () => void;
 	/** 换模型:返回失败原因(界面把它显示在选择器里,而不是飘到对话上)。 */
@@ -174,8 +209,6 @@ export function ThreadView({
 	readonly onSetMode: (mode: "default" | "plan" | "clarify") => Promise<{ readonly ok: boolean; readonly message?: string }>;
 	/** 回答一次工具审批 —— 批准之后电脑才会真的执行。 */
 	readonly onResolveApproval: (approvalId: string, approved: boolean) => Promise<{ readonly ok: boolean; readonly message?: string }>;
-	/** 选这一轮用哪些技能(发出去之后清空)。 */
-	readonly onSetPendingSkills: (skillIds: readonly string[]) => void;
 	/** 手动压缩上下文。 */
 	readonly onCompact: () => Promise<{ readonly ok: boolean; readonly message?: string }>;
 	/** 读会话总计用量(用量详情里的"会话统计")。 */
@@ -193,6 +226,18 @@ export function ThreadView({
 	readonly onUploadAttachment: (file: File) => Promise<{ readonly ok: boolean; readonly message?: string }>;
 	/** 撤掉一个还没发出去的附件。 */
 	readonly onRemoveAttachment: (uploadId: string) => Promise<void>;
+	/**
+	 * 在**这个会话的工作区**里搜文件与目录(输入框里的 `@`)。
+	 *
+	 * 返回 `unsupported` 表示本机不认识这个方法(老版本桌面端)—— 那时**不再摆选择器**,
+	 * 而不是每敲一个字弹一次"不支持"。
+	 */
+	readonly onSearchWorkspaceFiles: (query: string) => Promise<{
+		readonly ok: boolean;
+		readonly entries?: readonly RemoteWorkspaceReference[];
+		readonly message?: string;
+		readonly unsupported?: boolean;
+	}>;
 	/** 切换某一轮回复的版本。 */
 	readonly onSelectVersion: (messageId: string, version: number) => Promise<{ readonly ok: boolean; readonly message?: string }>;
 	/** 换专家 / 专家团(null = 不用)。 */
@@ -215,6 +260,16 @@ export function ThreadView({
 	const [newEntryId, setNewEntryId] = useState<string | undefined>(undefined);
 	/** 新建会话时"要连哪些连接器"(本地待选:还没有会话可写,与第一条消息一起发)。 */
 	const [newConnectorIds, setNewConnectorIds] = useState<readonly string[]>([]);
+	/** 新建会话时选的**工作目录**(代码 / 数据分析这类必须先挑一个)。 */
+	const [newWorkspaceId, setNewWorkspaceId] = useState<string | undefined>(undefined);
+	/** 新建会话时选的**设计风格**(只有设计那一类用得上)。 */
+	const [newDesignStyleId, setNewDesignStyleId] = useState<string | null>(null);
+	/**
+	 * 新建会话时选的**模型**(不选就由本机按入口自动挑一个 —— 与桌面端 WelcomeView 同一条)。
+	 */
+	const [newModel, setNewModel] = useState<
+		{ readonly connectionId: string; readonly modelId: string; readonly thinkingLevel?: string } | undefined
+	>(undefined);
 	/**
 	 * 会话**变了**就离开新建页(新建成功后客户端会打开那个新会话,这里跟着退出来)。
 	 *
@@ -249,11 +304,61 @@ export function ThreadView({
 	const [drafts, setDrafts] = useState<DraftMap>(() =>
 		readDrafts(typeof localStorage === "undefined" ? undefined : localStorage),
 	);
-	const composerRef = useRef<HTMLTextAreaElement>(null);
+	/** 输入框(编辑器)的句柄:插入 token、清空、聚焦都走它。 */
+	const editorRef = useRef<ComposerEditorHandle>(null);
 	const lastEntryCount = useRef(0);
+	/**
+	 * 输入框现在是什么(编辑器每次变化都会报一遍)。
+	 *
+	 * **正文与引用都在这里**,不再各存一份:编辑器是唯一真相 —— 用户删掉一枚 token,
+	 * 引用就跟着没了(上一版要把"正文里的字"和"挂着的芯片"两边同步,那才是麻烦的来源)。
+	 */
+	const [composerValue, setComposerValue] = useState<ComposerEditorValue>({
+		text: "",
+		references: [],
+		skills: [],
+		draft: "",
+	});
+	/** 选择器里摆的东西,以及选中了哪一行(文件与技能**共用**一个高亮位置:同时只可能开一个)。 */
+	const [workspaceMatches, setWorkspaceMatches] = useState<readonly RemoteWorkspaceReference[]>([]);
+	const [pickerIndex, setPickerIndex] = useState(0);
+	const [workspaceOpen, setWorkspaceOpen] = useState(false);
+	const [workspaceSearching, setWorkspaceSearching] = useState(false);
+	/**
+	 * 从「+」里点开的技能选择器(没有 `$…` 那一段)。
+	 *
+	 * 桌面端也是两条路进同一件事:「+」→技能、或者在输入框里敲 `$` —— 出来的都是同一枚 token。
+	 * 两条路各做一套的话,用户会以为它们是两种东西。
+	 */
+	const [skillPickerOpen, setSkillPickerOpen] = useState(false);
+	/** 用户按 Esc 关掉的那一段查询:同样的查询不再自己弹回来。 */
+	const dismissedMentionRef = useRef<string | undefined>(undefined);
+	/**
+	 * 结果缓存(5 秒)。**放在组件里**而不是客户端状态里:它是"这一刻下拉框里摆什么",
+	 * 换会话时键里带着会话 id,所以不需要谁去清它。
+	 */
+	const workspaceCacheRef = useRef(createWorkspaceSearchCache());
+	/** 搜索的自增序号:先发的后回来时丢掉(否则显示的是上一个词的结果)。 */
+	const workspaceSearchSeqRef = useRef(0);
+	/** 本机不认识这个方法(老版本桌面端):这次连接内不再摆选择器。 */
+	const workspaceUnsupportedRef = useRef(false);
+	const searchWorkspaceFilesRef = useRef(onSearchWorkspaceFiles);
+	searchWorkspaceFilesRef.current = onSearchWorkspaceFiles;
+
+	/** 技能选择器里摆什么:目录本来就在手上,所以**本地过滤**就行(不像文件要问本机)。 */
+	const skillMatches = useMemo(() => {
+		const query = (composerValue.skillQuery ?? "").trim().toLocaleLowerCase();
+		return (state.skills ?? []).filter(
+			(skill) => query.length === 0 || `${skill.name} ${skill.description ?? ""}`.toLocaleLowerCase().includes(query),
+		);
+	}, [composerValue.skillQuery, state.skills]);
 
 	const activeSession = state.sessions.find((session) => session.id === state.sessionId);
+	/** 这个会话存着的草稿(序列化后的编辑器状态;老草稿是一段纯文本)。 */
 	const draft = draftFor(drafts, state.sessionId);
+	/** 这条消息能不能发:正文、引用、技能有一个就行(挑一个文件 / 点一个技能就是在问"用这个")。 */
+	const canSendMessage =
+		composerValue.text.trim().length > 0 || composerValue.references.length > 0 || composerValue.skills.length > 0;
 	const setDraft = useCallback(
 		(value: string) => {
 			setDrafts((current) =>
@@ -286,14 +391,10 @@ export function ThreadView({
 	const sessionRunning = creatingSession || opening ? false : state.running;
 	const jump = jumpButtonView({ nearBottom, running: sessionRunning, unseen });
 
-	// 输入框长到内容那么高,但不超过上限(超过就内部滚动,不让它吃掉整个屏幕)。
-	useLayoutEffect(() => {
-		const node = composerRef.current;
-		if (!node) return;
-		node.style.height = "auto";
-		const height = clampComposerHeight(node.scrollHeight);
-		node.style.height = height === 0 ? "" : `${height}px`;
-	}, [draft, state.sessionId]);
+	/*
+		输入框的高度**不用量了**:编辑器的内容有多高它就多高(CSS 里给 `min-h` 与 `max-h`,
+		超过上限自己内部滚动)。上一版要自己量 `scrollHeight` 再写回高度,是因为 textarea 不会长。
+	*/
 	// 顶部那行状态:重连了几次、是不是该让用户去查点什么,都由它决定。
 	const status = connectionStatus(state);
 	/**
@@ -306,11 +407,17 @@ export function ThreadView({
 	// 输入区上方的只读信息:让手机上"看得见自己正在用什么"。
 	const chips = sessionChips(activeSession);
 	// 能换模型的两个前提:本机给了清单,而且此刻不在回复中(运行时会拒绝,界面先如实关掉)。
-	const canPickModel = state.models !== undefined && state.models.length > 0 && !sessionRunning;
-	const modelGroups_ = modelGroups(state.models, {
-		connectionId: activeSession?.modelConnectionId,
-		modelId: activeSession?.modelId,
-	});
+	/**
+	 * 模型清单:**新建页用目录那一份**(这台机器上已启用的全部),会话页用这个会话那一份。
+	 *
+	 * 分开是因为两者问的不是同一件事:前者是"这台机器上有什么",后者是"这个会话能换成什么"
+	 * (要按入口筛)。新建页还没有会话,拿会话那份会**一个模型都列不出来**(用户报过)。
+	 */
+	const modelChoices = creatingSession ? (state.catalogModels ?? []) : (state.models ?? []);
+	const canPickModel = modelChoices.length > 0 && !sessionRunning;
+	const modelGroups_ = modelGroups(modelChoices, creatingSession
+		? { connectionId: newModel?.connectionId, modelId: newModel?.modelId }
+		: { connectionId: activeSession?.modelConnectionId, modelId: activeSession?.modelId });
 	/** 现在用的是哪个模型(清单里那一条):模型按钮上显示的就是它的图标。 */
 	const currentModel = currentModelChoice(modelGroups_);
 	/** 模型:图标按钮(不显示名字 —— 名字太长,手机上会把这一行撑满)。 */
@@ -324,7 +431,10 @@ export function ThreadView({
 	const modelControl: ComposerControl = {
 		kind: "model",
 		label: "模型",
-		...(activeSession?.modelName === undefined ? {} : { value: activeSession.modelName }),
+		// 新建页还没有会话:显示的是**这一轮挑的那一个**(没挑就不显示名字,由本机按入口自动选)。
+		...((creatingSession ? currentModel?.displayName : activeSession?.modelName) === undefined
+			? {}
+			: { value: (creatingSession ? currentModel?.displayName : activeSession?.modelName) as string }),
 		editable: canPickModel,
 		// 图标与桌面端**同一份**(`ProviderIcon`):手机上和电脑上认出的是同一个标志。
 		...(currentModel?.avatarId === undefined ? {} : { avatarId: currentModel.avatarId }),
@@ -348,6 +458,12 @@ export function ThreadView({
 	 * 而那会变成一句用户看不懂的失败。不传 = 让运行时按新模型夹一次(与桌面端同一条规则)。
 	 */
 	const pickModel = async (connectionId: string, modelId: string, thinkingLevel?: string) => {
+		// 新建页还没有会话:本机没有"这个会话"可改,所以先记在这一轮里,随 `session.create` 发出去。
+		if (creatingSession) {
+			setNewModel({ connectionId, modelId, ...(thinkingLevel === undefined ? {} : { thinkingLevel }) });
+			if (thinkingLevel === undefined) setPickerOpen(false);
+			return;
+		}
 		setPickerBusy(true);
 		setPickerError(undefined);
 		const result = await onSetModel(connectionId, modelId, thinkingLevel);
@@ -471,33 +587,267 @@ export function ThreadView({
 	}, [state.sessionId, scrollToBottom]);
 
 	/** 新建页里可用的工作类型(选中项由它决定;没有可选项时下面那个框也不该让人打字)。 */
-	const selectedEntry = (entryOptions ?? []).filter((entry) => entry.available).find((entry) => entry.id === newEntryId)
-		?? (entryOptions ?? []).find((entry) => entry.available);
+	/**
+	 * 这一类能不能建:**入口本身可用**,而且(需要目录的那些)**已经选了目录**。
+	 *
+	 * 与桌面端 WelcomeView 同一条规则 —— 少了后半句,用户会点了之后才知道"还差一个目录"。
+	 */
+	const entryUsable = useCallback(
+		(entry: RemoteEntryOption) => entry.available && (entry.requiresWorkspace !== true || newWorkspaceId !== undefined),
+		[newWorkspaceId],
+	);
+	/**
+	 * 用户点的那一个(可能是"还差一个目录"的)。
+	 *
+	 * 上层**不替他换**:点了「代码开发」却拿「通用工作」去建会话,是屏幕上写着 A、实际发了 B。
+	 * 差目录时"能不能发"由下面那一个判断管 —— 发送键如实禁用,提示如实说。
+	 */
+	const pickedEntry = (entryOptions ?? []).find((entry) => entry.id === newEntryId);
+	/** 真能发的那个:用户没点过就取第一个能用的。 */
+	const selectedEntry = pickedEntry ?? (entryOptions ?? []).find(entryUsable);
+	/** 新建页那一条能不能发(差目录 / 本机说不可用,都不行)。 */
+	const canSendFirstMessage = selectedEntry !== undefined && entryUsable(selectedEntry);
 	const canCompose = creatingSession
-		? selectedEntry !== undefined
+		? canSendFirstMessage
 		: // 打开中不给发:这一页的会话设置(技能 / 连接器 / 模型)还是**上一个会话**的,发出去会用错那一份。
 			state.sessionId !== undefined && !opening;
+
+	const chooseWorkspaceReference = useCallback((reference: RemoteWorkspaceReference) => {
+		editorRef.current?.insertWorkspaceReference(reference);
+		dismissedMentionRef.current = undefined;
+		setWorkspaceOpen(false);
+		setWorkspaceMatches([]);
+	}, []);
+
+	/** 技能:插一枚 token 就完事(与本机无关,所以不用等)。 */
+	const chooseSkill = useCallback((skill: { readonly id: string; readonly name: string }) => {
+		editorRef.current?.insertSkill({ id: skill.id, name: skill.name });
+		setSkillPickerOpen(false);
+	}, []);
+
+	/** 编辑器报上来的这一段 `@` / `$` 查询(没有就是 `undefined`)。 */
+	const workspaceQuery = composerValue.workspaceQuery;
+	/**
+	 * 选择器里现在摆什么 —— **文件与技能合成同一份**。
+	 *
+	 * 同一时刻只可能开一个(两个触发符都从光标前那一段认出来),所以高亮位置、键盘规则、
+	 * 面板样式都共用一份;各写一套的话,"上下键走几格""回车选中的是哪一条"迟早会漂开。
+	 */
+	const pickerRows = useMemo((): {
+		readonly open: boolean;
+		readonly kind: "skill" | "workspace";
+		readonly items: readonly { readonly key: string; readonly choose: () => void; readonly content: ReactNode }[];
+	} => {
+		// 技能优先:它是本地过滤,而且「+」那条路本来就是在没有 `$` 的时候打开的。
+		if (skillPickerOpen || composerValue.skillQuery !== undefined) {
+			return {
+				open: true,
+				kind: "skill",
+				items: skillMatches.map((skill) => ({
+					key: `skill:${skill.id}`,
+					choose: () => chooseSkill(skill),
+					content: (
+						<>
+							<span
+								aria-hidden
+								className="grid h-4 w-4 shrink-0 place-items-center rounded-[4px] bg-muted text-[9px] font-semibold text-muted-foreground"
+							>
+								{skillIconText(skill.name)}
+							</span>
+							<span className="min-w-0 max-w-[52%] shrink-0 truncate text-[12px] font-medium text-foreground">
+								{skill.name}
+							</span>
+							{skill.description === undefined ? null : (
+								<span className="min-w-0 flex-1 truncate text-[10px] text-muted-foreground">{skill.description}</span>
+							)}
+						</>
+					),
+				})),
+			};
+		}
+		return {
+			open: workspaceOpen,
+			kind: "workspace",
+			items: workspaceMatches.map((reference) => {
+				const parts = workspacePathParts(reference);
+				return {
+					key: `file:${reference.path}`,
+					choose: () => chooseWorkspaceReference(reference),
+					content: (
+						<>
+							<FileTypeIcon
+								className="h-3.5 w-3.5 [&_svg]:h-3.5 [&_svg]:w-3.5"
+								kind={reference.kind}
+								name={reference.name}
+							/>
+							<span className="min-w-0 max-w-[52%] shrink-0 truncate text-[12px] font-medium text-foreground">
+								{parts.name}
+							</span>
+							{parts.directory.length === 0 ? null : (
+								<span className="min-w-0 flex-1 truncate font-mono text-[10px] text-muted-foreground">
+									{shortWorkspacePath(parts.directory, 40)}
+								</span>
+							)}
+						</>
+					),
+				};
+			}),
+		};
+	}, [chooseSkill, composerValue.skillQuery, skillMatches, skillPickerOpen, workspaceMatches, workspaceOpen]);
+	// 用户按 Esc 关掉的那一段,在查询串变掉之前不再自己弹回来。
+	if (workspaceQuery === undefined || workspaceQuery !== dismissedMentionRef.current) {
+		dismissedMentionRef.current = undefined;
+	}
+	/**
+	 * 搜一次。
+	 *
+	 * 三条保证都在这几行里,而且都能单独说清楚:
+	 * 1. **防抖 120ms** —— 手机上一个字一个字敲,每敲一下都发请求等于把电脑当打字机用;
+	 * 2. **缓存 5 秒** —— 打错一个字母再退回来,不必再走一趟中继;
+	 * 3. **只认最新那次** —— 慢的那次后回来会被丢掉,否则列表里是上一个词的结果。
+	 *
+	 * 刚敲下 `@` 就把面板摆出来(哪怕还在搜):手机上最难受的是"点了没反应",
+	 * 而冷启动时本机要建索引,这一下可能要几秒 —— 那几秒必须看得见。
+	 */
+	useEffect(() => {
+		/*
+			新建会话那一页**不摆选择器**。两个理由,都是"摆了会说假话":
+			1. 搜索是**按会话**做的(本机按这个会话的工作区去查),而新建页还没有会话 ——
+			   查出来的是上一个会话的工作区,和这一页毫无关系;
+			2. `session.create` 这一条路**不带引用**(桌面端的 WelcomeView 才有这一项)。
+			   于是挑中的文件会变成一枚芯片,建完会话就被清掉 —— 用户以为带上了,其实没有。
+		*/
+		if (workspaceQuery === undefined || !canCompose || creatingSession || workspaceUnsupportedRef.current) {
+			setWorkspaceOpen(false);
+			setWorkspaceMatches([]);
+			setWorkspaceSearching(false);
+			return;
+		}
+		if (workspaceQuery === dismissedMentionRef.current) {
+			setWorkspaceOpen(false);
+			return;
+		}
+		setWorkspaceOpen(true);
+		const key = workspaceSearchKey(state.sessionId, workspaceQuery);
+		const cached = workspaceCacheRef.current.read(key, Date.now());
+		if (cached !== undefined) {
+			setWorkspaceMatches(orderWorkspaceMatches(cached));
+			setPickerIndex(0);
+			setWorkspaceSearching(false);
+			return;
+		}
+		// 上一个词的列表**先清掉**:留着它,用户按 Enter 选中的就是那个已经不相关的结果。
+		setWorkspaceMatches([]);
+		// "正在找…"从这一刻就摆出去(而不是等防抖结束):否则那 120ms 里面板写的是
+		// "这个工作区里还没有文件" —— 那是一句**没发生过的话**(还没搜呢)。
+		setWorkspaceSearching(true);
+		const seq = (workspaceSearchSeqRef.current += 1);
+		const timer = window.setTimeout(() => {
+			void searchWorkspaceFilesRef.current(workspaceQuery).then((result) => {
+				if (isStaleSearch(seq, workspaceSearchSeqRef.current)) return;
+				setWorkspaceSearching(false);
+				if (!result.ok) {
+					// 老版本桌面端:这一次连接内不再摆选择器(否则每敲一个字弹一次"不支持")。
+					if (result.unsupported === true) workspaceUnsupportedRef.current = true;
+					setWorkspaceOpen(false);
+					return;
+				}
+				const entries = result.entries ?? [];
+				workspaceCacheRef.current.write(key, entries, Date.now());
+				// 排一次,视图与键盘都吃这一份 —— 否则"高亮的那条"和"选中的那条"会不是同一个。
+				setWorkspaceMatches(orderWorkspaceMatches(entries));
+				setPickerIndex(0);
+			});
+		}, WORKSPACE_SEARCH_DEBOUNCE_MS);
+		return () => window.clearTimeout(timer);
+	}, [canCompose, creatingSession, state.sessionId, workspaceQuery]);
+
+	/**
+	 * 选中一条:把光标前那段 `@…` 换成一枚**行内 token**(与桌面端一样长在文字行里)。
+	 *
+	 * 插入、去 `@`、把光标放到 token 之后 —— 三件事都在编辑器里做(它才知道节点在哪)。
+	 */
+	/**
+	 * 选择器开着时,上下键 / Enter / Esc 都归它 —— 不然回车会直接把消息发出去。
+	 *
+	 * 文件与技能**走同一套**:同一时刻只可能开一个(两个触发符都从光标前那一段认出来),
+	 * 各写一套的话,键盘行为迟早会漂开。
+	 */
+	const handlePickerKey = (event: ReactKeyboardEvent<HTMLElement>): boolean => {
+		const rows = pickerRows;
+		const open = rows.open;
+		if (!open || event.nativeEvent.isComposing) return false;
+		const matches = rows.items;
+		if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+			event.preventDefault();
+			if (matches.length === 0) return true;
+			const step = event.key === "ArrowDown" ? 1 : -1;
+			setPickerIndex((current) => (current + step + matches.length) % matches.length);
+			return true;
+		}
+		/*
+			回车 / Tab:**只有真的有一条可挑时才拦**。
+			
+			没有匹配(还在搜、或者一个都没搜到)时放它过去 —— 那时候用户按回车的意思是"发出去",
+			而"按了没反应"是手机上最难判断的一种状态(他会以为界面卡住了)。与桌面端逐字一致。
+		*/
+		const chosen = matches[pickerIndex];
+		if ((event.key === "Enter" || event.key === "Tab") && chosen !== undefined) {
+			event.preventDefault();
+			chosen.choose();
+			return true;
+		}
+		if (event.key === "Escape") {
+			event.preventDefault();
+			if (rows.kind === "skill") {
+				// 技能这一路没有"查询串"可记(`$…` 可能根本不存在):直接关掉。
+				setSkillPickerOpen(false);
+				dismissedMentionRef.current = workspaceQuery ?? "";
+			} else {
+				// 记下这一段查询:用户继续打字之前,它不再自己弹回来。
+				dismissedMentionRef.current = workspaceQuery ?? "";
+			}
+			setWorkspaceOpen(false);
+			return true;
+		}
+		return false;
+	};
 
 	const send = () => {
 		// **流式输出时不许发送**:那一轮还没答完,发出去只会插到它中间(桌面端也是这个规矩)。
 		// 这时候发送键是"停止",不是"发送"。
 		if (state.sending || sessionRunning) return;
-		const text = draft.trim();
-		if (text.length === 0) return;
+		// 从**编辑器**读当前值,而不是信 React 状态里那份(它可能还差一帧)。
+		const value = editorRef.current?.getValue() ?? composerValue;
+		const text = value.text.trim();
+		const skillIds = value.skills.map((skill) => skill.id);
+		// **只有 token、没有正文**也是能发的(与桌面端一样):挑一个文件 / 点一个技能就是在问"用这个"。
+		if (text.length === 0 && value.references.length === 0 && skillIds.length === 0) return;
 		if (creatingSession) {
 			// 新建页:**同一个输入框**,发出去就是"建会话 + 第一句话"(与桌面端 WelcomeView 同一条路)。
-			if (selectedEntry === undefined) return;
-			setDraft("");
+			if (!canSendFirstMessage) return;
+			clearComposer();
 			void onCreateSession(selectedEntry.id, text, {
-				skillIds: state.pendingSkillIds,
+				skillIds,
 				connectorIds: newConnectorIds,
+				...(newWorkspaceId === undefined ? {} : { workspaceId: newWorkspaceId }),
+				...(newDesignStyleId === null ? {} : { designStyleId: newDesignStyleId }),
+				...(newModel === undefined ? {} : { model: newModel }),
 			});
 			return;
 		}
-		onSend(text);
-		setDraft("");
+		onSend(text, value.references, skillIds);
+		clearComposer();
 		// 自己刚发了消息:无论刚才翻到哪儿,都回到最新。
 		scrollToBottom("smooth");
+	};
+
+	/** 发出去之后把输入框收干净(编辑器 + 草稿 + 选择器)。 */
+	const clearComposer = () => {
+		editorRef.current?.clear();
+		setDraft("");
+		setComposerValue({ text: "", references: [], skills: [], draft: "" });
+		setWorkspaceOpen(false);
 	};
 
 	return (
@@ -712,10 +1062,21 @@ export function ThreadView({
 					{state.sessionId === undefined || composing ? (
 						<WelcomeView
 							creating={creating === true}
+							modes={state.modes ?? []}
+							designStyles={state.designStyles ?? []}
+							designStyleId={newDesignStyleId}
 							entries={entryOptions}
 							entryId={newEntryId}
 							onLoad={onLoadEntries}
-							onSelect={setNewEntryId}
+							onSelect={(entryId) => {
+								setNewEntryId(entryId);
+								// 换了工作类型就**把风格放掉**:它是"设计那一类"的东西,跟着换过去没有意义。
+								setNewDesignStyleId(null);
+							}}
+							onSelectDesignStyle={setNewDesignStyleId}
+							onSelectWorkspace={setNewWorkspaceId}
+							workspaceId={newWorkspaceId}
+							workspaces={state.workspaces ?? []}
 						/>
 					) : opening ? (
 						// 加载态要**看得见**:手机上一个会话要读一会儿历史,没提示就只能猜点没点上。
@@ -832,6 +1193,34 @@ export function ThreadView({
 						所以改成**图标按钮 + 抽屉**,信息量一样,只是换了个摆法。
 					*/}
 					<div className="mx-auto max-w-[720px] rounded-[12px] border border-border bg-card">
+					{/*
+						`@` / `$` 选出来的东西:摆在**输入框正上方**,而不是浮在它上面。
+						手机上浮层会盖住正文与键盘上沿,而这里只把输入区顶高一点 —— 手指够得到,
+						眼睛也不用在两个地方之间跳。
+					*/}
+					{pickerRows.open ? (
+						<PickerPanel
+							// 从「+」点进来的技能选择器**没有查询串**:没有 Esc、也没有"继续打字就没了"
+							// 这条路 —— 所以给它一个明确的关掉按钮(用户报过:"一直关闭不了")。
+							{...(pickerRows.kind === "skill" && skillPickerOpen
+								? { onClose: () => setSkillPickerOpen(false) }
+								: {})}
+							empty={
+								pickerRows.kind === "skill"
+									? (composerValue.skillQuery ?? "").length === 0
+										? "这台电脑上还没有技能"
+										: `没有找到「${composerValue.skillQuery}」`
+									: (workspaceQuery ?? "").length === 0
+										? "这个工作区里还没有文件"
+										: `没有找到「${workspaceQuery}」`
+							}
+							index={pickerIndex}
+							items={pickerRows.items}
+							label={pickerRows.kind === "skill" ? "技能" : "工作区文件"}
+							onHover={setPickerIndex}
+							searching={pickerRows.kind === "workspace" && workspaceSearching}
+						/>
+					) : null}
 					<div className="flex min-w-0 items-end gap-2 px-2 pt-1.5 pb-2">
 						{state.attachments.length === 0 ? null : (
 							<div className="flex min-w-0 flex-wrap gap-1.5 border-b border-border px-2 py-1.5">
@@ -859,17 +1248,25 @@ export function ThreadView({
 								))}
 							</div>
 						)}
-						<textarea
-							ref={composerRef}
-							value={draft}
-							onChange={(event) => setDraft(event.target.value)}
-							onKeyDown={(event) => {
-								if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) {
-									event.preventDefault();
-									send();
-								}
+						{/*
+							输入框是**编辑器**(Lexical),不是 textarea:引用、技能、长文本块都要以
+							**行内 token** 的形式待在文字行里 —— 那是 textarea 做不到的事。
+							编辑器自己会长高(`min-h` / `max-h` 在它的 class 里),所以这里不再量高度。
+						*/}
+						<ComposerEditor
+							// 换会话就换草稿:重建一次编辑器最干净(草稿只在挂载时回填一次)。
+							key={state.sessionId ?? "new"}
+							ref={editorRef}
+							ariaLabel="消息"
+							draft={draft}
+							disabled={!canCompose}
+							onChange={(value) => {
+								setComposerValue(value);
+								// 草稿按会话存:手机上切出去再回来,打的字与挑的文件都该还在。
+								setDraft(value.draft);
 							}}
-							rows={1}
+							onSubmit={send}
+							onPickerKeyDown={handlePickerKey}
 							placeholder={
 								opening
 									? "正在打开会话…"
@@ -877,11 +1274,8 @@ export function ThreadView({
 										? selectedEntry === undefined
 											? "先在上面选一个工作类型"
 											: "写下第一句话就开始(Enter 发送)"
-										: "说点什么…(Enter 发送,Shift+Enter 换行)"
+										: "说点什么…(Enter 发送,Shift+Enter 换行,@ 引用工作区文件)"
 							}
-							disabled={!canCompose}
-							// 至少两三行的高度:手机上一行太憋屈,而这一段文字常常不止一行。
-							className="max-h-40 min-h-[68px] min-w-0 flex-1 resize-none bg-transparent px-2 py-2 text-[13px] leading-5 text-foreground outline-none placeholder:text-muted-foreground disabled:opacity-60"
 						/>
 					</div>
 					{/*
@@ -911,7 +1305,13 @@ export function ThreadView({
 							title={sessionRunning ? "停止" : "发送"}
 							onClick={() => (sessionRunning ? onAbort() : send())}
 							disabled={
-								sessionRunning ? false : !canCompose || draft.trim().length === 0 || state.sending || creating === true
+								sessionRunning
+									? false
+									: // 只有引用没有正文也能发:挑一个文件就是在问"这个怎么了"(与桌面端一样)。
+										!canCompose ||
+										!canSendMessage ||
+										state.sending ||
+										creating === true
 							}
 							className={`grid h-9 w-9 shrink-0 place-items-center rounded-full text-white transition-colors disabled:bg-[#b5b5b1] ${sendButtonTone}`}
 						>
@@ -932,7 +1332,6 @@ export function ThreadView({
 					kind={controlOpen}
 					session={activeSession}
 					running={sessionRunning}
-					pendingSkillIds={state.pendingSkillIds}
 					availableSkills={state.skills ?? []}
 					availableExperts={state.experts ?? []}
 					attachmentCount={state.attachments.length}
@@ -942,7 +1341,10 @@ export function ThreadView({
 					onSetExpert={onSetExpert}
 					onCompact={onCompact}
 					onSetMode={onSetMode}
-					onSetPendingSkills={onSetPendingSkills}
+					onOpenSkillPicker={() => {
+						setControlOpen(undefined);
+						setSkillPickerOpen(true);
+					}}
 					creatingSession={creatingSession}
 					onSetPermissions={onSetPermissions}
 					onSetConnectors={async (ids) => {
@@ -961,6 +1363,7 @@ export function ThreadView({
 			) : null}
 			{pickerOpen ? (
 				<ModelPickerSheet
+					creating={creatingSession}
 					groups={modelGroups_}
 					busy={pickerBusy}
 					error={pickerError}
@@ -985,12 +1388,15 @@ function ModelPickerSheet({
 	groups,
 	busy,
 	error,
+	creating = false,
 	onPick,
 	onClose,
 }: {
 	readonly groups: readonly ModelChoiceGroup[];
 	readonly busy: boolean;
 	readonly error?: string;
+	/** 新建会话时打开它:文案不一样(还没有会话可"改")。 */
+	readonly creating?: boolean;
 	readonly onPick: (connectionId: string, modelId: string, thinkingLevel?: string) => void;
 	readonly onClose: () => void;
 }) {
@@ -1008,8 +1414,12 @@ function ModelPickerSheet({
 				className="max-h-[80vh] w-full max-w-[560px] min-w-0 overflow-hidden rounded-t-[14px] border border-border bg-card p-4 md:rounded-[14px]"
 				onClick={(event) => event.stopPropagation()}
 			>
-				<p className="text-[13px] font-semibold text-card-foreground">换模型</p>
-				<p className="mt-1 text-[11px] text-muted-foreground">改的是这台电脑上的这个会话;正在回复时不能换。</p>
+				<p className="text-[13px] font-semibold text-card-foreground">{creating ? "选模型" : "换模型"}</p>
+				<p className="mt-1 text-[11px] text-muted-foreground">
+					{creating
+						? "新建的这个会话用它;不选就由电脑按工作类型自动挑一个。"
+						: "改的是这台电脑上的这个会话;正在回复时不能换。"}
+				</p>
 				{error === undefined ? null : (
 					<p className="mt-3 rounded-[8px] bg-[#f7e8e1] px-3 py-2 text-[11px] text-[#8a4b2a] dark:bg-[#3a2a22] dark:text-[#e0b394]">
 						{error}
@@ -1418,6 +1828,81 @@ function ApprovalCard({
 	);
 }
 
+/**
+ * `@` / `$` 的选择器:摆在输入框正上方的一列。
+ *
+ * 文件与技能**共用这一个面板**:同一时刻只可能开一个,而"摆在哪、怎么高亮、点哪儿"这几件事
+ * 本来就该一模一样 —— 各写一套的话,用户会在两个几乎一样的列表之间感到细微的不一致。
+ *
+ * 四条规矩:
+ * - 行里的内容由调用方给(`items[].content`):文件是"类型图标 + 名字 + 目录",技能是"首字 + 名字 + 说明";
+ * - **正在搜也显示**:冷启动时本机要建索引,那几秒里"什么都没发生"是最糟的反馈;
+ * - 最多 8 行(`orderWorkspaceMatches` 里截好,技能那边也一样):再多会把对话挤没;
+ * - 点的是 `onMouseDown`(不是 click):点下去时输入框会先失焦,面板的位置会跳一下。
+ */
+function PickerPanel({
+	items,
+	index,
+	searching,
+	empty,
+	label,
+	onHover,
+	onClose,
+}: {
+	readonly items: readonly { readonly key: string; readonly choose: () => void; readonly content: ReactNode }[];
+	readonly index: number;
+	readonly searching: boolean;
+	readonly empty: string;
+	readonly label: string;
+	readonly onHover: (index: number) => void;
+	/** 有就给一个关掉按钮(从「+」点进来的那一路需要它)。 */
+	readonly onClose?: () => void;
+}) {
+	return (
+		<div className="border-b border-border" role="listbox" aria-label={label}>
+			{onClose === undefined ? null : (
+				<div className="flex items-center justify-between gap-2 px-3 pt-2">
+					<span className="text-[11px] font-medium text-muted-foreground">{label}</span>
+					<button
+						type="button"
+						aria-label={`关闭${label}`}
+						onClick={onClose}
+						className="grid h-6 w-6 shrink-0 place-items-center rounded-full text-muted-foreground hover:bg-muted hover:text-foreground"
+					>
+						<X className="h-3.5 w-3.5" />
+					</button>
+				</div>
+			)}
+			{searching && items.length === 0 ? (
+				<p className="px-3 py-2 text-[11px] text-muted-foreground">正在找…</p>
+			) : items.length === 0 ? (
+				<p className="px-3 py-2 text-[11px] text-muted-foreground">{empty}</p>
+			) : (
+				<div className="max-h-[240px] overflow-y-auto py-1">
+					{items.map((item, position) => (
+						<button
+							key={item.key}
+							type="button"
+							role="option"
+							aria-selected={position === index}
+							onMouseDown={(event) => {
+								event.preventDefault();
+								item.choose();
+							}}
+							onMouseEnter={() => onHover(position)}
+							className={`flex w-full min-w-0 items-center gap-2 px-3 py-1.5 text-left ${
+								position === index ? "bg-muted" : "hover:bg-muted/60"
+							}`}
+						>
+							{item.content}
+						</button>
+					))}
+				</div>
+			)}
+		</div>
+	);
+}
+
 /** 输入区那一行的图标按钮:图标 + 可选的值(模型名、连接器数量)。 */
 function ComposerControlButton({
 	control,
@@ -1470,7 +1955,6 @@ function ComposerControlSheet({
 	session,
 	creatingSession = false,
 	running,
-	pendingSkillIds,
 	availableSkills,
 	availableExperts,
 	attachmentCount,
@@ -1480,7 +1964,7 @@ function ComposerControlSheet({
 	onSetExpert,
 	onCompact,
 	onSetMode,
-	onSetPendingSkills,
+	onOpenSkillPicker,
 	onSetPermissions,
 	onSetConnectors,
 	onClose,
@@ -1492,10 +1976,15 @@ function ComposerControlSheet({
 	 *
 	 * 这时**只摆技能与连接器**:它们本来就是"这一轮怎么干活"的一部分(与桌面端 WelcomeView 一致)。
 	 * 权限 / 模式 / 专家 / 压缩都要先有会话 —— 摆着也只能是灰的,不如不摆(宁可不给)。
+	 *
+	 * (技能不在这里挂芯片:它是输入框里的 `$技能` token,这里只负责**打开那个选择器**。)
+	 */
+	/*
+	 * 顺带一句:新建页的输入框**也能挑技能** —— 那条 `session.create` 本来就收 `skillIds`,
+	 * 与桌面端 WelcomeView 同一条路。
 	 */
 	readonly creatingSession?: boolean;
 	readonly running: boolean;
-	readonly pendingSkillIds: readonly string[];
 	readonly availableSkills: readonly { readonly id: string; readonly name: string; readonly description?: string }[];
 	readonly attachmentCount: number;
 	readonly availableConnectors: readonly { readonly id: string; readonly name: string; readonly enabled: boolean }[];
@@ -1513,7 +2002,8 @@ function ComposerControlSheet({
 	) => Promise<{ readonly ok: boolean; readonly message?: string }>;
 	readonly onCompact: () => Promise<{ readonly ok: boolean; readonly message?: string }>;
 	readonly onSetMode: (mode: "default" | "plan" | "clarify") => Promise<{ readonly ok: boolean; readonly message?: string }>;
-	readonly onSetPendingSkills: (skillIds: readonly string[]) => void;
+	/** 打开技能选择器(与在输入框里敲 `$` 是同一件事)。 */
+	readonly onOpenSkillPicker: () => void;
 	readonly onSetPermissions: (patch: {
 		readonly accessLevel?: "default" | "full";
 		readonly toolApprovalMode?: "manual" | "auto" | "bypass";
@@ -1559,7 +2049,6 @@ function ComposerControlSheet({
 	const connectorChoices = availableConnectors
 		.filter((connector) => !selectedConnectors.includes(connector.id))
 		.map((connector) => ({ value: connector.id, label: connector.name }));
-	const pendingSkills = pendingSkillIds;
 	const apply = async (action: () => Promise<{ readonly ok: boolean; readonly message?: string }>) => {
 		setBusy(true);
 		setError(undefined);
@@ -1650,13 +2139,20 @@ function ComposerControlSheet({
 					</div>
 				) : null}
 				{kind === "more" ? (
-					<div className="mt-3 space-y-3 text-[12px]">
+					// 行距**松一点**:手机上这些控件挨在一起时,用户分不清哪一行是标签、哪一行是控件
+					// (真实抱怨:"选项之间会贴在一起")。
+					<div className="mt-4 space-y-4 text-[12px]">
 						{/*
 							一律用**原生 select**:手机上它会唤起系统选择器 —— 省空间、能滚动、
 							而且滚动由系统负责(option 多的时候不用我们自己搭虚拟列表)。
 						*/}
 						{creatingSession ? null : (
-						<span className="contents">
+						/*
+							**这一组要自己带间距。** 上一版把它包在 `display: contents` 的 span 里,
+							指望外层 `space-y-4` 顺手管住它 —— 可 `space-y` 只认**直接子节点**,
+							于是模式 / 访问权限 / 工具确认三个框**上下贴在一起**(用户报过)。
+						*/
+						<div className="space-y-4">
 						<SelectRow
 							label="模式"
 							value={session?.interactionMode ?? "default"}
@@ -1678,27 +2174,7 @@ function ComposerControlSheet({
 							disabled={busy || running}
 							onPick={(value) => void apply(() => onSetPermissions({ toolApprovalMode: value }))}
 						/>
-						</span>
-						)}
-						{skillOptions.length === 0 ? null : (
-							<AddSelectRow
-								label="技能"
-								placeholder="添加技能…"
-								options={skillOptions
-									.filter((skill) => !pendingSkills.includes(skill.id))
-									.map((skill) => ({ value: skill.id, label: skill.name }))}
-								disabled={busy || running}
-								chips={skillOptions
-									.filter((skill) => pendingSkills.includes(skill.id))
-									.map((skill) => ({ key: skill.id, label: skill.name }))}
-								onPick={(value) => onSetPendingSkills([...pendingSkills, value])}
-								onRemove={(key) => onSetPendingSkills(pendingSkills.filter((id) => id !== key))}
-								hint={
-									creatingSession
-										? "选好之后随第一条消息一起发出去(与桌面端新建页一样)。"
-										: "选好之后随下一条消息发出去(与桌面端一样,技能是每一轮的事)。"
-								}
-							/>
+						</div>
 						)}
 						{availableConnectors.length === 0 && selectedConnectors.length === 0 ? null : (
 							<AddSelectRow
@@ -1726,7 +2202,7 @@ function ComposerControlSheet({
 							/>
 						)}
 						{creatingSession ? null : (
-						<span className="contents">
+						<div className="space-y-4">
 						{expertOptions.length === 0 ? null : (
 							<SelectRow
 								label="专家 / 专家团"
@@ -1747,45 +2223,70 @@ function ComposerControlSheet({
 								}}
 							/>
 						)}
-						<div className="flex flex-wrap items-center gap-2 border-t border-border pt-3">
-							<input
-								ref={fileInputRef}
-								type="file"
-								multiple
-								className="hidden"
-								onChange={(event) => {
-									const files = [...(event.target.files ?? [])];
-									event.currentTarget.value = "";
-									void pickFiles(files);
-								}}
-							/>
-							<Button
-								variant="outline"
-								size="sm"
-								disabled={busy || running || atAttachmentLimit}
-								onClick={() => fileInputRef.current?.click()}
-							>
-								<Paperclip className="h-3.5 w-3.5" />
-								添加附件
-							</Button>
-							<Button
-								variant="outline"
-								size="sm"
-								disabled={busy || running}
-								onClick={() => void apply(() => onCompact())}
-							>
-								压缩上下文
-							</Button>
 						</div>
-						<p className="text-[11px] leading-4 text-muted-foreground">
-							{atAttachmentLimit
-								? `附件一次最多 ${ATTACHMENT_MAX_FILES} 个。`
-								: `附件:图片、文档与文本,单个不超过 ${Math.round(ATTACHMENT_MAX_BYTES / 1024 / 1024)}MB;一次最多 ${ATTACHMENT_MAX_FILES} 个。`}
-						</p>
-						{attachmentError === undefined ? null : (
-							<p className="text-[11px] text-[#8a4b2a] dark:text-[#e0b394]">{attachmentError}</p>
 						)}
-						</span>
+						{/*
+							操作行:**新建页与已有会话都要有**(技能两边都能挑)。
+							附件与压缩只在已有会话里 —— 新建会话那条路(`session.create`)不带附件。
+						*/}
+						<div className="flex flex-wrap items-center gap-2 border-t border-border pt-3">
+							{skillOptions.length === 0 ? null : (
+								<Button
+									variant="outline"
+									size="sm"
+									disabled={busy || running}
+									onClick={() => {
+										onOpenSkillPicker();
+										onClose();
+									}}
+								>
+									用技能…
+								</Button>
+							)}
+							{creatingSession ? null : (
+								<>
+									<input
+										ref={fileInputRef}
+										type="file"
+										multiple
+										className="hidden"
+										onChange={(event) => {
+											const files = [...(event.target.files ?? [])];
+											event.currentTarget.value = "";
+											void pickFiles(files);
+										}}
+									/>
+									<Button
+										variant="outline"
+										size="sm"
+										disabled={busy || running || atAttachmentLimit}
+										onClick={() => fileInputRef.current?.click()}
+									>
+										<Paperclip className="h-3.5 w-3.5" />
+										添加附件
+									</Button>
+									<Button
+										variant="outline"
+										size="sm"
+										disabled={busy || running}
+										onClick={() => void apply(() => onCompact())}
+									>
+										压缩上下文
+									</Button>
+								</>
+							)}
+						</div>
+						{creatingSession ? null : (
+							<>
+								<p className="text-[11px] leading-4 text-muted-foreground">
+									{atAttachmentLimit
+										? `附件一次最多 ${ATTACHMENT_MAX_FILES} 个。`
+										: `附件:图片、文档与文本,单个不超过 ${Math.round(ATTACHMENT_MAX_BYTES / 1024 / 1024)}MB;一次最多 ${ATTACHMENT_MAX_FILES} 个。`}
+								</p>
+								{attachmentError === undefined ? null : (
+									<p className="text-[11px] text-[#8a4b2a] dark:text-[#e0b394]">{attachmentError}</p>
+								)}
+							</>
 						)}
 					</div>
 				) : null}
@@ -1814,7 +2315,7 @@ function SelectRow<T extends string>({
 	const [open, setOpen] = useState(false);
 	const current = options.find((option) => option.value === value);
 	return (
-		<div className="min-w-0">
+		<div className="min-w-0" data-setting-row={label}>
 			<div className="flex min-w-0 items-center gap-2">
 				<span className="w-[76px] shrink-0 text-[11px] text-muted-foreground">{label}</span>
 				<div className="relative min-w-0 flex-1">
@@ -1824,7 +2325,7 @@ function SelectRow<T extends string>({
 						aria-expanded={open}
 						disabled={disabled}
 						onClick={() => setOpen((value_) => !value_)}
-						className="flex h-8 w-full min-w-0 items-center gap-2 rounded-[7px] border border-border bg-card px-2 text-left text-[12px] text-foreground disabled:opacity-50"
+						className="flex h-9 w-full min-w-0 items-center gap-2 rounded-[7px] border border-border bg-card px-2.5 text-left text-[12px] text-foreground disabled:opacity-50"
 					>
 						<span className="min-w-0 flex-1 truncate">{current?.label ?? "—"}</span>
 						<ChevronDown className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
@@ -1848,7 +2349,7 @@ function SelectRow<T extends string>({
 											setOpen(false);
 											onPick(option.value);
 										}}
-										className={`flex h-8 w-full min-w-0 items-center gap-2 px-2.5 text-left text-[12px] ${
+										className={`flex h-9 w-full min-w-0 items-center gap-2 px-2.5 text-left text-[12px] ${
 											option.value === value
 												? "bg-muted text-foreground"
 												: "text-muted-foreground hover:bg-muted/60 hover:text-foreground"
@@ -1896,7 +2397,7 @@ function AddSelectRow({
 }) {
 	const [open, setOpen] = useState(false);
 	return (
-		<div className="min-w-0">
+		<div className="min-w-0" data-setting-row={label}>
 			<div className="flex min-w-0 items-center gap-2">
 				<span className="w-[76px] shrink-0 text-[11px] text-muted-foreground">{label}</span>
 				<div className="relative min-w-0 flex-1">
@@ -1906,7 +2407,7 @@ function AddSelectRow({
 						aria-expanded={open}
 						disabled={disabled || options.length === 0}
 						onClick={() => setOpen((value) => !value)}
-						className="flex h-8 w-full min-w-0 items-center gap-2 rounded-[7px] border border-border bg-card px-2 text-left text-[12px] text-muted-foreground disabled:opacity-50"
+						className="flex h-9 w-full min-w-0 items-center gap-2 rounded-[7px] border border-border bg-card px-2.5 text-left text-[12px] text-muted-foreground disabled:opacity-50"
 					>
 						<span className="min-w-0 flex-1 truncate">{options.length === 0 ? "没有可选项" : placeholder}</span>
 						<ChevronDown className="h-3.5 w-3.5 shrink-0" />
@@ -1928,7 +2429,7 @@ function AddSelectRow({
 											setOpen(false);
 											onPick(option.value);
 										}}
-										className="flex h-8 w-full min-w-0 items-center px-2.5 text-left text-[12px] text-muted-foreground hover:bg-muted/60 hover:text-foreground"
+										className="flex h-9 w-full min-w-0 items-center px-2.5 text-left text-[12px] text-muted-foreground hover:bg-muted/60 hover:text-foreground"
 									>
 										<span className="min-w-0 flex-1 truncate">{option.label}</span>
 									</button>
@@ -2423,10 +2924,13 @@ function CollapsibleUserMessage({
 	className,
 	contentKey,
 	text,
+	references = [],
 }: {
 	readonly className: string;
 	readonly contentKey: string;
 	readonly text: string;
+	/** 这条消息 `@` 的工作区文件(画在正文之前;一条只有引用没有正文的消息也靠它撑起来)。 */
+	readonly references?: readonly WorkspaceReferenceBlock[];
 }) {
 	const bodyRef = useRef<HTMLDivElement>(null);
 	const [expanded, setExpanded] = useState(false);
@@ -2452,9 +2956,30 @@ function CollapsibleUserMessage({
 
 	return (
 		<div className={className}>
-			<div className={clamped ? "line-clamp-3" : undefined} ref={bodyRef}>
-				{text}
-			</div>
+			{references.length === 0 ? null : (
+				<div className="mb-1 flex flex-wrap gap-1">
+					{references.map((reference) => (
+						<span
+							key={reference.id}
+							title={reference.path}
+							// 芯片上写的是**名字**,不是路径 —— 所以用正文字体(等宽留给选择器里那一段目录)。
+							className="inline-flex max-w-full min-w-0 items-center gap-1 rounded-[5px] border border-black/10 bg-white/70 px-1.5 py-0.5 text-[11px] leading-4 text-[#4d4d48] dark:border-white/15 dark:bg-white/10 dark:text-foreground"
+						>
+							<FileTypeIcon
+								className="h-3.5 w-3.5 [&_svg]:h-3.5 [&_svg]:w-3.5"
+								kind={reference.kind}
+								name={reference.name}
+							/>
+							<span className="min-w-0 truncate">{reference.name}</span>
+						</span>
+					))}
+				</div>
+			)}
+			{text.trim().length === 0 ? null : (
+				<div className={clamped ? "line-clamp-3" : undefined} ref={bodyRef}>
+					{text}
+				</div>
+			)}
 			{truncated ? (
 				<div className="mt-0.5 flex justify-center">
 					<button
@@ -2635,6 +3160,16 @@ function MessageRow({
 		);
 	}
 	if (message.role === "user") {
+		/*
+			用户消息里 `@` 挑的文件:画在气泡**里面**、正文之前 —— 与桌面端同一个位置。
+			没有它,"我明明 @ 了一个文件"在手机上是看不见的(正文是用户打的字,引用不在里面)。
+			一条只有引用、没有正文的消息也靠它撑起来,而不是画成一个空气泡。
+		*/
+		const references = planned.blocks.filter(
+			(block): block is { readonly type: "reference"; readonly reference: WorkspaceReferenceBlock } =>
+				block.type === "reference",
+		);
+		const hasText = message.text.trim().length > 0;
 		return (
 			<article
 				className={`flex min-w-0 flex-col items-end gap-1 ${message.pending === true ? "message-enter" : ""}`}
@@ -2642,9 +3177,10 @@ function MessageRow({
 				<CollapsibleUserMessage
 					contentKey={`${message.at}:${message.text.length}`}
 					text={message.text}
+					references={references.map((block) => block.reference)}
 					className={`w-fit max-w-[88%] rounded-[10px] bg-[#f0f0ed] px-3.5 py-2.5 text-[14px] leading-6 break-words whitespace-pre-wrap text-[#343431] dark:bg-muted dark:text-foreground sm:max-w-[560px] ${
 						message.pending === true ? "opacity-60" : ""
-					}`}
+					} ${hasText ? "" : "py-2"}`}
 				/>
 				{/* 状态用文字说,不只靠"变淡":用户要能分清"在路上"和"没发出去"。 */}
 				{message.pending === true ? (
@@ -2678,11 +3214,19 @@ function MessageRow({
 				<div className="mt-2 flex min-w-0 flex-col gap-2">
 					{planned.blocks.map((block, index) =>
 						block.type === "group" ? (
-							<ToolGroupBlock key={`${block.group.id}-${index}`} group={block.group} />
+							<ToolGroupBlock
+								key={`${block.group.id}-${index}`}
+								group={block.group}
+								streaming={message.streaming === true}
+							/>
 						) : block.type === "reasoning" ? (
-							<ReasoningBlock key={`reasoning-${index}`} text={block.text} />
+							<ReasoningBlock key={`reasoning-${index}`} streaming={message.streaming === true} text={block.text} />
 						) : block.type === "compaction" ? (
 							<CompactionBlock key={`compaction-${index}`} compaction={block.compaction} />
+						) : block.type === "reference" ? (
+							// 引用只出现在**用户**消息里(本机只从用户消息的块里映射它)。
+							// 助手消息里万一出现就丢掉 —— 摆一枚没有正文的芯片出来,只会让人以为模型引用了一个文件。
+							null
 						) : (
 							<MessageMarkdown
 								key={`text-${index}`}
@@ -2742,14 +3286,32 @@ function ReasoningBlock({ text, streaming = false }: { readonly text: string; re
 	 * 「深度思考」块 —— 与桌面端的 `ThinkingBlock` 同一个样子:
 	 * 图标 + 标题 + 会转的箭头 + **markdown 正文**(不是纯文本,思考里也会有列表与代码)。
 	 *
-	 * 默认收起(桌面端只在流式时默认展开),用户点过就以用户为准。
+	 * **展开规则也与桌面端逐条一致**:
+	 * 1. 正在流式时**自动展开** —— 那时候思考是用户唯一看得见的进度("它在想什么");
+	 * 2. 用户自己收起过就**以用户为准**,不再自己弹开(别跟用户抢);
+	 * 3. 这一轮**答完自动收起** —— 答案已经出来了,思考退到幕后,对话不至于被它撑得很长。
 	 */
 	const [open, setOpen] = useState(streaming);
+	/** 用户是否亲手动过这个块:动过之后就不再自动展开。 */
+	const userInteractedRef = useRef(false);
+	useEffect(() => {
+		if (streaming) {
+			if (!userInteractedRef.current) setOpen(true);
+			return;
+		}
+		// 答完了:收起来,并把"用户动过"这件事放掉(下一轮重新按规则来)。
+		setOpen(false);
+		userInteractedRef.current = false;
+	}, [streaming]);
+	const toggle = () => {
+		userInteractedRef.current = true;
+		setOpen((value) => !value);
+	};
 	return (
 		<section className="mt-4 min-w-0 border-b border-border pb-3">
 			<button
 				type="button"
-				onClick={() => setOpen((value) => !value)}
+				onClick={toggle}
 				aria-expanded={open}
 				aria-label="深度思考"
 				title="深度思考"
@@ -2786,7 +3348,7 @@ const CATEGORY_LABELS: Record<ToolCategory, string> = {
  * 折叠默认值与桌面端一致:正文封闭过、且没有工具在跑 → 收起;否则展开;用户点过以用户为准。
  * **长输出只在展开时渲染** —— 这是这个分组存在的主要理由(不展开就不进 DOM)。
  */
-function ToolGroupBlock({ group }: { readonly group: ToolGroup }) {
+function ToolGroupBlock({ group, streaming = false }: { readonly group: ToolGroup; readonly streaming?: boolean }) {
 	const [override, setOverride] = useState<boolean | undefined>(undefined);
 	const expanded = isGroupExpanded(group, override);
 	const duration = groupDurationMs(group);
@@ -2828,8 +3390,8 @@ function ToolGroupBlock({ group }: { readonly group: ToolGroup }) {
 					{/* 按**本来的顺序**画:模型先想还是先动手,那个顺序本身是信息,不重排。 */}
 					{group.items.map((item, index) =>
 						item.kind === "reasoning" ? (
-							// 组里的思考也是**同一个可折叠的块**,不是一段裸文本。
-							<ReasoningBlock key={`reasoning-${index}`} text={item.text} />
+							// 组里的思考也是**同一个可折叠的块**,不是一段裸文本(展开规则也一样)。
+							<ReasoningBlock key={`reasoning-${index}`} streaming={streaming} text={item.text} />
 						) : (
 							<ToolRow key={item.tool.callId} tool={item.tool} />
 						),
@@ -2911,73 +3473,353 @@ function ToolRow({
  */
 function WelcomeView({
 	entries,
+	modes,
 	entryId,
 	creating,
 	onLoad,
 	onSelect,
+	workspaces,
+	workspaceId,
+	onSelectWorkspace,
+	designStyles,
+	designStyleId,
+	onSelectDesignStyle,
 }: {
 	readonly entries: readonly RemoteEntryOption[] | undefined;
+	/** 最上面那一栏(日常工作 / 写代码 / 创作):名字与图标都由本机给。 */
+	readonly modes: readonly RemoteModeOption[];
 	/** 选中的工作类型(由上层持有:底部那个输入框要用它来决定"发出去是新建还是继续对话")。 */
 	readonly entryId: string | undefined;
 	readonly creating: boolean;
 	readonly onLoad: () => void;
 	readonly onSelect: (entryId: string) => void;
+	/** 能选的工作目录(代码 / 数据分析这类必须先挑一个 —— 与桌面端 WelcomeView 同一条规则)。 */
+	readonly workspaces: readonly RemoteWorkspaceOption[];
+	readonly workspaceId: string | undefined;
+	readonly onSelectWorkspace: (workspaceId: string | undefined) => void;
+	/** 设计风格(只有设计那一类用得上)。 */
+	readonly designStyles: readonly RemoteDesignStyleOption[];
+	readonly designStyleId: string | null;
+	readonly onSelectDesignStyle: (styleId: string | null) => void;
 }) {
 	useEffect(() => onLoad(), [onLoad]);
-	const available = entries?.filter((entry) => entry.available) ?? [];
-	const selected = available.find((entry) => entry.id === entryId) ?? available[0];
+	/**
+	 * 打开的那个小抽屉(目录 / 风格)。**手机上比下拉框好点**,也比铺一屏卡片省地方。
+	 *
+	 * `hint` 是"为什么开":从虚线芯片点进来时说清"这一类要先选一个目录" ——
+	 * 用户点它正是因为点不动,那句话必须在**他看的地方**。
+	 */
+	const [sheet, setSheet] = useState<
+		{ readonly kind: "workspace" | "style"; readonly hint?: string; readonly required?: boolean } | undefined
+	>(undefined);
+
+	/** 能不能建:入口本身可用,而且(需要目录的那些)**已经选了目录** —— 与桌面端同一条规则。 */
+	const usable = (entry: RemoteEntryOption) =>
+		entry.available && (entry.requiresWorkspace !== true || workspaceId !== undefined);
+	const all = entries ?? [];
+	/**
+	 * 选中的是**用户点的那一个**,哪怕它还差一个目录。
+	 *
+	 * 不能"不可用就偷偷替他换成别的":用户点了「代码开发」,界面却高亮着「通用工作」——
+	 * 那他接下来发的消息会**以别的类型发出去**,而屏幕上写的是另一个(真实抱怨的温床)。
+	 * 差目录时如实摆着 + 提示"先选一个工作目录";能不能发由上层按"可用"判断。
+	 */
+	const selected = all.find((entry) => entry.id === entryId) ?? all.find(usable);
+	/**
+	 * 现在在哪一栏。
+	 *
+	 * **跟着选中的类型走,而不是自己记一份**:用户从别处(比如上一次选的是代码)回到这一页时,
+	 * 高亮的那一栏必须是他真正选中的那一栏 —— 两份状态迟早会各说各话。
+	 */
+	const activeMode = modes.find((mode) => mode.id === selected?.mode)?.id ?? modes[0]?.id;
+	/** 这一栏底下的类型(与桌面端同一条:栏里只有一个也照摆,用户要看得见自己选的是什么)。 */
+	const modeEntries = all.filter((entry) => entry.mode === activeMode);
+	/**
+	 * 换一栏就选这一栏里的**第一个**(与桌面端 `changeMode` 同一条规则)。
+	 *
+	 * **不按"可用"筛**:筛了的话,点「写代码」(它底下只有代码开发,而代码开发还差一个目录)
+	 * 会什么都不发生 —— 用户看到的是一个点了没反应的标签,而不是"这里要一个目录"。
+	 */
+	const changeMode = (modeId: string) => {
+		const first = all.find((entry) => entry.mode === modeId);
+		if (first) onSelect(first.id);
+	};
+	const selectedAny = all.find((entry) => entry.id === selected?.id);
+	/** 选中的这一类要不要摆那两样(需要目录 / 能用风格)。 */
+	const needsWorkspace = selectedAny?.requiresWorkspace === true;
+	const designEntry = selectedAny?.acceptsDesignStyle === true;
+	const workspace = workspaces.find((candidate) => candidate.id === workspaceId);
+	const style = designStyles.find((candidate) => candidate.id === designStyleId);
+
 	return (
-		<div className="mx-auto flex w-full max-w-[720px] min-w-0 flex-col px-1 py-6">
-			<div className="flex items-center gap-3">
-				<img alt="" aria-hidden draggable={false} src={wordlessBrandIcon} className="h-9 w-9 shrink-0 rounded-[20%] object-cover ring-1 ring-black/10 dark:ring-white/15" />
+		<div className="mx-auto flex w-full max-w-[720px] min-w-0 flex-col px-1 pt-4 pb-2">
+			{/*
+				欢迎语:与桌面端 WelcomeView 同一句(标题 + 一句话)。
+				桌面端那版是 44px 的大字,手机上一屏放不下 —— 这里收到"一眼看清是什么、又不占地方"。
+			*/}
+			<div className="flex items-center gap-2.5">
+				<img
+					alt=""
+					aria-hidden
+					draggable={false}
+					src={wordlessBrandIcon}
+					className="h-8 w-8 shrink-0 rounded-[20%] object-cover ring-1 ring-black/10 dark:ring-white/15"
+				/>
 				<div className="min-w-0">
-					<p className="text-[15px] font-semibold text-foreground">今天想做什么?</p>
-					<p className="text-[11px] text-muted-foreground">选一个工作类型,然后写下第一句话。</p>
+					<p className="truncate text-[15px] font-semibold text-foreground">Wordless</p>
+					<p className="truncate text-[11px] text-muted-foreground">你的通用 Agent 工作台。</p>
 				</div>
 			</div>
 
-			<div className="mt-5 space-y-1.5">
-				{(entries ?? []).map((entry) => {
+			{/*
+				**先分栏,再摆类型**(与桌面端 WelcomeView 同一个结构)。
+
+				一栏里放的是"同一类活":日常工作底下有通用工作 / 演示文稿 / 电子表格 / 数据分析,
+				写代码底下是代码开发,创作底下是设计页面。分栏之后**一次只看一栏** —— 六种类型
+				一屏铺完的时代过去了,而每一栏底下最多四个,名字也不必截。
+			*/}
+			{modes.length > 0 ? (
+				<div className="mt-4 flex min-w-0 gap-1 rounded-[10px] bg-muted/60 p-1">
+					{modes.map((mode) => {
+						const active = mode.id === activeMode;
+						return (
+							<button
+								key={mode.id}
+								type="button"
+								aria-pressed={active}
+								disabled={creating}
+								onClick={() => changeMode(mode.id)}
+								className={`flex min-w-0 flex-1 items-center justify-center gap-1.5 rounded-[7px] px-2 py-1.5 text-[12px] font-medium transition-colors ${
+									active
+										? "bg-card text-foreground shadow-[0_1px_2px_rgba(0,0,0,0.08)]"
+										: "text-muted-foreground hover:text-foreground"
+								} disabled:opacity-60`}
+							>
+								<AgentEntryIcon iconKey={mode.iconKey} className="h-3.5 w-3.5 shrink-0" />
+								<span className="min-w-0 truncate">{mode.name}</span>
+							</button>
+						);
+					})}
+				</div>
+			) : null}
+
+			{/*
+				**工作类型是竖着的一列,不是横滑的一条。**
+
+				手机是"竖着富余、横着紧张"的那块屏:横着一条放得下三四个,而这里**有六种**
+				(通用工作 / 演示文稿 / 电子表格 / 数据分析 / 代码开发 / 设计页面)—— 后三种会被
+				滑出屏幕外,而横向能滑这件事**看不出来**(本仓库在别处也踩过这个:风格胶片那条)。
+
+				竖排之后:六种全在眼前、名字不被截、每行整宽好点(≥40px)。换来的高度是 260px 左右,
+				而这一页本来就要给输入框留位置 —— 竖着花得起,横着花不起。
+			*/}
+			<div className="mt-2 flex min-w-0 flex-col gap-1">
+				{modeEntries.map((entry) => {
 					const active = entry.id === selected?.id;
+					const ok = usable(entry);
 					return (
 						<button
 							key={entry.id}
 							type="button"
 							aria-pressed={active}
-							disabled={!entry.available || creating}
-							onClick={() => onSelect(entry.id)}
-							className={`flex w-full min-w-0 items-start gap-2.5 rounded-[10px] border px-3 py-2.5 text-left transition-colors ${
+							disabled={creating}
+							// 需要目录但还没选:**点它直接去选目录**,而不是摆一个点不动的按钮。
+							onClick={() => {
+								if (ok) {
+									onSelect(entry.id);
+									return;
+								}
+								if (entry.requiresWorkspace === true) {
+									setSheet({ kind: "workspace", hint: "这一类会话要先选一个工作目录。", required: true });
+								}
+							}}
+							title={ok ? undefined : (entry.note ?? "先选一个工作目录")}
+							className={`flex min-h-10 w-full min-w-0 items-center gap-2.5 rounded-[8px] border px-2.5 py-2 text-left text-[13px] transition-colors ${
 								active
-									? "border-[#a8bd69] bg-[#f3f6e8] dark:border-[#9fba55] dark:bg-[#303c1f]"
-									: "border-border bg-card enabled:hover:bg-muted"
+									? "border-[#a8bd69] bg-[#f3f6e8] font-medium text-foreground dark:border-[#9fba55] dark:bg-[#303c1f]"
+									: ok
+										? "border-transparent text-foreground hover:bg-muted"
+										: "border-dashed border-border text-muted-foreground"
 							} disabled:opacity-60`}
 						>
-							<AgentEntryIcon iconKey={entry.iconKey} className="mt-0.5 h-4 w-4" />
-							<span className="min-w-0 flex-1">
-								<span className="block truncate text-[13px] font-medium text-foreground">{entry.name}</span>
-								{entry.description === undefined ? null : (
-									<span className="mt-0.5 block text-[11px] leading-4 text-muted-foreground">{entry.description}</span>
-								)}
-								{/* 不能建时**照实说原因**,而不是让用户点一下才知道。 */}
-								{entry.note === undefined ? null : (
-									<span className="mt-0.5 block text-[11px] leading-4 text-[#ad7956] dark:text-[#d6a16d]">{entry.note}</span>
-								)}
-							</span>
+							<AgentEntryIcon iconKey={entry.iconKey} className="h-4 w-4" />
+							<span className="min-w-0 flex-1 truncate">{entry.name}</span>
+							{/* 选中的那一行给个勾:光靠底色,色弱的人分不出来(状态不只靠颜色)。 */}
+							{active ? <Check aria-hidden className="h-3.5 w-3.5 shrink-0 text-[#6c8542]" /> : null}
 						</button>
 					);
 				})}
-				{entries === undefined ? <p className="py-6 text-center text-[12px] text-muted-foreground">正在读取可用的工作类型…</p> : null}
 			</div>
+
+			{/* 说明只给**选中的那一个**;不能建时照实说原因,而不是让用户点一下才知道。 */}
+			<p className="mt-1 min-w-0 text-[11px] leading-4 text-muted-foreground">
+				{selected === undefined
+					? "选一个工作类型,然后在下面写下第一句话。"
+					: needsWorkspace && workspace === undefined
+						? "这一类要先选一个工作目录 —— 点「目录」挑一个。"
+						: (selected.description ?? "在下面写下第一句话就开始。")}
+			</p>
+
+			{/*
+				次要选择**收成一行**:目录与风格各是一枚小芯片,点开才铺选项。
+				只有"用得上"的时候才出现 —— 通用工作默认一行都不多摆(与桌面端"按数据走"同一条纪律)。
+			*/}
+			{needsWorkspace || designEntry || workspaceId !== undefined ? (
+				<div className="mt-2 flex min-w-0 flex-wrap items-center gap-1.5">
+					<SettingChip
+						label="目录"
+						value={workspace?.name ?? "选一个"}
+						warn={needsWorkspace && workspace === undefined}
+						onOpen={() => setSheet({ kind: "workspace", required: needsWorkspace })}
+					/>
+					{designEntry ? (
+						<SettingChip label="风格" value={style?.name ?? "由它自己定"} onOpen={() => setSheet({ kind: "style" })} />
+					) : null}
+				</div>
+			) : null}
+
+			{sheet?.kind === "workspace" ? (
+				<ChoiceSheet
+					hint={sheet.hint}
+					title="工作目录"
+					// 目录被删掉 / 移走的那些**不列**(与桌面端同一条:不摆一个选了会失败的选项)。
+					options={[
+						...(sheet.required === true ? [] : [{ value: null, label: "不用目录", hint: "这一类不需要" }]),
+						...workspaces
+							.filter((candidate) => candidate.available)
+							.map((candidate) => ({ value: candidate.id, label: candidate.name })),
+					]}
+					selected={workspaceId ?? null}
+					onPick={(value) => {
+						onSelectWorkspace(value ?? undefined);
+						setSheet(undefined);
+					}}
+					onClose={() => setSheet(undefined)}
+				/>
+			) : null}
+			{sheet?.kind === "style" ? (
+				<ChoiceSheet
+					title="设计风格"
+					options={[
+						{ value: null, label: "由它自己定", hint: "不指定风格" },
+						...designStyles.map((candidate) => ({
+							value: candidate.id,
+							label: candidate.name,
+							hint: candidate.tagline,
+						})),
+					]}
+					selected={designStyleId}
+					onPick={(value) => {
+						onSelectDesignStyle(value);
+						setSheet(undefined);
+					}}
+					onClose={() => setSheet(undefined)}
+				/>
+			) : null}
 
 			{/*
 				这里**不再自带输入框**:底部已经有一个,而且它更完整(模型、权限、附件都在那儿)。
 				摆两个输入框只会让人犹豫"该在哪个里打字"。
 			*/}
-			<p className="mt-4 text-[11px] text-muted-foreground">
-				{selected === undefined
-					? "选一个工作类型,然后在下面写下第一句话。"
-					: `选好了「${selected.name}」—— 在下面写下第一句话就开始。`}
-			</p>
+		</div>
+	);
+}
+
+/**
+ * 次要选择的那一枚小芯片:「目录 · 登录页重构」。
+ *
+ * 一行里放得下两三个,点开才铺选项 —— 手机上比下拉框好点,也比"把选项全铺在这一页"省地方。
+ */
+function SettingChip({
+	label,
+	value,
+	warn = false,
+	onOpen,
+}: {
+	readonly label: string;
+	readonly value: string;
+	readonly warn?: boolean;
+	readonly onOpen: () => void;
+}) {
+	return (
+		<button
+			type="button"
+			onClick={onOpen}
+			className={`flex max-w-full min-w-0 items-center gap-1 rounded-full border px-2.5 py-1 text-[11px] transition-colors ${
+				warn
+					? "border-[#d8b48c] bg-[#fdf6ee] text-[#8a5a2a] dark:border-[#6d5533] dark:bg-[#2f2718] dark:text-[#e0b394]"
+					: "border-border bg-card text-muted-foreground hover:bg-muted"
+			}`}
+		>
+			<span className="shrink-0 opacity-70">{label}</span>
+			<span className="min-w-0 max-w-[160px] truncate font-medium text-foreground">{value}</span>
+			<ChevronDown aria-hidden className="h-3 w-3 shrink-0 opacity-60" />
+		</button>
+	);
+}
+
+/**
+ * 选一个值的底部小抽屉(目录 / 风格)。
+ *
+ * 与 `ComposerControlSheet` 同一个形状(手机上是底部抽屉、宽屏是居中卡片),但它只管**选一个值** ——
+ * 那些设置项(权限、连接器、技能)各有各的语义,不该混进这一个。
+ */
+function ChoiceSheet<T extends string | null>({
+	title,
+	hint,
+	options,
+	selected,
+	onPick,
+	onClose,
+}: {
+	readonly title: string;
+	/** 一句"为什么开"(可选):从虚线芯片点进来时用它说清原因。 */
+	readonly hint?: string;
+	readonly options: readonly { readonly value: T; readonly label: string; readonly hint?: string }[];
+	readonly selected: T | undefined;
+	readonly onPick: (value: T) => void;
+	readonly onClose: () => void;
+}) {
+	return (
+		<div
+			className="fixed inset-0 z-50 flex items-end justify-center bg-black/40 md:items-center"
+			role="presentation"
+			onClick={onClose}
+		>
+			<div
+				role="dialog"
+				aria-label={title}
+				className="max-h-[70vh] w-full max-w-[480px] min-w-0 overflow-y-auto rounded-t-[14px] border border-border bg-card p-3 md:rounded-[14px]"
+				onClick={(event) => event.stopPropagation()}
+			>
+				<p className="px-1 text-[12px] font-semibold text-foreground">{title}</p>
+				{hint === undefined ? null : (
+					<p className="px-1 pt-1 pb-2 text-[11px] leading-4 text-[#ad7956] dark:text-[#d6a16d]">{hint}</p>
+				)}
+				{hint === undefined ? <span className="block pb-2" /> : null}
+				{options.map((option) => {
+					const active = option.value === selected;
+					return (
+						<button
+							key={option.value ?? "none"}
+							type="button"
+							aria-pressed={active}
+							onClick={() => onPick(option.value)}
+							className={`flex min-h-9 w-full min-w-0 items-center gap-2 rounded-[7px] px-2.5 py-1.5 text-left text-[12px] transition-colors ${
+								active ? "bg-muted font-medium text-foreground" : "text-foreground hover:bg-muted/60"
+							}`}
+						>
+							<span className="min-w-0 flex-1 truncate">{option.label}</span>
+							{option.hint === undefined ? null : (
+								<span className="min-w-0 max-w-[45%] shrink-0 truncate text-[10px] text-muted-foreground">
+									{option.hint}
+								</span>
+							)}
+							{active ? <Check aria-hidden className="h-3.5 w-3.5 shrink-0 text-[#6c8542]" /> : null}
+						</button>
+					);
+				})}
+			</div>
 		</div>
 	);
 }

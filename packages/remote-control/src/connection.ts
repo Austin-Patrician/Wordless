@@ -150,6 +150,18 @@ export class RemoteConnection {
 		this.transport = transport;
 		this.setState("connecting");
 		const waiting = this.expectHandshake();
+		/**
+		 * **先给这个 promise 挂一个处理器。**
+		 *
+		 * 它会在这两种情况下被拒绝:握手失败,以及**握手还没结束就有人 `close()`**
+		 * (关掉一个正在连接的连接 —— 切换接入方式时就会这样)。
+		 * 而 `connect()` 要等 `transport.connect()` 才把 `waiting` 交回调用方 ——
+		 * 在那之前被拒绝的话,这一次拒绝**没有任何人接**,于是变成"未处理的 promise 拒绝":
+		 * 主进程日志被刷满,而且调用方的 await 也跟着崩。
+		 *
+		 * 挂一个空的处理器只是"标记已处理",`connect()` 仍然把同一个 promise 交回去,语义不变。
+		 */
+		waiting.catch(() => undefined);
 		await transport.connect({
 			onFrame: (frame) => this.handleFrame(frame),
 			onClose: (reason) => this.handleTransportClose(reason),

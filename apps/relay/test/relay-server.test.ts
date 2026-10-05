@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createServer } from "node:net";
 import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -391,5 +392,22 @@ describe("两个端点经真中继说话", () => {
 		assert.equal(verificationCode(generateIdentityKeyPair().publicKey, generateIdentityKeyPair().publicKey).length, 6);
 		assert.equal(mobile.state, "online");
 		await teardown(server, desktop, mobile);
+	});
+
+	it("端口被占用时**拒绝**,而不是一直挂着", async () => {
+		// 真实踩到过:listen 的 error 事件没人接 → promise 永不 settle + 未处理事件掀掉进程。
+		// 桌面端的"端口被占用就换一个"就建立在这条之上。
+		const blocker = createServer();
+		const busy = await new Promise<number>((resolve) => {
+			blocker.listen(0, "127.0.0.1", () => {
+				const address = blocker.address();
+				resolve(typeof address === "object" && address !== null ? address.port : 0);
+			});
+		});
+		try {
+			await assert.rejects(() => startRelayServer({ port: busy, host: "127.0.0.1" }));
+		} finally {
+			await new Promise<void>((resolve) => blocker.close(() => resolve()));
+		}
 	});
 });

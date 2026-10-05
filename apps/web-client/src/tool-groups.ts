@@ -296,8 +296,18 @@ export type RenderBlock =
 	| { readonly type: "text"; readonly text: string }
 	| { readonly type: "reasoning"; readonly text: string }
 	| { readonly type: "group"; readonly group: ToolGroup }
+	/**
+	 * 用户消息里 `@` 挑的一个工作区文件。
+	 *
+	 * 它不是"一段文字",所以不混进 text 块:混进去的话,复制这条消息会把路径也复制走,
+	 * 而用户在手机上点"复制"想要的通常是他自己打的那句话。
+	 */
+	| { readonly type: "reference"; readonly reference: WorkspaceReferenceBlock }
 	/** 压缩上下文那一行(与桌面端同一条信息:原因、前后 token、模型、摘要)。 */
 	| { readonly type: "compaction"; readonly compaction: RemoteCompactionBlock };
+
+/** 引用块(从协议类型里取,不另抄一份形状)。 */
+export type WorkspaceReferenceBlock = Extract<RemoteMessageBlock, { readonly type: "workspace-reference" }>;
 
 export interface PlannedMessage {
 	/** 用网页端自己的消息类型:它多带"发送中/发送失败"两个**只存在于这一端**的标记。 */
@@ -358,6 +368,10 @@ export function planMessages(messages: readonly RemoteMessage[]): readonly Plann
 			}
 			if (block.type === "compaction") {
 				blocks.push({ type: "compaction", compaction: block });
+				continue;
+			}
+			if (block.type === "workspace-reference") {
+				blocks.push({ type: "reference", reference: block });
 				continue;
 			}
 		}

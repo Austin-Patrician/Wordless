@@ -25,10 +25,22 @@ export interface RemoteAccessStore {
 	readonly secrets: RemoteSecretStore;
 }
 
+/**
+ * 落盘形状。
+ *
+ * **这里是"哪些字段会被记住"的唯一清单** —— 内存里加了新字段却忘了加到这里,
+ * 症状是"设置看起来生效了,下一次读回来又变回旧的"(真实抱怨:切换接入方式时档位抖动一下又弹回去)。
+ * 所以有一条例例:把 `RemoteAccessPreferences` 填满 → 存 → 读 → 必须逐字段一样。
+ */
 interface StoredFile {
 	readonly version: 1;
 	readonly enabled: boolean;
+	/** 接入方式(局域网 / 远程)。 */
+	readonly mode?: "lan" | "remote";
+	/** 当前生效的中继地址。 */
 	readonly relayBaseUrl?: string;
+	/** 用户自己填的远程地址(与上面分开存:切模式不该把它冲掉)。 */
+	readonly remoteRelayBaseUrl?: string;
 	readonly devices: readonly RemotePairedDevice[];
 }
 
@@ -70,7 +82,11 @@ export function createRemoteAccessStore(input: { readonly userDataPath: string; 
 				await persist({
 					version: 1,
 					enabled: updated.enabled,
+					...(updated.mode === undefined ? {} : { mode: updated.mode }),
 					...(updated.relayBaseUrl === undefined ? {} : { relayBaseUrl: updated.relayBaseUrl }),
+					...(updated.remoteRelayBaseUrl === undefined
+						? {}
+						: { remoteRelayBaseUrl: updated.remoteRelayBaseUrl }),
 					devices: updated.devices,
 				});
 				return updated;
@@ -90,7 +106,9 @@ export function createRemoteAccessStore(input: { readonly userDataPath: string; 
 function toPreferences(file: StoredFile): RemoteAccessPreferences {
 	return {
 		enabled: file.enabled,
+		...(file.mode === undefined ? {} : { mode: file.mode }),
 		...(file.relayBaseUrl === undefined ? {} : { relayBaseUrl: file.relayBaseUrl }),
+		...(file.remoteRelayBaseUrl === undefined ? {} : { remoteRelayBaseUrl: file.remoteRelayBaseUrl }),
 		devices: [...file.devices],
 	};
 }
@@ -99,15 +117,32 @@ function toPreferences(file: StoredFile): RemoteAccessPreferences {
 function normalize(value: unknown): StoredFile {
 	if (typeof value !== "object" || value === null) return { version: 1, enabled: false, devices: [] };
 	const record = value as Record<string, unknown>;
-	const devices = Array.isArray(record.devices) ? record.devices.filter(isDevice) : [];
+	const devices = Array.isArray(record.devices) ? record.devices.filter(isDevice).map(cleanDevice) : [];
 	return {
 		version: 1,
 		enabled: record.enabled === true,
+		...(record.mode === "lan" || record.mode === "remote" ? { mode: record.mode } : {}),
 		...(typeof record.relayBaseUrl === "string" && record.relayBaseUrl.length > 0
 			? { relayBaseUrl: record.relayBaseUrl }
 			: {}),
+		...(typeof record.remoteRelayBaseUrl === "string" && record.remoteRelayBaseUrl.length > 0
+			? { remoteRelayBaseUrl: record.remoteRelayBaseUrl }
+			: {}),
 		devices,
 	};
+}
+
+/**
+ * 设备上那些**可选**字段也收一道。
+ *
+ * 一个拼错的 `mode`(或旧版本/手工改过的文件里写进来的别的值)不该让界面去猜它属于哪一档 ——
+ * 收掉它就等于"没记下配对方式",而界面有专门的一组放这种。**丢掉整个设备**是不对的:
+ * 那台手机本身是好的。
+ */
+function cleanDevice(device: RemotePairedDevice): RemotePairedDevice {
+	if (device.mode === "lan" || device.mode === "remote") return device;
+	const { mode: _invalid, ...rest } = device;
+	return rest;
 }
 
 function isDevice(value: unknown): value is RemotePairedDevice {

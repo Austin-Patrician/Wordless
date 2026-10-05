@@ -17,6 +17,23 @@ const ENTRY_LABELS: Record<string, { readonly name: string; readonly description
 	entryImageGeneration: { name: "图片生成", description: "生成与编辑图片。" },
 };
 
+/**
+ * 模式(新建页最上面那三栏)。
+ *
+ * 与桌面端 `WelcomeView` 里的 `modeOptions` **逐字对齐**(标签取自渲染层 i18n 的
+ * `modeEveryday` / `modeCode` / `modeCreate`,图标 key 与入口共用同一张表)。
+ * 顺序就是那一栏的顺序 —— 从最日常到最专门。
+ */
+export const MODE_COPY: readonly {
+	readonly id: string;
+	readonly name: string;
+	readonly iconKey: string;
+}[] = [
+	{ id: "everyday", name: "日常工作", iconKey: "sparkles" },
+	{ id: "code", name: "写代码", iconKey: "code" },
+	{ id: "create", name: "创作", iconKey: "palette" },
+];
+
 /** 名字与一句话说明:查不到就**如实回落到 key**,而不是编一个。 */
 export function entryCopy(labelKey: string, descriptionKey: string): { readonly name: string; readonly description: string } {
 	const copy = ENTRY_LABELS[labelKey];

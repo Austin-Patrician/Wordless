@@ -147,6 +147,11 @@ export default defineConfig({
       "test/notification-center.browser.test.tsx",
       // 工具图标映射(漏一条映射是静默的:那行工具会变成通用扳手)。
       "test/tool-icon-map.browser.test.tsx",
+      // 内联浮层必须声明遮挡:内嵌浏览器那张原生视图永远画在 DOM 之上,
+      // 不声明的弹窗会"看得见、点不到"(设置右上角的关闭按钮就是这么坏掉的)。
+      "test/browser-panel-occlusion.browser.test.tsx",
+      // 设置弹窗的关闭按钮点得到(分成两档那一轮之后真实坏过)。
+      "test/settings-dialog-close.browser.test.tsx",
     ],
   },
 });

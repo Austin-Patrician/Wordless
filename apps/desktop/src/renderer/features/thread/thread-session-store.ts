@@ -336,9 +336,16 @@ export class ThreadSessionStore {
   }
 
   async start(initialPendingTurn?: PendingThreadTurn | null): Promise<void> {
-    if (this.unsubscribeRuntime || this.disposed) return;
-    // 又有人看它了:撤掉上一次卸载时留下的"跑完就释放"。
+    /**
+     * 又有人看它了:撤掉上一次卸载时留下的"跑完就释放"。
+     *
+     * **必须放在下面那个早退之前。** 已经装载过(还订阅着)的 store 会从这里直接返回 ——
+     * 而"用户又打开它了"这件事与"要不要重新装载"无关。放在后面的话,这条路径会漏掉撤销:
+     * 标记留着,等这一轮跑完就把**正开着**的会话挂起(`session` 置空),界面停在一句
+     * "Loading session" 上直到再切一次会话(真实踩到:切走再切回,响应结束时会话变成加载中)。
+     */
     this.releaseWhenIdle = false;
+    if (this.unsubscribeRuntime || this.disposed) return;
     const generation = ++this.recoveryGeneration;
     this.hydrating = true;
     this.unsubscribeRuntime = this.runtimeSubscribe((event) => {
