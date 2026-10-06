@@ -204,24 +204,29 @@ export function RemoteAccessSettings() {
    * 取部署步骤。
    *
    * 输入不全就**不请求** —— 命令里出现空的服务器地址,用户抄下去只会得到一堆莫名其妙的失败。
+   *
+   * `uploadSource` 由调用方按档给:教程档要 `bundle`(那句 scp 得指向用户找得到的部署包),
+   * 自动部署要 `installed`(上传安装目录里那一份,不需要副本、也不会旧)。
    */
-  const loadDeployPlan = useCallback(async () => {
-    setDeployError(null);
-    if (deployServer.trim().length === 0 || deployUser.trim().length === 0) {
-      setDeployError(t("remoteDeployNeedInputs"));
-      return;
-    }
-    try {
-      const plan = await client.getRemoteDeployPlan({
-        server: deployServer.trim(),
-        user: deployUser.trim(),
-        // **整份**探测结果带过去:跳过哪些步骤、走哪条反代路线都由它决定。
-        // (以前只带 node 那两项,于是"nginx 在跑"到不了计划 —— 计划永远按 Caddy 走。)
-        ...(sshProbed === null ? {} : { facts: sshProbed.facts }),
-        ...(deployDomain.trim().length === 0 ? {} : { domain: deployDomain.trim() }),
-        ...(deployPorts().relayPort === undefined ? {} : { relayPort: deployPorts().relayPort }),
-        ...(deployPorts().publicPort === undefined ? {} : { publicPort: deployPorts().publicPort }),
-      });
+  const loadDeployPlan = useCallback(
+    async (uploadSource: "bundle" | "installed") => {
+      setDeployError(null);
+      if (deployServer.trim().length === 0 || deployUser.trim().length === 0) {
+        setDeployError(t("remoteDeployNeedInputs"));
+        return;
+      }
+      try {
+        const plan = await client.getRemoteDeployPlan({
+          server: deployServer.trim(),
+          user: deployUser.trim(),
+          uploadSource,
+          // **整份**探测结果带过去:跳过哪些步骤、走哪条反代路线都由它决定。
+          // (以前只带 node 那两项,于是"nginx 在跑"到不了计划 —— 计划永远按 Caddy 走。)
+          ...(sshProbed === null ? {} : { facts: sshProbed.facts }),
+          ...(deployDomain.trim().length === 0 ? {} : { domain: deployDomain.trim() }),
+          ...(deployPorts().relayPort === undefined ? {} : { relayPort: deployPorts().relayPort }),
+          ...(deployPorts().publicPort === undefined ? {} : { publicPort: deployPorts().publicPort }),
+        });
       setDeploySteps([...plan.steps]);
       // `skipped` 可能没有(旧版本的本机、或测试替身):缺了就当"什么都没跳过"。
       setDeployPlan({
@@ -288,6 +293,8 @@ export function RemoteAccessSettings() {
       const result = await client.runRemoteDeploy({
         server: deployServer.trim(),
         user: deployUser.trim(),
+        // 自动部署上传**安装目录里那一份**:不用先准备部署包,而且永远是最新的。
+        uploadSource: "installed",
         ...(deployDomain.trim().length === 0 ? {} : { domain: deployDomain.trim() }),
         ...(sshPort.trim().length === 0 ? {} : { port: Number(sshPort.trim()) }),
         ...(deployPorts().relayPort === undefined ? {} : { relayPort: deployPorts().relayPort }),
@@ -641,26 +648,6 @@ export function RemoteAccessSettings() {
       ) : null}
 
       {/*
-        部署包:两条路**都要**它 —— 教程里那句 `scp` 指向它,自动部署也从这里上传。
-        所以它不属于任何一档,单独一节放在上面。
-      */}
-      {view.mode === "remote" ? (
-        <section className="rounded-2xl bg-[#f7f7f5] p-4 dark:bg-[#22241c]">
-          <h2 className="text-[14px] font-semibold">{t("remoteDeployBundleTitle")}</h2>
-          <p className="mt-1 text-[12px] leading-5 text-muted-foreground">{t("remoteDeployBundleHint")}</p>
-          <div className="mt-3 flex flex-wrap items-center gap-2">
-            <Button variant="outline" onClick={() => void prepareBundle()}>
-              <Download className="size-4" />
-              {deployBundleDir === null ? t("remoteDeployPrepare") : t("remoteDeployPrepared")}
-            </Button>
-            <span className="min-w-0 break-all text-[11px] leading-4 text-muted-foreground">
-              {deployBundleDir === null ? t("remoteDeployPrepareHint") : deployBundleDir}
-            </span>
-          </div>
-        </section>
-      ) : null}
-
-      {/*
         怎么部署:**两条路分成两档**。
 
         以前教程与自动部署堆在同一页上,用户分不清哪一步属于哪条路(真实反馈)—— 而它们其实是
@@ -707,8 +694,26 @@ export function RemoteAccessSettings() {
                 </ul>
               </div>
 
+              {/*
+                部署包:只在**这一档**里出现 —— 用户要自己敲那句 `scp`,路径就得找得到、打得出来。
+                它以前摆在档外(理由写着"两条路都要它"),而那条理由不成立。
+              */}
+              <div className="mt-3 rounded-[7px] bg-muted/50 px-3 py-2">
+                <p className="text-[11px] font-medium text-foreground">{t("remoteDeployBundleTitle")}</p>
+                <p className="mt-1 text-[11px] leading-4 text-muted-foreground">{t("remoteDeployBundleHint")}</p>
+                <div className="mt-2 flex flex-wrap items-center gap-2">
+                  <Button variant="outline" size="sm" onClick={() => void prepareBundle()}>
+                    <Download className="size-4" />
+                    {deployBundleDir === null ? t("remoteDeployPrepare") : t("remoteDeployPrepared")}
+                  </Button>
+                  <span className="min-w-0 break-all text-[11px] leading-4 text-muted-foreground">
+                    {deployBundleDir === null ? t("remoteDeployPrepareHint") : deployBundleDir}
+                  </span>
+                </div>
+              </div>
+
               <div className="mt-3 flex flex-wrap items-center gap-2">
-                <Button onClick={() => void loadDeployPlan()}>{t("remoteDeploySteps")}</Button>
+                <Button onClick={() => void loadDeployPlan("bundle")}>{t("remoteDeploySteps")}</Button>
                 <span className="text-[11px] leading-4 text-muted-foreground">{t("remoteDeployStepsHint")}</span>
               </div>
 
@@ -728,6 +733,11 @@ export function RemoteAccessSettings() {
           ) : (
             <>
                 <p className="mt-3 text-[11px] leading-4 text-muted-foreground">{t("remoteSshHint")}</p>
+                {/*
+                  说清"传的是哪一份":教程那一档要用户先准备部署包,这一档不用 ——
+                  不写出来,用户会以为这里漏了一步(或者反过来,以为那边白准备了)。
+                */}
+                <p className="mt-1 text-[11px] leading-4 text-muted-foreground">{t("remoteSshUploadNote")}</p>
                   {/*
                 把"连到哪台服务器"写在明面上:服务器地址在上面那一节里填,
                 不写出来用户会以为这里缺一个输入框(真实抱怨)。
@@ -896,7 +906,7 @@ export function RemoteAccessSettings() {
               就把命令藏起来(那正是"预览即所跑"要防的事)。
               */}
               <div className="mt-3 flex flex-wrap items-center gap-2">
-                <Button variant="outline" size="sm" onClick={() => void loadDeployPlan()}>
+                <Button variant="outline" size="sm" onClick={() => void loadDeployPlan("installed")}>
                   {t("remoteSshPreviewSteps")}
                   </Button>
                 {deploySteps === null ? null : (

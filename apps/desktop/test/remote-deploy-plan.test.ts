@@ -1,4 +1,8 @@
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, it } from "node:test";
 import { DEPLOY_RELAY_PORT, DEPLOY_REQUIREMENTS, remoteDeployPlan } from "../src/main/remote/deploy-plan.ts";
 
@@ -14,7 +18,8 @@ const plan = (overrides: Partial<Parameters<typeof remoteDeployPlan>[0]> = {}) =
 	remoteDeployPlan({
 		server: "1.2.3.4",
 		user: "ubuntu",
-		localDir: "/Users/me/Downloads/wordless-deploy",
+		// 教程档的来源:用户找得到的部署包目录。
+		upload: { relayPath: "/Users/me/Downloads/wordless-deploy/relay.mjs", webClientDir: "/Users/me/Downloads/wordless-deploy/web-client" },
 		...overrides,
 	});
 
@@ -60,8 +65,115 @@ describe("远程部署步骤", () => {
 		assert.match(all, /--web-root \/opt\/wordless-relay\/web-client/);
 	});
 
-	it("中继**只听环回**:公网那一侧交给反向代理", () => {
-		// 中继暴露到公网且没有 TLS 时,连接码与手机凭据是明文的(见 remote-access.md §18.2)。
+	it("上传那一步:远程落点**显式写出来**,来源目录叫什么名字都不影响", () => {
+		/*
+			这是这次修复的核心不变式。以前是"整个目录 scp 过去",远程名字由本地 basename 决定 ——
+			打包版里正好叫 `web-client`,开发版却是 `apps/web-client/dist`,于是会传成 `dist/`,
+			而 systemd 单元认的是 `web-client`。显式写名字之后,来源在哪儿都无所谓。
+		*/
+		const upload = plan({
+			upload: { relayPath: "/opt/src/relay.mjs", webClientDir: "/opt/src/dist" },
+		}).steps.find((step) => step.id === "Upload");
+		const lines = (upload?.command ?? "").split("\n");
+		assert.equal(lines.length, 2, "两样东西各一行:落点不同,不能合成一句");
+		assert.equal(lines[0], 'scp -r "/opt/src/relay.mjs" ubuntu@1.2.3.4:/opt/wordless-relay/relay.mjs');
+		assert.equal(
+			lines[1],
+			'scp -r "/opt/src/dist"/* ubuntu@1.2.3.4:/opt/wordless-relay/web-client/',
+			"来源叫 dist 也得落到 web-client —— 远程名字是我们定的,不是 basename 定的",
+		);
+		// 引号只包目录、不包通配符:包住了 `*` 就不再展开(路径里有空格时这是唯一正确的写法)。
+		assert.equal(lines[1]?.includes('"/*"'), false, "通配符不能被引号吃掉");
+	});
+
+	it("上传的是**目录内容**:目标目录由 PrepareDir 先建好,落进去是覆盖合并", () => {
+		// 目标不存在就没地方落,所以 PrepareDir 必须建它;而"落进去"而不是"先删再传"是刻意的:
+		// 删了万一这次上传失败,线上就只剩 404。
+		const result = plan();
+		const ids = result.steps.map((step) => step.id);
+		assert.ok(ids.indexOf("PrepareDir") < ids.indexOf("Upload"), "先建目录再上传");
+		const prepare = result.steps.find((step) => step.id === "PrepareDir");
+		assert.match(prepare?.command ?? "", /mkdir -p \/opt\/wordless-relay\/web-client/);
+		assert.equal(/rm -rf/.test(result.steps.map((step) => step.command).join("\n")), false, "部署不许删线上已有的东西");
+	});
+
+	it("两条路只差**来源**这一步:同一份命令,换一个 upload 就换一个来源", () => {
+		// 教程档给部署包(用户敲得到),自动部署给安装目录(永远最新)。除此之外必须一模一样 ——
+		// 否则"预览即所跑"就是假的。
+		const bundle = plan({ upload: { relayPath: "/Users/me/Downloads/wordless-deploy/relay.mjs", webClientDir: "/Users/me/Downloads/wordless-deploy/web-client" } });
+		const installed = plan({ upload: { relayPath: "/Applications/Wordless.app/Contents/Resources/relay/relay.mjs", webClientDir: "/Applications/Wordless.app/Contents/Resources/web-client" } });
+		const others = (result: typeof bundle) =>
+			result.steps.filter((step) => step.id !== "Upload").map((step) => `${step.id}:${step.command}`);
+		assert.deepEqual(others(bundle), others(installed));
+		assert.notEqual(
+			bundle.steps.find((step) => step.id === "Upload")?.command,
+			installed.steps.find((step) => step.id === "Upload")?.command,
+		);
+	});
+
+	it("上传那一步真的跑得起来:假 `scp` 收到的是**展开后的文件**与**写死的远程名字**", () => {
+		/*
+			上面那条查的是字符串。这一条**真的执行**那行命令(把 `scp` 换成一个只记录参数的替身),
+			因为它依赖两件只有真跑才看得见的事:
+
+			1. `web-client/*` 由 **shell 展开** —— 展开出来的是 `index.html`、`assets` 这些**目录内容**,
+			   而不是 `dist` 这个名字本身(这正是"来源叫什么名字都无所谓"的由来);
+			2. 两行各传一次,远程落点分别是 `relay.mjs` 与 `web-client/`。
+		*/
+		const root = mkdtempSync(join(tmpdir(), "wordless-upload-"));
+		try {
+			const shim = join(root, "bin");
+			mkdirSync(shim, { recursive: true });
+			const calls = join(root, "calls.txt");
+			// 替身:`scp` 只把收到的参数逐行记下来,然后成功退出(真的 scp 要 sshd,这里不需要)。
+			writeFileSync(join(shim, "scp"), `#!/bin/sh\nprintf '%s\\n' "---" "$@" >> ${calls}\n`, { mode: 0o755 });
+			chmodSync(join(shim, "scp"), 0o755);
+
+			// 来源目录**故意叫 dist,而且父目录带空格**:打包版里叫 web-client、开发版叫 dist,
+			// 而用户的主目录里什么都可能有 —— 落点都不该因此改变。
+			const webClientDir = join(root, "my dir", "dist");
+			mkdirSync(join(webClientDir, "assets"), { recursive: true });
+			writeFileSync(join(webClientDir, "index.html"), "<html></html>");
+			writeFileSync(join(webClientDir, "assets", "app.js"), "");
+			const relayPath = join(root, "my dir", "relay.mjs");
+			writeFileSync(relayPath, "");
+
+			const upload = plan({ upload: { relayPath, webClientDir } }).steps.find((step) => step.id === "Upload");
+			const result = spawnSync("bash", ["-c", upload?.command ?? ""], {
+				encoding: "utf8",
+				env: { ...process.env, PATH: `${shim}:${process.env.PATH ?? ""}` },
+			});
+			assert.equal(result.status, 0, `上传那一步没跑通:${result.stderr}`);
+
+			const invocations = readFileSync(calls, "utf8").trim().split("---\n").filter((line) => line.length > 0);
+			assert.deepEqual(invocations.map((line) => line.trim().split("\n")), [
+				["-r", relayPath, "ubuntu@1.2.3.4:/opt/wordless-relay/relay.mjs"],
+				[
+					"-r",
+					join(webClientDir, "assets"),
+					join(webClientDir, "index.html"),
+					"ubuntu@1.2.3.4:/opt/wordless-relay/web-client/",
+				],
+			]);
+		} finally {
+			rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("每一步都是**语法正确的 shell**(长脚本里最容易写坏引号)", () => {
+		for (const upload of [
+			{ relayPath: "/tmp/relay.mjs", webClientDir: "/tmp/web-client" },
+			// 带空格与中文的路径也要能过 —— 用户的主目录里什么都可能有。
+			{ relayPath: "/tmp/my dir/中继.mjs", webClientDir: "/tmp/my dir/web client" },
+		]) {
+			for (const step of plan({ upload }).steps) {
+				const result = spawnSync("bash", ["-n", "-c", step.command], { encoding: "utf8" });
+				assert.equal(result.status, 0, `${step.id} 的语法错了:${result.stderr}`);
+			}
+		}
+	});
+
+	it("中继**只听环回**:公网那一侧交给反向代理", () => {		// 中继暴露到公网且没有 TLS 时,连接码与手机凭据是明文的(见 remote-access.md §18.2)。
 		const service = plan({ domain: "relay.example.com" }).steps.find((step) => step.id === "Service");
 		assert.match(service?.command ?? "", /--host 127\.0\.0\.1/);
 	});

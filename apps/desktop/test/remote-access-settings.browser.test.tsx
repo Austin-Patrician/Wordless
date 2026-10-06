@@ -246,7 +246,12 @@ describe("设置 → 远程连接", () => {
       button("照着做")?.click();
       await Promise.resolve();
     });
-    expect(getRemoteDeployPlan).toHaveBeenCalledWith({ server: "1.2.3.4", user: "ubuntu", domain: "relay.example.com" });
+    expect(getRemoteDeployPlan).toHaveBeenCalledWith({
+      server: "1.2.3.4",
+      user: "ubuntu",
+      domain: "relay.example.com",
+      uploadSource: "bundle",
+    });
     const text = container.textContent ?? "";
     expect(text).toContain("装 Node 20");
     expect(text).toContain("sudo apt-get install -y nodejs");
@@ -340,6 +345,57 @@ describe("设置 → 远程连接", () => {
     // `{detail}` 要填进去:留着占位符等于没告诉用户"服务器上是哪一版"。
     expect(text).toContain("1.2.0 → 1.4.0");
     expect(text).not.toContain("remoteWarnRedeployOutdated");
+  });
+
+  it("上传来源按档走:教程档要部署包,SSH 档要安装目录", async () => {
+    /*
+      这是这次修复的核心。以前两条路都从部署包目录上传,于是"没点过准备部署包"会让自动部署
+      死在 scp 上 —— 而服务器上那时已经建好目录了。
+    */
+    getRemoteAccessState.mockResolvedValueOnce(state({ mode: "remote" }) as never);
+    await render();
+    const inputs = [...container.querySelectorAll("input")];
+    const setValue = (input: Element, value: string) => {
+      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
+      setter?.call(input, value);
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    };
+    await act(async () => {
+      setValue(inputs[0] as Element, "1.2.3.4");
+      setValue(inputs[1] as Element, "ubuntu");
+    });
+    const button = (label: string) =>
+      [...container.querySelectorAll("button")].find((entry) => entry.textContent?.includes(label));
+
+    await act(async () => {
+      button("照着做")?.click();
+      await Promise.resolve();
+    });
+    expect(getRemoteDeployPlan, "教程里那句 scp 得指向用户找得到的部署包").toHaveBeenLastCalledWith(
+      expect.objectContaining({ uploadSource: "bundle" }),
+    );
+
+    await openSshTab();
+    await act(async () => {
+      button("预览要跑的步骤")?.click();
+      await Promise.resolve();
+    });
+    expect(getRemoteDeployPlan, "自动部署上传安装目录里那一份 —— 不用先准备副本,而且不会旧").toHaveBeenLastCalledWith(
+      expect.objectContaining({ uploadSource: "installed" }),
+    );
+  });
+
+  it("部署包那一节**只属于教程档**:自动部署不该让人先准备一份副本", async () => {
+    getRemoteAccessState.mockResolvedValueOnce(state({ mode: "remote" }) as never);
+    await render();
+    const button = (label: string) =>
+      [...container.querySelectorAll("button")].find((entry) => entry.textContent?.includes(label));
+    // 查按钮而不是查文本:SSH 档那句说明里也会出现"准备部署包"(它说的是"不用先准备")。
+    expect(button("准备部署包")).toBeDefined();
+    await openSshTab();
+    expect(button("准备部署包")).toBeUndefined();
+    // 而且要说清它传的是哪一份 —— 不写出来用户会以为这里漏了一步。
+    expect(container.textContent).toContain("安装目录里");
   });
 
   it("卸载:要删什么先摆出来,确认之后才跑(不可逆的动作不该只有「信任」一条路)", async () => {
@@ -499,6 +555,7 @@ describe("设置 → 远程连接", () => {
     expect(getRemoteDeployPlan).toHaveBeenCalledWith({
       server: "1.2.3.4",
       user: "ubuntu",
+      uploadSource: "bundle",
       relayPort: 9001,
       publicPort: 8443,
     });

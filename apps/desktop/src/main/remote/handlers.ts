@@ -1,9 +1,9 @@
 import type { RemoteAccessService, RemoteAccessState } from "./remote-access-service.ts";
 import { normalizeRelayAddress, probeRelay, type RelayProbeResult } from "./relay-address.ts";
-import { DEPLOY_RELAY_PORT, remoteDeployPlan, type DeployPlan, type DeployPlanInput } from "./deploy-plan.ts";
+import { DEPLOY_RELAY_PORT, remoteDeployPlan, type DeployPlan, type DeployPlanInput, type DeployUploadSource } from "./deploy-plan.ts";
 import { SshDeploy, type DeployProgress, type SshTarget } from "./ssh-deploy.ts";
 import { remoteUninstallPlan, type UninstallPlan, type UninstallScope } from "./uninstall-plan.ts";
-import { prepareDeployBundle, type DeployBundleResult } from "./deploy-bundle.ts";
+import { deployBundleUpload, prepareDeployBundle, type DeployBundleResult } from "./deploy-bundle.ts";
 
 /**
  * 远程访问的 IPC 逻辑。
@@ -23,6 +23,8 @@ export interface RemoteAccessHandlers {
 	 * 准备部署包(把中继单文件与网页客户端复制到用户找得到的地方)。
 	 *
 	 * 目录由主进程定(默认在"下载"里),因为教程里那句 `scp` 要指向**真实存在的路径**。
+	 *
+	 * **只有教程档需要它**:自动部署直接上传安装目录里的那一份(见 `readUploadSource`)。
 	 */
 	prepareDeployBundle(): Promise<DeployBundleResult>;
 	/** 取部署步骤(教程档渲染它;自动部署跑的**就是这一份**)。 */
@@ -110,7 +112,7 @@ export function createRemoteAccessHandlers(
 			 */
 			return remoteDeployPlan({
 				...readTargetInputs(record),
-				localDir: paths.deployBundleDir,
+				upload: readUploadSource(record, paths),
 				...(paths.version === undefined ? {} : { version: paths.version }),
 			});
 		},
@@ -126,7 +128,7 @@ export function createRemoteAccessHandlers(
 			const record = asRecord(payload);
 			const plan = remoteDeployPlan({
 				...readTargetInputs(record),
-				localDir: paths.deployBundleDir,
+				upload: readUploadSource(record, paths),
 				...(paths.version === undefined ? {} : { version: paths.version }),
 			});
 			return sshDeploy.run(readTarget(payload), plan.steps, (progress) => deps.onDeployProgress?.(progress));
@@ -321,6 +323,27 @@ function readOptionalPort(record: Record<string, unknown>, field: string): numbe
  *
  * scope 收一道值域:`remove` 是不可逆的那一档,不能让一个拼错的字符串意外走到它。
  */
+/**
+ * 上传来源:**两条路给的本来就不是同一个位置**,所以这里必须问清楚是哪一条。
+ *
+ * 为什么不给默认值:默认错了不会报错,只会在几分钟后以"scp 找不到文件"的样子出现
+ * (而且那时服务器上已经建好目录了)。要求显式传,漏了就是一条能看懂的错。
+ */
+function readUploadSource(
+	record: Record<string, unknown>,
+	paths: RemoteAccessHandlerPaths,
+): DeployUploadSource {
+	const source = record.uploadSource;
+	if (source !== "bundle" && source !== "installed") {
+		throw new Error("uploadSource 必须是 bundle(部署包)或 installed(安装目录)");
+	}
+	if (source === "installed") {
+		// 装在这台电脑上的那一份:自动部署上传它,所以**永远是最新的**(副本会旧)。
+		return { relayPath: paths.relayBundlePath, webClientDir: paths.webClientDir };
+	}
+	return deployBundleUpload(paths.deployBundleDir);
+}
+
 function readUninstallInput(payload: unknown): Parameters<typeof remoteUninstallPlan>[0] {
 	const record = asRecord(payload);
 	const scope = record.scope;

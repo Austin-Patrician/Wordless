@@ -30,6 +30,26 @@ export const DEPLOY_RELAY_PORT = 8787;
 /** 服务器上的目录。 */
 export const DEPLOY_REMOTE_DIR = "/opt/wordless-relay";
 
+/**
+ * 上传的**来源**:本机上要传到服务器上去的那两样东西。
+ *
+ * 为什么是两条路径而不是"一个部署包目录":两条路给的**不是同一个位置**。
+ *
+ * - **教程档**给部署包目录 —— 用户要**自己敲**那句 `scp`,路径就得找得到、打得出来,
+ *   而安装目录在 `Wordless.app/Contents/Resources` 里,两样东西还不在同一个父目录下。
+ * - **自动部署**给安装目录里的真实文件 —— 它由我们自己执行,不需要副本,
+ *   而**副本会旧**:桌面端升级后部署包还停在上一版,却没有任何东西会察觉。
+ *
+ * 早先两条路共用 `localDir`(部署包目录),于是"没点过准备部署包"会让自动部署
+ * 死在 `scp` 上,而那时服务器上已经建好目录了 —— 一个纯自找的失败。
+ */
+export interface DeployUploadSource {
+	/** 本机的 `relay.mjs`。 */
+	readonly relayPath: string;
+	/** 本机的网页客户端构建产物目录。 */
+	readonly webClientDir: string;
+}
+
 export interface DeployStep {
 	/** 文案的键:`remoteDeployStep<Id>` / `remoteDeployStep<Id>Note`。 */
 	readonly id: string;
@@ -84,8 +104,8 @@ export interface DeployPlanInput {
 	readonly user: string;
 	/** 指向这台服务器的域名。空 = 不做 TLS(代价见文档)。 */
 	readonly domain?: string;
-	/** 本机上准备好的部署包目录(由主进程"准备部署包"给出)。 */
-	readonly localDir: string;
+	/** 本机上要传上去的那两样东西(见 `DeployUploadSource`)。 */
+	readonly upload: DeployUploadSource;
 	/**
 	 * 中继在服务器上监听哪个端口(默认 8787)。
 	 *
@@ -219,6 +239,7 @@ export function remoteDeployPlan(input: DeployPlanInput): DeployPlan {
 			id: "PrepareDir",
 			sudo: true,
 			target: "server",
+			// `web-client` 这一层**必须先建**:上传那一步是"把目录内容落进去",目标不存在就没地方落。
 			command: [
 				`sudo mkdir -p ${DEPLOY_REMOTE_DIR}/web-client`,
 				`sudo chown -R ${input.user} ${DEPLOY_REMOTE_DIR}`,
@@ -228,8 +249,25 @@ export function remoteDeployPlan(input: DeployPlanInput): DeployPlan {
 			id: "Upload",
 			sudo: false,
 			target: "local",
-			// 从**这台电脑**上传(部署包已经准备好,见"准备部署包"那一步)。
-			command: `scp -r ${input.localDir}/relay.mjs ${input.localDir}/web-client ${input.user}@${input.server}:${DEPLOY_REMOTE_DIR}/`,
+			/*
+				两行,而且**远程名字是显式写出来的**。
+
+				不能写成"一个目录里装两样东西,整体 scp 过去":那样远程文件名由**本地 basename**
+				决定 —— 打包版里 web 客户端是 `…/Resources/web-client`(正好),开发版却是
+				`apps/web-client/dist`(会传成 `dist/`),而 systemd 单元认的是 `web-client`。
+				显式写名字之后,来源叫什么、在哪儿,都无所谓了。
+
+				`web-client` 那行传的是**目录内容**(`"…"/*`):目标是 PrepareDir 建好的目录,
+				逐项落进去是覆盖合并 —— 重复部署是幂等的,而且不用先删掉旧目录
+				(删了万一这次上传失败,线上就只剩 404 了)。
+
+				引号**只包住目录那一段**,`/*` 留在外面 —— 路径里有空格是常事(Windows 的用户名、
+				改过的"下载"目录),而"引号包住整个含通配符的路径"会让通配符不再展开。
+			*/
+			command: [
+				`scp -r "${input.upload.relayPath}" ${input.user}@${input.server}:${DEPLOY_REMOTE_DIR}/relay.mjs`,
+				`scp -r "${input.upload.webClientDir}"/* ${input.user}@${input.server}:${DEPLOY_REMOTE_DIR}/web-client/`,
+			].join("\n"),
 		},
 		{
 			id: "Service",
