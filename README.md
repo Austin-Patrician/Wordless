@@ -98,6 +98,7 @@ Choose WorkBuddy when you want a mature, ready-made office and team ecosystem wi
 - **Workspace context**: use `@` to reference workspace files and folders, `$` to select Skills, and `!` to point at an open task. File indexing respects `.gitignore`.
 - **UI design**: pick a built-in style or describe the interface from scratch. The Agent writes real HTML frames into an `x.wdesign` package, on a canvas you can zoom, select, align, recolour, and export from.
 - **Image generation and editing**: generate images on a canvas, then iterate with variations, cropping, local edits, background removal, and object removal.
+- **Text recognition (OCR)**: bundled and offline. When the model cannot see images itself, it can read **printed text** out of a screenshot, a scanned page, or a photo of a document. It is **not a replacement for vision**: layout, colour, chart trends, stamps, and handwriting are out of reach, and the result carries a note saying the text was machine-recognised.
 - **Interactive Presentation**: after the Agent creates or edits slides, inspect pages, select elements, and continue iterating in the right workspace instead of downloading a one-off file.
 - **Interactive Spreadsheet**: inspect cells, charts, and changes directly. Continue from the current selection and verify updates immediately.
 - **Data Analysis and deep research**: divide research into dimensions, delegate work in parallel, follow progress, and return reports and charts to the workspace.
@@ -173,6 +174,11 @@ A session is where work happens; these are the surfaces that keep it visible aft
 - **Digital employees**: save reusable roles, group them into a team, and delegate from the conversation.
 - **Translation**: select text in a message to translate it in place, or keep the translation panel open beside the conversation.
 
+Two more things reach you after the work stops, without you watching the window:
+
+- **Desktop notifications** (**Settings → General**): when Wordless is not in the foreground, the Agent waiting for an approval or an answer, a completed run, and a failed run each raise a system notification. A session you are already looking at is left alone.
+- **Message push** (**Settings → Message push**): automations and scheduled runs can deliver their result to a DingTalk, Feishu, or WeCom group robot. The body is a template with a fixed set of variables, each automation can override the defaults, and the credential stays on this machine.
+
 <!-- Screenshot: tasks-board.png — task centre with the board (to-do / in progress / done columns with cards) and the timeline view (bars, week/month range switch). -->
 ![Task board and timeline](docs/assets/desktop/tasks-board.png)
 
@@ -184,6 +190,19 @@ A session is where work happens; these are the surfaces that keep it visible aft
 
 <!-- Screenshot: translation.png — selected text with the translation bubble, or the translation panel beside a conversation. -->
 ![Inline translation](docs/assets/desktop/translation.png)
+
+## Remote access
+
+Continue this computer's sessions from your phone. Everything is end-to-end encrypted, and both the session and the execution stay on this machine. **Settings → Remote access** offers two ways in:
+
+- **Local network**: the phone and this computer on the same WiFi is enough. Turn the switch on and Wordless runs the relay and the web client here, fills in the address, and shows a QR code — scan it and you are in. No server, no configuration.
+- **Remote**: works on any network the phone happens to be on, including mobile data. It needs a relay server **you deploy yourself**, and Wordless gives you two routes: a tutorial to type out, or SSH details so it deploys for you — after probing the server it tells you what it found wrong (a port already taken, the wrong distribution, an earlier deployment), leaves a version stamp on the server (a desktop upgrade means deploying again), and can be taken down again in one action.
+
+Pairing is a QR scan, or typing a connection code plus a password. **The first phone to present a key pins the identity public key**, an unclaimed connection code expires after ten minutes, every phone that connects raises a system notification, and each phone can be unpaired on its own.
+
+What the phone can do is **continue the conversation**: list and read sessions, send messages, abort, switch models, attach files, answer approvals and questions, and search workspace files read-only. It is **not remote desktop** — no screen streaming, no settings, no picking files on this machine, no operating the desktop. The Agent keeps running on this computer.
+
+<!-- Screenshot: remote-access.png — remote access settings: the local-network / remote pair of modes, the QR code, and the address with "open on your phone". -->
 
 ## Extension and control
 
@@ -247,6 +266,8 @@ Files ending in `.zip`, `.blockmap`, `latest.yml`, and `latest-mac.yml` are prim
 > Current macOS releases are test builds without Apple Developer ID notarization. Download them only from the official Wordless repository. On first launch, you may need to Control-click Wordless in Finder and choose **Open**, or use **System Settings → Privacy & Security → Open Anyway**. Do not disable Gatekeeper globally.
 
 On first launch, a short guided tour creates your first workspace, connects a model, and walks through the sidebar. You can replay it from Settings.
+
+Wordless needs a shell and Node to run the agent, and neither is something you have to install: Node falls back to the runtime the app already ships (Electron is a Node), and Windows does not require Git Bash — without bash it uses PowerShell or cmd. Python is only used by the data features, and a copy ships with the app too. Anything missing is listed honestly in **Settings → Environment**, with a link to the official download page; that panel is read-only and never installs anything for you.
 
 Wordless notifies you when a new version is available but never forces installation. Because unsigned macOS builds cannot use the standard signed update path reliably, some versions must be downloaded as a DMG and installed manually over the existing application.
 

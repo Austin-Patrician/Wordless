@@ -1,7 +1,7 @@
 import type { RemoteAccessState } from "@wordless/protocol";
 import type { DeployProbeFacts, RemoteUninstallPlan } from "../../../bridge/desktop-bridge";
 import { Button, Switch } from "@wordless/ui-kit";
-import { AlertTriangle, Check, Copy, Download, Loader2, QrCode, RefreshCw, Smartphone, Trash2, Unlink, Wifi } from "lucide-react";
+import { AlertTriangle, Check, Copy, Loader2, QrCode, RefreshCw, Smartphone, Trash2, Unlink, Wifi } from "lucide-react";
 import { QRCodeSVG } from "qrcode.react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { usePreferences } from "../../shared/preferences";
@@ -30,14 +30,13 @@ export function RemoteAccessSettings() {
   const [relayDraft, setRelayDraft] = useState("");
   const [copied, setCopied] = useState<"code" | "password" | "quick" | null>(null);
   const [probing, setProbing] = useState(false);
-  /** 教程档的三个输入(服务器、用户、域名)与"准备部署包"的结果。 */
+  /** 教程档的三个输入(服务器、用户、域名)。 */
   const [deployServer, setDeployServer] = useState("");
   const [deployUser, setDeployUser] = useState("");
   const [deployDomain, setDeployDomain] = useState("");
   /** 两个端口(默认 8787 / 443):留空就是默认值。 */
   const [relayPortDraft, setRelayPortDraft] = useState("");
   const [publicPortDraft, setPublicPortDraft] = useState("");
-  const [deployBundleDir, setDeployBundleDir] = useState<string | null>(null);
   const [deployError, setDeployError] = useState<string | null>(null);
   const [deploySteps, setDeploySteps] = useState<
     Array<{ id: string; command: string; sudo: boolean }> | null
@@ -174,21 +173,6 @@ export function RemoteAccessSettings() {
     }
   }, []);
 
-  /** 准备部署包:把两样东西复制到"下载 / wordless-deploy",好让教程里那句 scp 指得到。 */
-  const prepareBundle = useCallback(async () => {
-    setDeployError(null);
-    try {
-      const result = await client.prepareRemoteDeployBundle();
-      if (!result.ok || result.dir === undefined) {
-        setDeployError(result.error ?? t("remoteAccessError"));
-        return;
-      }
-      setDeployBundleDir(result.dir);
-    } catch (failure) {
-      setDeployError(failure instanceof Error ? failure.message : t("remoteAccessError"));
-    }
-  }, [client, t]);
-
   /** 两个端口:填的是数字才算,留空/填错就是"用默认值"(计划那边还会再收一道)。 */
   const deployPorts = useCallback(() => {
     const parse = (value: string): number | undefined => {
@@ -205,24 +189,26 @@ export function RemoteAccessSettings() {
    *
    * 输入不全就**不请求** —— 命令里出现空的服务器地址,用户抄下去只会得到一堆莫名其妙的失败。
    *
-   * `uploadSource` 由调用方按档给:教程档要 `bundle`(那句 scp 得指向用户找得到的部署包),
-   * 自动部署要 `installed`(上传安装目录里那一份,不需要副本、也不会旧)。
+   * 上传的来源只有一处(安装目录里那一份),所以这里不再分档。
    */
   const loadDeployPlan = useCallback(
-    async (uploadSource: "bundle" | "installed") => {
+    async (factsOverride?: DeployProbeFacts) => {
       setDeployError(null);
       if (deployServer.trim().length === 0 || deployUser.trim().length === 0) {
         setDeployError(t("remoteDeployNeedInputs"));
         return;
       }
+      // 探测刚回来时 `sshProbed` 还没落地(同一个 tick 里 setState 不会立刻生效),
+      // 所以允许调用方把刚拿到的那份 facts 直接递进来 —— 否则这次请求会**不带**探测结果,
+      // 于是"nginx 在跑""443 被占"全到不了计划,警告也就无从谈起。
+      const facts = factsOverride ?? sshProbed?.facts;
       try {
         const plan = await client.getRemoteDeployPlan({
           server: deployServer.trim(),
           user: deployUser.trim(),
-          uploadSource,
           // **整份**探测结果带过去:跳过哪些步骤、走哪条反代路线都由它决定。
           // (以前只带 node 那两项,于是"nginx 在跑"到不了计划 —— 计划永远按 Caddy 走。)
-          ...(sshProbed === null ? {} : { facts: sshProbed.facts }),
+          ...(facts === undefined ? {} : { facts }),
           ...(deployDomain.trim().length === 0 ? {} : { domain: deployDomain.trim() }),
           ...(deployPorts().relayPort === undefined ? {} : { relayPort: deployPorts().relayPort }),
           ...(deployPorts().publicPort === undefined ? {} : { publicPort: deployPorts().publicPort }),
@@ -271,12 +257,18 @@ export function RemoteAccessSettings() {
         return;
       }
       setSshProbed({ findings: result.findings, facts: result.facts });
+      /*
+        探测之后**顺手把计划要来**:计划里的警告(443 被占、发行版不对、已经部署过、
+        sudo 要密码)说的都是"失败了也看不出原因"的那一类 —— 它们必须在按下部署**之前**
+        就能看到,所以不摆按钮、不要用户再点一次。
+      */
+      await loadDeployPlan(result.facts);
     } catch (failure) {
       setSshProbeError(failure instanceof Error ? failure.message : t("remoteAccessError"));
     } finally {
       setSshProbing(false);
     }
-  }, [client, deployPorts, deployServer, deployUser, sshInput, t]);
+  }, [client, deployPorts, deployServer, deployUser, loadDeployPlan, sshInput, t]);
 
   const runSsh = useCallback(async () => {
     // 没探测过就不跑:连不上的话后面每一步都是白跑,而用户会以为"部署过了"。
@@ -293,8 +285,6 @@ export function RemoteAccessSettings() {
       const result = await client.runRemoteDeploy({
         server: deployServer.trim(),
         user: deployUser.trim(),
-        // 自动部署上传**安装目录里那一份**:不用先准备部署包,而且永远是最新的。
-        uploadSource: "installed",
         ...(deployDomain.trim().length === 0 ? {} : { domain: deployDomain.trim() }),
         ...(sshPort.trim().length === 0 ? {} : { port: Number(sshPort.trim()) }),
         ...(deployPorts().relayPort === undefined ? {} : { relayPort: deployPorts().relayPort }),
@@ -694,26 +684,8 @@ export function RemoteAccessSettings() {
                 </ul>
               </div>
 
-              {/*
-                部署包:只在**这一档**里出现 —— 用户要自己敲那句 `scp`,路径就得找得到、打得出来。
-                它以前摆在档外(理由写着"两条路都要它"),而那条理由不成立。
-              */}
-              <div className="mt-3 rounded-[7px] bg-muted/50 px-3 py-2">
-                <p className="text-[11px] font-medium text-foreground">{t("remoteDeployBundleTitle")}</p>
-                <p className="mt-1 text-[11px] leading-4 text-muted-foreground">{t("remoteDeployBundleHint")}</p>
-                <div className="mt-2 flex flex-wrap items-center gap-2">
-                  <Button variant="outline" size="sm" onClick={() => void prepareBundle()}>
-                    <Download className="size-4" />
-                    {deployBundleDir === null ? t("remoteDeployPrepare") : t("remoteDeployPrepared")}
-                  </Button>
-                  <span className="min-w-0 break-all text-[11px] leading-4 text-muted-foreground">
-                    {deployBundleDir === null ? t("remoteDeployPrepareHint") : deployBundleDir}
-                  </span>
-                </div>
-              </div>
-
               <div className="mt-3 flex flex-wrap items-center gap-2">
-                <Button onClick={() => void loadDeployPlan("bundle")}>{t("remoteDeploySteps")}</Button>
+                <Button onClick={() => void loadDeployPlan()}>{t("remoteDeploySteps")}</Button>
                 <span className="text-[11px] leading-4 text-muted-foreground">{t("remoteDeployStepsHint")}</span>
               </div>
 
@@ -733,11 +705,6 @@ export function RemoteAccessSettings() {
           ) : (
             <>
                 <p className="mt-3 text-[11px] leading-4 text-muted-foreground">{t("remoteSshHint")}</p>
-                {/*
-                  说清"传的是哪一份":教程那一档要用户先准备部署包,这一档不用 ——
-                  不写出来,用户会以为这里漏了一步(或者反过来,以为那边白准备了)。
-                */}
-                <p className="mt-1 text-[11px] leading-4 text-muted-foreground">{t("remoteSshUploadNote")}</p>
                   {/*
                 把"连到哪台服务器"写在明面上:服务器地址在上面那一节里填,
                 不写出来用户会以为这里缺一个输入框(真实抱怨)。
@@ -901,27 +868,24 @@ export function RemoteAccessSettings() {
                 </p>
               )}
 
-              {/*
-              **预览要跑什么**:跑的与「自己部署」那一档是同一份命令 —— 这一档不能因为"是自动的"
-              就把命令藏起来(那正是"预览即所跑"要防的事)。
-              */}
-              <div className="mt-3 flex flex-wrap items-center gap-2">
-                <Button variant="outline" size="sm" onClick={() => void loadDeployPlan("installed")}>
-                  {t("remoteSshPreviewSteps")}
-                  </Button>
-                {deploySteps === null ? null : (
-                  <span className="text-[11px] leading-4 text-muted-foreground">{t("remoteSshPreviewHint")}</span>
-                  )}
-                </div>
               {deployError === null ? null : (
                 <p className="mt-2 text-[11px] leading-4 text-[#8a4b2a] dark:text-[#e0b394]">{deployError}</p>
                 )}
+              {/*
+                这一档**不摆步骤**。要跑的命令与「自己部署」那一档是同一份,而这一档是自动的 ——
+                用户不需要先读一遍"我们要跑什么"(真要看,教程那一档里每一步都能复制)。
+
+                留下的两样都是**用户自己判断不了**的:计划里的警告(443 被占、发行版不对、
+                已经部署过 —— 全都是"失败了也看不出原因"的那一类),以及部署完之后要填的中继地址。
+                地址那一块只在**部署成功之后**出现 —— 在那之前它不是"最后一步"。
+              */}
               <DeployPlanPanel
                 copied={copied}
                 onCopy={(command) => void copy("quick", command)}
                 onFillAddress={() => void run(() => client.setRemoteRelayUrl(deployPlan?.relayBaseUrl ?? ""))}
                 plan={deployPlan}
-                steps={deploySteps}
+                showFinish={sshResult?.ok === true}
+                steps={null}
                 t={t}
                 />
 
@@ -1309,6 +1273,7 @@ function DeployPlanPanel({
   onCopy,
   onFillAddress,
   plan,
+  showFinish = true,
   steps,
   t,
 }: {
@@ -1316,6 +1281,13 @@ function DeployPlanPanel({
   onCopy: (command: string) => void;
   onFillAddress: () => void;
   plan: { secure: boolean; proxy?: "caddy" | "nginx"; warnings: readonly { key: string; detail?: string }[]; skipped: readonly { id: string; reason: string }[]; relayBaseUrl: string } | null;
+  /**
+   * 是否显示"最后一步:回来填地址"。
+   *
+   * 自动部署那一档把它压到**部署成功之后** —— 在那之前摆出"最后一步"是在说一件还没发生的事。
+   * 教程那一档保持默认(用户是照着做完再回来填地址,顺序本来就是对的)。
+   */
+  showFinish?: boolean;
   steps: readonly { id: string; command: string; sudo: boolean }[] | null;
   t: (key: Parameters<ReturnType<typeof usePreferences>["t"]>[0]) => string;
 }) {
@@ -1403,7 +1375,7 @@ function DeployPlanPanel({
           </ol>
         )}
 
-        {plan === null ? null : (
+        {plan === null || !showFinish ? null : (
           <div className="mt-4 rounded-[7px] border border-[#cfd9b8] bg-[#f5f8eb] px-3 py-2 dark:border-[#53663a] dark:bg-[#303b1d]">
             <p className="text-[12px] font-medium">{t("remoteDeployFinish")}</p>
             <p className="mt-1 text-[11px] leading-4 text-muted-foreground">{t("remoteDeployFinishHint")}</p>

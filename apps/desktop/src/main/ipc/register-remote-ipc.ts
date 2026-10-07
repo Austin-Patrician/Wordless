@@ -18,7 +18,7 @@ export interface RemoteIpcDeps {
    * 而且随时在关;往一个正在关掉的窗口发,就是那句 "Render frame was disposed"(见 `renderer-window.ts`)。
    */
   readonly getWindow: () => RendererWindowLike | undefined;
-  /** 部署包相关的路径(要 `app.getPath`,所以由调用方给)。 */
+  /** 部署要用的本机路径(要 `app.getPath`,所以由调用方给)。 */
   readonly paths: RemoteAccessHandlerPaths;
 }
 
@@ -39,7 +39,6 @@ export function registerRemoteIpc(deps: RemoteIpcDeps): void {
   ipcMain.handle("wordless:remote:set-enabled", async (_event, payload: unknown) => await handlers.setEnabled(payload));
   ipcMain.handle("wordless:remote:set-relay-url", async (_event, payload: unknown) => await handlers.setRelayUrl(payload));
   ipcMain.handle("wordless:remote:set-mode", async (_event, payload: unknown) => await handlers.setMode(payload));
-  ipcMain.handle("wordless:remote:prepare-deploy-bundle", async () => await handlers.prepareDeployBundle());
   ipcMain.handle("wordless:remote:deploy-plan", async (_event, payload: unknown) => await handlers.deployPlan(payload));
   ipcMain.handle("wordless:remote:deploy-probe", async (_event, payload: unknown) => await handlers.deployProbe(payload));
   ipcMain.handle("wordless:remote:deploy-run", async (_event, payload: unknown) => await handlers.deployRun(payload));

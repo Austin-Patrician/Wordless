@@ -97,20 +97,6 @@ describe("远程部署步骤", () => {
 		assert.equal(/rm -rf/.test(result.steps.map((step) => step.command).join("\n")), false, "部署不许删线上已有的东西");
 	});
 
-	it("两条路只差**来源**这一步:同一份命令,换一个 upload 就换一个来源", () => {
-		// 教程档给部署包(用户敲得到),自动部署给安装目录(永远最新)。除此之外必须一模一样 ——
-		// 否则"预览即所跑"就是假的。
-		const bundle = plan({ upload: { relayPath: "/Users/me/Downloads/wordless-deploy/relay.mjs", webClientDir: "/Users/me/Downloads/wordless-deploy/web-client" } });
-		const installed = plan({ upload: { relayPath: "/Applications/Wordless.app/Contents/Resources/relay/relay.mjs", webClientDir: "/Applications/Wordless.app/Contents/Resources/web-client" } });
-		const others = (result: typeof bundle) =>
-			result.steps.filter((step) => step.id !== "Upload").map((step) => `${step.id}:${step.command}`);
-		assert.deepEqual(others(bundle), others(installed));
-		assert.notEqual(
-			bundle.steps.find((step) => step.id === "Upload")?.command,
-			installed.steps.find((step) => step.id === "Upload")?.command,
-		);
-	});
-
 	it("上传那一步真的跑得起来:假 `scp` 收到的是**展开后的文件**与**写死的远程名字**", () => {
 		/*
 			上面那条查的是字符串。这一条**真的执行**那行命令(把 `scp` 换成一个只记录参数的替身),

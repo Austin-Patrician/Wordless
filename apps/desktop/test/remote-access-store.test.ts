@@ -191,7 +191,6 @@ describe("IPC 边界", () => {
 			server: "1.2.3.4",
 			user: "ubuntu",
 			domain: "relay.example.com",
-			uploadSource: "bundle",
 			facts: { nginx: true, nginxActive: true, listeningPorts: [80, 443] },
 		});
 		assert.equal(plan.proxy, "nginx");
@@ -199,53 +198,23 @@ describe("IPC 边界", () => {
 		assert.equal(plan.steps.some((step) => step.id === "NginxSite"), true);
 	});
 
-	it("上传来源按档取:**教程给部署包,自动部署给安装目录**", async () => {
+	it("上传来源**只有一处**:安装目录 —— 调用方不需要声明,也就不可能声明错", async () => {
 		/*
-			这次修复的核心。以前两条路都读部署包目录,于是"没点过准备部署包"会让自动部署
-			死在 scp 上(而且那时服务器上已经建好目录了)—— 一个纯自找的失败。
+			曾经有两个来源(教程档读"下载"里的部署包,自动部署读安装目录),于是"没点过准备部署包"
+			会让教程那句 scp 死在找不到文件上。那个概念已经删掉:两条路读同一个位置,
+			所以这里钉的是"不带任何来源字段也能拿到正确的 Upload"。
 		*/
 		const handlers = await buildService();
 		const uploadOf = (plan: { steps: ReadonlyArray<{ id: string; command: string }> }) =>
 			plan.steps.find((step) => step.id === "Upload")?.command ?? "";
 
-		const tutorial = await handlers.deployPlan({ server: "1.2.3.4", user: "ubuntu", uploadSource: "bundle" });
-		assert.deepEqual(
-			uploadOf(tutorial).split("\n"),
-			[
-				'scp -r "/tmp/wordless-deploy/relay.mjs" ubuntu@1.2.3.4:/opt/wordless-relay/relay.mjs',
-				'scp -r "/tmp/wordless-deploy/web-client"/* ubuntu@1.2.3.4:/opt/wordless-relay/web-client/',
-			],
-			"教程档指部署包",
-		);
-
-		const ssh = await handlers.deployPlan({ server: "1.2.3.4", user: "ubuntu", uploadSource: "installed" });
-		assert.deepEqual(
-			uploadOf(ssh).split("\n"),
-			[
-				'scp -r "/tmp/relay.mjs" ubuntu@1.2.3.4:/opt/wordless-relay/relay.mjs',
-				'scp -r "/tmp/web-client"/* ubuntu@1.2.3.4:/opt/wordless-relay/web-client/',
-			],
-			"自动部署指安装目录里那一份,而且不需要用户先准备副本",
-		);
-	});
-
-	it("上传来源**没有默认值**:缺了/写错都要报错,不能猜", async () => {
-		// 猜错了不会立刻报错,只会在几分钟后以"scp 找不到文件"的样子出现 —— 那时服务器上
-		// 已经建好目录了。所以这里宁可当场拒绝。
-		const handlers = await buildService();
-		await assert.rejects(
-			() => handlers.deployPlan({ server: "1.2.3.4", user: "ubuntu" }),
-			/uploadSource 必须是 bundle\(部署包\)或 installed\(安装目录\)/,
-		);
-		await assert.rejects(
-			() => handlers.deployPlan({ server: "1.2.3.4", user: "ubuntu", uploadSource: "downloads" }),
-			/uploadSource/,
-		);
-		await assert.rejects(
-			() => handlers.deployRun({ server: "1.2.3.4", user: "ubuntu", uploadSource: "whatever" }),
-			/uploadSource/,
-			"执行那条路也要收同一道",
-		);
+		const planned = await handlers.deployPlan({ server: "1.2.3.4", user: "ubuntu" });
+		assert.deepEqual(uploadOf(planned).split("\n"), [
+			'scp -r "/tmp/relay.mjs" ubuntu@1.2.3.4:/opt/wordless-relay/relay.mjs',
+			'scp -r "/tmp/web-client"/* ubuntu@1.2.3.4:/opt/wordless-relay/web-client/',
+		]);
+		// 执行那条路读的是同一处(它自己组装计划,不是拿界面传回来的)。
+		assert.deepEqual(uploadOf(await handlers.deployPlan({ server: "1.2.3.4", user: "ubuntu" })), uploadOf(planned));
 	});
 
 	it("探测结果缺字段/类型不对:当没探测过,不让计划崩", async () => {		const handlers = await buildService();

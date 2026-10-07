@@ -71,10 +71,9 @@ const wordlessBridge: DesktopBridge = {
   setRemoteAccessEnabled: (enabled) => ipcRenderer.invoke("wordless:remote:set-enabled", { enabled }),
   setRemoteRelayUrl: (relayBaseUrl) => ipcRenderer.invoke("wordless:remote:set-relay-url", { relayBaseUrl }),
   setRemoteMode: (mode) => ipcRenderer.invoke("wordless:remote:set-mode", { mode }),
-  // 远程部署的教程档:部署包 + 步骤(见 docs/architecture/remote-deployment.md §3.1)。
-  prepareRemoteDeployBundle: () => ipcRenderer.invoke("wordless:remote:prepare-deploy-bundle"),
+  // 部署计划(教程档渲染它,自动部署跑的**就是这一份**;见 remote-deployment.md §3.1)。
   getRemoteDeployPlan: (input) => ipcRenderer.invoke("wordless:remote:deploy-plan", input),
-  // 自动部署:只读探测 → 预览(就是上面那份计划)→ 逐步执行 → 自检。密码只用于这一次连接。
+  // 自动部署:只读探测 → 逐步执行 → 自检(命令不摆出来,§5.10)。密码只用于这一次连接。
   probeRemoteDeploy: (input) => ipcRenderer.invoke("wordless:remote:deploy-probe", input),
   runRemoteDeploy: (input) => ipcRenderer.invoke("wordless:remote:deploy-run", input),
   cancelRemoteDeploy: () => ipcRenderer.invoke("wordless:remote:deploy-cancel"),

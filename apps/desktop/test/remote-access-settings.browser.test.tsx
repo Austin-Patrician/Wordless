@@ -43,7 +43,6 @@ const setRemoteAccessEnabled = vi.fn(async () => state() as never);
 const setRemoteMode = vi.fn(async () => state() as never);
 const setRemoteLanMode = vi.fn(async () => state() as never);
 const setRemoteLanAddress = vi.fn(async () => state() as never);
-const prepareRemoteDeployBundle = vi.fn(async () => ({ ok: true, dir: "/Users/me/Downloads/wordless-deploy" }));
 const probeRemoteDeploy = vi.fn(async () => ({
   ok: true,
   findings: ["system=Linux x86_64", "node=v20.11.0"],
@@ -106,7 +105,6 @@ const client = {
   setRemoteMode,
   setRemoteLanMode,
   setRemoteLanAddress,
-  prepareRemoteDeployBundle,
   getRemoteDeployPlan,
   probeRemoteDeploy,
   runRemoteDeploy,
@@ -171,7 +169,6 @@ beforeEach(() => {
   createRemoteInvite.mockClear();
   revokeRemoteDevice.mockClear();
   // 新增的替身也要清:不清的话"没调用"这种断言会被上一条用例的调用计数骗过。
-  prepareRemoteDeployBundle.mockClear();
   getRemoteDeployPlan.mockClear();
   probeRemoteDeploy.mockClear();
   runRemoteDeploy.mockClear();
@@ -217,7 +214,7 @@ describe("设置 → 远程连接", () => {
     expect(lan?.getAttribute("aria-pressed")).toBe("false");
   });
 
-  it("自己部署那一档:填服务器与用户 → 准备部署包 → 出步骤(带 sudo 标记),最后能一键填地址", async () => {
+  it("自己部署那一档:填服务器与用户 → 出步骤(带 sudo 标记),最后能一键填地址", async () => {
     getRemoteAccessState.mockResolvedValueOnce(state({ mode: "remote" }) as never);
     await render();
     const inputs = [...container.querySelectorAll("input")];
@@ -236,13 +233,6 @@ describe("设置 → 远程连接", () => {
       [...container.querySelectorAll("button")].find((entry) => entry.textContent?.includes(label));
 
     await act(async () => {
-      button("准备部署包")?.click();
-      await Promise.resolve();
-    });
-    expect(prepareRemoteDeployBundle).toHaveBeenCalled();
-    expect(container.textContent).toContain("/Users/me/Downloads/wordless-deploy");
-
-    await act(async () => {
       button("照着做")?.click();
       await Promise.resolve();
     });
@@ -250,7 +240,6 @@ describe("设置 → 远程连接", () => {
       server: "1.2.3.4",
       user: "ubuntu",
       domain: "relay.example.com",
-      uploadSource: "bundle",
     });
     const text = container.textContent ?? "";
     expect(text).toContain("装 Node 20");
@@ -275,11 +264,9 @@ describe("设置 → 远程连接", () => {
     const button = (label: string) =>
       [...container.querySelectorAll("button")].find((entry) => entry.textContent?.includes(label));
     await openSshTab();
-    await act(async () => {
-      button("先探测")?.click();
-      await Promise.resolve();
-    });
     // 计划要**带着探测结果**去要(否则会白装一遍 Node)。
+    // 探测成功后界面会**自动**去要一份计划(警告必须在按下部署之前就能看到),
+    // 所以这份 mock 要在探测**之前**就位。
     getRemoteDeployPlan.mockResolvedValueOnce({
       steps: [{ id: "PrepareDir", command: "mkdir -p /opt/wordless-relay", sudo: true, target: "server" }],
       skipped: [{ id: "InstallNode", reason: "v20.11.0" }],
@@ -288,7 +275,8 @@ describe("设置 → 远程连接", () => {
       healthUrl: "https://relay.example.com/health",
     } as never);
     await act(async () => {
-      button("预览要跑的步骤")?.click();
+      button("先探测")?.click();
+      await Promise.resolve();
       await Promise.resolve();
     });
     // **整份**探测结果都要往下传:只传 node 那两项时,"nginx 在跑"到不了计划,
@@ -321,10 +309,7 @@ describe("设置 → 远程连接", () => {
     const button = (label: string) =>
       [...container.querySelectorAll("button")].find((entry) => entry.textContent?.includes(label));
     await openSshTab();
-    await act(async () => {
-      button("先探测")?.click();
-      await Promise.resolve();
-    });
+    // 与上一条同理:mock 要在探测之前就位 —— 警告是探测之后**自动**来的。
     getRemoteDeployPlan.mockResolvedValueOnce({
       steps: [{ id: "Service", command: "sudo systemctl restart wordless-relay", sudo: true, target: "server" }],
       skipped: [],
@@ -337,7 +322,8 @@ describe("设置 → 远程连接", () => {
       ],
     } as never);
     await act(async () => {
-      button("预览要跑的步骤")?.click();
+      button("先探测")?.click();
+      await Promise.resolve();
       await Promise.resolve();
     });
     const text = container.textContent ?? "";
@@ -345,57 +331,25 @@ describe("设置 → 远程连接", () => {
     // `{detail}` 要填进去:留着占位符等于没告诉用户"服务器上是哪一版"。
     expect(text).toContain("1.2.0 → 1.4.0");
     expect(text).not.toContain("remoteWarnRedeployOutdated");
-  });
-
-  it("上传来源按档走:教程档要部署包,SSH 档要安装目录", async () => {
     /*
-      这是这次修复的核心。以前两条路都从部署包目录上传,于是"没点过准备部署包"会让自动部署
-      死在 scp 上 —— 而服务器上那时已经建好目录了。
+      计划已经来了(警告就在下面),但**要跑的命令不在这** —— 这一档不摆步骤。
+      这条断言必须挂在"计划已加载"之后:没探测过的时候 `deploySteps` 本来就是 null,
+      那种状态下"看不到命令"什么也证明不了。
     */
-    getRemoteAccessState.mockResolvedValueOnce(state({ mode: "remote" }) as never);
-    await render();
-    const inputs = [...container.querySelectorAll("input")];
-    const setValue = (input: Element, value: string) => {
-      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
-      setter?.call(input, value);
-      input.dispatchEvent(new Event("input", { bubbles: true }));
-    };
-    await act(async () => {
-      setValue(inputs[0] as Element, "1.2.3.4");
-      setValue(inputs[1] as Element, "ubuntu");
-    });
-    const button = (label: string) =>
-      [...container.querySelectorAll("button")].find((entry) => entry.textContent?.includes(label));
-
-    await act(async () => {
-      button("照着做")?.click();
-      await Promise.resolve();
-    });
-    expect(getRemoteDeployPlan, "教程里那句 scp 得指向用户找得到的部署包").toHaveBeenLastCalledWith(
-      expect.objectContaining({ uploadSource: "bundle" }),
-    );
-
-    await openSshTab();
-    await act(async () => {
-      button("预览要跑的步骤")?.click();
-      await Promise.resolve();
-    });
-    expect(getRemoteDeployPlan, "自动部署上传安装目录里那一份 —— 不用先准备副本,而且不会旧").toHaveBeenLastCalledWith(
-      expect.objectContaining({ uploadSource: "installed" }),
-    );
+    expect(text).not.toContain("sudo systemctl restart wordless-relay");
   });
 
-  it("部署包那一节**只属于教程档**:自动部署不该让人先准备一份副本", async () => {
+  it("部署包这个概念已经删掉:两档都不该再出现「准备部署包」", async () => {
+    // 它曾是一个"路径问题"的解法(让教程那句 scp 有个短路径可指),而那个理由不成立了:
+    // 教程的每一步都能一键复制,用户从来不敲路径;副本反而会旧、跳过还会让 scp 找不到文件。
     getRemoteAccessState.mockResolvedValueOnce(state({ mode: "remote" }) as never);
     await render();
     const button = (label: string) =>
       [...container.querySelectorAll("button")].find((entry) => entry.textContent?.includes(label));
-    // 查按钮而不是查文本:SSH 档那句说明里也会出现"准备部署包"(它说的是"不用先准备")。
-    expect(button("准备部署包")).toBeDefined();
+    expect(button("准备部署包")).toBeUndefined();
     await openSshTab();
     expect(button("准备部署包")).toBeUndefined();
-    // 而且要说清它传的是哪一份 —— 不写出来用户会以为这里漏了一步。
-    expect(container.textContent).toContain("安装目录里");
+    expect(container.textContent).not.toContain("wordless-deploy");
   });
 
   it("卸载:要删什么先摆出来,确认之后才跑(不可逆的动作不该只有「信任」一条路)", async () => {
@@ -555,7 +509,6 @@ describe("设置 → 远程连接", () => {
     expect(getRemoteDeployPlan).toHaveBeenCalledWith({
       server: "1.2.3.4",
       user: "ubuntu",
-      uploadSource: "bundle",
       relayPort: 9001,
       publicPort: 8443,
     });
@@ -580,7 +533,7 @@ describe("设置 → 远程连接", () => {
     // 没探测过:部署键是**灰的**,而且旁边写着为什么(灰着不说原因,用户只会以为坏了)。
     await openSshTab();
     expect(button("开始部署")?.hasAttribute("disabled")).toBe(true);
-    expect(container.textContent).toContain("先探测一次再部署");
+    expect(container.textContent).toContain("先探测一次");
     await act(async () => {
       button("开始部署")?.click();
       await Promise.resolve();
@@ -830,10 +783,13 @@ describe("设置 → 远程连接", () => {
     await openSshTab();
     const after = container.textContent ?? "";
     expect(after).toContain("先探测");
-    expect(after).toContain("预览要跑的步骤");
+    // 这一档**不摆要跑的命令**:它与教程那一档是同一份,而这一档是自动的 ——
+    // 用户不需要先读一遍(真要看,教程那一档里每一步都能复制)。
+    expect(after).not.toContain("预览要跑的步骤");
+    expect(after).not.toContain("照着做:每一步都能复制");
     expect(after).not.toContain("先确认这几件事");
-    // 部署包是两条路**共用**的,所以它不属于任何一档 —— 两档里都看得到。
-    expect(after).toContain("准备部署包");
+    // 部署包这个概念已经没了 —— 两档里都不该再出现。
+    expect(after).not.toContain("准备部署包");
   });
 
   it("能测中继连通性,并把地址与原因显示出来", async () => {

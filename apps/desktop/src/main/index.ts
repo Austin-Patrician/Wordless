@@ -611,10 +611,12 @@ app.whenReady().then(async () => {
     },
   });
   /**
-   * 部署包的两条路径。
+   * 部署要用的两条本机路径。
    *
    * 中继单文件随包发布(`resources/relay/relay.mjs`,见 `scripts/build-relay-bundle.mjs`),
    * 网页客户端与局域网模式用的是**同一份**产物 —— 两处指向同一个目录,升级时一起变。
+   *
+   * 两条路(教程与自动部署)读的就是这两条 —— 不再有"先复制一份部署包"那一步(§5.9)。
    */
   const webClientDir = app.isPackaged
     ? path.join(process.resourcesPath, "web-client")
@@ -630,8 +632,6 @@ app.whenReady().then(async () => {
         ? path.join(process.resourcesPath, "relay", "relay.mjs")
         : path.resolve(__dirname, "../../resources/relay/relay.mjs"),
       webClientDir,
-      // 用户要找得到它:固定放"下载"里,教程里那句 scp 直接指这里。
-      deployBundleDir: path.join(app.getPath("downloads"), "wordless-deploy"),
     },
   });
   // 先读偏好再开始服务:在那之前 getState() 只能给出默认值。

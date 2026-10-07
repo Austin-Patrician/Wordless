@@ -3,7 +3,6 @@ import { normalizeRelayAddress, probeRelay, type RelayProbeResult } from "./rela
 import { DEPLOY_RELAY_PORT, remoteDeployPlan, type DeployPlan, type DeployPlanInput, type DeployUploadSource } from "./deploy-plan.ts";
 import { SshDeploy, type DeployProgress, type SshTarget } from "./ssh-deploy.ts";
 import { remoteUninstallPlan, type UninstallPlan, type UninstallScope } from "./uninstall-plan.ts";
-import { deployBundleUpload, prepareDeployBundle, type DeployBundleResult } from "./deploy-bundle.ts";
 
 /**
  * 远程访问的 IPC 逻辑。
@@ -19,14 +18,6 @@ import { deployBundleUpload, prepareDeployBundle, type DeployBundleResult } from
 export interface RemoteAccessHandlers {
 	getState(): Promise<RemoteAccessState>;
 	setEnabled(payload: unknown): Promise<RemoteAccessState>;
-	/**
-	 * 准备部署包(把中继单文件与网页客户端复制到用户找得到的地方)。
-	 *
-	 * 目录由主进程定(默认在"下载"里),因为教程里那句 `scp` 要指向**真实存在的路径**。
-	 *
-	 * **只有教程档需要它**:自动部署直接上传安装目录里的那一份(见 `readUploadSource`)。
-	 */
-	prepareDeployBundle(): Promise<DeployBundleResult>;
 	/** 取部署步骤(教程档渲染它;自动部署跑的**就是这一份**)。 */
 	deployPlan(payload: unknown): Promise<DeployPlan>;
 	/** 只读探测:动手之前先问清楚(系统、Node、用户、sudo)。 */
@@ -58,13 +49,13 @@ export interface RemoteAccessHandlers {
 }
 
 /**
- * 部署包相关的**路径**(由主进程给:它们要 `app.getPath`,而这一层刻意不 import Electron)。
+ * 部署要用的**本机路径**(由主进程给:它们要 `app.getPath`,而这一层刻意不 import Electron)。
  */
 export interface RemoteAccessHandlerPaths {
+	/** 随包发布的中继单文件(`Resources/relay/relay.mjs`)。 */
 	readonly relayBundlePath: string;
+	/** 随包发布的网页客户端构建产物目录(`Resources/web-client`)。 */
 	readonly webClientDir: string;
-	/** "准备部署包"复制到哪儿(通常是"下载"里的一个固定子目录)。 */
-	readonly deployBundleDir: string;
 	/**
 	 * 这台电脑上装的是哪一版(`app.getVersion()`)。
 	 *
@@ -95,13 +86,6 @@ export function createRemoteAccessHandlers(
 			return service.setEnabled(enabled);
 		},
 
-		prepareDeployBundle: async () =>
-			prepareDeployBundle({
-				relayBundlePath: paths.relayBundlePath,
-				webClientDir: paths.webClientDir,
-				targetDir: paths.deployBundleDir,
-			}),
-
 		deployPlan: async (payload) => {
 			const record = asRecord(payload);
 			/**
@@ -112,7 +96,7 @@ export function createRemoteAccessHandlers(
 			 */
 			return remoteDeployPlan({
 				...readTargetInputs(record),
-				upload: readUploadSource(record, paths),
+				upload: readUploadSource(paths),
 				...(paths.version === undefined ? {} : { version: paths.version }),
 			});
 		},
@@ -128,7 +112,7 @@ export function createRemoteAccessHandlers(
 			const record = asRecord(payload);
 			const plan = remoteDeployPlan({
 				...readTargetInputs(record),
-				upload: readUploadSource(record, paths),
+				upload: readUploadSource(paths),
 				...(paths.version === undefined ? {} : { version: paths.version }),
 			});
 			return sshDeploy.run(readTarget(payload), plan.steps, (progress) => deps.onDeployProgress?.(progress));
@@ -324,24 +308,15 @@ function readOptionalPort(record: Record<string, unknown>, field: string): numbe
  * scope 收一道值域:`remove` 是不可逆的那一档,不能让一个拼错的字符串意外走到它。
  */
 /**
- * 上传来源:**两条路给的本来就不是同一个位置**,所以这里必须问清楚是哪一条。
+ * 上传来源:**就是这台电脑安装目录里的那一份**。
  *
- * 为什么不给默认值:默认错了不会报错,只会在几分钟后以"scp 找不到文件"的样子出现
- * (而且那时服务器上已经建好目录了)。要求显式传,漏了就是一条能看懂的错。
+ * 曾经有第二个来源(复制到"下载"里的部署包),为的是让教程里那句 `scp` 指向一个短路径。
+ * 那个理由不成立了:教程的每一步都能**一键复制**,用户从来不敲路径;而副本**会旧**
+ * (升级桌面端之后它停在上一版,没有任何东西会察觉),跳过那一步还会让 `scp` 直接找不到文件。
+ * 现在两条路读同一个位置,`Resources/` 下的东西**在 asar 之外**,`scp` 读得到。
  */
-function readUploadSource(
-	record: Record<string, unknown>,
-	paths: RemoteAccessHandlerPaths,
-): DeployUploadSource {
-	const source = record.uploadSource;
-	if (source !== "bundle" && source !== "installed") {
-		throw new Error("uploadSource 必须是 bundle(部署包)或 installed(安装目录)");
-	}
-	if (source === "installed") {
-		// 装在这台电脑上的那一份:自动部署上传它,所以**永远是最新的**(副本会旧)。
-		return { relayPath: paths.relayBundlePath, webClientDir: paths.webClientDir };
-	}
-	return deployBundleUpload(paths.deployBundleDir);
+function readUploadSource(paths: RemoteAccessHandlerPaths): DeployUploadSource {
+	return { relayPath: paths.relayBundlePath, webClientDir: paths.webClientDir };
 }
 
 function readUninstallInput(payload: unknown): Parameters<typeof remoteUninstallPlan>[0] {

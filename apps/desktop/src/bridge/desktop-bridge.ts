@@ -204,26 +204,11 @@ export interface DesktopBridge {
    */
   onRemoteAccessChanged(listener: (state: RemoteAccessState) => void): () => void;
   setRemoteAccessEnabled(enabled: boolean): Promise<RemoteAccessState>;
-  /**
-   * 准备远程部署包:把中继单文件与网页客户端复制到一个用户找得到的地方。
-   *
-   * 教程里那句 `scp` 必须指向**真实存在的路径** —— 让用户自己去安装目录里翻是不现实的。
-   *
-   * **只有教程档需要它**:自动部署上传的是安装目录里那一份(`uploadSource: "installed"`)。
-   */
-  prepareRemoteDeployBundle(): Promise<{ ok: boolean; dir?: string; error?: string }>;
   /** 取部署步骤(教程档渲染它;自动部署跑的**就是这一份**命令)。 */
   getRemoteDeployPlan(input: {
     server: string;
     user: string;
     domain?: string;
-    /**
-     * 上传来源。**必填、没有默认值** —— 两条路给的本来就不是同一个位置,猜错了不会报错,
-     * 只会在几分钟后以"scp 找不到文件"的样子出现(那时服务器上已经建好目录了)。
-     *
-     * `bundle` = 部署包(教程档:那句 scp 要指得到);`installed` = 安装目录(自动部署:永远最新)。
-     */
-    uploadSource: "bundle" | "installed";
     /** 探测结果(**整份**带过去):跳过哪些步骤、走哪条反代路线都由它决定。 */
     facts?: DeployProbeFacts;
     /** 中继在服务器上监听的端口(默认 8787)。 */
@@ -266,11 +251,6 @@ export interface DesktopBridge {
     server: string;
     user: string;
     domain?: string;
-    /**
-     * 上传来源:自动部署固定给 `installed` —— 上传这台电脑安装目录里的那一份,
-     * 不用用户先"准备部署包",而且永远是最新的。
-     */
-    uploadSource: "bundle" | "installed";
     /** 探测结果(**整份**带过来):跳过哪些步骤、走哪条反代路线都由它决定。 */
     facts?: DeployProbeFacts;
     /** SSH 端口(默认 22)。 */
@@ -947,7 +927,6 @@ export const requiredMethods: Array<Exclude<keyof DesktopBridge, "version">> = [
   "onRemoteAccessChanged",
   "setRemoteAccessEnabled",
   "setRemoteMode",
-  "prepareRemoteDeployBundle",
   "getRemoteDeployPlan",
   "probeRemoteDeploy",
   "runRemoteDeploy",
