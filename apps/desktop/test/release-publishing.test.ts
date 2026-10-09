@@ -5,10 +5,76 @@ import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
+import { fileURLToPath } from "node:url";
+import { deflateRawSync } from "node:zlib";
 import test from "node:test";
 
 const execFileAsync = promisify(execFile);
 const scriptsDirectory = new URL("../scripts/", import.meta.url);
+const scriptPath = (name: string) => fileURLToPath(new URL(name, scriptsDirectory));
+
+/**
+ * 一份**形状正确**的 AppImage:文件本体 + deflate(块图) + 4 字节大端长度。
+ * 这正是 electron-builder 的 `appendBlockmap` 追加的东西,electron-updater 也按这个布局去读
+ * (`fileSize - (blockMapSize + 4)`)。
+ */
+function appImageFixture(payload: string) {
+  const body = Buffer.from(payload);
+  const blockMap = { version: "2", files: [{ name: "file", offset: 0, checksums: ["checksum"], sizes: [body.length] }] };
+  const compressed = deflateRawSync(Buffer.from(JSON.stringify(blockMap)));
+  const sizeHeader = Buffer.allocUnsafe(4);
+  sizeHeader.writeUInt32BE(compressed.length, 0);
+  return { bytes: Buffer.concat([body, compressed, sizeHeader]), blockMapSize: compressed.length };
+}
+
+test("linux update metadata carries the embedded block map size", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "wordless-linux-update-manifest-"));
+  try {
+    const version = "1.2.3";
+    const name = `Wordless-${version}-linux-x64.AppImage`;
+    const { bytes, blockMapSize } = appImageFixture("appimage-payload");
+    await writeFile(path.join(root, name), bytes);
+
+    const output = path.join(root, "latest-linux.yml");
+    await execFileAsync(process.execPath, [
+      scriptPath("generate-linux-update-manifest.mjs"),
+      "--release-dir", root,
+      "--version", version,
+      "--url-prefix", "v1.2.3",
+      "--output", output,
+    ]);
+
+    const yaml = await readFile(output, "utf8");
+    assert.match(yaml, /version: 1\.2\.3/);
+    assert.match(yaml, new RegExp(`url: v1\\.2\\.3/${name.replaceAll(".", "\\.")}`));
+    assert.match(yaml, new RegExp(`path: v1\\.2\\.3/${name.replaceAll(".", "\\.")}`));
+    assert.match(yaml, new RegExp(`size: ${String(bytes.length)}`));
+    // 少了这一行不会报错,但差分更新会退化成全量下载 —— 所以它必须被钉住。
+    assert.match(yaml, new RegExp(`blockMapSize: ${String(blockMapSize)}`));
+    assert.ok(yaml.includes(createHash("sha512").update(bytes).digest("base64")));
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("linux update metadata rejects an AppImage without an embedded block map", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "wordless-linux-update-manifest-bad-"));
+  try {
+    // 一个"看起来像 AppImage"但尾部没有块图的文件:与其让用户在差分下载时炸,不如在这里红。
+    await writeFile(path.join(root, "Wordless-1.2.3-linux-x64.AppImage"), "not-an-appimage");
+    await assert.rejects(
+      execFileAsync(process.execPath, [
+        scriptPath("generate-linux-update-manifest.mjs"),
+        "--release-dir", root,
+        "--version", "1.2.3",
+        "--output", path.join(root, "latest-linux.yml"),
+      ]),
+      /embedded block map/,
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
 
 test("update manifests use the immutable version directory", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "wordless-update-manifests-"));

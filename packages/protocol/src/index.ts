@@ -133,6 +133,25 @@ export type DesktopMenuId = "file" | "edit" | "window" | "help";
 export type DesktopCommand =
   "new-thread" | "open-settings" | "search" | "show-about";
 
+/**
+ * 标题栏上的窗口按钮动作。
+ *
+ * Windows 上这些按钮是系统画的(`titleBarOverlay`),Linux 上系统不画 —— 按钮由渲染层自己画,
+ * 于是需要一条回到主进程的路。`close` 与直接点窗口的 × 是同一条路(idempotent 地走 close 事件)。
+ */
+export type DesktopWindowControl = "minimize" | "toggle-maximize" | "close";
+
+/**
+ * 窗口状态。目前只有"是否最大化" —— Linux 上标题栏那三个按钮由渲染层画,
+ * 中间那个的图标与标签必须跟着这个状态变(见 `docs/architecture/linux-release.md` §3 D3)。
+ *
+ * 两条路都要有:挂载时**拉一次**(窗口可能一开就是最大化的,比如窗口状态被系统恢复),
+ * 之后靠 `window.changed` 事件**推**。
+ */
+export type DesktopWindowState = {
+  maximized: boolean;
+};
+
 export type DesktopAppInfo = {
   name: string;
   version: string;
@@ -436,12 +455,13 @@ export type DesktopUpdateSnapshot = {
   progress?: number;
   checkedAt?: number;
   error?: string;
-  installMode?: "restart-install" | "manual-dmg";
+  installMode?: "restart-install" | "manual-dmg" | "manual-package";
 };
 
 export type DesktopHostEvent =
   | { type: "command"; command: DesktopCommand }
   | { type: "deep-link"; url: string }
+  | { type: "window.changed"; state: DesktopWindowState }
   | { type: "update"; snapshot: DesktopUpdateSnapshot }
   | { type: "account.changed"; account: AccountSnapshot }
   | { type: "cloud-sync.changed"; snapshot: CloudSyncSnapshot }

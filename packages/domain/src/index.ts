@@ -2214,6 +2214,34 @@ export interface ContextCompactionRecord {
   model: ModelReference;
 }
 
+/**
+ * 一次模型调用的**时间事实**。
+ *
+ * 为什么和 `ConversationUsage` 分开:`ConversationUsage` 那组不变式(I1–I11)全是 token 与成本的,
+ * 把时间塞进同一个袋子会把"分母是谁"搅浑;而且聚合规则也不同(速度要按生成窗口**加权**、首 token
+ * 要取中位数,都不是简单求和)。
+ *
+ * 四个时刻都必须在**同一个进程**里取 —— 这也是它只能由"消费流的那一层"(`packages/agent` 的
+ * agent loop)记录的原因:跨进程/跨设备相减会碰上时钟偏移。
+ */
+export interface ModelCallTiming {
+  /** 请求发出时刻(epoch ms)。 */
+  requestStartedAt: number;
+  /** 首个**内容**增量到达(thinking / text / toolcall 任一)。未观测到流式增量时不写。 */
+  firstTokenAt?: number;
+  /** 首个**正文**(text)增量到达 —— "我多久看到第一行答案",与首 token 分开。 */
+  firstTextAt?: number;
+  /** 调用结束(收到 `message_end`)。abort / error 也写。 */
+  completedAt: number;
+  /**
+   * 是否观测到流式增量。
+   *
+   * `false` 时**首 token 与速度都不可得** —— 既不是 0,也不能拿总时长冒充(非流式响应里
+   * "首 token 耗时"就是整个调用时长,那个数会骗人)。
+   */
+  streamed: boolean;
+}
+
 export interface ConversationMessage {
   id: string;
   role: "user" | "assistant";
@@ -2222,6 +2250,8 @@ export interface ConversationMessage {
   model: ModelReference | null;
   timestamp: number;
   usage?: ConversationUsage;
+  /** 只有助手消息有:这次模型调用的时间事实(见 `ModelCallTiming`)。 */
+  timing?: ModelCallTiming;
   errorMessage?: string;
 }
 
@@ -2657,6 +2687,36 @@ export function conversationUsageFromUnknown(
 }
 
 /**
+ * 把消息里的调用计时读成领域形状。
+ *
+ * 逐字段判类型,而不是整体断言:journal 是磁盘上的东西 —— 可能是老记录、也可能被手改过。
+ * 一个坏字段只该让这一个数"不可得",不该让整条消息渲染不出来。
+ *
+ * `firstTokenAt` / `firstTextAt` **缺省即缺失**:不补 `completedAt`。非流式响应里"首 token 耗时"
+ * 就是整个调用时长,拿它冒充会骗人(见 `ModelCallTiming.streamed`)。
+ */
+export function modelCallTimingFromUnknown(
+  value: unknown,
+): ModelCallTiming | undefined {
+  if (typeof value !== "object" || value === null || Array.isArray(value))
+    return undefined;
+  const timing = value as Record<string, unknown>;
+  const requestStartedAt = optionalNonNegativeNumber(timing.requestStartedAt);
+  const completedAt = optionalNonNegativeNumber(timing.completedAt);
+  if (requestStartedAt === undefined || completedAt === undefined)
+    return undefined;
+  const firstTokenAt = optionalNonNegativeNumber(timing.firstTokenAt);
+  const firstTextAt = optionalNonNegativeNumber(timing.firstTextAt);
+  return {
+    requestStartedAt,
+    ...(firstTokenAt === undefined ? {} : { firstTokenAt }),
+    ...(firstTextAt === undefined ? {} : { firstTextAt }),
+    completedAt,
+    streamed: timing.streamed === true,
+  };
+}
+
+/**
  * prompt 的分量口径:`input` / `cacheRead` / `cacheWrite` **互斥**,三者之和才是 prompt。
  * `output` 永不进任何 prompt 分母(它不属于请求)。
  */
@@ -2958,6 +3018,139 @@ export interface TurnUsageDetails {
   summary: TokenUsageSummary;
   /** 参与统计的逐条用量(主调用在前、委派在后),给折叠明细用。 */
   usages: readonly ConversationUsage[];
+  /** 本轮的速度与首 token 耗时(口径见 `TurnLatencySummary`)。 */
+  latency: TurnLatencySummary;
+}
+
+/** 一次调用的延迟明细(折叠列表逐行用)。 */
+export interface TurnCallLatency {
+  /** 本轮第几次调用,从 1 开始(按消息顺序)。**没有时间事实的调用也占一行**(数值为 `null`)。 */
+  index: number;
+  /** 请求发出时刻;这次调用没有时间事实时为 `null`。 */
+  requestStartedAt: number | null;
+  /** 请求发出 → 首个内容增量;未观测到流式增量时为 `null`。 */
+  firstTokenMs: number | null;
+  /** 首个内容增量 → 调用结束(生成窗口);不可得时为 `null`。 */
+  generationMs: number | null;
+  outputTokens: number;
+  /** 生成窗口内的输出速度;窗口不可得或为 0 时为 `null`。 */
+  outputTokensPerSecond: number | null;
+}
+
+/**
+ * 本轮的速度与首 token 耗时。
+ *
+ * **口径(必须写清,否则数字没法解释)**
+ *
+ * - `firstTokenMs`:本轮**第一次可观测调用**的"请求发出 → 首个内容增量"。即"模型多快开始吐东西",
+ *   不含本地组装、也不含工具执行。**不含 thinking?含** —— thinking 也是模型在吐东西,界面那一刻
+ *   就有反应了;想看"第一行正文"用 `calls[].firstTextAt` 的派生值。
+ * - `outputTokensPerSecond`:`Σoutput / Σ生成窗口`,**按窗口加权**。不是对每次调用的速度取算术平均
+ *   (一次大调用 + 一次小调用会被小调用带偏,与 I10 同一个陷阱);也**不是**整轮墙钟 —— agent 轮次里
+ *   混进几十次工具执行时间,那个数没有意义。
+ * - 分子只含**窗口可观测**的那些调用:窗口进不了分母,它的 output 也不许进分子(与 I3 同一条纪律)。
+ * - `observedCalls / totalCalls` 必须一起显示:老记录没有时间事实,只看速度会以为是"最近变慢了"。
+ *
+ * **委派(子代理 / 专家团)不计入**:它们的时间事实挂在子代理自己的 harness 上,当前没有随
+ * 工具块上报(`details.usage` 只带 token)。所以这里的 `totalCalls` 是**主调用**数。
+ */
+export interface TurnLatencySummary {
+  firstTokenMs: number | null;
+  /** 每次可观测调用的首 token 耗时**中位数** —— 避免被一次慢调用带偏。 */
+  callFirstTokenMedianMs: number | null;
+  outputTokensPerSecond: number | null;
+  /** Σ生成窗口(ms)。 */
+  generationMs: number;
+  /** 本轮有 usage 的主调用数(分母)。 */
+  totalCalls: number;
+  /** 其中带时间事实的调用数(分子)。 */
+  observedCalls: number;
+  calls: readonly TurnCallLatency[];
+}
+
+function median(values: readonly number[]): number | null {
+  if (values.length === 0) return null;
+  const sorted = [...values].sort((left, right) => left - right);
+  const middle = Math.floor(sorted.length / 2);
+  if (sorted.length % 2 === 1) return sorted[middle]!;
+  return (sorted[middle - 1]! + sorted[middle]!) / 2;
+}
+
+/**
+ * 把一组消息折算成本轮的速度与首 token 耗时。
+ *
+ * 与 `summarizeUsageMessages` 同样的输入(消息序列),所以两处口径天然同步:同一条消息既贡献
+ * 用量也贡献时间,不会出现"用量算 5 次、速度算 4 次"。
+ */
+export function summarizeTurnLatency(
+  messages: readonly ConversationMessage[],
+): TurnLatencySummary {
+  const calls: TurnCallLatency[] = [];
+  let totalCalls = 0;
+  let observedCalls = 0;
+  for (const message of messages) {
+    if (message.role !== "assistant" || !message.usage) continue;
+    totalCalls += 1;
+    const outputTokens = message.usage.outputTokens;
+    const timing = message.timing;
+    if (!timing) {
+      /*
+       * 没有时间事实的调用**也要占一行**:逐次明细的作用就是回答"哪一次没采集到",
+       * 把它藏起来会让人以为这一轮只调用了一次。数值一律 `null` ⇒ 界面显示"—"。
+       */
+      calls.push({
+        index: calls.length + 1,
+        requestStartedAt: null,
+        firstTokenMs: null,
+        generationMs: null,
+        outputTokens,
+        outputTokensPerSecond: null,
+      });
+      continue;
+    }
+    const firstTokenMs =
+      timing.firstTokenAt === undefined
+        ? null
+        : Math.max(0, timing.firstTokenAt - timing.requestStartedAt);
+    const generationMs =
+      timing.firstTokenAt === undefined
+        ? null
+        : Math.max(0, timing.completedAt - timing.firstTokenAt);
+    const outputTokensPerSecond =
+      generationMs !== null && generationMs > 0
+        ? (outputTokens * 1000) / generationMs
+        : null;
+    if (firstTokenMs !== null) observedCalls += 1;
+    calls.push({
+      index: calls.length + 1,
+      requestStartedAt: timing.requestStartedAt,
+      firstTokenMs,
+      generationMs,
+      outputTokens,
+      outputTokensPerSecond,
+    });
+  }
+
+  let generationMs = 0;
+  let weightedOutputTokens = 0;
+  for (const call of calls) {
+    if (call.generationMs === null || call.generationMs <= 0) continue;
+    generationMs += call.generationMs;
+    weightedOutputTokens += call.outputTokens;
+  }
+
+  return {
+    firstTokenMs: calls.find((call) => call.firstTokenMs !== null)?.firstTokenMs ?? null,
+    callFirstTokenMedianMs: median(
+      calls.flatMap((call) => (call.firstTokenMs === null ? [] : [call.firstTokenMs])),
+    ),
+    outputTokensPerSecond:
+      generationMs > 0 ? (weightedOutputTokens * 1000) / generationMs : null,
+    generationMs,
+    totalCalls,
+    observedCalls,
+    calls,
+  };
 }
 
 /**
@@ -3024,6 +3217,7 @@ export function summarizeUsageMessages(
     usage: { ...merged, primaryCallCount, toolCallCount },
     summary,
     usages,
+    latency: summarizeTurnLatency(messages),
   };
 }
 

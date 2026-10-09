@@ -46,12 +46,12 @@ const releasesDirectory = join(appRoot, "release");
 function resolveUnpackedDirectory() {
   const requested = process.argv[2];
   if (requested !== undefined) return resolve(requested);
-  if (!existsSync(releasesDirectory)) fail("还没有 release/ 目录 —— 先跑一次 dist:win 或 dist:mac");
+  if (!existsSync(releasesDirectory)) fail("还没有 release/ 目录 —— 先跑一次 dist:win / dist:mac / dist:linux");
   const candidates = readdirSync(releasesDirectory)
     .map((name) => join(releasesDirectory, name))
     .filter((path) => {
       if (!statSync(path).isDirectory()) return false;
-      return existsSync(join(path, "Wordless.exe")) || readdirSync(path).some((name) => name.endsWith(".app"));
+      return existsSync(join(path, "Wordless.exe")) || existsSync(join(path, "wordless")) || readdirSync(path).some((name) => name.endsWith(".app"));
     });
   if (candidates.length !== 1) {
     fail(
@@ -94,19 +94,37 @@ function fail(message) {
   process.exit(1);
 }
 
-/** 在解包目录里找到可执行文件(Win/Linux 在根,Mac 在 .app 里),以及它旁边的 app.asar。 */
+/**
+ * 在解包目录里找到可执行文件(Win/Linux 在根,Mac 在 .app 里),以及它旁边的 app.asar。
+ *
+ * 顺带给出**这个平台**在 `asarUnpack` 里应该出现的那几个原生包名:`.node` 不能从 asar 里加载,
+ * 所以"装了但没解出来"必须在打包期就红。原生包名按平台带后缀(Windows 是 `-msvc`,Linux 是 `-gnu`),
+ * 所以这份清单只能跟着布局一起走 —— 早先它硬编码在 `.exe` 分支里,Linux 包会整段跳过这项检查。
+ */
 function locateApplication(directory) {
   const windows = join(directory, "Wordless.exe");
   if (existsSync(windows)) {
-    return { executable: windows, asar: join(directory, "resources", "app.asar") };
+    return {
+      executable: windows,
+      asar: join(directory, "resources", "app.asar"),
+      nativePackages: ["@tailwindcss/oxide-win32-x64-msvc", "lightningcss-win32-x64-msvc"],
+    };
   }
   const bundle = readdirSync(directory).find((name) => name.endsWith(".app"));
   if (bundle !== undefined) {
     const macRoot = join(directory, bundle, "Contents");
-    return { executable: join(macRoot, "MacOS", "Wordless"), asar: join(macRoot, "Resources", "app.asar") };
+    // macOS 不在这里断言:darwin 的原生包名带架构后缀(`-arm64` / `-x64`),而 `.app` 目录名不保证
+    // 能反推出架构。macOS 侧由 `dist:mac` 里那次真实的编译探针兜底。
+    return { executable: join(macRoot, "MacOS", "Wordless"), asar: join(macRoot, "Resources", "app.asar"), nativePackages: [] };
   }
   const linux = join(directory, "wordless");
-  if (existsSync(linux)) return { executable: linux, asar: join(directory, "resources", "app.asar") };
+  if (existsSync(linux)) {
+    return {
+      executable: linux,
+      asar: join(directory, "resources", "app.asar"),
+      nativePackages: [`@tailwindcss/oxide-linux-${process.arch}-gnu`, `lightningcss-linux-${process.arch}-gnu`],
+    };
+  }
   fail(`${directory} 里找不到可执行文件(Windows/Linux/macOS 三种布局都试过了)`);
 }
 
@@ -173,7 +191,7 @@ function run(executable, args, cwd) {
 const tail = (text, limit = 2_000) => (text.length <= limit ? text : `…${text.slice(-limit)}`);
 
 async function main() {
-  const { executable, asar } = locateApplication(unpackedDirectory);
+  const { executable, asar, nativePackages } = locateApplication(unpackedDirectory);
   if (!existsSync(asar)) fail(`${asar} 不存在`);
   process.stdout.write(`verify-packaged-design-build: ${executable}\n`);
 
@@ -203,10 +221,10 @@ async function main() {
       );
     }
   }
-  // 平台原生包必须解出来:`.node` 不能从 asar 里加载。只对当前这个包的平台断言。
-  if (executable.endsWith(".exe")) {
+  // 平台原生包必须解出来:`.node` 不能从 asar 里加载。清单跟着布局走(见 locateApplication)。
+  if (nativePackages.length > 0) {
     const unpacked = new Set(listPackagesUnder(join(dirname(asar), "app.asar.unpacked", "node_modules")));
-    for (const name of ["@tailwindcss/oxide-win32-x64-msvc", "lightningcss-win32-x64-msvc"]) {
+    for (const name of nativePackages) {
       if (!unpacked.has(name)) fail(`${name} 不在 app.asar.unpacked 里 —— 原生 .node 不能从 asar 里加载`);
     }
   }

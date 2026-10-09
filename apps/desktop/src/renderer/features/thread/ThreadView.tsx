@@ -857,6 +857,19 @@ const THREAD_INITIAL_BOTTOM_LOCATION = {
   index: "LAST" as const,
 };
 
+/**
+ * 消息列表**永不横向滚动**。
+ *
+ * Virtuoso 的 scroller 只声明了 `overflow-y: auto`,而按 CSS 规则,一轴不是 `visible` 时
+ * 另一轴的 `visible` **会计算成 `auto`** —— 于是这个容器实际上是一条横向滚动容器。任何
+ * 顶出内容宽度的东西(列表 / 标题里的长路径、长 URL 就是)都会让列表底部、也就是 composer
+ * 正上方长出一条横向滚动条,而且拖的是整段对话。
+ *
+ * 所以在这里显式收掉这条轴:该换行的在 `message-markdown.css` 里换行,收不住的宁可裁掉,
+ * 也不许整段对话横着走。
+ */
+const THREAD_SCROLLER_STYLE = { overflowX: "hidden" } as const;
+
 function isScrollbarPointerDown(
   event: Parameters<NonNullable<ComponentProps<"div">["onPointerDown"]>>[0],
 ): boolean {
@@ -886,6 +899,7 @@ function ExpertMemberScroller(
   return (
     <div
       {...props}
+      style={{ ...props.style, ...THREAD_SCROLLER_STYLE }}
       onKeyDown={(event) => {
         if (["ArrowUp", "PageUp", "Home"].includes(event.key))
           context?.viewportStore.markUserScrollIntent();
@@ -3375,6 +3389,7 @@ const ThreadStoreScroller = forwardRef<
   return (
     <div
       {...props}
+      style={{ ...props.style, ...THREAD_SCROLLER_STYLE }}
       onKeyDown={(event) => {
         if (["ArrowUp", "PageUp", "Home"].includes(event.key))
           context?.viewportStore.markUserScrollIntent();

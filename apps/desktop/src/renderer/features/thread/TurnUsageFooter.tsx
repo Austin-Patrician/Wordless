@@ -18,6 +18,12 @@ export function TurnUsageFooter({
   loadSessionUsage?: () => Promise<SessionUsageSnapshot | null>;
 }) {
   // 依赖消息数组本身:上层每次渲染都会新建数组,所以这里的缓存是为了同一次渲染内不重复算。
-  const usage = useMemo(() => summarizeUsageMessages(messages)?.usage, [messages]);
-  return <TurnTokenUsageRow loadSessionUsage={loadSessionUsage} usage={usage} />;
+  const details = useMemo(() => summarizeUsageMessages(messages), [messages]);
+  return (
+    <TurnTokenUsageRow
+      latency={details?.latency}
+      loadSessionUsage={loadSessionUsage}
+      usage={details?.usage}
+    />
+  );
 }

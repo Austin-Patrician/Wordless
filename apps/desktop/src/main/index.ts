@@ -37,7 +37,7 @@ import { NodeDesignFs } from "./design/design-fs";
 import { WorkspacePathService } from "@wordless/platform-node";
 import { OnboardingService } from "./onboarding/onboarding-service";
 import { createMainWindow, updateTitleBarOverlays } from "./windows/main-window";
-import { createDesktopHostInfo } from "./platform/desktop-platform";
+import { closingQuitsApplication, createDesktopHostInfo } from "./platform/desktop-platform";
 import { ApplicationMenuController } from "./menu/application-menu";
 import { hydrateShellEnvironment } from "./environment/shell-environment";
 import { HostEnvironmentService } from "./environment/host-environment-service";
@@ -143,6 +143,36 @@ function showWindow(): void {
   if (mainWindow.isMinimized()) mainWindow.restore();
   if (!mainWindow.isVisible()) mainWindow.show();
   mainWindow.focus();
+}
+
+/**
+ * 标题栏上那三个按钮的动作(Linux:系统不画那组按钮,渲染层自己画)。
+ *
+ * `close` 走的是 `window.close()` —— 与点窗口的 × 完全同一条路,所以"Linux 上关窗即退出、
+ * 其他平台收进托盘"这条规则不会被按钮绕过去(见 `closingQuitsApplication`)。
+ */
+function controlMainWindow(action: import("@wordless/protocol").DesktopWindowControl): void {
+  const window = mainWindow;
+  if (!window || window.isDestroyed()) return;
+  if (action === "minimize") window.minimize();
+  else if (action === "toggle-maximize") window.isMaximized() ? window.unmaximize() : window.maximize();
+  else window.close();
+}
+
+/**
+ * 主窗口的行为。**两处创建窗口(启动、`activate` 重建)必须挂同一套** —— 这里原来是复制粘贴的
+ * 两份,加"窗口状态变化"这条事件时正好收成一处,免得下次再漏一处。
+ *
+ * 窗口状态是**推 + 拉**两条路:事件覆盖变化,`getWindowState` 覆盖"挂载时窗口已经是最大化的"
+ * (窗口状态被系统恢复的情况)。只做推送的话,那一种情况下按钮的图标会一直错到用户手动切换为止。
+ */
+function attachMainWindowBehaviour(window: BrowserWindow): void {
+  window.on("close", (event) => { if (!quitting && !closingQuitsApplication()) { event.preventDefault(); window.hide(); } });
+  window.on("focus", () => notifications?.clearBadge());
+  const sendWindowState = () =>
+    sendToAppWindow("wordless:host-event", { type: "window.changed", state: { maximized: window.isMaximized() } });
+  window.on("maximize", sendWindowState);
+  window.on("unmaximize", sendWindowState);
 }
 
 function createTrayIcon(): Electron.NativeImage {
@@ -509,6 +539,8 @@ app.whenReady().then(async () => {
     hostInfo,
     getAppInfo: () => updateService.getAppInfo(),
     showApplicationMenu: (menuId, window) => applicationMenu.show(menuId, window),
+    controlWindow: (action) => controlMainWindow(action),
+    getWindowState: () => ({ maximized: mainWindow?.isMaximized() ?? false }),
     getUpdateSnapshot: () => updateService.getSnapshot(),
     listReleases: (refresh) => updateService.listReleases(refresh),
     checkForUpdates: () => updateService.check(),
@@ -534,8 +566,7 @@ app.whenReady().then(async () => {
     }),
   });
   mainWindow = createMainWindow(path.join(__dirname, "preload.cjs"), runtime.getSnapshot().preferences);
-  mainWindow.on("close", (event) => { if (!quitting) { event.preventDefault(); mainWindow?.hide(); } });
-  mainWindow.on("focus", () => notifications?.clearBadge());
+  attachMainWindowBehaviour(mainWindow);
   // The browser service needs the window, which is created after the runtime
   // IPC is registered, so it takes a late-bound accessor rather than the window
   // itself.
@@ -659,14 +690,15 @@ app.whenReady().then(async () => {
       mainWindow.focus();
     } else if (runtime) {
       mainWindow = createMainWindow(path.join(__dirname, "preload.cjs"), runtime.getSnapshot().preferences);
-      mainWindow.on("close", (event) => { if (!quitting) { event.preventDefault(); mainWindow?.hide(); } });
-      mainWindow.on("focus", () => notifications?.clearBadge());
+      attachMainWindowBehaviour(mainWindow);
     }
   });
 });
 
 app.on("window-all-closed", () => {
-  // Automations continue while the main window is hidden in the tray.
+  // 托盘让应用继续活着(自动化照跑),所以这里平时什么都不做。
+  // Linux 例外:那里关窗就是退出(见 closingQuitsApplication),窗口没了就该走正常退出流程。
+  if (closingQuitsApplication()) app.quit();
 });
 
 app.on("before-quit", (event) => {

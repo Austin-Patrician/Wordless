@@ -255,6 +255,76 @@ describe("Agent integration with faux provider", () => {
 			{ type: "text", text: "4" },
 		]);
 	});
+
+	/*
+	 * Wordless: 调用计时。首 token 耗时与输出速度只可能来自"消费流的那一层",而它拿不到
+	 * provider 上报(TTFT 没人上报),所以这里锁的是**我们自己测出来的三个时刻**是否自洽 ——
+	 * 时间字段最容易的坏法是"悄悄变成 undefined",那样面板只会安静地显示"未采集"。
+	 */
+	it("records call timing on the final message", async () => {
+		const faux = createFauxRegistration({
+			tokensPerSecond: 40,
+			tokenSize: { min: 2, max: 2 },
+		});
+		faux.setResponses([fauxAssistantMessage("one two three four five six seven eight")]);
+
+		const agent = new Agent({
+			initialState: {
+				systemPrompt: "You are a helpful assistant.",
+				model: faux.getModel(),
+				thinkingLevel: "off",
+				tools: [],
+			},
+		});
+
+		await agent.prompt("count for me");
+
+		const assistantMessage = agent.state.messages[1];
+		if (assistantMessage?.role !== "assistant") throw new Error("Expected assistant message");
+		const timing = assistantMessage.timing;
+		expect(timing).toBeDefined();
+		if (!timing) throw new Error("Expected call timing");
+
+		expect(timing.streamed).toBe(true);
+		// 三个时刻必须单调:请求发出 ≤ 首个增量 ≤ 首个正文 ≤ 结束。
+		expect(timing.firstTokenAt).toBeDefined();
+		expect(timing.firstTextAt).toBeDefined();
+		expect(timing.requestStartedAt).toBeLessThanOrEqual(timing.firstTokenAt!);
+		expect(timing.firstTokenAt!).toBeLessThanOrEqual(timing.firstTextAt!);
+		expect(timing.firstTextAt!).toBeLessThanOrEqual(timing.completedAt);
+
+		// 40 tok/s × 8 个 token ⇒ 生成窗口应当有几十毫秒级的下限(不锁上限:CI 机器慢)。
+		const generationMs = timing.completedAt - timing.firstTokenAt!;
+		expect(generationMs).toBeGreaterThan(50);
+	});
+
+	it("marks a call without content deltas as not streamed instead of faking a duration", async () => {
+		// 没有内容增量(provider 一次性给全 / 空响应)⇒ 首 token 与速度都不可得。
+		// 这里**不许**把 `completedAt - requestStartedAt` 填进 firstTokenAt:非流式响应里
+		// 那个数就是整个调用时长,拿它冒充首 token 耗时是错的。
+		const faux = createFauxRegistration({ tokensPerSecond: 20 });
+		faux.setResponses([fauxAssistantMessage([])]);
+
+		const agent = new Agent({
+			initialState: {
+				systemPrompt: "You are a helpful assistant.",
+				model: faux.getModel(),
+				thinkingLevel: "off",
+				tools: [],
+			},
+		});
+
+		await agent.prompt("say something");
+
+		const assistantMessage = agent.state.messages[1];
+		if (assistantMessage?.role !== "assistant") throw new Error("Expected assistant message");
+		expect(assistantMessage.timing?.streamed).toBe(false);
+		expect(assistantMessage.timing?.firstTokenAt).toBeUndefined();
+		expect(assistantMessage.timing?.firstTextAt).toBeUndefined();
+		expect(assistantMessage.timing?.completedAt).toBeGreaterThanOrEqual(
+			assistantMessage.timing?.requestStartedAt ?? 0,
+		);
+	});
 });
 
 describe("Agent.continue() with faux provider", () => {

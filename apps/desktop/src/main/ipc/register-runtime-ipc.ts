@@ -98,6 +98,8 @@ import {
   GetExpertTeamDetailSchema,
   type DesktopHostInfo,
   type DesktopMenuId,
+  type DesktopWindowControl,
+  type DesktopWindowState,
   type DesktopAppInfo,
   type DesktopRelease,
   type DesktopUpdateSnapshot,
@@ -273,6 +275,10 @@ type DesktopIpcOptions = {
   downloadUpdate: () => Promise<DesktopUpdateSnapshot>;
   installUpdate: () => Promise<DesktopUpdateSnapshot>;
   openReleasePage: (version?: string) => Promise<void>;
+  /** 标题栏按钮(Linux 上由渲染层画:系统不画那组按钮,见 DesktopChrome)。 */
+  controlWindow: (action: DesktopWindowControl) => void;
+  /** 窗口状态(最大化与否),渲染层用它决定中间那个按钮的图标与标签。 */
+  getWindowState: () => DesktopWindowState;
   account: GoogleAccountService;
   cloudSync: CloudSyncService;
   office: OfficeCliService;
@@ -302,6 +308,10 @@ function isDesktopMenuId(value: unknown): value is DesktopMenuId {
     value === "window" ||
     value === "help"
   );
+}
+
+function isDesktopWindowControl(value: unknown): value is DesktopWindowControl {
+  return value === "minimize" || value === "toggle-maximize" || value === "close";
 }
 
 export function registerRuntimeIpc(
@@ -354,6 +364,12 @@ export function registerRuntimeIpc(
         : undefined;
     return options.openReleasePage(version);
   });
+  ipcMain.handle("wordless:window:control", (_event, payload: unknown) => {
+    // **不信任渲染层传来的动作名**:白名单之外的一律当成没发生 —— 这条 IPC 能关掉窗口。
+    const action = isRecord(payload) && isDesktopWindowControl(payload.action) ? payload.action : undefined;
+    if (action) options.controlWindow(action);
+  });
+  ipcMain.handle("wordless:window:state", () => options.getWindowState());
   ipcMain.handle("wordless:account:snapshot", () =>
     options.account.getSnapshot(),
   );

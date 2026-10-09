@@ -98,6 +98,25 @@ nsis:
   createDesktopShortcut: always
   installerIcon: icon.ico
   uninstallerIcon: icon.ico
+linux:
+  # 三个目标各有分工:AppImage 是**唯一能自更新**的那个(electron-updater 在 Linux 只认
+  # `APPIMAGE` 环境变量,deb/rpm 装出来的应用连 checkForUpdates 都不会发事件);deb/rpm 是
+  # 传统安装路径,只作为普通下载,不进更新清单。
+  #
+  # `target` 必须显式写:electron-builder 的 Linux 默认值是 `[snap, appimage]`,而 runner 上
+  # 没有 snapcraft —— 不写就是构建直接失败。
+  target:
+    - AppImage
+    - deb
+    - rpm
+  # 可执行文件名显式钉住。Linux 的默认值是 productName 小写(`wordless`),三个校验脚本按这个
+  # 名字找可执行文件 —— 依赖默认值等于让"哪天默认值变了"在打包后才暴露。
+  executableName: wordless
+  category: Utility
+  synopsis: Local-first desktop agent workspace
+  # deb/rpm 的 Maintainer/Vendor 字段。不写就得靠 package.json 的 author.email(现在没有)。
+  maintainer: Wordless Contributors <wordless@users.noreply.github.com>
+  vendor: Wordless
 publish:
   provider: github
   owner: Austin-Patrician

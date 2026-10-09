@@ -308,6 +308,18 @@ async function streamAssistantResponse(
 	const resolvedApiKey =
 		(config.getApiKey ? await config.getApiKey(config.model.provider) : undefined) || config.apiKey;
 
+	/*
+	 * Wordless: 调用计时。只有这里能看到"首个 token 到了"这个时刻,而首 token 耗时与输出速度
+	 * (TPS)只能从它算出来 —— 上游没有任何时间字段,provider 也不上报 TTFT。
+	 *
+	 * 三个时刻都在同一个进程里取,所以相减安全(跨进程相减会碰上时钟偏移)。
+	 * `firstTokenAt` / `firstTextAt` 保持 `undefined` 直到真的收到增量:非流式的响应里
+	 * "首 token 耗时"就是整个调用时长,拿它冒充会骗人(见 `packages/domain` 的 `ModelCallTiming`)。
+	 */
+	const requestStartedAt = Date.now();
+	let firstTokenAt: number | undefined;
+	let firstTextAt: number | undefined;
+
 	const response = await streamFunction(config.model, llmContext, {
 		...config,
 		apiKey: resolvedApiKey,
@@ -335,6 +347,14 @@ async function streamAssistantResponse(
 			case "toolcall_start":
 			case "toolcall_delta":
 			case "toolcall_end":
+				/*
+				 * Wordless: 首个增量到达。`*_start` 也算 —— 界面在那一刻已经有反应(流式光标/
+				 * "思考中"),所以它是用户感知到的第一个 token;`text_*` 单独再记一次,给
+				 * "第一行正文多久出现"用。
+				 */
+				if (firstTokenAt === undefined) firstTokenAt = Date.now();
+				if (firstTextAt === undefined && event.type.startsWith("text_"))
+					firstTextAt = Date.now();
 				if (partialMessage) {
 					partialMessage = event.partial;
 					context.messages[context.messages.length - 1] = partialMessage;
@@ -348,7 +368,11 @@ async function streamAssistantResponse(
 
 			case "done":
 			case "error": {
-				const finalMessage = await response.result();
+				const finalMessage = withCallTiming(await response.result(), {
+					requestStartedAt,
+					firstTokenAt,
+					firstTextAt,
+				});
 				if (addedPartial) {
 					context.messages[context.messages.length - 1] = finalMessage;
 				} else {
@@ -363,7 +387,11 @@ async function streamAssistantResponse(
 		}
 	}
 
-	const finalMessage = await response.result();
+	const finalMessage = withCallTiming(await response.result(), {
+		requestStartedAt,
+		firstTokenAt,
+		firstTextAt,
+	});
 	if (addedPartial) {
 		context.messages[context.messages.length - 1] = finalMessage;
 	} else {
@@ -372,6 +400,35 @@ async function streamAssistantResponse(
 	}
 	await emit({ type: "message_end", message: finalMessage });
 	return finalMessage;
+}
+
+/**
+ * Wordless: 给最终消息挂上调用计时。
+ *
+ * 挂在**最终消息**上(而不是 partial)是关键:`message_end` 是把整个 message 对象写进 journal 的
+ * (`AgentHarness` → `session.appendMessage`),所以这一个字段就随消息落盘了,不需要任何额外管道。
+ *
+ * `streamed` 由"有没有观测到增量"决定,而不是由 provider 自称:没观测到增量的调用(非流式响应、
+ * 或者 provider 一次性把结果给全)首 token 耗时与速度**都不可得**,读作"未上报"。
+ */
+function withCallTiming(
+	message: AssistantMessage,
+	timing: {
+		requestStartedAt: number;
+		firstTokenAt: number | undefined;
+		firstTextAt: number | undefined;
+	},
+): AssistantMessage {
+	return {
+		...message,
+		timing: {
+			requestStartedAt: timing.requestStartedAt,
+			...(timing.firstTokenAt === undefined ? {} : { firstTokenAt: timing.firstTokenAt }),
+			...(timing.firstTextAt === undefined ? {} : { firstTextAt: timing.firstTextAt }),
+			completedAt: Date.now(),
+			streamed: timing.firstTokenAt !== undefined,
+		},
+	};
 }
 
 /**

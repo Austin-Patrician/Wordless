@@ -24,3 +24,10 @@
   prompt total that is independent of our normalized components (OpenAI/Google/Mistral), and exists so
   normalization drift can be detected instead of silently clamped. Covered by
   `test/wordless-cache-usage-reporting.test.ts`.
+
+- Added an additive `AssistantMessage.timing` (`{ requestStartedAt, firstTokenAt?, firstTextAt?, completedAt, streamed }`),
+  so first-token latency and output speed (TPS) can be shown per turn. It is **type-only in this package** — the
+  values are filled by `@wordless/agent`'s agent loop, which is the only layer that sees "the first token arrived",
+  and ride into the journal with the message (see `packages/agent/WORDLESS_CHANGES.md`). Shape matches
+  `ModelCallTiming` in `@wordless/domain`; this package does not depend on it, so the seam is checked at the
+  two mapping sites (`agent-driver-generic`, `runtime`) instead.

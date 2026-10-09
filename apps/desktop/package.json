@@ -4,6 +4,7 @@
   "version": "0.0.0",
   "description": "Wordless local-first desktop Agent workspace",
   "author": "Wordless Contributors",
+  "homepage": "https://github.com/Austin-Patrician/Wordless",
   "type": "module",
   "main": "dist/electron/main.cjs",
   "config": {
@@ -32,6 +33,7 @@
     "dist:mac": "npm run build:desktop && electron-builder --config electron-builder.yml --mac --publish never && npm run verify:packaged-assets && npm run verify:packaged-design-build",
     "dist:mac:preview": "npm run build:desktop && CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --config electron-builder.yml --mac --publish never",
     "dist:win": "npm run build:desktop && electron-builder --config electron-builder.yml --win --x64 --publish never && node scripts/verify-packaged-icon.mjs release/win-unpacked && npm run verify:packaged-assets -- release/win-unpacked && npm run verify:packaged-design-build",
+    "dist:linux": "npm run build:desktop && electron-builder --config electron-builder.yml --linux --x64 --publish never && npm run verify:packaged-assets -- release/linux-unpacked && npm run verify:packaged-design-build -- release/linux-unpacked",
     "prepare:python": "node scripts/prepare-python-runtime.mjs",
     "prepare:ocr": "node scripts/prepare-ocr-assets.mjs",
     "build:ocr-runner": "vite build --config vite.ocr.config.ts"

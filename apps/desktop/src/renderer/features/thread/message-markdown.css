@@ -13,6 +13,22 @@
   margin: 0;
 }
 
+/*
+ * 正文里的**不可断行长串**(路径、URL、hash、id)必须能断行。
+ *
+ * 不设这条时,`li` / 标题里的长串会顶出内容宽度;它上面没有任何裁剪层,溢出会一路传给
+ * Virtuoso 的 scroller —— 而那个容器只有 `overflow-y: auto`,按 CSS 规则 `overflow-x`
+ * 会**计算成 auto**,于是消息列表底部(正好在 composer 上方)冒出一条横向滚动条,拖的是
+ * 整段对话。`anywhere` 而不是 `break-word`:前者也参与 min-content 计算,flex 行里才真
+ * 收得住。
+ *
+ * 只列**文本块**:代码块(`pre`)要保留自己的横向滚动,表格自带 `overflow-x-auto`。
+ * 内联的 `a` / `code` 跟着所在块走,不必单列。
+ */
+.message-markdown :is(p, li, blockquote, h1, h2, h3, h4, h5, h6) {
+  overflow-wrap: anywhere;
+}
+
 .message-markdown-table::-webkit-scrollbar,
 .message-code-scroll::-webkit-scrollbar,
 .message-markdown .katex-display::-webkit-scrollbar {

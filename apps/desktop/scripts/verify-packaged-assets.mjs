@@ -37,10 +37,23 @@ for (let index = 0; index < args.length; index += 1) {
   }
 }
 
+/**
+ * 解包目录 → 资产所在的那棵树。三种布局各认各的入口文件:
+ * - macOS:`<root>/Wordless.app/Contents/Resources`
+ * - Windows:`<root>/Wordless.exe` + `<root>/resources`
+ * - Linux:`<root>/wordless` + `<root>/resources`
+ *
+ * Linux 的可执行文件是**小写**的(electron-builder 在 Linux 的默认 `executableName` 就是
+ * productName 小写),名字在 `electron-builder.yml` 的 `linux.executableName` 里显式钉住了 ——
+ * 大小写写错在 mac/Windows 上看不出来,在 Linux 上就是"找不到 app"。
+ */
+const LINUX_EXECUTABLE = "wordless";
+
 function resourcesAt(root, requested) {
   const macApp = join(root, "Wordless.app", "Contents", "Resources");
   if (existsSync(macApp)) return { resources: macApp, label: requested };
   if (existsSync(join(root, "Wordless.exe"))) return { resources: join(root, "resources"), label: requested };
+  if (existsSync(join(root, LINUX_EXECUTABLE))) return { resources: join(root, "resources"), label: requested };
   return undefined;
 }
 

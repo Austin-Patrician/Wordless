@@ -43,7 +43,6 @@ import type {
 import {
   OPERATION_APPROVAL_JOURNAL_TYPE,
   CONTEXT_COMPACTION_JOURNAL_TYPE,
-  MODEL_RETRY_JOURNAL_TYPE,
   SESSION_FILE_BASELINE_JOURNAL_TYPE,
   USER_REQUEST_JOURNAL_TYPE,
   projectUserMessageContent,
@@ -81,6 +80,7 @@ import {
   calculateCurrentTurnUsage,
   conversationUsageFromUnknown,
   emptyTokenUsageSummary,
+  modelCallTimingFromUnknown,
   summarizeTokenUsage,
   resolveTranslationTargetLanguage,
   SIDEBAR_PINNED_LIMIT_DEFAULT,
@@ -217,7 +217,7 @@ import {
 } from "./history-cache.ts";
 import { createSingleFlightLoads, type LoadOutcome, type LoadState } from "./history-loader.ts";
 import { withModelRequestHeaders } from "./model-request-headers.ts";
-import { projectSessionTurnVersions } from "./session-branches.ts";
+import { collectSupersededResponseEntryIds, projectSessionTurnVersions } from "./session-branches.ts";
 import {
   createSessionHistoryPage,
   createSessionHistoryProjection,
@@ -2315,7 +2315,6 @@ export class WordlessRuntime {
       tokensBefore: number;
     }> = [];
     const extensions: AgentExtensionSessionState[] = [];
-    const recoveredRetryEntryIds = new Set<string>();
     for (const entry of branchEntries) {
       const customEntry = entry as unknown as {
         type: string;
@@ -2396,15 +2395,6 @@ export class WordlessRuntime {
         const compaction = persistedContextCompaction(customEntry.data);
         if (compaction)
           compactionMetadata.set(compaction.compactionId, compaction);
-        continue;
-      }
-      if (
-        customEntry.type === "custom" &&
-        customEntry.customType === MODEL_RETRY_JOURNAL_TYPE
-      ) {
-        const data = asRecord(customEntry.data);
-        if (typeof data?.failedMessageEntryId === "string")
-          recoveredRetryEntryIds.add(data.failedMessageEntryId);
         continue;
       }
       if (entry.type === "compaction") {
@@ -2496,13 +2486,19 @@ export class WordlessRuntime {
         };
       },
     );
-    const recoveredFailureEntryIds = new Set(
-      [...compactionMetadata.values()]
-        .map((metadata) => metadata.recoveredFailureEntryId)
-        .filter((entryId): entryId is string => typeof entryId === "string"),
-    );
-    for (const entryId of recoveredRetryEntryIds)
-      recoveredFailureEntryIds.add(entryId);
+    /**
+     * 被内部回收的失败响应不进消息列表。
+     *
+     * 范围是**活动分支**(而不是全树),与版本投影的取法故意不同:这里要的是"你现在正看着的那条
+     * 豁免" —— 用户手动切到某个被回收的版本时,那条标记落在别的分支上,于是它照常显示出来,
+     * 屏幕上不会出现一段空白回复。(版本投影要的是与 leaf 无关的纯函数,所以它扫全树。)
+     *
+     * 判定用的是同一份定义(见 `collectSupersededResponseEntryIds`),只是范围不同 —— 以前这里
+     * 自己拼了两份来源(压缩元数据 + 重试标记),与版本投影各写各的,那正是"同一事实一处认一处不认"
+     * 的来源。这里比旧的压缩解析**更宽松**:只要记录里有 `recoveredFailureEntryId` 就认,
+     * 不再要求整条压缩记录解析成功 —— 宁可多藏一条被回收的失败响应,也不要让它漏回对话里。
+     */
+    const supersededEntryIds = collectSupersededResponseEntryIds(branchEntries);
     let latestCompactionTimestamp = 0;
     for (const compaction of compactions) {
       if (compaction.timestamp > latestCompactionTimestamp) {
@@ -2518,7 +2514,7 @@ export class WordlessRuntime {
       record,
     });
     const visibleMessages = messages.filter(
-      (message) => !recoveredFailureEntryIds.has(message.id),
+      (message) => !supersededEntryIds.has(message.id),
     );
     return {
       value: {
@@ -7191,6 +7187,10 @@ export class WordlessRuntime {
       usage:
         value.role === "assistant"
           ? toConversationUsage(value.usage)
+          : undefined,
+      timing:
+        value.role === "assistant"
+          ? modelCallTimingFromUnknown(value.timing)
           : undefined,
       errorMessage:
         typeof value.errorMessage === "string" ? value.errorMessage : undefined,

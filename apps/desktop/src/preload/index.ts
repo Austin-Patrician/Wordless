@@ -43,6 +43,11 @@ const wordlessBridge: DesktopBridge = {
   getAppInfo: () => ipcRenderer.invoke("wordless:app:info"),
   openApplicationMenu: (menuId) =>
     ipcRenderer.invoke("wordless:menu:open", { menuId }),
+  // Linux 上标题栏的按钮由渲染层画(见 DesktopChrome),动作回到主进程执行。
+  controlWindow: (action) =>
+    ipcRenderer.invoke("wordless:window:control", { action }),
+  // 按钮的图标/标签要跟着窗口状态变,所以挂载时先拉一次(之后靠 window.changed 事件推)。
+  getWindowState: () => ipcRenderer.invoke("wordless:window:state"),
   getUpdateSnapshot: () => ipcRenderer.invoke("wordless:update:snapshot"),
   listReleases: (refresh) =>
     ipcRenderer.invoke("wordless:update:releases", {

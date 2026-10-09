@@ -474,6 +474,27 @@ export interface AssistantMessage {
 	 * Preserved for debugging and does not currently affect agent control flow.
 	 */
 	endTurn?: boolean;
+	/**
+	 * Wordless: 这次调用的时间事实,由消费流的那一层(`@wordless/agent` 的 agent loop)填。
+	 *
+	 * 只有**消费流的地方**能取到"首个 token 到了"这个时刻,而它恰好是首 token 耗时与输出速度
+	 * (TPS)唯一可靠的来源。它随消息一起落进 journal,所以历史轮次也能算,不必依赖渲染层的时钟。
+	 *
+	 * 形状与 `@wordless/domain` 的 `ModelCallTiming` 一一对应(本包是 fork,不反向依赖 domain)。
+	 * 见 `WORDLESS_CHANGES.md`。
+	 */
+	timing?: {
+		/** 请求发出时刻(epoch ms)。 */
+		requestStartedAt: number;
+		/** 首个内容增量(thinking / text / toolcall 任一);未观测到流式增量时不写。 */
+		firstTokenAt?: number;
+		/** 首个正文增量。 */
+		firstTextAt?: number;
+		/** 调用结束(收到 message_end)。 */
+		completedAt: number;
+		/** 是否观测到流式增量。`false` ⇒ 首 token / 速度都不可得。 */
+		streamed: boolean;
+	};
 	timestamp: number; // Unix timestamp in milliseconds
 }
 

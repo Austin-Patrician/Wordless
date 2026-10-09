@@ -1,4 +1,9 @@
-import { summarizeTokenUsage, type SessionTurnUsage, type TokenUsageSummary } from "@wordless/domain";
+import {
+  summarizeTokenUsage,
+  type SessionTurnUsage,
+  type TokenUsageSummary,
+  type TurnLatencySummary,
+} from "@wordless/domain";
 import type { SessionUsageSnapshot } from "@wordless/protocol";
 import {
   Popover,
@@ -19,6 +24,17 @@ function formatPercent(value: number | null): string | null {
 
 function formatCost(value: number): string {
   return `$${value.toFixed(4)}`;
+}
+
+/** 毫秒 → `850ms` / `1.2s`。亚秒级不给小数位:TTFT 的抖动本来就大于 10ms。 */
+function formatLatency(milliseconds: number): string {
+  return milliseconds < 1_000
+    ? `${Math.round(milliseconds)}ms`
+    : `${(milliseconds / 1_000).toFixed(1)}s`;
+}
+
+function formatSpeed(tokensPerSecond: number): string {
+  return `${tokensPerSecond.toFixed(1)} tok/s`;
 }
 
 /**
@@ -44,10 +60,17 @@ function UsagePanel({
   summary,
   title,
   extras,
+  latency,
 }: {
   summary: TokenUsageSummary;
   title: string;
   extras?: readonly (readonly [string, string])[];
+  /**
+   * 速度与首 token 耗时。**只有"本轮"有** —— 会话总计还没有按会话聚合时间事实(见
+   * `docs/architecture/token-usage-accounting.md`),所以这里缺省就不渲染这一块,
+   * 而不是显示一个 0。
+   */
+  latency?: TurnLatencySummary;
 }) {
   const { t } = usePreferences();
   const [detailsOpen, setDetailsOpen] = useState(false);
@@ -110,6 +133,60 @@ function UsagePanel({
           {t("turnUsageEstimatedCost")} {formatCost(summary.totalCost)}
         </span>
       </div>
+
+      {/*
+        速度与首 token。口径写在 `title` 里(它们是"看起来合理但容易理解错"的两个数:首 token 含
+        思考、速度不含首 token 也不含工具时间)。
+        没有可观测调用时显示「未采集」而**不是** 0 —— 老记录与流式缺失都会落到这里,
+        显示 0 会被读成"模型不吐字了"。
+      */}
+      {latency ? (
+        <div
+          className="mt-2 grid grid-cols-2 gap-2"
+          data-turn-latency={latency.observedCalls === 0 ? "unobserved" : "observed"}
+        >
+          <div
+            className="rounded-md bg-[#f6f7f4] px-2 py-1.5 dark:bg-muted/50"
+            title={t("turnUsageFirstTokenHint")}
+          >
+            <div className="text-[10px] text-[#8a8f94] dark:text-muted-foreground">
+              {t("turnUsageFirstToken")}
+            </div>
+            <div
+              className="mt-0.5 text-[13px] font-semibold leading-none tabular-nums text-[#40403c] dark:text-foreground"
+              data-turn-first-token={latency.firstTokenMs === null ? "unreported" : Math.round(latency.firstTokenMs)}
+            >
+              {latency.firstTokenMs === null
+                ? t("turnUsageLatencyUnavailable")
+                : formatLatency(latency.firstTokenMs)}
+            </div>
+          </div>
+          <div
+            className="rounded-md bg-[#f6f7f4] px-2 py-1.5 dark:bg-muted/50"
+            title={t("turnUsageOutputSpeedHint")}
+          >
+            <div className="text-[10px] text-[#8a8f94] dark:text-muted-foreground">
+              {t("turnUsageOutputSpeed")}
+            </div>
+            <div
+              className="mt-0.5 text-[13px] font-semibold leading-none tabular-nums text-[#40403c] dark:text-foreground"
+              data-turn-output-speed={
+                latency.outputTokensPerSecond === null
+                  ? "unreported"
+                  : latency.outputTokensPerSecond.toFixed(1)
+              }
+            >
+              {latency.outputTokensPerSecond === null
+                ? t("turnUsageLatencyUnavailable")
+                : formatSpeed(latency.outputTokensPerSecond)}
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {latency && latency.observedCalls === 0 ? (
+        <p className="mt-1 text-[9px] text-[#a8adb2]">{t("turnUsageLatencyUnavailableHint")}</p>
+      ) : null}
 
       {/*
         按比例分段:用 `flexGrow` 给比例,而不是"宽度百分比 + 间隙"。后者在 overflow 时会按比例
@@ -193,7 +270,45 @@ function UsagePanel({
                 <dd className="text-right tabular-nums text-[#40403c] dark:text-foreground">{value}</dd>
               </div>
             ))}
+            {latency ? (
+              <div className="contents">
+                <dt className="truncate text-[#8a8f94] dark:text-muted-foreground">
+                  {t("turnUsageLatencyCalls")}
+                </dt>
+                <dd
+                  className="text-right tabular-nums text-[#40403c] dark:text-foreground"
+                  data-turn-latency-coverage={`${latency.observedCalls}/${latency.totalCalls}`}
+                >
+                  {t("turnUsageLatencyCoverage")
+                    .replace("{observed}", String(latency.observedCalls))
+                    .replace("{total}", String(latency.totalCalls))}
+                </dd>
+              </div>
+            ) : null}
           </dl>
+        ) : null}
+        {detailsOpen && latency && latency.calls.length > 0 ? (
+          // 逐次调用:排障用(哪一次慢、哪一次没采集到)。**默认折叠**,与"调用级只作为明细"的口径一致。
+          <ul
+            className="mt-1.5 space-y-0.5 text-[10px]"
+            data-turn-latency-call-count={latency.calls.length}
+            title={t("turnUsageLatencyCallHint")}
+          >
+            {latency.calls.map((call) => (
+              <li className="flex items-baseline gap-2 tabular-nums" key={call.index}>
+                <span className="w-5 shrink-0 text-[#a8adb2]">#{call.index}</span>
+                <span className="w-11 shrink-0 text-right text-[#8a8f94] dark:text-muted-foreground">
+                  {call.firstTokenMs === null ? "—" : formatLatency(call.firstTokenMs)}
+                </span>
+                <span className="w-16 shrink-0 text-right text-[#8a8f94] dark:text-muted-foreground">
+                  {call.outputTokensPerSecond === null ? "—" : formatSpeed(call.outputTokensPerSecond)}
+                </span>
+                <span className="ml-auto text-right text-[#a8adb2]">
+                  {formatTokenCount(call.outputTokens)}
+                </span>
+              </li>
+            ))}
+          </ul>
         ) : null}
       </div>
     </>
@@ -211,9 +326,12 @@ function UsagePanel({
  */
 export function TurnTokenUsageRow({
   usage,
+  latency,
   loadSessionUsage,
 }: {
   usage?: SessionTurnUsage;
+  /** 本轮的速度与首 token 耗时(见 `summarizeTurnLatency`)。缺省 = 不显示这一块。 */
+  latency?: TurnLatencySummary;
   /** 会话总计是懒加载的:只在用户真的切过去时才读 journal。没给就只显示本轮。 */
   loadSessionUsage?: () => Promise<SessionUsageSnapshot | null>;
 }) {
@@ -325,6 +443,7 @@ export function TurnTokenUsageRow({
         ) : (
           <UsagePanel
             extras={extras}
+            latency={scope === "turn" ? latency : undefined}
             summary={summary ?? turnSummary}
             title={t(scope === "session" ? "turnUsageSessionTitle" : "turnUsagePanelTitle")}
           />

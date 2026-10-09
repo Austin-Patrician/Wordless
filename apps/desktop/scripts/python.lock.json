@@ -16,6 +16,10 @@
     "win-x64": {
       "asset": "cpython-3.12.14+20260929-x86_64-pc-windows-msvc-install_only.tar.gz",
       "sha256": "28728baf30b65e263f0b25c5a85be8226e7ab0d212fbadd6a8f0f796139fa804"
+    },
+    "linux-x64": {
+      "asset": "cpython-3.12.14+20260929-x86_64-unknown-linux-gnu-install_only.tar.gz",
+      "sha256": "06c90b93f419b63371c18f20fed0558a1a901f6518c3c24f755077e048447e7f"
     }
   }
 }

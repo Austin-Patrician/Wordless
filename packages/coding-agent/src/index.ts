@@ -218,6 +218,17 @@ export function createHeadlessCodingTools(env: ExecutionEnv, search?: WorkspaceS
         command: input.command,
         elapsedMs: Date.now() - startedAt,
         exitCode: result.value.exitCode,
+        /**
+         * 命令到底有没有真的打印东西。
+         *
+         * 这是给**界面**用的:成功且真的没输出时,正文只有上面那句兜底文案,界面据此不显示
+         * "View output" 入口(见 `apps/desktop` 的 `tool-output-visibility.ts`)。判断必须在
+         * 这里算 —— 界面能看到的 `text` 已经加过兜底,它想分辨就只能字符串匹配那句英文。
+         *
+         * 用 `output`(兜底**之前**的原始捕获)而不是 `text`,并且 trim 掉纯空白:
+         * 只打印了一个换行的命令,给人看的还是一句"什么都没输出"。
+         */
+        hasOutput: output.trim().length > 0,
         ...(result.value.truncated ? { truncated: true, fullOutputPath: result.value.fullOutputPath } : {}),
         timeoutSeconds,
       });

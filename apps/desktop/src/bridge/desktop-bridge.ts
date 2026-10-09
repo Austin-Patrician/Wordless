@@ -66,6 +66,8 @@ import type {
   DesktopMenuId,
   DesktopRelease,
   DesktopUpdateSnapshot,
+  DesktopWindowControl,
+  DesktopWindowState,
   HostEnvironmentFacts,
   HostPythonProvisionResult,
   OfficeEngineHealth,
@@ -135,7 +137,7 @@ import type {
 } from "@wordless/protocol";
 import type { ToolApprovalMode } from "@wordless/domain";
 
-export const DESKTOP_BRIDGE_VERSION = 57;
+export const DESKTOP_BRIDGE_VERSION = 59;
 
 /**
  * 只读探测的结果(**整份**)。
@@ -185,6 +187,8 @@ export interface DesktopBridge {
   getHostInfo(): Promise<DesktopHostInfo>;
   getAppInfo(): Promise<DesktopAppInfo>;
   openApplicationMenu(menuId: DesktopMenuId): Promise<void>;
+  controlWindow(action: DesktopWindowControl): Promise<void>;
+  getWindowState(): Promise<DesktopWindowState>;
   getUpdateSnapshot(): Promise<DesktopUpdateSnapshot>;
   listReleases(refresh?: boolean): Promise<DesktopRelease[]>;
   checkForUpdates(): Promise<DesktopUpdateSnapshot>;
@@ -912,6 +916,8 @@ export const requiredMethods: Array<Exclude<keyof DesktopBridge, "version">> = [
   "getHostInfo",
   "getAppInfo",
   "openApplicationMenu",
+  "controlWindow",
+  "getWindowState",
   "getUpdateSnapshot",
   "listReleases",
   "checkForUpdates",

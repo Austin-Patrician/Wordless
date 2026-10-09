@@ -93,6 +93,25 @@ describe("verify-packaged-assets", () => {
     assert.match(output, /python\/win-x64/);
   });
 
+  it("完整的 Linux 包通过(布局不同:小写 `wordless` + `resources/`)", async () => {
+    // 大小写是真的会错的地方:Linux 上用 `Wordless` 找不到那个可执行文件。名字来自
+    // `electron-builder.yml` 的 `linux.executableName`,探针必须认同一个。
+    const root = join(sandbox, "linux-unpacked");
+    const resources = join(root, "resources");
+    await mkdir(join(resources, "python", "linux-x64", "bin"), { recursive: true });
+    await writeFile(join(resources, "python", "linux-x64", "bin", "python3"), "#!/bin/sh\nexit 0\n");
+    await mkdir(join(resources, "ocr", "models"), { recursive: true });
+    await mkdir(join(resources, "ocr", "ort"), { recursive: true });
+    await writeFile(join(resources, "ocr", "models", "ppocrv5_det.onnx"), "model");
+    await writeFile(join(resources, "ocr", "ort", "ort-wasm-simd-threaded.wasm"), "wasm");
+    await mkdir(join(resources, "ocr-runner"), { recursive: true });
+    await writeFile(join(resources, "ocr-runner", "index.html"), "<!doctype html>");
+    await writeFile(join(root, "wordless"), "\u007fELF");
+    const { code, output } = await run(root);
+    assert.equal(code, 0, output);
+    assert.match(output, /python\/linux-x64/);
+  });
+
   it("缺 OCR 资产 → 红,并点名是哪一项", async () => {
     const root = join(sandbox, "mac-no-ocr");
     await makeMacApp(root, { ocr: false });

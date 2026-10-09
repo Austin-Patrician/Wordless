@@ -4,6 +4,7 @@ import { BrowserWindow, Notification, app, shell } from "electron";
 import { autoUpdater, type UpdateInfo } from "electron-updater";
 import type { DesktopAppInfo, DesktopHostEvent, DesktopRelease, DesktopUpdateSnapshot } from "@wordless/protocol";
 import { DesktopReleaseService } from "./release-service";
+import { newestRelease, resolveInstallMode } from "./update-policy";
 
 const REPOSITORY_URL = "https://github.com/Austin-Patrician/Wordless";
 const R2_UPDATE_URL = "https://download.wordless.20250230.xyz/releases";
@@ -21,13 +22,17 @@ function notesFrom(info: UpdateInfo): string | undefined {
 }
 
 export class DesktopUpdateService {
-  private readonly autoInstallSupported = supportsMacAutoInstall();
+  private readonly installMode = resolveInstallMode({
+    platform: process.platform,
+    appImagePath: process.env.APPIMAGE,
+    macAutoInstallSupported: supportsMacAutoInstall(),
+  });
   private readonly downloadsDirectory: string;
   private manualInstallerPath: string | undefined;
   private snapshot: DesktopUpdateSnapshot = {
     state: "idle",
     currentVersion: app.getVersion(),
-    installMode: this.autoInstallSupported ? "restart-install" : "manual-dmg",
+    installMode: this.installMode,
   };
   private readonly releases: DesktopReleaseService;
   private readonly send: SendHostEvent;
@@ -87,6 +92,7 @@ export class DesktopUpdateService {
 
   async check(): Promise<DesktopUpdateSnapshot> {
     if (!app.isPackaged) return this.getSnapshot();
+    if (this.installMode === "manual-package") return await this.checkWithoutUpdater();
     this.update({ state: "checking", error: undefined });
     this.suppressUpdaterErrors = true;
     try {
@@ -107,10 +113,13 @@ export class DesktopUpdateService {
 
   async download(): Promise<DesktopUpdateSnapshot> {
     if (!app.isPackaged) return this.getSnapshot();
+    // 手动安装模式没有"下载到本地再打开"这一步:这个动作本身就是"去发布页拿新包",
+    // 所以不需要先有 availableVersion(用户也可能直接从关于页点进去)。
+    if (this.installMode === "manual-package") return await this.openManualPackagePage();
     if (!this.snapshot.availableVersion) throw new Error("No Wordless update is available to download");
     this.update({ state: "downloading", progress: 0, error: undefined });
 
-    if (!this.autoInstallSupported && process.platform === "darwin") {
+    if (this.installMode === "manual-dmg") {
       try {
         this.manualInstallerPath = await this.releases.downloadMacInstaller(
           this.snapshot.availableVersion,
@@ -143,6 +152,7 @@ export class DesktopUpdateService {
   }
 
   async install(): Promise<DesktopUpdateSnapshot> {
+    if (this.installMode === "manual-package") return await this.openManualPackagePage();
     if (this.snapshot.state !== "ready") throw new Error("No downloaded Wordless update is ready to install");
 
     if (this.snapshot.installMode === "manual-dmg") {
@@ -159,6 +169,43 @@ export class DesktopUpdateService {
   async openReleasePage(version?: string): Promise<void> {
     const normalized = version?.replace(/^v/, "");
     await shell.openExternal(normalized ? `${REPOSITORY_URL}/releases/tag/v${encodeURIComponent(normalized)}` : `${REPOSITORY_URL}/releases`);
+  }
+
+  /**
+   * 手动安装模式的"下载/安装"动作:打开这个版本的发布页。
+   *
+   * deb/rpm/解包目录装出来的 Linux 应用**没有原地安装的路径** —— electron-updater 只有 AppImage
+   * 实现,而替换 /opt 下的包需要 root。所以这里不假装能装,而是把人送到发布页自己拿新包,
+   * 与 macOS 未签名包的"打开 DMG"属于同一类动作(那个至少还能让用户拖进去)。
+   */
+  private async openManualPackagePage(): Promise<DesktopUpdateSnapshot> {
+    await this.openReleasePage(this.snapshot.availableVersion);
+    return this.getSnapshot();
+  }
+
+  /**
+   * 不走 electron-updater 的检查(见 `resolveInstallMode`)。
+   *
+   * Linux 上非 AppImage 的安装形式里,`checkForUpdates()` 既不发事件也不抛错(它直接
+   * `isUpdaterActive() === false` 返回 null),照走上面那条路会让快照永远停在 "checking" ——
+   * 用户看到一个转不完的圈。这里改成拿发布清单自己比版本。
+   */
+  private async checkWithoutUpdater(): Promise<DesktopUpdateSnapshot> {
+    this.update({ state: "checking", error: undefined });
+    try {
+      const newest = newestRelease(await this.releases.list(true), app.getVersion());
+      this.update({
+        state: newest ? "available" : "up-to-date",
+        availableVersion: newest?.version,
+        releaseNotes: newest?.notes || undefined,
+        checkedAt: Date.now(),
+        progress: undefined,
+        error: undefined,
+      });
+    } catch (error) {
+      this.fail(error);
+    }
+    return this.getSnapshot();
   }
 
   private update(change: Partial<DesktopUpdateSnapshot> & Pick<DesktopUpdateSnapshot, "state">): void {

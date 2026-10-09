@@ -103,6 +103,13 @@ export interface SessionTreeEntry {
   message?: AgentMessage;
   targetId?: string | null;
   label?: string;
+  /**
+   * `type: "custom"` 的条目带这两个字段(运行时的元数据都写在这里:重试标记、压缩记录、
+   * 审批、用户提问、扩展状态……)。它们以前没进这份 shim,于是每处读元数据的代码都得自己
+   * `as unknown as {...}` 绕过去。
+   */
+  customType?: string;
+  data?: unknown;
 }
 
 export interface SessionStorage<TMetadata extends SessionMetadata = SessionMetadata> {

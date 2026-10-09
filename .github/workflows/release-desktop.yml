@@ -197,8 +197,56 @@ jobs:
             apps/desktop/release/*.yml
           if-no-files-found: error
 
+  build-linux:
+    needs: [prepare, verify]
+    if: ${{ github.event_name != 'workflow_dispatch' || !inputs.mirror_only }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare.outputs.tag }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.19.0
+          cache: npm
+      - name: Install Linux packaging tools
+        # rpm 由 fpm 驱动,缺 rpmbuild 会直接失败("Need executable 'rpmbuild' to convert dir to rpm"),
+        # xz 是 rpm 载荷压缩要的。deb 用的 dpkg/fakeroot runner 自带。
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y rpm xz-utils
+      - run: npm ci
+      - name: Set package version
+        run: npm pkg set version="${{ needs.prepare.outputs.version }}" --workspace=@wordless/desktop
+      - name: Build Linux artifacts
+        env:
+          WORDLESS_GOOGLE_CLIENT_ID: ${{ vars.GOOGLE_OAUTH_CLIENT_ID }}
+          WORDLESS_GOOGLE_CLIENT_SECRET: ${{ secrets.GOOGLE_OAUTH_CLIENT_SECRET }}
+          WORDLESS_SKILLSMP_API_KEY: ${{ secrets.SKILLSMP_API_KEY }}
+        run: npm run dist:linux --workspace=@wordless/desktop
+      - name: Verify generated Linux update metadata
+        working-directory: apps/desktop
+        # electron-builder 会给 AppImage 目标写一份 `latest-linux.yml`(GitHub 回退源靠它),
+        # 但它"写不出来"是静默的 —— 少一个文件不会让构建失败,只会让安装版永远查不到更新。
+        run: |
+          test -f release/latest-linux.yml || { echo "electron-builder did not write release/latest-linux.yml" >&2; exit 1; }
+          grep -Fq "AppImage" release/latest-linux.yml || { echo "latest-linux.yml does not reference the AppImage" >&2; exit 1; }
+      - name: Verify packaged FFF native search
+        working-directory: apps/desktop
+        run: npm run verify:packaged-fff -- release/linux-unpacked
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wordless-linux-x64
+          retention-days: 3
+          path: |
+            apps/desktop/release/Wordless-*-linux-x64.AppImage
+            apps/desktop/release/Wordless-*-linux-x64.deb
+            apps/desktop/release/Wordless-*-linux-x64.rpm
+            apps/desktop/release/latest-linux.yml
+          if-no-files-found: error
+
   publish:
-    needs: [prepare, build-macos, build-windows]
+    needs: [prepare, build-macos, build-windows, build-linux]
     if: ${{ github.event_name != 'workflow_dispatch' || !inputs.mirror_only }}
     runs-on: ubuntu-latest
     steps:
@@ -284,6 +332,11 @@ jobs:
             --version "$VERSION" \
             --url-prefix "$RELEASE_TAG" \
             --output release/r2-latest-mac.yml
+          node apps/desktop/scripts/generate-linux-update-manifest.mjs \
+            --release-dir release \
+            --version "$VERSION" \
+            --url-prefix "$RELEASE_TAG" \
+            --output release/r2-latest-linux.yml
       - name: Upload versioned release files to Cloudflare R2
         shell: bash
         run: |
@@ -300,6 +353,9 @@ jobs:
             "Wordless-${VERSION}-mac-x64.zip.blockmap"
             "Wordless-${VERSION}-win-x64.exe"
             "Wordless-${VERSION}-win-x64.exe.blockmap"
+            "Wordless-${VERSION}-linux-x64.AppImage"
+            "Wordless-${VERSION}-linux-x64.deb"
+            "Wordless-${VERSION}-linux-x64.rpm"
           )
           upload_and_verify() {
             local file="$1"
@@ -421,6 +477,7 @@ jobs:
           }
           upload_and_verify release/r2-latest.yml releases/latest.yml text/yaml
           upload_and_verify release/r2-latest-mac.yml releases/latest-mac.yml text/yaml
+          upload_and_verify release/r2-latest-linux.yml releases/latest-linux.yml text/yaml
           upload_and_verify release/releases.json releases/releases.json application/json
       - name: Verify public R2 release manifest
         shell: bash
@@ -430,8 +487,11 @@ jobs:
           curl --fail --location --retry 5 --retry-all-errors --max-time 30 "$MANIFEST_URL" -o downloaded-releases.json
           curl --fail --location --retry 5 --retry-all-errors --max-time 30 "${R2_PUBLIC_BASE_URL%/}/releases/latest.yml" -o downloaded-latest.yml
           curl --fail --location --retry 5 --retry-all-errors --max-time 30 "${R2_PUBLIC_BASE_URL%/}/releases/latest-mac.yml" -o downloaded-latest-mac.yml
+          curl --fail --location --retry 5 --retry-all-errors --max-time 30 "${R2_PUBLIC_BASE_URL%/}/releases/latest-linux.yml" -o downloaded-latest-linux.yml
           grep -Fq "url: ${RELEASE_TAG}/" downloaded-latest.yml || { echo "Public Windows update metadata does not point to $RELEASE_TAG" >&2; exit 1; }
           grep -Fq "url: ${RELEASE_TAG}/" downloaded-latest-mac.yml || { echo "Public macOS update metadata does not point to $RELEASE_TAG" >&2; exit 1; }
+          grep -Fq "url: ${RELEASE_TAG}/" downloaded-latest-linux.yml || { echo "Public Linux update metadata does not point to $RELEASE_TAG" >&2; exit 1; }
+          grep -Fq "blockMapSize:" downloaded-latest-linux.yml || { echo "Public Linux update metadata is missing the embedded block map size" >&2; exit 1; }
           node - <<'NODE'
           void (async () => {
             const manifest = require("./downloaded-releases.json");

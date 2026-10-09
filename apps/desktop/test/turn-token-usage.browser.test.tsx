@@ -540,3 +540,136 @@ describe("本轮用量面板", () => {
     expect(panel.textContent).toContain(zh("turnUsageDelegated").replace("{count}", "1"));
   });
 });
+
+describe("首 token 耗时与输出速度(This turn)", () => {
+  let container: HTMLDivElement;
+  let root: Root;
+
+  beforeEach(() => {
+    container = document.createElement("div");
+    document.body.append(container);
+    root = createRoot(container);
+  });
+
+  afterEach(() => {
+    act(() => root.unmount());
+    container.remove();
+  });
+
+  /** 一条助手消息:带 usage 与调用计时(和 runtime 映射出来的形状一致)。 */
+  const assistantMessage = (
+    id: string,
+    parts: {
+      outputTokens: number;
+      requestStartedAt?: number;
+      firstTokenAt?: number;
+      completedAt?: number;
+      streamed?: boolean;
+    },
+  ): ConversationMessage =>
+    ({
+      id,
+      role: "assistant",
+      status: "complete",
+      timestamp: 0,
+      blocks: [{ type: "text", text: "ok" }],
+      model: null,
+      usage: turnUsage({ inputTokens: 10, outputTokens: parts.outputTokens, primaryCallCount: 1, toolCallCount: 0 }),
+      ...(parts.streamed === undefined && parts.firstTokenAt === undefined
+        ? {}
+        : {
+            timing: {
+              requestStartedAt: parts.requestStartedAt ?? 0,
+              ...(parts.firstTokenAt === undefined ? {} : { firstTokenAt: parts.firstTokenAt }),
+              completedAt: parts.completedAt ?? 1_000,
+              streamed: parts.streamed ?? parts.firstTokenAt !== undefined,
+            },
+          }),
+    }) as ConversationMessage;
+
+  const renderTurn = async (messages: ConversationMessage[]): Promise<void> => {
+    await act(async () => {
+      root.render(
+        <TooltipProvider>
+          <TurnUsageFooter messages={messages} />
+        </TooltipProvider>,
+      );
+    });
+    const trigger = container.querySelector('[data-turn-token-usage="trigger"]');
+    await act(async () => {
+      trigger?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+    });
+  };
+
+  const panel = (): HTMLElement =>
+    document.querySelector<HTMLElement>('[data-turn-token-usage="panel"]') as HTMLElement;
+
+  it("展示首 token 与输出速度,速度按生成窗口加权", async () => {
+    // 第一次调用:TTFT 1200ms,生成窗口 1000ms 出 100 token(100 tok/s)。
+    // 第二次调用:TTFT 300ms,生成窗口 2000ms 出 100 token(50 tok/s)。
+    // 加权后 = 200 / 3s ≈ 66.7 tok/s —— 若对两次的速度取平均会得到 75。
+    await renderTurn([
+      assistantMessage("a1", { outputTokens: 100, requestStartedAt: 0, firstTokenAt: 1_200, completedAt: 2_200 }),
+      assistantMessage("a2", { outputTokens: 100, requestStartedAt: 5_000, firstTokenAt: 5_300, completedAt: 7_300 }),
+    ]);
+
+    expect(panel().querySelector("[data-turn-latency]")?.getAttribute("data-turn-latency")).toBe("observed");
+    // 首 token = 本轮第一次可观测调用的等待,不是平均。
+    expect(panel().querySelector("[data-turn-first-token]")?.getAttribute("data-turn-first-token")).toBe("1200");
+    expect(panel().textContent).toContain("1.2s");
+    expect(panel().textContent).toContain("66.7 tok/s");
+    expect(panel().textContent).not.toContain("75.0 tok/s");
+  });
+
+  it("没有观测到流式增量时显示「未采集」,而不是 0 或总时长", async () => {
+    await renderTurn([
+      assistantMessage("a1", { outputTokens: 50, requestStartedAt: 0, completedAt: 3_000, streamed: false }),
+    ]);
+
+    const block = panel().querySelector("[data-turn-latency]");
+    expect(block?.getAttribute("data-turn-latency")).toBe("unobserved");
+    expect(panel().querySelector("[data-turn-first-token]")?.getAttribute("data-turn-first-token")).toBe("unreported");
+    expect(panel().querySelector("[data-turn-output-speed]")?.getAttribute("data-turn-output-speed")).toBe("unreported");
+    expect(panel().textContent).toContain(zh("turnUsageLatencyUnavailable"));
+    // 3s 是"整个调用时长",拿它当首 token 耗时就是骗人 —— 屏幕上不该出现它。
+    expect(panel().textContent).not.toContain("3.0s");
+    expect(panel().textContent).toContain(zh("turnUsageLatencyUnavailableHint"));
+  });
+
+  it("折叠里给出覆盖率与逐次调用(哪一次慢、哪一次没采集)", async () => {
+    await renderTurn([
+      assistantMessage("a1", { outputTokens: 10, requestStartedAt: 0, firstTokenAt: 900, completedAt: 1_400 }),
+      assistantMessage("a2", { outputTokens: 10, requestStartedAt: 2_000, completedAt: 2_500, streamed: false }),
+    ]);
+
+    const more = Array.from(panel().querySelectorAll("button")).find(
+      (button) => button.textContent === zh("turnUsageMore"),
+    );
+    await act(async () => {
+      more?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+    });
+
+    expect(panel().querySelector("[data-turn-latency-coverage]")?.getAttribute("data-turn-latency-coverage")).toBe("1/2");
+    expect(panel().textContent).toContain("覆盖 1/2 次调用");
+    // 两次调用都列出来:没采集的那次也要留痕,否则用户会以为"只有一次调用"。
+    expect(panel().querySelector("[data-turn-latency-call-count]")?.getAttribute("data-turn-latency-call-count")).toBe("2");
+    const rows = Array.from(panel().querySelectorAll("[data-turn-latency-call-count] li"));
+    expect(rows.length).toBe(2);
+    expect(rows[1]?.textContent).toContain("—");
+  });
+
+  it("老记录(没有 timing)只降覆盖率,不显示 0", async () => {
+    await renderTurn([assistantMessage("old", { outputTokens: 30 })]);
+
+    expect(panel().querySelector("[data-turn-latency]")?.getAttribute("data-turn-latency")).toBe("unobserved");
+    const more = Array.from(panel().querySelectorAll("button")).find(
+      (button) => button.textContent === zh("turnUsageMore"),
+    );
+    await act(async () => {
+      more?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+    });
+    expect(panel().textContent).toContain("覆盖 0/1 次调用");
+    // 逐次明细里那一次也在(它交代了"这一次没采集"),只是数值不可得。
+    expect(panel().querySelector("[data-turn-latency-call-count]")?.getAttribute("data-turn-latency-call-count")).toBe("1");
+  });
+});

@@ -63,6 +63,7 @@ import {
 import {
   conversationUsageFromAiUsage,
   conversationUsageFromUnknown,
+  modelCallTimingFromUnknown,
 } from "@wordless/domain";
 import type {
   ClarificationBrief,
@@ -980,6 +981,10 @@ function toConversationMessage(
       typeof value.timestamp === "number" ? value.timestamp : Date.now(),
     usage:
       value.role === "assistant" ? toConversationUsage(value.usage) : undefined,
+    timing:
+      value.role === "assistant"
+        ? modelCallTimingFromUnknown(value.timing)
+        : undefined,
     errorMessage:
       typeof value.errorMessage === "string" ? value.errorMessage : undefined,
   };

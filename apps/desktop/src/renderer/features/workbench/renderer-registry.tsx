@@ -84,6 +84,7 @@ import type {
   ResearchTaskSelection,
 } from "./context-panel-types";
 import { formatToolInput, summarizeToolInput } from "./tool-input-preview";
+import { hidesEmptySuccessfulBashOutput } from "./tool-output-visibility";
 
 /**
  * A tool's icon is either a bundled glyph or a Lucide component.
@@ -1090,11 +1091,6 @@ function CodeToolActivity({
   const exitCode =
     typeof details?.exitCode === "number" ? details.exitCode : undefined;
   const nonZeroExit = exitCode !== undefined && exitCode !== 0;
-  const hideEmptySuccessfulBashOutput =
-    block.name === "bash" &&
-    exitCode === 0 &&
-    !textValue(details?.stdout) &&
-    !textValue(details?.stderr);
   const icon = standardToolIcon(block.name) ?? (
     <Code2 className="h-3.5 w-3.5" />
   );
@@ -1195,7 +1191,7 @@ function CodeToolActivity({
           path={path ?? "."}
           pattern={pattern}
         />
-      ) : hideEmptySuccessfulBashOutput || (oldText !== undefined && newText !== undefined) ? null : (
+      ) : hidesEmptySuccessfulBashOutput(block) || (oldText !== undefined && newText !== undefined) ? null : (
         <ToolOutput block={block} onLoadToolOutput={onLoadToolOutput} />
       )}
     </section>

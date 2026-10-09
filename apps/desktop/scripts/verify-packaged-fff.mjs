@@ -16,6 +16,10 @@ const candidates = releaseEntries.flatMap((entry) => {
   if (existsSync(macApp)) return [{ executable: join(macApp, "Contents", "MacOS", "Wordless"), resources: join(macApp, "Contents", "Resources"), label: entry.name }];
   const windowsExecutable = join(root, "Wordless.exe");
   if (existsSync(windowsExecutable)) return [{ executable: windowsExecutable, resources: join(root, "resources"), label: entry.name }];
+  // Linux 解包目录(`release/linux-unpacked`):可执行文件在根,名字是小写的 `wordless`
+  // (与 electron-builder.yml 的 `linux.executableName` 一致)。
+  const linuxExecutable = join(root, "wordless");
+  if (existsSync(linuxExecutable)) return [{ executable: linuxExecutable, resources: join(root, "resources"), label: entry.name }];
   return [];
 });
 
