@@ -77,7 +77,19 @@ const escapedVersion = version.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 const artifactPattern = new RegExp(`^Wordless-${escapedVersion}-linux-(?:arm64|x64)\\.AppImage$`, "i");
 const names = (await readdir(releaseDirectory)).filter((name) => artifactPattern.test(name)).sort();
 if (names.length !== 1) {
-  throw new Error(`Expected exactly one Linux AppImage update artifact for ${version}, found ${names.length}${names.length ? ` (${names.join(", ")})` : ""}`);
+  /*
+    报"found 0"而不说**看到了什么**,等于让下一个人从头查一遍:v0.7.2 那次真正的名字是
+    `…-linux-x86_64.AppImage`(electron-builder 在 Linux 上把 `${arch}` 展开成发行版架构名),
+    而原始错误里没有任何线索 —— 只能去翻 release 的资产列表才知道。
+    所以把目录里的 AppImage 一并报出来:名字对不上时,一眼就能看见对的是什么。
+  */
+  const appImages = (await readdir(releaseDirectory)).filter((entry) => /\.AppImage$/i.test(entry)).sort();
+  throw new Error(
+    `Expected exactly one Linux AppImage update artifact for ${version}, found ${names.length}${names.length ? ` (${names.join(", ")})` : ""}` +
+      (appImages.length === 0
+        ? `; no .AppImage in ${releaseDirectory}`
+        : `; AppImages present: ${appImages.join(", ")}`),
+  );
 }
 
 const name = names[0];

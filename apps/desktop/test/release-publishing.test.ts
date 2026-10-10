@@ -194,3 +194,91 @@ test("release manifest exposes only objects that exist in version directories", 
     await rm(root, { recursive: true, force: true });
   }
 });
+
+/**
+ * 命名契约:上游产物名与下游的三处假设必须是**同一个字符串**。
+ *
+ * v0.7.2 就是因为它们分叉了才发不出去 —— electron-builder 在 Linux 上把 `${arch}` 展开成
+ * **发行版架构名**(x64 在 AppImage/rpm 上是 `x86_64`、在 deb 上是 `amd64`,arm64 是 `arm_aarch64`),
+ * 而 workflow 的 glob、R2 清单和这里的脚本都按 `-linux-x64-` 找文件:三个二进制一个都没上传,
+ * 构建却报成功,一路等到 R2 镜像那一步才炸。
+ *
+ * 这条测试把"改了一处忘了另一处"变成测试里的红,而不是发布时的红。
+ */
+test("linux artifact naming is pinned once and every consumer agrees", async () => {
+  const desktopRoot = new URL("../", import.meta.url);
+  const builderConfig = await readFile(new URL("electron-builder.yml", desktopRoot), "utf8");
+  const workflow = await readFile(new URL("../../../.github/workflows/release-desktop.yml", import.meta.url), "utf8");
+  const manifest = JSON.parse(await readFile(new URL("package.json", desktopRoot), "utf8")) as {
+    scripts: Record<string, string>;
+  };
+
+  // ① `linux:` 段里必须**显式**钉住产物名
+  const lines = builderConfig.split("\n");
+  const start = lines.findIndex((line) => line.trimEnd() === "linux:");
+  assert.notEqual(start, -1, "electron-builder.yml 里找不到 linux: 段");
+  const block: string[] = [];
+  for (const line of lines.slice(start + 1)) {
+    if (/^[A-Za-z]/.test(line)) break; // 下一个顶层键
+    block.push(line);
+  }
+  const artifactName = block
+    .map((line) => /^\s+artifactName:\s*(\S+)\s*$/.exec(line)?.[1])
+    .find((value): value is string => Boolean(value));
+  assert.ok(artifactName, "linux: 段里必须显式写 artifactName —— 依赖默认值正是这次的坑");
+  // `${arch}` 在 Linux 上不是 electron-builder 的内部名,写它就等于把名字交给那张按目标而定的映射表。
+  assert.doesNotMatch(artifactName, /\$\{arch\}/);
+
+  // ② 产物名里的架构 token 必须与 `dist:linux` 实际构建的架构一致
+  const archFlag = /--(x64|arm64|ia32|armv7l)\b/.exec(manifest.scripts["dist:linux"] ?? "")?.[1];
+  assert.ok(archFlag, "dist:linux 必须显式写架构");
+  const token = /-linux-([a-z0-9_]+)\.\$\{ext\}$/.exec(artifactName)?.[1];
+  assert.equal(
+    token,
+    archFlag,
+    `产物名里的架构 token(${token ?? "缺失"})与 dist:linux 构建的架构(${archFlag})不一致 —— 改了架构就要同时改名字`,
+  );
+
+  // ③ 下游**三处**必须认同同一个 token —— 而且断言要盯住"具体那一处"。
+  //
+  // 这里踩过一次:第一版写的是 `workflow.includes("…-linux-x64.deb")`,结果**上面那个守卫步骤**
+  // 里的同一个字符串就把断言满足了 —— 于是从上传 glob 里删掉 `.deb` 也照样绿。这正是原来那个
+  // bug 的形状(守卫被错误的东西满足),所以每一处单独切出来断言。
+  const sectionBetween = (start: string, end: string): string => {
+    const from = workflow.indexOf(start);
+    assert.notEqual(from, -1, `workflow 里找不到 ${start}`);
+    const to = workflow.indexOf(end, from);
+    assert.notEqual(to, -1, `workflow 里找不到 ${start} 之后的 ${end}`);
+    return workflow.slice(from, to);
+  };
+  const guardLine = workflow.split("\n").find((line) => line.trimStart().startsWith("for name in"));
+  assert.ok(guardLine, "找不到逐个断言 Linux 二进制的守卫步骤");
+  const uploadGlobs = sectionBetween("name: wordless-linux-x64", "if-no-files-found:");
+  const r2List = sectionBetween("files=(", ")");
+  for (const extension of ["AppImage", "deb", "rpm"]) {
+    // 构建期守卫:少了它,"三个二进制全缺"会在 upload-artifact 那里报成功(v0.7.2 就是这样)。
+    assert.ok(guardLine.includes(`-linux-${archFlag}.${extension}`), `守卫没盯住 ${extension}`);
+    // 上传 glob:少了它,二进制进不了 workflow 产物 → 也就进不了 release。
+    assert.ok(uploadGlobs.includes(`Wordless-*-linux-${archFlag}.${extension}`), `上传 glob 缺少 ${extension}`);
+    // R2 清单:少了它,镜像那一步会 `stat` 不到文件。
+    assert.ok(r2List.includes(`Wordless-\${VERSION}-linux-${archFlag}.${extension}`), `R2 清单缺少 ${extension}`);
+  }
+
+  // ④ 把模板真正产出的名字喂给脚本 —— 名字对不上时这里红,而不是发布时红
+  const root = await mkdtemp(path.join(os.tmpdir(), "wordless-linux-naming-"));
+  try {
+    const artifact = artifactName.replace("${version}", "1.2.3").replace("${ext}", "AppImage");
+    const { bytes } = appImageFixture("appimage-payload");
+    await writeFile(path.join(root, artifact), bytes);
+    const output = path.join(root, "latest-linux.yml");
+    await execFileAsync(process.execPath, [
+      scriptPath("generate-linux-update-manifest.mjs"),
+      "--release-dir", root,
+      "--version", "1.2.3",
+      "--output", output,
+    ]);
+    assert.match(await readFile(output, "utf8"), new RegExp(`path: ${artifact.replaceAll(".", "\\.")}`));
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});

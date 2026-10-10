@@ -234,6 +234,18 @@ jobs:
       - name: Verify packaged FFF native search
         working-directory: apps/desktop
         run: npm run verify:packaged-fff -- release/linux-unpacked
+      - name: Verify Linux binaries exist
+        working-directory: apps/desktop
+        # `upload-artifact` 的 `if-no-files-found: error` **守不住**这三样:多条 glob 里只要有一条
+        # 命中就不报错,而 `latest-linux.yml` 总会命中 —— 于是"三个二进制一个都没上传"也会报成功。
+        # v0.7.2 就是这么发出去的(release 里只有那份 yml,AppImage/deb/rpm 全缺),一路等到
+        # R2 镜像那一步才炸。所以这里逐个断言,不看 glob 的"有没有匹配到"。
+        run: |
+          # glob 必须带 `release/` 前缀:不带的话它在当前目录里找不到东西,`test -f "release/<字面量>"`
+          # 永远为假 —— 那样这个守卫会拦住每一次构建(而不是只拦住坏的那次)。
+          for name in release/Wordless-*-linux-x64.AppImage release/Wordless-*-linux-x64.deb release/Wordless-*-linux-x64.rpm; do
+            test -f "$name" || { echo "missing Linux artifact: $name" >&2; exit 1; }
+          done
       - uses: actions/upload-artifact@v4
         with:
           name: wordless-linux-x64

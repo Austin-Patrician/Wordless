@@ -109,6 +109,19 @@ linux:
     - AppImage
     - deb
     - rpm
+  # 产物名**显式钉住**,理由与下面的 `executableName` 是同一条 —— 但这里踩过一次,代价更大:
+  # Linux 上 `${arch}` 展开的是**按扩展名分流的发行版架构名**,不是 electron-builder 的内部名
+  # (`builder-util` 的 `getArtifactArchName(arch, ext)` —— 同一个 x64,在 AppImage/rpm 上是
+  # `x86_64`、在 deb 上是 `amd64`;arm64 在 rpm 上是 `aarch64`、在 AppImage 上却还是 `arm64`)。
+  # 也就是说**同一台机器打出来的三个包,架构那一段互不相同** —— 没有任何一个"默认值"能同时对上。
+  #
+  # 后果:v0.7.2 那次发出去的 AppImage 叫 `Wordless-0.7.2-linux-x86_64.AppImage`,而发布脚本、
+  # workflow 的 glob 与 R2 清单全都按 `-linux-x64-` 找文件 —— **三个二进制一个都没上传**,而
+  # 构建报成功(release 里只剩一份 `latest-linux.yml`),最后死在 R2 镜像那一步。
+  #
+  # 钉死之后上游产物名与下游的三处假设是同一个字符串;`release-publishing.test.ts` 会盯着它们
+  # 不许分叉(包括"改了 `dist:linux` 的架构却忘了改这里")。
+  artifactName: Wordless-${version}-linux-x64.${ext}
   # 可执行文件名显式钉住。Linux 的默认值是 productName 小写(`wordless`),三个校验脚本按这个
   # 名字找可执行文件 —— 依赖默认值等于让"哪天默认值变了"在打包后才暴露。
   executableName: wordless
