@@ -16,7 +16,17 @@ import { TooltipProvider } from "@wordless/ui-kit";
 const { messages } = await import("../src/renderer/shared/i18n.ts");
 
 vi.mock("../src/renderer/shared/preferences", () => ({
-  usePreferences: () => ({ t: (key: string): string => (messages["zh-CN"] as Record<string, string>)[key] ?? key }),
+  usePreferences: () => ({
+    // 操作行上现在还有一颗「存进知识库」,它按这个开关决定显不显示。
+    knowledge: { enabled: true, processingModel: null, autoProcessMinutes: 0, maxFilesPerRound: 0 },
+    t: (key: string): string => (messages["zh-CN"] as Record<string, string>)[key] ?? key,
+  }),
+}));
+
+const fileKnowledgeAnswer = vi.fn(async () => ({ sessionId: "kb-session" }));
+vi.mock("../src/renderer/shared/runtime", () => ({
+  useRuntime: () => ({ snapshot: null }),
+  useRuntimeClient: () => ({ fileKnowledgeAnswer }),
 }));
 
 import { AssistantMessageFooter } from "../src/renderer/features/thread/AssistantMessageFooter";
@@ -97,9 +107,68 @@ describe("助手回复底部的操作行", () => {
     expect(container.textContent).toBe("");
   });
 
+  it("是**图标按钮**,而且排在重做右边 —— 这一行本来就窄,不该多一个词", async () => {
+    await render({ retry: <span data-footer-item="retry" /> });
+    const button = container.querySelector(`button[aria-label="${zh("knowledgeFileAnswer")}"]`) as HTMLButtonElement;
+    expect(button).not.toBeNull();
+    // 图标按钮:没有可见文字(只有 svg),尺寸与复制那颗一致。
+    expect(button.textContent).toBe("");
+    expect(button.querySelector("svg")).not.toBeNull();
+    expect(button.className).toContain("h-6");
+    expect(button.className).toContain("w-6");
+    // 排在重做**右边**(DOM 顺序就是视觉顺序,这一行是 flex 从左到右)。
+    const retry = container.querySelector('[data-footer-item="retry"]')!;
+    expect(retry.compareDocumentPosition(button) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    // 时间戳仍然靠右(它带着 ml-auto)。
+    const timestamp = [...container.querySelectorAll("span")].find((node) => node.className.includes("ml-auto"));
+    expect(timestamp).not.toBeUndefined();
+    expect(button.compareDocumentPosition(timestamp!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
   it("复制按钮按 aria-label 找得到(读屏器与测试都靠它)", async () => {
     await render({ retry: <span data-footer-item="retry" /> });
     // 一次渲染里只有一个复制按钮 —— 多个回复各自一个,但都在各自的 footer 里。
     expect(container.querySelectorAll(`button[aria-label="${zh("threadCopyResponse")}"]`).length).toBe(1);
+  });
+});
+
+describe("存进知识库", () => {
+  it("按 aria-label 找得到,点了会把正文交给知识库并就地确认", async () => {
+    fileKnowledgeAnswer.mockClear();
+    // 自己挂一个容器:上面那个 describe 的 container/root 在自己的作用域里。
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    const ownRoot = createRoot(host);
+    await act(async () => {
+      ownRoot.render(
+        <TooltipProvider>
+          <AssistantMessageFooter
+            copyText="对比结论:甲优于乙。"
+            hasPendingInteraction={false}
+            isStreaming={false}
+            isTurnRunning={false}
+            messageCount={2}
+            timestamp={1}
+          />
+        </TooltipProvider>,
+      );
+    });
+
+    const button = host.querySelector('[aria-label="存进知识库"]') as HTMLButtonElement;
+    expect(button).not.toBeNull();
+    await act(async () => {
+      button.click();
+    });
+
+    // 归档由宿主起知识会话去做 —— 界面只把正文交出去。
+    expect(fileKnowledgeAnswer).toHaveBeenCalledWith("对比结论:甲优于乙。");
+    // 就地确认:按钮换成对勾、aria-label 换成"已存进知识库"(图标按钮没有文字可看)。
+    expect(host.textContent).not.toContain("存进知识库");
+    expect(host.querySelector('[aria-label="已存进知识库"]')).not.toBeNull();
+
+    await act(async () => {
+      ownRoot.unmount();
+    });
+    host.remove();
   });
 });

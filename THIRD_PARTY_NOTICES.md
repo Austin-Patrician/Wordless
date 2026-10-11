@@ -40,6 +40,23 @@ application bundle. The wasm runtime and its JavaScript glue are copied from the
 - Lock file: `apps/desktop/scripts/ocr.lock.json`
 - Preparer: `apps/desktop/scripts/prepare-ocr-assets.mjs`
 
+## mammoth (Word document conversion)
+
+Wordless reads `.docx` with `mammoth`, which converts the OOXML package into plain text. The
+package is bundled into the application, so its notice ships with it.
+
+- Copyright: 2013 Michael Williamson
+- Source: `https://github.com/mwilliamson/mammoth.js`
+- License: BSD-2-Clause
+- License text: `third_party/mammoth/LICENSE`
+- Dependency: `apps/desktop/package.json` (`mammoth`)
+
+Why this one is listed even though most npm dependencies are not: the BSD-2-Clause licence
+requires the copyright notice and licence text to travel with the distribution, and mammoth
+produces the text the agent reads — it is not an implementation detail that callers can
+swap out silently. Its own dependencies (jszip, underscore, xmlbuilder, …) are pulled in
+under their own licences and are not bundled separately.
+
 ## Design style catalog
 
 Wordless's built-in design styles ship `theme.css` token files and `DESIGN.md` specifications adapted from the Vetta design templates catalog.

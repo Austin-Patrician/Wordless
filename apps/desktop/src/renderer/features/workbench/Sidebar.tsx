@@ -15,7 +15,7 @@ import { SessionSearchDialog } from "./SessionSearchDialog";
 import { SidebarNavMorePanel } from "./SidebarNavMorePanel";
 import { activeSidebarNavRow, DEFAULT_PINNED_SIDEBAR_NAV_IDS, sidebarNavButtonClassName, SIDEBAR_NAV_ITEM_IDS, toSidebarNavClickHandlers, toSidebarNavRows, type SidebarNavRow, type WorkbenchMainView } from "./sidebar-nav";
 import { useSidebarNavDrag, type SidebarNavRegion } from "./use-sidebar-nav-drag";
-import { sortWorkspaceGroupsByRecentSession } from "./sidebar-sessions";
+import { sidebarVisibleSessions, sortWorkspaceGroupsByRecentSession } from "./sidebar-sessions";
 import { useDesktopAccount } from "../../shared/account";
 import type { SettingsPage } from "../settings/SettingsDialog";
 import { NotificationCenter } from "./NotificationCenter";
@@ -28,6 +28,7 @@ type SidebarProps = {
   onOpenSettings: (page?: SettingsPage) => void;
   onOpenSkills: () => void;
   onOpenDesign: () => void;
+  onOpenKnowledge: () => void;
   onOpenExperts: () => void;
   onOpenSession: (sessionId: string) => void;
   onSessionDeleted: (sessionId: string) => void;
@@ -232,7 +233,7 @@ function SidebarSettingsPopover({ onOpenSettings }: { onOpenSettings: (page?: Se
   );
 }
 
-export function Sidebar({ collapsed, mainView, onNewThread, onOpenAutomation, onOpenDesign, onOpenExperts, onOpenMedia, onOpenSettings, onOpenSession, onSessionDeleted, onOpenSkills, onToggle, runningSessionIds, selectedSessionId, onOpenTasks }: SidebarProps & { onOpenTasks: () => void }) {
+export function Sidebar({ collapsed, mainView, onNewThread, onOpenAutomation, onOpenDesign, onOpenKnowledge, onOpenExperts, onOpenMedia, onOpenSettings, onOpenSession, onSessionDeleted, onOpenSkills, onToggle, runningSessionIds, selectedSessionId, onOpenTasks }: SidebarProps & { onOpenTasks: () => void }) {
   const client = useRuntimeClient();
   const { refresh, snapshot } = useRuntime();
   const { locale, setSidebar, sidebar, t } = usePreferences();
@@ -247,9 +248,8 @@ export function Sidebar({ collapsed, mainView, onNewThread, onOpenAutomation, on
   const [recentSessionsExpanded, setRecentSessionsExpanded] = useState(false);
   const sessions = useMemo(
     () =>
-      (snapshot?.sessions ?? []).filter(
-        (session) => session.workbenchId !== "media-canvas",
-      ),
+      // **不是对话的东西不进会话列表** —— 判据与理由见 `sidebarVisibleSessions`。
+      sidebarVisibleSessions(snapshot?.sessions ?? []),
     [snapshot?.sessions],
   );
   const workspaces = snapshot?.workspaces ?? [];
@@ -379,8 +379,8 @@ export function Sidebar({ collapsed, mainView, onNewThread, onOpenAutomation, on
   const moreNavRows = useMemo(() => toSidebarNavRows(resolvedNav.more, mainView, selectedSessionId, t), [mainView, resolvedNav.more, selectedSessionId, t]);
   const [navMoreOpen, setNavMoreOpen] = useState(false);
   const navClickHandlers = useMemo(
-    () => toSidebarNavClickHandlers({ newThread: onNewThread, openDesign: onOpenDesign, openMedia: onOpenMedia, openAutomation: onOpenAutomation, openTasks: onOpenTasks, openExperts: onOpenExperts, openSkills: onOpenSkills }),
-    [onNewThread, onOpenAutomation, onOpenDesign, onOpenExperts, onOpenMedia, onOpenSkills, onOpenTasks],
+    () => toSidebarNavClickHandlers({ newThread: onNewThread, openDesign: onOpenDesign, openKnowledge: onOpenKnowledge, openMedia: onOpenMedia, openAutomation: onOpenAutomation, openTasks: onOpenTasks, openExperts: onOpenExperts, openSkills: onOpenSkills }),
+    [onNewThread, onOpenAutomation, onOpenDesign, onOpenKnowledge, onOpenExperts, onOpenMedia, onOpenSkills, onOpenTasks],
   );
   const commitNavLayout = (next: ResolvedSidebarNavLayout, pinnedLimit: number = sidebar.pinnedLimit) => {
     const layout: SidebarNavLayout = toStoredSidebarNavLayout(next);

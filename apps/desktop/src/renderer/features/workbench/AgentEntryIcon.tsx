@@ -5,6 +5,7 @@ import everydayOfficeIcon from "../../../icons/common-icons/日常办公.svg";
 import dataAnalysisIcon from "../../../icons/common-icons/数据分析.svg";
 import websiteIcon from "../../../icons/common-icons/网站.svg";
 import innovationIcon from "../../../icons/common-icons/innovation.svg";
+import knowledgeBaseIcon from "../../../icons/common-icons/knowledge-base.svg";
 import presentationIcon from "../../../icons/common-icons/presentation.svg";
 
 const icons: Record<string, string> = {
@@ -15,6 +16,7 @@ const icons: Record<string, string> = {
   code: codeDevelopmentIcon,
   palette: websiteIcon,
   image: innovationIcon,
+  knowledge: knowledgeBaseIcon,
 };
 
 export function AgentEntryIcon({ className, iconKey }: { className?: string; iconKey?: string }) {

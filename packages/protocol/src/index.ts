@@ -3375,3 +3375,264 @@ export type DesignRasterResultDto =
   | { ok: true; key: string; bytes: Uint8Array<ArrayBuffer>; width: number; height: number }
   | { ok: false; key: string; code: "timeout" | "load-failed" | "capture-failed" | "cancelled" };
 export type DesignMoveFramesRequestDto = Static<typeof DesignMoveFramesRequestSchema>;
+
+// ---------- 知识库 ----------
+//
+// 界面与宿主之间的三个方法:看现状、导入文件、在文件夹里打开。**加工本身不在这里** ——
+// 那是开一个 `knowledge` 工作类型的会话(见 docs/architecture/knowledge-base.md §6.2),
+// 走的是既有的 `createAndPrompt`,不需要新协议。
+
+export const KnowledgeRawFileSchema = Type.Object(
+  {
+    /** 相对 `raws/` 的路径,如 `合同/2024.pdf`。 */
+    path: Type.String(),
+    /** 是否已经有活页指向它。false = 还没加工。 */
+    processed: Type.Boolean(),
+    bytes: Type.Number(),
+  },
+  { additionalProperties: false },
+);
+
+export const KnowledgePageSummarySchema = Type.Object(
+  {
+    path: Type.String(),
+    kind: Type.String(),
+    title: Type.String(),
+    description: Type.String(),
+    tags: Type.Array(Type.String()),
+    /** 原始文件已删、等着被回收的页。 */
+    orphaned: Type.Boolean(),
+    /**
+     * `deprecated` = 已被退役(重复页,或原文被删)。
+     *
+     * 界面据此分清一个待回收的页是**被退役**还是**原文已删** —— 两者该做的事不同。
+     * 不写就是没设过(正常页)。
+     */
+    status: Type.Optional(Type.Union([Type.Literal("draft"), Type.Literal("stable"), Type.Literal("deprecated")])),
+    /** 人工复核过 —— 加工轮不再自动改写它。 */
+    verified: Type.Boolean(),
+    /** 复核已过期:复核过,但来源变了。 */
+    reviewStale: Type.Boolean(),
+  },
+  { additionalProperties: false },
+);
+
+/**
+ * 知识库的累计用量。
+ *
+ * **只统计最近若干轮**:每一轮的用量要读那个会话的 journal,而一个跑了几百轮的知识库会把
+ * 打开视图变成一次全库读盘。`sampledRounds` 如实说明统计了多少轮 —— 一个"看起来完整"的
+ * 数字比一个说明了自己范围的数字更容易误导人。
+ */
+export const KnowledgeUsageSummarySchema = Type.Object(
+  {
+    /** 统计到的加工会话数。 */
+    rounds: Type.Number({ minimum: 0 }),
+    totalTokens: Type.Number({ minimum: 0 }),
+    /** 估算成本(模型元数据里的价格 × 用量)。可能与账单有出入。 */
+    totalCost: Type.Number({ minimum: 0 }),
+    /** 库里一共有多少轮(用来判断上面的数字是不是全部)。 */
+    totalRounds: Type.Number({ minimum: 0 }),
+  },
+  { additionalProperties: false },
+);
+export type KnowledgeUsageSummary = Static<typeof KnowledgeUsageSummarySchema>;
+
+/**
+ * 把一段回答归档进知识库。
+ *
+ * 只传正文:它引用了哪些页由**宿主**从正文里抽出来(模型自己回忆"我刚引了哪几页"不可靠,
+ * 而 `sources` 是这一页能不能被核对的依据)。
+ */
+export const FileKnowledgeAnswerSchema = Type.Object(
+  {
+    text: Type.String({ minLength: 1 }),
+    /** 这段回答来自哪个会话 —— 记进 prompt,回看时知道上下文。 */
+    sourceTitle: Type.Optional(Type.String()),
+  },
+  { additionalProperties: false },
+);
+export type FileKnowledgeAnswerRequest = Static<typeof FileKnowledgeAnswerSchema>;
+
+/**
+ * 导入一份别人的 OKF bundle 的**计划** —— 先看再导。
+ *
+ * 一份别人的库可能有几百页,盲目导进去之后才发现"撞了 40 页""少了原始文件",而那时已经在库里了。
+ */
+export const KnowledgeImportPlanSchema = Type.Object(
+  {
+    /** 来源目录(用户选的那个)。 */
+    directory: Type.String(),
+    /** 会新建的页数。 */
+    added: Type.Number({ minimum: 0 }),
+    /** 路径撞车、默认会跳过的页。 */
+    conflicts: Type.Array(Type.Object({ path: Type.String(), title: Type.String() }, { additionalProperties: false })),
+    /** 读不出来的文件。 */
+    damaged: Type.Array(Type.Object({ path: Type.String(), issue: Type.String() }, { additionalProperties: false })),
+    /** 会一起带进来的原始文件数。 */
+    raws: Type.Number({ minimum: 0 }),
+    /**
+     * 来源只有页面、没有 `raws/`。
+     *
+     * 少了原始文件,那些源页下一轮会被判成孤儿并回收 —— 用户必须事先知道,否则他会以为
+     * 导进来的东西会一直在。
+     */
+    sourceFilesMissing: Type.Boolean(),
+    /** 来源里有、我们放不下的字段:字段名 → 出现次数。 */
+    droppedFields: Type.Record(Type.String(), Type.Number({ minimum: 0 })),
+    /** 类型被映射过的页:原类型 → 次数。 */
+    mappedTypes: Type.Record(Type.String(), Type.Number({ minimum: 0 })),
+    /** 标签被截断的页数。 */
+    truncatedTags: Type.Number({ minimum: 0 }),
+  },
+  { additionalProperties: false },
+);
+export type KnowledgeImportPlan = Static<typeof KnowledgeImportPlanSchema>;
+
+/** 新建 / 删除一个知识库。**删的是它自己的目录** —— 用户要删的东西就在那里。 */
+export const MutateKnowledgeLibrarySchema = Type.Union([
+  Type.Object({ action: Type.Literal("create"), name: Type.String({ minLength: 1 }) }, { additionalProperties: false }),
+  Type.Object({ action: Type.Literal("delete"), name: Type.String({ minLength: 1 }) }, { additionalProperties: false }),
+]);
+export type MutateKnowledgeLibraryRequest = Static<typeof MutateKnowledgeLibrarySchema>;
+
+/**
+ * 一页的正文(预览用)。
+ *
+ * `null` = 这一页读不出来(路径不对、或它的 frontmatter 坏了)。
+ */
+/** 把一页从"待回收"里救回来。 */
+export const RestoreKnowledgePageSchema = Type.Object(
+  { path: Type.String({ minLength: 1 }) },
+  { additionalProperties: false },
+);
+
+/**
+ * 清空整理结果(保留原始文件)。
+ *
+ * 先**问一遍会失去什么**(无参数 = 只看),再带着 `confirm` 真清 —— 与导入那份"先看再导"同一套。
+ */
+export const ClearKnowledgePagesSchema = Type.Object(
+  { confirm: Type.Optional(Type.Boolean()) },
+  { additionalProperties: false },
+);
+
+/** 清空会失去什么。**说清再动手** —— 不报数字的确认等于没确认。 */
+export const KnowledgeClearPlanSchema = Type.Object(
+  {
+    pages: Type.Number(),
+    /** 没有原文可重新加工的页(导入来的,或来源已被删)。它们**永久消失**。 */
+    withoutRaw: Type.Number(),
+    /** 人工复核过的页 —— 也在被清之列,但要说出来。 */
+    verified: Type.Number(),
+  },
+  { additionalProperties: false },
+);
+export type KnowledgeClearPlan = Static<typeof KnowledgeClearPlanSchema>;
+
+/** 立即删除一页(不等宽限期;只对已经标了孤儿的页开放)。 */
+export const DeleteKnowledgePageSchema = Type.Object(
+  { path: Type.String({ minLength: 1 }) },
+  { additionalProperties: false },
+);
+
+export const KnowledgePageContentRequestSchema = Type.Object(
+  { path: Type.String({ minLength: 1 }) },
+  { additionalProperties: false },
+);
+
+export const KnowledgePageContentSchema = Type.Object(
+  {
+    path: Type.String(),
+    /** frontmatter 之后的部分 —— 预览要的是"这一页写了什么"。 */
+    body: Type.String(),
+  },
+  { additionalProperties: false },
+);
+export type KnowledgePageContent = Static<typeof KnowledgePageContentSchema>;
+
+export const KnowledgeLibrariesSchema = Type.Object(
+  {
+    /** 当前在用的那个。 */
+    active: Type.String(),
+    /** 根目录下所有像库的子目录。 */
+    names: Type.Array(Type.String()),
+  },
+  { additionalProperties: false },
+);
+export type KnowledgeLibraries = Static<typeof KnowledgeLibrariesSchema>;
+
+export const ImportKnowledgeBundleSchema = Type.Object(
+  {
+    directory: Type.String({ minLength: 1 }),
+    /** 撞车时:`skip` 留本库那一页,`rename` 给来源那一页一个带序号的新路径。**永不覆盖。** */
+    onConflict: Type.Union([Type.Literal("skip"), Type.Literal("rename")]),
+  },
+  { additionalProperties: false },
+);
+export type ImportKnowledgeBundleRequest = Static<typeof ImportKnowledgeBundleSchema>;
+
+export const SetKnowledgeVerificationSchema = Type.Object(
+  {
+    path: Type.String({ minLength: 1 }),
+    /** true = 标记为已复核(加工轮不再自动改写它);false = 取消复核。 */
+    verified: Type.Boolean(),
+  },
+  { additionalProperties: false },
+);
+export type SetKnowledgeVerificationRequest = Static<typeof SetKnowledgeVerificationSchema>;
+
+export const KnowledgeDamagedPageSchema = Type.Object(
+  { path: Type.String(), issue: Type.String() },
+  { additionalProperties: false },
+);
+
+export const KnowledgeSnapshotSchema = Type.Object(
+  {
+    /** 知识库根目录的绝对路径。 */
+    root: Type.String(),
+    rawFiles: Type.Array(KnowledgeRawFileSchema),
+    pages: Type.Array(KnowledgePageSummarySchema),
+    /** frontmatter 坏掉、进不了目录的页。要让人看见,否则它们的源文件会永远显示"未加工"。 */
+    damaged: Type.Array(KnowledgeDamagedPageSchema),
+  },
+  { additionalProperties: false },
+);
+export type KnowledgeSnapshot = Static<typeof KnowledgeSnapshotSchema>;
+
+export const ImportKnowledgeFilesSchema = Type.Object(
+  {
+    sourcePaths: Type.Array(Type.String()),
+    /** `copy` 保留原件,`move` 把它挪进库里(消除重复)。 */
+    mode: Type.Union([Type.Literal("copy"), Type.Literal("move")]),
+  },
+  { additionalProperties: false },
+);
+export type ImportKnowledgeFilesRequest = Static<typeof ImportKnowledgeFilesSchema>;
+
+export const ImportKnowledgeFilesResultSchema = Type.Object(
+  {
+    imported: Type.Number(),
+    /** 跳过的文件(不是文件、读不了)。**要说出来**,不能静默少几个。 */
+    skipped: Type.Array(Type.String()),
+  },
+  { additionalProperties: false },
+);
+export type ImportKnowledgeFilesResult = Static<typeof ImportKnowledgeFilesResultSchema>;
+
+/**
+ * 「立即整理」的结果。
+ *
+ * 只有两种结局:**起了会话**(界面跳到它)或**没起**(并说清为什么)。没有第三种 ——
+ * "起了但失败了"由会话自己显示,不在这里编一个状态。
+ */
+export const KnowledgeOrganizeResultSchema = Type.Object(
+  {
+    /** 起了会话就有它。 */
+    sessionId: Type.Optional(Type.String()),
+    /** 没起会话的原因:关掉了 / 没选模型 / 正在跑 / 没有要整理的活。 */
+    skipped: Type.Optional(Type.String()),
+  },
+  { additionalProperties: false },
+);
+export type KnowledgeOrganizeResult = Static<typeof KnowledgeOrganizeResultSchema>;

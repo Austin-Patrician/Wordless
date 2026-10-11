@@ -4,6 +4,7 @@ import { app, BrowserWindow, clipboard, dialog, ipcMain, shell } from "electron"
 import { Type } from "typebox";
 import { Value } from "typebox/value";
 import type { TSchema } from "typebox";
+import { KNOWLEDGE_AUTO_PROCESS_OPTIONS, KNOWLEDGE_ROUND_BUDGET_OPTIONS } from "@wordless/domain";
 import type {
   AppearancePreferences,
   AppPreferences,
@@ -219,7 +220,8 @@ function isAppPreferences(value: unknown): value is AppPreferences {
     !("notifications" in value) ||
     !("security" in value) ||
     !("translation" in value) ||
-    !("appearance" in value)
+    !("appearance" in value) ||
+    !("knowledge" in value)
   )
     return false;
   const notifications = value.notifications;
@@ -242,8 +244,46 @@ function isAppPreferences(value: unknown): value is AppPreferences {
     isSecurityRuleList(security.customFileRules, "pattern") &&
     isSecurityRuleList(security.customCommandRules, "command") &&
     isAppearancePreferences(value.appearance) &&
-    isTranslationPreferences(value.translation)
+    isTranslationPreferences(value.translation) &&
+    isKnowledgePreferences(value.knowledge)
   );
+}
+
+/**
+ * 知识库偏好:开关是布尔;每库的设置各自校验(坏的那项退回默认,不连坐)。
+ *
+ * 校验放在主进程这一侧而不是只靠渲染层,因为**偏好文件是用户能直接改的** ——
+ * 一个手改出来的 `"autoProcessMinutes": 0.5` 不该悄悄生效。
+ */
+function isKnowledgePreferences(value: unknown): boolean {
+  if (typeof value !== "object" || value === null) return false;
+  const { enabled, activeKnowledgeBase, libraries } = value as {
+    enabled?: unknown;
+    activeKnowledgeBase?: unknown;
+    libraries?: unknown;
+  };
+  if (typeof enabled !== "boolean") return false;
+  if (activeKnowledgeBase !== null && typeof activeKnowledgeBase !== "string") return false;
+  if (typeof libraries !== "object" || libraries === null || Array.isArray(libraries)) return false;
+  return Object.values(libraries as Record<string, unknown>).every(isKnowledgeLibrarySettings);
+}
+
+function isKnowledgeLibrarySettings(value: unknown): boolean {
+  if (typeof value !== "object" || value === null) return false;
+  const { processingModel, autoProcessMinutes, maxFilesPerRound } = value as {
+    processingModel?: unknown;
+    autoProcessMinutes?: unknown;
+    maxFilesPerRound?: unknown;
+  };
+  // 间隔必须是允许的档位之一:自由数值会让"每 0.5 分钟"这种配置悄悄生效。
+  if (typeof autoProcessMinutes !== "number" || !KNOWLEDGE_AUTO_PROCESS_OPTIONS.includes(autoProcessMinutes as (typeof KNOWLEDGE_AUTO_PROCESS_OPTIONS)[number]))
+    return false;
+  if (typeof maxFilesPerRound !== "number" || !KNOWLEDGE_ROUND_BUDGET_OPTIONS.includes(maxFilesPerRound as (typeof KNOWLEDGE_ROUND_BUDGET_OPTIONS)[number]))
+    return false;
+  if (processingModel === null) return true;
+  if (typeof processingModel !== "object" || processingModel === null) return false;
+  const model = processingModel as { connectionId?: unknown; modelId?: unknown };
+  return typeof model.connectionId === "string" && typeof model.modelId === "string";
 }
 
 /**
@@ -298,6 +338,8 @@ type DesktopIpcOptions = {
   mcpMarketplace: McpRegistryService;
   skillMarketplace: SkillsMpMarketplaceService;
   onboarding: OnboardingService;
+  /** 偏好变化后重排知识库的定时加工。缺省 = 不重排(测试、以及没有知识库的宿主)。 */
+  reloadKnowledgePoller?: () => Promise<void>;
   translation: DesktopTranslationService;
 };
 

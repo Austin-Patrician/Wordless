@@ -81,6 +81,7 @@ import {
   conversationUsageFromUnknown,
   emptyTokenUsageSummary,
   modelCallTimingFromUnknown,
+  normalizeKnowledgePreferences,
   summarizeTokenUsage,
   resolveTranslationTargetLanguage,
   SIDEBAR_PINNED_LIMIT_DEFAULT,
@@ -216,6 +217,7 @@ import {
   historyRevision,
 } from "./history-cache.ts";
 import { createSingleFlightLoads, type LoadOutcome, type LoadState } from "./history-loader.ts";
+import { journalCompaction, latestCompactionTimestamp } from "./journal-entries.ts";
 import { withModelRequestHeaders } from "./model-request-headers.ts";
 import { collectSupersededResponseEntryIds, projectSessionTurnVersions } from "./session-branches.ts";
 import {
@@ -583,6 +585,18 @@ export const BUILTIN_ENTRIES: WorkbenchEntryDefinition[] = [
     modelRequirements: { requiresToolUse: true },
   },
   {
+    id: "knowledge",
+    mode: "everyday",
+    labelKey: "entryKnowledge",
+    descriptionKey: "entryKnowledgeDescription",
+    iconKey: "knowledge",
+    profile: { id: "knowledge", version: "1" },
+    // 加工轮次不是对话:独立一档,免得会话根的机器行为(artifacts/)落进知识库里。
+    workbenchId: "knowledge",
+    availability: "available",
+    modelRequirements: { requiresToolUse: true },
+  },
+  {
     id: "presentation",
     mode: "everyday",
     labelKey: "entryPresentation",
@@ -699,6 +713,7 @@ const DEFAULT_PREFERENCES = (defaultWorkspaceRoot: string): AppPreferences => ({
     cache: true,
     granularity: "text",
   },
+  knowledge: normalizeKnowledgePreferences(undefined),
   dismissedNotices: {},
 });
 
@@ -1525,8 +1540,6 @@ type ActiveRun = {
   isCompacting: boolean;
   compactionTrigger?: ContextCompactionRecord["trigger"];
   sequence: number;
-  /** 用量估算在途时又被要求刷新一次 —— 回来后重算,而不是排队重算。 */
-  contextUsageDirty: boolean;
   runId: string;
   userMessageId?: string;
   /**
@@ -2398,23 +2411,8 @@ export class WordlessRuntime {
         continue;
       }
       if (entry.type === "compaction") {
-        const value = asRecord(entry);
-        if (
-          typeof value?.id === "string" &&
-          typeof value.summary === "string" &&
-          typeof value.tokensBefore === "number"
-        ) {
-          const timestamp =
-            typeof value.timestamp === "string"
-              ? Date.parse(value.timestamp)
-              : Number.NaN;
-          compactions.push({
-            id: value.id,
-            timestamp: Number.isNaN(timestamp) ? Date.now() : timestamp,
-            summary: value.summary,
-            tokensBefore: value.tokensBefore,
-          });
-        }
+        const compaction = journalCompaction(entry);
+        if (compaction) compactions.push(compaction);
         continue;
       }
       if (entry.type !== "message") continue;
@@ -2688,25 +2686,14 @@ export class WordlessRuntime {
         continue;
       }
       if (entry.type === "compaction") {
-        if (
-          typeof value?.id === "string" &&
-          typeof value.summary === "string" &&
-          typeof value.tokensBefore === "number"
-        ) {
-          const timestamp =
-            typeof value.timestamp === "string"
-              ? Date.parse(value.timestamp)
-              : Number.NaN;
+        const compaction = journalCompaction(entry);
+        if (compaction)
           compactions.push({
-            id: value.id,
-            timestamp: Number.isNaN(timestamp) ? Date.now() : timestamp,
-            summary: value.summary,
-            tokensBefore: value.tokensBefore,
+            ...compaction,
             tokensAfter: 0,
             trigger: "manual",
             model,
           });
-        }
         continue;
       }
       if (entry.type !== "message") continue;
@@ -3395,7 +3382,9 @@ export class WordlessRuntime {
 
     const now = Date.now();
     const id = randomUUID();
+    // 根的三级来源:宿主指定的内部根 > 工作区 > 一次性临时目录。
     const runtimeRootPath =
+      options?.sessionRootPath ??
       workspace?.canonicalRootPath ??
       join(this.options.paths.sessionWorkspacesRoot, id);
     await this.pathService.ensureSessionRoot(runtimeRootPath);
@@ -5689,7 +5678,6 @@ export class WordlessRuntime {
       isCompacting: kind === "compaction",
       compactionTrigger: kind === "compaction" ? "manual" : undefined,
       sequence: 0,
-      contextUsageDirty: false,
       runId: randomUUID(),
       ...(userMessageId ? { userMessageId } : {}),
       ...(turnId ? { turnId } : {}),
@@ -5983,18 +5971,6 @@ export class WordlessRuntime {
     }
   }
 
-  /** 压缩后时间戳:`latestProviderInputTokens` 用它划出"这次请求"的范围。 */
-  private latestCompactionTimestamp(entries: readonly unknown[]): number {
-    let latest = 0;
-    for (const entry of entries) {
-      const candidate = entry as { type?: string; timestamp?: number };
-      if (candidate.type !== "compaction") continue;
-      const timestamp = candidate.timestamp ?? 0;
-      if (timestamp > latest) latest = timestamp;
-    }
-    return latest;
-  }
-
   /**
    * 只算用量,不构造会话视图。
    *
@@ -6018,12 +5994,19 @@ export class WordlessRuntime {
      * 判据,该单独设计 —— 不是为了省这 118ms 顺手塞进这里。
      */
     const session = await openWordlessSession(record.journalPath);
-    const entries = await session.getEntries();
+    /**
+     * 边界与消息必须来自**同一条分支**:`buildContext()` 走的是活动分支,而 `getEntries()`
+     * 是整棵树 —— 拿整棵树的压缩去划活动分支的范围,重试/回退到压缩之前之后,两边会算出
+     * 不同的用量(与会话视图那条路的分歧,和上面那个 ISO 字符串是同一类)。
+     */
+    const branchEntries = await session.getBranch();
     const activeContext = await session.buildContext();
     return this.buildContextUsage({
+      // 压缩边界必须和会话视图那条路用**同一个**解析(`journal-entries.ts`):
+      // 两边各读一遍 journal 的时间戳,读法一旦不同,同一个会话就会有两个用量。
       latestInputTokens: this.latestProviderInputTokens(
         activeContext.messages,
-        this.latestCompactionTimestamp(entries),
+        latestCompactionTimestamp(branchEntries),
       ),
       messages: activeContext.messages,
       record,
@@ -6035,24 +6018,39 @@ export class WordlessRuntime {
    *
    * 合并:在途未完成时只置一个 dirty 标记,回来后重算一次。原来只是"丢弃过期结果",
    * 每一次调用仍然各跑一遍 —— 一轮里几十条消息就是几十次重算,而它们的结果几乎一样。
+   *
+   * 在途状态按**会话**记,而且 dirty 标记也放在这里 —— 以前守卫按会话、标记却挂在发起那次
+   * 刷新的 run 上,于是"上一轮还在估算、下一轮已经开始"时(手动压缩就是这么收尾的:
+   * 压缩轮关掉时那次估算还在飞),新那一轮只把标记写进自己的 run,而在途的循环读的是旧 run
+   * 的标记 —— 那次刷新被静默丢掉,指示器停在上一个数。
    */
-  private pendingContextUsage = new Set<string>();
+  private pendingContextUsage = new Map<
+    string,
+    { active: ActiveRun; dirty: boolean }
+  >();
 
   private async refreshContextUsage(sessionId: string, active: ActiveRun): Promise<void> {
-    if (this.pendingContextUsage.has(sessionId)) {
-      active.contextUsageDirty = true;
+    const pending = this.pendingContextUsage.get(sessionId);
+    if (pending) {
+      pending.dirty = true;
+      // 事件要挂在**最新**那一轮的 runId 上,否则它落在上一轮的游标上。
+      pending.active = active;
       return;
     }
-    this.pendingContextUsage.add(sessionId);
+    const state = { active, dirty: false };
+    this.pendingContextUsage.set(sessionId, state);
     try {
       do {
-        active.contextUsageDirty = false;
+        state.dirty = false;
         const contextUsage = await this.estimateContextUsageForSession(sessionId);
-        if (active.contextUsageDirty) continue;
+        if (state.dirty) continue;
         if (contextUsage) {
-          this.emit(sessionId, active, { type: "context.usage.updated", contextUsage });
+          this.emit(sessionId, state.active, {
+            type: "context.usage.updated",
+            contextUsage,
+          });
         }
-      } while (active.contextUsageDirty);
+      } while (state.dirty);
     } catch {
       // 用量是展示面:失败就等下一次。下一条消息还会再触发一次。
     } finally {

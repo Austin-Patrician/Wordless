@@ -110,6 +110,8 @@ export default defineConfig({
       "test/assistant-message-footer.browser.test.tsx",
       "test/sidebar-settings-menu.browser.test.tsx",
       "test/sidebar-nav-more.browser.test.tsx",
+    "test/knowledge-view.browser.test.tsx",
+    "test/knowledge-settings.browser.test.tsx",
       "test/thread-selection-menu.browser.test.tsx",
       "test/global-shortcuts.browser.test.tsx",
       "test/shortcut-preferences.browser.test.tsx",

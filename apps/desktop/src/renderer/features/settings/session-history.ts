@@ -184,6 +184,7 @@ export const WORKBENCH_LABEL_KEYS: Record<WorkbenchId, MessageKey> = {
   analysis: "workbenchAnalysis",
   "ui-preview": "workbenchUiPreview",
   "media-canvas": "workbenchMediaCanvas",
+  knowledge: "knowledge",
 };
 
 /** Falls back to the raw id so an unknown or legacy workbench still renders. */

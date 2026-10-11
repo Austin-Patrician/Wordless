@@ -13,7 +13,19 @@ export type WorkbenchId =
   | "workbook"
   | "analysis"
   | "ui-preview"
-  | "media-canvas";
+  | "media-canvas"
+  /**
+   * 知识库加工轮次。
+   *
+   * 它**不是对话**,所以不能复用 `conversation`:那一档会带来一整套"会话根是共享命名空间"的
+   * 机器行为(`artifacts/primary`、`artifacts/shared`、写进系统提示的那段产物约定、每轮扫描产物)。
+   * 而加工会话的根是**知识库本身**,往里建 `artifacts/` 会污染一份要能带走的资产
+   * (见 `docs/architecture/knowledge-base.md` §4.1「bundle 内不留任何机器文件」)。
+   *
+   * 独立一档同时给了界面一个判据:加工会话不进会话列表(与 `media-canvas` 同一做法),
+   * 它们从知识库页进入。
+   */
+  | "knowledge";
 
 /**
  * 产物类型。
@@ -1456,6 +1468,173 @@ export function normalizeDismissedNotices(value: unknown): DismissedNotices {
   return Object.fromEntries(entries.slice(-50));
 }
 
+/**
+ * **一个库自己的设置。**
+ *
+ * 为什么这几项按库分开、而"开关"不分开:这三项都取决于**这个库里装的是什么** ——
+ * 一个全英文技术资料的库和一个扫描件合同库,合适的模型、间隔、每轮文件数都不一样。
+ * 而"知识库能不能用"是功能级的开关,与库无关。
+ *
+ * 另外:每库的 `autoProcessMinutes = 0` 本身就表达了"这个库不要自动加工",所以也不需要
+ * 再单独加一个"暂停某个库"的开关。
+ */
+export interface KnowledgeLibrarySettings {
+  /** 整理**这个库**用哪个模型;`null` = 跟随会话模型(只对手动整理有效)。 */
+  processingModel: ModelReference | null;
+  /** 自动加工**这个库**的间隔(分钟);`0` = 只手动。 */
+  autoProcessMinutes: number;
+  /** **这个库**一轮最多加工多少个文件;`0` = 不限。 */
+  maxFilesPerRound: number;
+}
+
+/** 没配过的库用这套。 */
+export const DEFAULT_KNOWLEDGE_LIBRARY_SETTINGS: KnowledgeLibrarySettings = {
+  processingModel: null,
+  // 默认**只手动**:自动加工是"让它自己花钱",不该是默认行为。
+  autoProcessMinutes: 0,
+  maxFilesPerRound: 0,
+};
+
+/** 某个库的设置(没配过就是默认)。**唯一的读取入口** —— 别在各处自己兜默认值。 */
+export function knowledgeSettingsFor(preferences: KnowledgePreferences, name: string | null): KnowledgeLibrarySettings {
+  if (name === null) return DEFAULT_KNOWLEDGE_LIBRARY_SETTINGS;
+  return preferences.libraries[name] ?? DEFAULT_KNOWLEDGE_LIBRARY_SETTINGS;
+}
+
+/**
+ * 改某个库的设置,其余库原样不动。
+ *
+ * 界面里三个控件都要写这一份"展开 + 只改一格",写三遍迟早会有一处漏掉别的库 ——
+ * 所以只留这一个入口。
+ */
+export function withKnowledgeLibrarySettings(
+  preferences: KnowledgePreferences,
+  name: string,
+  patch: Partial<KnowledgeLibrarySettings>,
+): KnowledgePreferences {
+  return {
+    ...preferences,
+    libraries: { ...preferences.libraries, [name]: { ...knowledgeSettingsFor(preferences, name), ...patch } },
+  };
+}
+
+/**
+ * 知识库的偏好。
+ *
+ * **机器本地的设置全在偏好里,按库名索引**;库本身(那份目录)只装内容。
+ *
+ * 为什么不把设置写进库目录里(那样改名也不会丢):模型引用里那个 `connectionId` 是**本机**
+ * 的概念。写进库目录,别人导入你的库就会带进一个指向不存在连接的模型 —— 而库是要能带走的
+ * 资产,不该夹带本机配置。
+ *
+ * 代价说清楚:**在 Finder 里给库改名 = 换了一个库**,它原来的设置读不到了(退回默认)。
+ * 所以设置页必须把"现在改的是哪个库"摆在明面上。
+ */
+export interface KnowledgePreferences {
+  /**
+   * agent 能不能使用知识库(查与写)。
+   *
+   * 关掉它 = 知识库的工具不进任何会话。**界面仍然可用**(浏览、导入、打开文件夹)—— 那些是
+   * 用户自己的操作,不经过 agent。停用时「立即整理」也不给点,因为那个会话跑起来会没有工具。
+   */
+  enabled: boolean;
+  /**
+   * 当前在用的知识库(名字 = 知识库根目录下的一个子目录)。
+   *
+   * **清单从文件系统推出来,不存注册表**:存了就有第二份真相,而用户在 Finder 里拷进来一份、
+   * 删掉一份之后,"哪个是真的"没有好答案。这里只记"当前用哪个"。
+   *
+   * `null` = 还没选过 → 用第一个可用的(没有就建默认那个)。
+   */
+  activeKnowledgeBase: string | null;
+  /**
+   * 每个库自己的设置,按**库名**索引。
+   *
+   * 没有条目的库用 `DEFAULT_KNOWLEDGE_LIBRARY_SETTINGS`(不预先写满:一份没配过的库不该
+   * 在偏好文件里留下痕迹)。
+   */
+  libraries: Record<string, KnowledgeLibrarySettings>;
+}
+
+/**
+ * 默认库名。第一次用时建它 —— 用户不该先"新建一个库"才能开始用。
+ *
+ * 放在 domain 而不是知识库那几个文件里,因为**迁移老偏好时需要它**:多库之前只有一份扁平
+ * 设置,它们属于当时那个唯一的库(也就是这个名字)。
+ */
+export const DEFAULT_KNOWLEDGE_BASE_NAME = "知识库";
+
+/** 自动加工的间隔选项(分钟);`0` = 只手动。 */
+export const KNOWLEDGE_AUTO_PROCESS_OPTIONS = [0, 3, 5, 10, 30] as const;
+
+/** 每轮加工的文件数上限;`0` = 不限。 */
+export const KNOWLEDGE_ROUND_BUDGET_OPTIONS = [0, 5, 10, 20, 50] as const;
+
+/** 一个库的设置:每一项都单独校验,坏的那项退回默认,不连坐。 */
+function normalizeKnowledgeLibrarySettings(value: unknown): KnowledgeLibrarySettings {
+  const record = typeof value === "object" && value !== null && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
+  const model = record.processingModel;
+  const reference =
+    typeof model === "object" &&
+    model !== null &&
+    typeof (model as { connectionId?: unknown }).connectionId === "string" &&
+    typeof (model as { modelId?: unknown }).modelId === "string"
+      ? { connectionId: (model as { connectionId: string }).connectionId, modelId: (model as { modelId: string }).modelId }
+      : null;
+  const minutes = record.autoProcessMinutes;
+  return {
+    processingModel: reference,
+    autoProcessMinutes:
+      typeof minutes === "number" && KNOWLEDGE_AUTO_PROCESS_OPTIONS.includes(minutes as (typeof KNOWLEDGE_AUTO_PROCESS_OPTIONS)[number])
+        ? minutes
+        : DEFAULT_KNOWLEDGE_LIBRARY_SETTINGS.autoProcessMinutes,
+    maxFilesPerRound:
+      typeof record.maxFilesPerRound === "number" &&
+      KNOWLEDGE_ROUND_BUDGET_OPTIONS.includes(record.maxFilesPerRound as (typeof KNOWLEDGE_ROUND_BUDGET_OPTIONS)[number])
+        ? record.maxFilesPerRound
+        : DEFAULT_KNOWLEDGE_LIBRARY_SETTINGS.maxFilesPerRound,
+  };
+}
+
+/**
+ * 知识库偏好的默认值。
+ *
+ * 单独导出是为了让**读到偏好之前**的调用方(应用刚起来、快照还没建立)有一个正当的取值 ——
+ * 而不是各自写一份 `{ enabled: true, ... }` 的近似品。
+ */
+export const DEFAULT_KNOWLEDGE_PREFERENCES: KnowledgePreferences = {
+  enabled: true,
+  activeKnowledgeBase: null,
+  libraries: {},
+};
+
+export function normalizeKnowledgePreferences(value: unknown): KnowledgePreferences {
+  const record = typeof value === "object" && value !== null && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
+  const activeKnowledgeBase =
+    typeof record.activeKnowledgeBase === "string" && record.activeKnowledgeBase.trim() !== "" ? record.activeKnowledgeBase : null;
+
+  const libraries: Record<string, KnowledgeLibrarySettings> = {};
+  const raw = record.libraries;
+  if (typeof raw === "object" && raw !== null && !Array.isArray(raw)) {
+    for (const [name, entry] of Object.entries(raw as Record<string, unknown>)) {
+      // 库名会变成目录名,所以这里也挡住空名与路径分隔符(偏好文件是用户能改的)。
+      if (name === "" || name.length > 60 || name.includes("/") || name.includes("\\")) continue;
+      libraries[name] = normalizeKnowledgeLibrarySettings(entry);
+    }
+  } else if ("processingModel" in record || "autoProcessMinutes" in record || "maxFilesPerRound" in record) {
+    // **多库之前的老结构是扁平的**:那时只有一个库,那几项就属于当时那个库。
+    // 不迁移的话,用户配好的加工模型会静默消失 —— 自动加工不再跑,而他不知道为什么。
+    libraries[activeKnowledgeBase ?? DEFAULT_KNOWLEDGE_BASE_NAME] = normalizeKnowledgeLibrarySettings(record);
+  }
+
+  return {
+    // 默认**开**:知识库是个只读安全的能力(写工具只在整理画像上),不该让用户先去找开关。
+    enabled: typeof record.enabled === "boolean" ? record.enabled : DEFAULT_KNOWLEDGE_PREFERENCES.enabled,
+    activeKnowledgeBase,
+    libraries,
+  };
+}
+
 export interface AppPreferences {
   locale: "zh-CN" | "en-US";
   theme: "light" | "dark" | "system";
@@ -1471,6 +1650,7 @@ export interface AppPreferences {
   shortcuts: ShortcutPreferences;
   sidebar: SidebarPreferences;
   ocr: OcrPreferences;
+  knowledge: KnowledgePreferences;
   dismissedNotices: DismissedNotices;
 }
 
@@ -1722,6 +1902,17 @@ export interface PromptSessionOptions {
   connectorIds?: string[];
   taskId?: string;
   attachments?: PromptAttachmentInput[];
+  /**
+   * 这个会话的根**不是工作区、也不是临时目录**,而是宿主指定的位置。
+   *
+   * 知识库加工用它:一轮加工的相对路径(任务清单里的 `raws/x.pdf`、约定里的 `read index.md`)
+   * 只有在会话根就是知识库时才成立 —— 否则 `read` 会在 `session-workspaces/<id>/` 里找文件,
+   * 拿到 ENOENT,而 agent 明明照着说明书在做。
+   *
+   * **只给主进程用**:它是个"根覆盖"原语(会话的可写根就是这个路径)。渲染层够不到它 ——
+   * IPC 处理器逐字段地构造选项(只取 `attachments`),不转发整个 payload。
+   */
+  sessionRootPath?: string;
 }
 
 export type PromptAttachmentInput = {

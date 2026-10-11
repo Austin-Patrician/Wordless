@@ -352,6 +352,37 @@ const wordlessBridge: DesktopBridge = {
     ipcRenderer.invoke("wordless:session:compact", { sessionId }),
   getSessionContext: (sessionId) =>
     ipcRenderer.invoke("wordless:session:context", sessionId),
+  getKnowledgeSnapshot: () => ipcRenderer.invoke("wordless:knowledge:snapshot"),
+  readKnowledgePage: (path) => ipcRenderer.invoke("wordless:knowledge:page-content", { path }),
+  restoreKnowledgePage: (path) => ipcRenderer.invoke("wordless:knowledge:restore", { path }),
+  deleteKnowledgePage: (path) => ipcRenderer.invoke("wordless:knowledge:delete-page", { path }),
+  clearKnowledgePages: (options) => ipcRenderer.invoke("wordless:knowledge:clear-pages", options ?? {}),
+  importKnowledgeFiles: async (files, mode) => {
+    // 路径只能在 preload 里拿(`webUtils` 是 Electron 的)—— 与 `importMediaImages` 同一做法。
+    const sourcePaths = files
+      .map((file) => webUtils.getPathForFile(file))
+      .filter((path) => path.length > 0);
+    if (sourcePaths.length !== files.length) throw new Error("One or more selected files are unavailable");
+    return await ipcRenderer.invoke("wordless:knowledge:import", { sourcePaths, mode });
+  },
+  revealKnowledgeRoot: () => ipcRenderer.invoke("wordless:knowledge:reveal"),
+  organizeKnowledge: (kind) => ipcRenderer.invoke("wordless:knowledge:organize", kind ?? "process"),
+  getKnowledgeLibraries: () => ipcRenderer.invoke("wordless:knowledge:libraries"),
+  mutateKnowledgeLibrary: (request) => ipcRenderer.invoke("wordless:knowledge:library-mutate", request),
+  importKnowledgeBundle: (request) => ipcRenderer.invoke("wordless:knowledge:import-bundle", request),
+  fileKnowledgeAnswer: (text, sourceTitle) => ipcRenderer.invoke("wordless:knowledge:file-answer", { text, ...(sourceTitle === undefined ? {} : { sourceTitle }) }),
+  getKnowledgeUsage: () => ipcRenderer.invoke("wordless:knowledge:usage"),
+  setKnowledgeVerification: (path, verified) => ipcRenderer.invoke("wordless:knowledge:verify", { path, verified }),
+  subscribeKnowledgeProcessing: (listener) => {
+    const handler = (_event: Electron.IpcRendererEvent, processing: boolean) => listener(processing);
+    ipcRenderer.on("wordless:knowledge:processing", handler);
+    return () => ipcRenderer.removeListener("wordless:knowledge:processing", handler);
+  },
+  subscribeKnowledgeChanged: (listener) => {
+    const handler = () => listener();
+    ipcRenderer.on("wordless:knowledge:changed", handler);
+    return () => ipcRenderer.removeListener("wordless:knowledge:changed", handler);
+  },
   getSessionArtifacts: (sessionId) =>
     ipcRenderer.invoke("wordless:session:artifacts", sessionId),
   readSessionArtifact: (sessionId, artifactId) =>

@@ -6,8 +6,8 @@ export const generalProfile: ProfileDefinition = {
   modelRequirements: { requiresToolUse: true },
   systemPrompt:
     "You are Wordless, a practical general-purpose agent. Be clear, accurate, and concise. Use workspace tools when they help complete the task, inspect relevant files before changing them, and respect the configured access and approval policy.",
-  activeToolNames: ["read", "bash", "edit", "write", "grep", "find", "ls", "browser_tabs", "browser_snapshot", "browser_console", "browser_screenshot", "browser_click", "browser_type", "browser_press", "extract_text_from_image"],
-  capabilityIds: ["filesystem", "shell", "browser"],
+  activeToolNames: ["read", "bash", "edit", "write", "grep", "find", "ls", "browser_tabs", "browser_snapshot", "browser_console", "browser_screenshot", "browser_click", "browser_type", "browser_press", "extract_text_from_image", "extract_text_from_pdf", "extract_text_from_docx", "fetch_url", "kb_query", "kb_list_tags"],
+  capabilityIds: ["filesystem", "shell", "browser", "documents", "knowledge"],
   skills: [],
   artifactKinds: ["report", "image"],
   contextCompactionInstructions:

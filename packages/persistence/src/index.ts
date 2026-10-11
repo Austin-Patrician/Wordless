@@ -9,7 +9,7 @@ import {
   type SessionStorage,
   type SessionTreeEntry,
 } from "@wordless/agent";
-import { normalizeDismissedNotices, normalizeShortcutBindings, normalizeSidebarPreferences } from "@wordless/domain";
+import { normalizeDismissedNotices, normalizeKnowledgePreferences, normalizeShortcutBindings, normalizeSidebarPreferences } from "@wordless/domain";
 import type {
   AppPreferences,
   AutomationRun,
@@ -133,6 +133,11 @@ export class WordlessDatabase {
         // interface is allowed to show. Keys the catalog no longer offers are
         // kept here — dropping them belongs to the renderer, and keeping them
         // lets an entry that comes back keep its place.
+        // 知识库偏好也要在读的时候归一。多库之前那份是**扁平的**(只有一份设置),而这里是
+        // 浅合并 —— 老的 `autoProcessMinutes` / `processingModel` 会盖上来、`libraries` 却是
+        // 默认的空对象,于是宿主侧(轮询、每轮预算、归档模型)读到的一律是默认值:
+        // 用户配好的自动加工会**静默不再跑**。归一顺便把老结构迁移到当前库名下。
+        knowledge: normalizeKnowledgePreferences(stored.knowledge),
         sidebar: normalizeSidebarPreferences(
           typeof stored.sidebar === "object" && stored.sidebar !== null && !Array.isArray(stored.sidebar)
             ? stored.sidebar

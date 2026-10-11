@@ -4050,6 +4050,7 @@ export function ThreadView({
     () => getThreadSessionStore(client, sessionId, t),
     [client, sessionId],
   );
+
   const threadMetadata = useSyncExternalStore(
     threadStore.subscribeMetadata,
     threadStore.getMetadataSnapshot,

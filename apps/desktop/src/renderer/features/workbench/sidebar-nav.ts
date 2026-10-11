@@ -1,5 +1,5 @@
 import { SIDEBAR_PINNED_ANCHOR } from "@wordless/domain";
-import { CalendarClock, Command, Folder, Images, ListTodo, PenTool, UserRoundSearch, type LucideIcon } from "lucide-react";
+import { BookOpen, CalendarClock, Command, Folder, Images, ListTodo, PenTool, UserRoundSearch, type LucideIcon } from "lucide-react";
 import type { MessageKey } from "../../shared/i18n";
 
 /**
@@ -14,14 +14,15 @@ export type WorkbenchMainView =
   | "media"
   | "automation"
   | "tasks"
-  | "design";
+  | "design"
+  | "knowledge";
 
 /**
  * Ids in the order "More" lists entries the user never touched. This tuple is
  * the whole list: the rows and the click handlers are declared against it, so
  * adding an entry here is a compile error until both exist.
  */
-export const SIDEBAR_NAV_ITEM_IDS = ["new", "design", "media", "automation", "tasks", "experts", "skills"] as const;
+export const SIDEBAR_NAV_ITEM_IDS = ["new", "design", "media", "automation", "tasks", "experts", "skills", "knowledge"] as const;
 
 export type SidebarNavItemId = (typeof SIDEBAR_NAV_ITEM_IDS)[number];
 
@@ -52,6 +53,8 @@ const SIDEBAR_NAV_ITEM_DEFS: Record<SidebarNavItemId, Omit<SidebarNavItemDef, "i
   tasks: { labelKey: "tasks", icon: ListTodo, view: "tasks" },
   experts: { labelKey: "digitalEmployees", icon: UserRoundSearch, view: "experts" },
   skills: { labelKey: "skillsMcp", icon: Command, view: "skills" },
+  // 标签直接用早已预留的 `knowledge`(它一直没被引用过)。
+  knowledge: { labelKey: "knowledge", icon: BookOpen, view: "knowledge" },
 };
 
 export const SIDEBAR_NAV_ITEMS: readonly SidebarNavItemDef[] = SIDEBAR_NAV_ITEM_IDS.map((id) => ({
@@ -84,6 +87,7 @@ export interface SidebarNavActions {
   openExperts: () => void;
   openSkills: () => void;
   openDesign: () => void;
+  openKnowledge: () => void;
 }
 
 export function toSidebarNavClickHandlers(actions: SidebarNavActions): Record<SidebarNavItemId, () => void> {
@@ -95,6 +99,7 @@ export function toSidebarNavClickHandlers(actions: SidebarNavActions): Record<Si
     experts: actions.openExperts,
     skills: actions.openSkills,
     design: actions.openDesign,
+    knowledge: actions.openKnowledge,
   };
 }
 

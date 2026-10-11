@@ -19,6 +19,8 @@ asarUnpack:
   # 这份清单与 `scripts/external-packages.mjs` 的 NATIVE_ASAR_UNPACK 由测试逐条比对。
   - node_modules/@tailwindcss/**/*
   - node_modules/lightningcss*/**/*
+  # PDF 渲染用的原生 canvas。与 external-packages.mjs 的 NATIVE_ASAR_UNPACK 由测试逐条比对。
+  - node_modules/@napi-rs/**/*
 extraResources:
   # 局域网模式要托管的网页客户端。**必须随包发布**:打包版用户没有 npm,
   # 不能让他"先构建一次"(见 docs/architecture/remote-deployment.md §2.3)。

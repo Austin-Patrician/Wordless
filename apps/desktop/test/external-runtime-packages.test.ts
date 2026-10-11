@@ -117,6 +117,11 @@ test("external 判定本身没被改坏", async () => {
     "@ff-labs/fff-bin-win32-x64",
     "@yuuang/ffi-rs-win32-x64-msvc",
     "undici",
+    // 内联会让 pdfjs 的 createRequire(import.meta.url) 被改写成 {}.url,整个包在求值时就抛。
+    "pdf-parse",
+    "pdf-parse/lib/index.js",
+    "@napi-rs/canvas",
+    "@napi-rs/canvas-darwin-arm64",
   ]) {
     assert.equal(isExternalRuntimeDependency(id), true, `${id} 应当被外部化`);
   }

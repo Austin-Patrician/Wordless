@@ -1,0 +1,720 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>小白也能懂：Wordless 远程连接 & 帧加密原理解析</title>
+  <style>
+    :root {
+      --bg: #0b0f17;
+      --card-bg: #121824;
+      --card-subtle: #182234;
+      --border: #233047;
+      --border-bright: #3b5074;
+      --text: #e6edf8;
+      --text-muted: #8b9bb4;
+      --text-dim: #5c6b84;
+      --phone: #38bdf8;
+      --phone-glow: rgba(56, 189, 248, 0.2);
+      --desktop: #10b981;
+      --desktop-glow: rgba(16, 185, 129, 0.2);
+      --relay: #f59e0b;
+      --relay-glow: rgba(245, 158, 11, 0.2);
+      --crypto: #ec4899;
+      --crypto-glow: rgba(236, 72, 153, 0.2);
+      --danger: #ef4444;
+      --font-mono: "DM Mono", "JetBrains Mono", Consolas, monospace;
+      --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: var(--font-sans);
+      line-height: 1.65;
+      padding: 32px 16px 80px;
+      background-image: 
+        radial-gradient(circle at 10% 20%, rgba(56, 189, 248, 0.05) 0%, transparent 40%),
+        radial-gradient(circle at 90% 70%, rgba(236, 72, 153, 0.05) 0%, transparent 40%),
+        linear-gradient(to bottom, #070a0f, #0b0f17 200px);
+      min-height: 100vh;
+    }
+
+    .container {
+      max-width: 1040px;
+      margin: 0 auto;
+    }
+
+    /* 顶部 Banner */
+    header {
+      text-align: center;
+      margin-bottom: 48px;
+      padding-bottom: 32px;
+      border-bottom: 1px solid var(--border);
+    }
+    .badge {
+      display: inline-block;
+      font-size: 12px;
+      font-weight: 700;
+      letter-spacing: 1px;
+      text-transform: uppercase;
+      padding: 4px 12px;
+      border-radius: 999px;
+      background: rgba(56, 189, 248, 0.1);
+      color: var(--phone);
+      border: 1px solid rgba(56, 189, 248, 0.3);
+      margin-bottom: 16px;
+    }
+    h1 {
+      font-size: clamp(26px, 4vw, 38px);
+      font-weight: 800;
+      letter-spacing: -0.5px;
+      margin-bottom: 12px;
+      background: linear-gradient(135deg, #fff 30%, #94a3b8 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+    .subtitle {
+      font-size: 16px;
+      color: var(--text-muted);
+      max-width: 680px;
+      margin: 0 auto;
+    }
+
+    /* 导航标签 */
+    .nav-tabs {
+      display: flex;
+      gap: 8px;
+      justify-content: center;
+      margin-bottom: 36px;
+      flex-wrap: wrap;
+    }
+    .tab-btn {
+      background: var(--card-bg);
+      border: 1px solid var(--border);
+      color: var(--text-muted);
+      padding: 8px 16px;
+      border-radius: 8px;
+      font-size: 14px;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+    .tab-btn:hover {
+      border-color: var(--border-bright);
+      color: var(--text);
+    }
+    .tab-btn.active {
+      background: #1e293b;
+      border-color: var(--phone);
+      color: #fff;
+      font-weight: 600;
+      box-shadow: 0 0 16px var(--phone-glow);
+    }
+
+    /* 场景卡片通用样式 */
+    .card {
+      background: var(--card-bg);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 28px;
+      margin-bottom: 32px;
+      box-shadow: 0 8px 24px rgba(0,0,0,0.3);
+    }
+    .card-title {
+      font-size: 20px;
+      font-weight: 700;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 8px;
+    }
+    .card-title .icon {
+      width: 28px;
+      height: 28px;
+      border-radius: 6px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 14px;
+      font-weight: bold;
+    }
+    .card-desc {
+      color: var(--text-muted);
+      font-size: 14px;
+      margin-bottom: 24px;
+    }
+
+    /* 角色色彩定义 */
+    .role-phone { color: var(--phone); }
+    .role-desktop { color: var(--desktop); }
+    .role-relay { color: var(--relay); }
+    .role-crypto { color: var(--crypto); }
+
+    /* ========== 第1幕：为什么需要中继快递员 ========== */
+    .topology-stage {
+      display: grid;
+      grid-template-columns: 1fr 140px 1fr;
+      align-items: center;
+      gap: 16px;
+      background: var(--card-subtle);
+      padding: 24px 16px;
+      border-radius: 12px;
+      border: 1px dashed var(--border);
+      margin-bottom: 24px;
+    }
+    @media (max-width: 640px) {
+      .topology-stage { grid-template-columns: 1fr; text-align: center; }
+    }
+    .actor {
+      background: var(--card-bg);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 16px;
+      text-align: center;
+    }
+    .actor.phone { border-top: 3px solid var(--phone); }
+    .actor.relay { border-top: 3px solid var(--relay); }
+    .actor.desktop { border-top: 3px solid var(--desktop); }
+    .actor-name { font-weight: 700; font-size: 15px; margin-bottom: 4px; }
+    .actor-tag { font-size: 12px; color: var(--text-dim); }
+
+    .channel {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 6px;
+      font-size: 12px;
+      color: var(--text-muted);
+    }
+    .arrow-line {
+      width: 100%;
+      height: 2px;
+      background: linear-gradient(90deg, var(--phone), var(--relay));
+      position: relative;
+    }
+    .arrow-line.right {
+      background: linear-gradient(90deg, var(--relay), var(--desktop));
+    }
+
+    /* 快递比喻对比表 */
+    .metaphor-box {
+      background: rgba(245, 158, 11, 0.05);
+      border-left: 4px solid var(--relay);
+      padding: 16px 20px;
+      border-radius: 0 8px 8px 0;
+      margin-top: 16px;
+      font-size: 14px;
+    }
+    .metaphor-box h4 {
+      color: var(--relay);
+      margin-bottom: 6px;
+      font-size: 15px;
+    }
+
+    /* ========== 第2幕：生动形象的密钥协商 ========== */
+    .dh-stepper {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 16px;
+    }
+    .step-item {
+      background: var(--card-subtle);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 16px;
+      display: grid;
+      grid-template-columns: 36px 1fr;
+      gap: 14px;
+      align-items: start;
+    }
+    .step-num {
+      width: 32px;
+      height: 32px;
+      background: var(--card-bg);
+      border: 1px solid var(--border-bright);
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: 700;
+      font-size: 14px;
+      color: var(--phone);
+    }
+    .step-content h4 {
+      font-size: 15px;
+      margin-bottom: 4px;
+    }
+    .step-content p {
+      font-size: 13px;
+      color: var(--text-muted);
+      margin-bottom: 8px;
+    }
+    .key-tag-group {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+    .key-tag {
+      font-family: var(--font-mono);
+      font-size: 11px;
+      padding: 2px 8px;
+      border-radius: 4px;
+      background: #1f293d;
+      border: 1px solid var(--border-bright);
+    }
+
+    /* ========== 第3幕：每帧怎么加密（重头戏）交互模拟 ========== */
+    .interactive-demo {
+      background: var(--card-subtle);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 20px;
+      margin-top: 20px;
+    }
+    .demo-input-row {
+      display: flex;
+      gap: 10px;
+      margin-bottom: 18px;
+    }
+    .demo-input {
+      flex: 1;
+      background: var(--card-bg);
+      border: 1px solid var(--border-bright);
+      border-radius: 8px;
+      padding: 10px 14px;
+      color: #fff;
+      font-size: 14px;
+      outline: none;
+    }
+    .demo-input:focus { border-color: var(--phone); }
+    .demo-btn {
+      background: linear-gradient(135deg, #0284c7, #0369a1);
+      border: none;
+      color: #fff;
+      padding: 0 20px;
+      border-radius: 8px;
+      font-weight: 600;
+      font-size: 14px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      transition: all 0.2s;
+    }
+    .demo-btn:hover { filter: brightness(1.15); transform: translateY(-1px); }
+
+    /* 帧封包流水线视效 */
+    .pipeline {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+      gap: 14px;
+      margin-top: 16px;
+    }
+    .pipe-box {
+      background: var(--card-bg);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 14px;
+      position: relative;
+    }
+    .pipe-box.active {
+      border-color: var(--crypto);
+      box-shadow: 0 0 12px var(--crypto-glow);
+    }
+    .pipe-header {
+      font-size: 12px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      color: var(--text-dim);
+      margin-bottom: 8px;
+      display: flex;
+      justify-content: space-between;
+    }
+    .code-block {
+      background: #090d14;
+      border: 1px solid #1a2333;
+      border-radius: 6px;
+      padding: 10px;
+      font-family: var(--font-mono);
+      font-size: 12px;
+      color: #cbd5e1;
+      max-height: 180px;
+      overflow-y: auto;
+      word-break: break-all;
+      white-space: pre-wrap;
+    }
+    .code-block .hl-key { color: #f472b6; }
+    .code-block .hl-str { color: #38bdf8; }
+    .code-block .hl-num { color: #facc15; }
+
+    /* 密文密封盒样式 */
+    .sealed-box-visual {
+      background: linear-gradient(135deg, #1e1b4b, #31103f);
+      border: 2px dashed #ec4899;
+      border-radius: 8px;
+      padding: 12px;
+      margin-top: 12px;
+    }
+    .sealed-box-visual h5 {
+      color: #f472b6;
+      font-size: 12px;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      margin-bottom: 6px;
+    }
+
+    /* 核心问题问答小贴士 */
+    .qa-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+      gap: 16px;
+      margin-top: 20px;
+    }
+    .qa-item {
+      background: var(--card-subtle);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 16px;
+    }
+    .qa-q {
+      font-size: 14px;
+      font-weight: 700;
+      color: var(--text);
+      margin-bottom: 8px;
+      display: flex;
+      gap: 8px;
+    }
+    .qa-q::before {
+      content: "Q";
+      color: var(--phone);
+      font-weight: 900;
+    }
+    .qa-a {
+      font-size: 13px;
+      color: var(--text-muted);
+      line-height: 1.6;
+    }
+
+    footer {
+      text-align: center;
+      margin-top: 48px;
+      color: var(--text-dim);
+      font-size: 12px;
+    }
+  </style>
+</head>
+<body>
+
+<div class="container">
+  <header>
+    <div class="badge">Wordless Architecture Explained</div>
+    <h1>Wordless 远程连接 & 帧加密原理解析</h1>
+    <p class="subtitle">
+      零网络基础也能懂：把 NAT 穿透、中继转发、三重 DH 与 XChaCha20-Poly1305 拆成生活中的快递、保险箱与验伪标签。
+    </p>
+  </header>
+
+  <!-- 选项卡导航 -->
+  <div class="nav-tabs">
+    <button class="tab-btn active" onclick="switchSection('part1')">1. 为什么需要中继？</button>
+    <button class="tab-btn" onclick="switchSection('part2')">2. 密码怎么协商出来的？</button>
+    <button class="tab-btn" onclick="switchSection('part3')">3. 每一帧怎么加密？(动工演示)</button>
+    <button class="tab-btn" onclick="switchSection('part4')">4. 常见困惑解答</button>
+  </div>
+
+  <!-- 第 1 部分：拓扑与中继职责 -->
+  <section id="part1" class="card">
+    <div class="card-title">
+      <div class="icon" style="background: rgba(245, 158, 11, 0.2); color: var(--relay);">1</div>
+      <span>中继服务(Relay)：只看不拆的“快递驿站”</span>
+    </div>
+    <p class="card-desc">
+      你在咖啡厅用手机 4G，家里的电脑在路由器内网（没有公网 IP，不开放任何端口）。两端怎么连上？
+    </p>
+
+    <div class="topology-stage">
+      <div class="actor phone">
+        <div class="actor-name role-phone">📱 手机浏览器</div>
+        <div class="actor-tag">NAT 后 / 4G 移动网络</div>
+        <div style="font-size: 11px; margin-top: 6px; color: #94a3b8;">主动发起出站连接</div>
+      </div>
+
+      <div class="channel">
+        <div>wss:// 连接</div>
+        <div class="arrow-line"></div>
+        <div class="actor-name role-relay" style="margin-top: 4px;">🏢 中继服务器</div>
+        <div style="font-size: 10px; color: var(--relay);">只转发 sealed 密文</div>
+        <div class="arrow-line right"></div>
+        <div>wss:// 连接</div>
+      </div>
+
+      <div class="actor desktop">
+        <div class="actor-name role-desktop">💻 电脑端 Wordless</div>
+        <div class="actor-tag">家庭内网 127.0.0.1</div>
+        <div style="font-size: 11px; margin-top: 6px; color: #94a3b8;">主动向外拨号中继</div>
+      </div>
+    </div>
+
+    <div class="metaphor-box">
+      <h4>📦 生动比喻：盲人快递柜</h4>
+      <p>
+        中继服务器就像一个放在公网的<strong>盲人快递柜</strong>。<br>
+        1. <strong>手机和电脑都主动走到柜子前</strong>，打开一个专属于你们的信箱格（配对房间 <code>pairingId</code>）。<br>
+        2. 手机把一个<strong>焊死的保险箱</strong>塞进格子里，中继只能照原样把它递给电脑。<br>
+        3. <strong>中继没有开箱钥匙</strong>。中继日志里只能看到：<em>“收到一个密文盒子，转交给电脑”</em>。它看不到你在问什么、电脑在执行什么代码。
+      </p>
+    </div>
+  </section>
+
+  <!-- 第 2 部分：握手协商密钥 -->
+  <section id="part2" class="card">
+    <div class="card-title">
+      <div class="icon" style="background: rgba(56, 189, 248, 0.2); color: var(--phone);">2</div>
+      <span>端到端握手：怎么做到连中继都解不开？</span>
+    </div>
+    <p class="card-desc">
+      两端不用提前商量共同密码，中继在中间偷听也算不出密码，靠的是 <strong>Triple-DH (三重 Diffie-Hellman)</strong>。
+    </p>
+
+    <div class="dh-stepper">
+      <div class="step-item">
+        <div class="step-num">A</div>
+        <div class="step-content">
+          <h4>双钥匙制度：长期身份钥匙 + 一次性临时钥匙</h4>
+          <p>手机和电脑各自持有两把钥匙：</p>
+          <div class="key-tag-group">
+            <span class="key-tag" style="color: #6ee7b7;">电脑身份私钥 (系统钥匙串)</span>
+            <span class="key-tag" style="color: #93c5fd;">电脑临时私钥 (这次刚随机生成的)</span>
+            <span class="key-tag" style="color: #f472b6;">手机身份私钥 (配对时记住)</span>
+            <span class="key-tag" style="color: #fde047;">手机临时私钥 (这次刚随机生成的)</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="step-item">
+        <div class="step-num">B</div>
+        <div class="step-content">
+          <h4>三重混合（Triple-DH 计算）</h4>
+          <p>
+            双方在中继交换公开的<strong>公钥</strong>（公钥谁看都行），然后各自在本地做三次乘法混合：<br>
+            ① <code>临时 × 临时</code>：保证<strong>前向安全</strong>！就算未来电脑哪天被盗、私钥泄漏，过去的聊天记录也永远解不开！<br>
+            ② <code>身份 × 对端临时</code> + ③ <code>临时 × 对端身份</code>：把<strong>身份死死钉在这次连接上</strong>，中继如果想偷偷换成自己的临时钥匙，身份验证立即失败！
+          </p>
+        </div>
+      </div>
+
+      <div class="step-item">
+        <div class="step-num">C</div>
+        <div class="step-content">
+          <h4>派生出两条“单行道”密钥（方向密钥）</h4>
+          <p>
+            通过 HKDF 哈希切出两把 32 字节独立密钥：<br>
+            • <code>手机 ➔ 电脑 发件密钥</code>：专门用来加密手机发往电脑的话；<br>
+            • <code>电脑 ➔ 手机 发件密钥</code>：专门用来加密电脑发往手机的回答。<br>
+            <strong>绝不两头混用同一把锁</strong>，彻底消除重放和计数冲突风险。
+          </p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 第 3 部分：每帧加密交互模拟 -->
+  <section id="part3" class="card">
+    <div class="card-title">
+      <div class="icon" style="background: rgba(236, 72, 153, 0.2); color: var(--crypto);">3</div>
+      <span>每帧加密的流水线（动手试一试）</span>
+    </div>
+    <p class="card-desc">
+      每一个动作（发消息、按中断、接收 Agent 代码输出）都是一个独立的<strong>密封帧 (sealed frame)</strong>。
+      下面是真实代码 <code>sealFrame()</code> 里的完整工序：
+    </p>
+
+    <div class="interactive-demo">
+      <div style="font-size: 13px; font-weight: 600; margin-bottom: 8px; color: var(--text);">
+        输入你想通过手机发给电脑的一句话：
+      </div>
+      <div class="demo-input-row">
+        <input id="demoMsg" class="demo-input" type="text" value="帮我把桌面的 3 张图片压缩成 zip" placeholder="输入任意内容...">
+        <button class="demo-btn" onclick="simulateFrameSeal()">
+          <span>🔒 加密封箱这一帧</span>
+        </button>
+      </div>
+
+      <div class="pipeline">
+        <!-- 阶段 1 -->
+        <div class="pipe-box" id="boxStep1">
+          <div class="pipe-header">
+            <span>第 1 步：业务明文帧 (JSON)</span>
+            <span style="color: var(--phone);">Phone Memory</span>
+          </div>
+          <div class="code-block" id="outStep1">点击上方按钮执行...</div>
+          <div style="font-size: 11px; color: var(--text-dim); margin-top: 6px;">
+            自带随机 requestId 与请求方法
+          </div>
+        </div>
+
+        <!-- 阶段 2 -->
+        <div class="pipe-box" id="boxStep2">
+          <div class="pipe-header">
+            <span>第 2 步：XChaCha20-Poly1305 封箱</span>
+            <span style="color: var(--crypto);">Crypto Engine</span>
+          </div>
+          <div class="code-block" id="outStep2">等待生成...</div>
+          <div style="font-size: 11px; color: var(--text-dim); margin-top: 6px;">
+            每次全新 24 字节 Nonce + 认证标签 (MAC)
+          </div>
+        </div>
+
+        <!-- 阶段 3 -->
+        <div class="pipe-box" id="boxStep3">
+          <div class="pipe-header">
+            <span>第 3 步：网络传输帧 (Sealed)</span>
+            <span style="color: var(--relay);">Relay Sees This</span>
+          </div>
+          <div class="code-block" id="outStep3">中继只看得懂这一层...</div>
+          <div style="font-size: 11px; color: var(--text-dim); margin-top: 6px;">
+            中继只查 type="sealed"，其他内容全是天书
+          </div>
+        </div>
+      </div>
+
+      <div class="sealed-box-visual" id="sealedVisual" style="display: none;">
+        <h5>🛡️ 解密与防篡改验证（电脑端）</h5>
+        <p style="font-size: 12px; color: #cbd5e1;">
+          电脑收到这个盒子后，使用 <code>receiveKey</code> 解密。如果链路上有黑客或中继偷偷篡改了哪怕 <strong>1 个比特</strong>，
+          Poly1305 验签会直接爆炸抛错，<strong>整帧直接丢弃并切断连接，绝不让破损或被篡改的半个指令落到电脑里执行！</strong>
+        </p>
+      </div>
+    </div>
+  </section>
+
+  <!-- 第 4 部分：小白最关心的灵魂拷问 -->
+  <section id="part4" class="card">
+    <div class="card-title">
+      <div class="icon" style="background: rgba(16, 185, 129, 0.2); color: var(--desktop);">4</div>
+      <span>核心细节问答：小白常问的 4 个问题</span>
+    </div>
+    
+    <div class="qa-grid">
+      <div class="qa-item">
+        <div class="qa-q">每帧都在加密，会不会很卡很费电？</div>
+        <div class="qa-a">
+          <strong>完全不会。</strong> 算法选的是 <code>XChaCha20-Poly1305</code>，这是专门针对没有硬件 AES 加速的移动端优化的高性能流密码，加密 1KB 纯文本只需要几微秒（不到 0.005 毫秒），手机刷小视频消耗的 CPU 算力是它的几千倍。
+        </div>
+      </div>
+
+      <div class="qa-item">
+        <div class="qa-q">什么是 24 字节的 Nonce？为什么要每帧换？</div>
+        <div class="qa-a">
+          <code>Nonce</code> 意为“只用一次的数 (Number once)”。如果两帧用了相同的钥匙和相同的 Nonce，攻击者把两段密文一做异或，就有机会倒推出明文！Wordless 采用 192 位的超长随机 Nonce，就像宇宙里的沙子，连续随机抽几亿次也不会撞车。
+        </div>
+      </div>
+
+      <div class="qa-item">
+        <div class="qa-q">中继服务器能假装成我的电脑来套我的话吗？</div>
+        <div class="qa-a">
+          <strong>装不了（防中间人攻击 MITM）。</strong> 首次配对时，手机电脑会通过二维码绑定对方的<strong>公钥指纹</strong>，且手机电脑屏幕上还会显示一个一模一样的 <strong>6 位对验验证码 (SAS)</strong>。如果中继偷偷掉包了临时公钥，两边算出的验证码立刻不一致。
+        </div>
+      </div>
+
+      <div class="qa-item">
+        <div class="qa-q">如果网络抖动，一帧丢了或者乱序了怎么办？</div>
+        <div class="qa-a">
+          协议里每个事件都有一个递增序号 <code>sequence</code>。手机收到 1, 2, 4 发现缺了 3，会立即停下把 4 扣住，通过 <code>resume</code> 帧让电脑补发第 3 帧；电脑内存里保留着最近 512 条事件日志，补齐之后再连贯渲染，界面绝不会发生时空倒流。
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <footer>
+    Wordless Remote Protocol · End-to-End Cryptographic Architecture
+  </footer>
+</div>
+
+<script>
+  function switchSection(id) {
+    document.querySelectorAll('.tab-btn').forEach(btn => btn.classList.remove('active'));
+    event.target.classList.add('active');
+    document.getElementById(id).scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
+
+  // 简易 Base64Url 模拟
+  function fakeBase64Url(len) {
+    const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+    let res = "";
+    for (let i = 0; i < len; i++) res += chars.charAt(Math.floor(Math.random() * chars.length));
+    return res;
+  }
+
+  function simulateFrameSeal() {
+    const msg = document.getElementById('demoMsg').value || "你好，电脑";
+    const reqId = "req-" + Math.floor(Math.random() * 9000 + 1000);
+
+    // 1. 明文帧
+    const rawFrame = {
+      type: "request",
+      requestId: reqId,
+      method: "session.prompt",
+      payload: {
+        text: msg,
+        timestamp: Date.now()
+      }
+    };
+    document.getElementById('outStep1').innerHTML = syntaxHighlight(rawFrame);
+
+    // 2. 模拟 Nonce 和 Ciphertext
+    const nonce = fakeBase64Url(32); // 24 字节 base64 约 32 字符
+    const fakeCipher = fakeBase64Url(Math.max(64, msg.length * 4)) + "_POLY1305_MAC";
+
+    document.getElementById('outStep2').innerHTML = 
+      `<span style="color:#6ee7b7;">// XChaCha20 密文流 + Poly1305 认证标签</span>\n` +
+      `<span class="hl-key">Nonce (24B)</span>: <span class="hl-str">"${nonce}"</span>\n` +
+      `<span class="hl-key">AssociatedData</span>: <span class="hl-str">"wordless-remote-v2/session"</span>\n` +
+      `<span class="hl-key">Ciphertext</span>: <span class="hl-str">"${fakeCipher.slice(0, 32)}...[${fakeCipher.length} chars]"</span>`;
+
+    // 3. Sealed 帧
+    const sealedFrame = {
+      type: "sealed",
+      nonce: nonce,
+      ciphertext: fakeCipher
+    };
+    document.getElementById('outStep3').innerHTML = syntaxHighlight(sealedFrame);
+
+    document.getElementById('sealedVisual').style.display = 'block';
+
+    // 动画微交互
+    ['boxStep1', 'boxStep2', 'boxStep3'].forEach((id, idx) => {
+      const el = document.getElementById(id);
+      el.classList.remove('active');
+      setTimeout(() => el.classList.add('active'), idx * 120);
+    });
+  }
+
+  function syntaxHighlight(json) {
+    let str = JSON.stringify(json, null, 2);
+    str = str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    return str.replace(/("(\\u[a-zA-Z0-9]{4}|\\[^u]|[^\\"])*"(\s*:)?|\b(true|false|null)\b|-?\d+(?:\.\d*)?(?:[eE][+\-]?\d+)?)/g, function (match) {
+      let cls = 'hl-num';
+      if (/^"/.test(match)) {
+        if (/:$/.test(match)) {
+          cls = 'hl-key';
+        } else {
+          cls = 'hl-str';
+        }
+      }
+      return '<span class="' + cls + '">' + match + '</span>';
+    });
+  }
+
+  // 页面加载默认运行一次演示
+  window.addEventListener('load', () => {
+    simulateFrameSeal();
+  });
+</script>
+
+</body>
+</html>

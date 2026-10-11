@@ -39,6 +39,8 @@ export const NATIVE_ASAR_UNPACK = [
   // asarUnpack 不增加体积：文件是从 asar 挪到 `app.asar.unpacked`，asar 里只留索引。
   "node_modules/@tailwindcss/**/*",
   "node_modules/lightningcss*/**/*",
+  // PDF 渲染用的原生 canvas(@napi-rs/canvas 及其平台二进制包)。
+  "node_modules/@napi-rs/**/*",
 ];
 
 export const RUNTIME_EXTERNALS = [
@@ -65,6 +67,22 @@ export const RUNTIME_EXTERNALS = [
   { id: "@tailwindcss/oxide", match: "package", shippedBy: "@tailwindcss/oxide" },
   { id: "tailwindcss", match: "package", shippedBy: "tailwindcss" },
   { id: "lightningcss", match: "prefix", shippedBy: "lightningcss" },
+  /**
+   * PDF 解析。成因与上面那批**同一类**:它是 JS 包,但**必须**外部化。
+   *
+   * `pdf-parse` 在 Node 下通过 `createRequire(import.meta.url)("@napi-rs/canvas")` 加载原生
+   * canvas,而 esbuild 把主进程打成 CJS 时会把 `import.meta.url` 改写成 `{}.url`(即 undefined)
+   * —— 于是 createRequire 抛错,canvas 加载不上,`DOMMatrix`/`ImageData`/`Path2D` 全部缺失,
+   * **整个 pdf-parse 模块在求值时就抛**(实测:`DOMMatrix is not defined`)。
+   *
+   * 症状很隐蔽:开发机上跑测试用的是未打包的 ESM 版本,一切正常;只有**跑起来的主进程**里
+   * PDF 一个字都读不出来。所以这里外化,让它按原样从 node_modules 加载。
+   */
+  { id: "pdf-parse", match: "package", shippedBy: "pdf-parse" },
+  // canvas 的 JS 包装与它的平台二进制包(@napi-rs/canvas-darwin-arm64 这种"名字 + 平台后缀",
+  // 中间没有 `/`,所以按前缀匹配)。
+  { id: "@napi-rs/canvas", match: "package", shippedBy: "pdf-parse" },
+  { id: "@napi-rs/canvas-", match: "prefix", shippedBy: "pdf-parse" },
 ];
 
 /** 判断一个 import 标识符是否属于"不能内联、必须随包发布"的那批。 */

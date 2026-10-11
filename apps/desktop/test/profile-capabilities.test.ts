@@ -5,6 +5,7 @@ import { codingProfile } from "../../../packages/profiles/coding/src/index.ts";
 import { dataProfile } from "../../../packages/profiles/data/src/index.ts";
 import { excelProfile } from "../../../packages/profiles/excel/src/index.ts";
 import { generalProfile } from "../../../packages/profiles/general/src/index.ts";
+import { knowledgeProfile } from "../../../packages/profiles/knowledge/src/index.ts";
 import { pptProfile } from "../../../packages/profiles/ppt/src/index.ts";
 
 /**
@@ -29,6 +30,14 @@ const CAPABILITY_TOOLS: Record<string, readonly string[]> = {
   // spreadsheet tools, the presentation profile the presentation ones.
   office: ["spreadsheet_catalog", "presentation_catalog"],
   design: ["presentation_help"],
+  // Reading the user's own documents (PDF text layer, web pages) is a capability of its
+  // own: it has no write path and no workspace state, so the profiles that get it are the
+  // ones whose work starts from a file the user already has.
+  documents: ["extract_text_from_pdf", "extract_text_from_docx", "fetch_url"],
+  // The knowledge base is read/write, but only through its own three tools: the page format is
+  // enforced there, and the raw source files stay off limits.
+  knowledge: ["kb_write_page", "kb_retire_page", "kb_query", "kb_list_tags"],
+  // documents 与 knowledge 的只读半也在这个画像里(它要读原始资料、要查库)。
 };
 
 const PROFILES = [
@@ -37,6 +46,7 @@ const PROFILES = [
   ["data", dataProfile],
   ["excel", excelProfile],
   ["ppt", pptProfile],
+  ["knowledge", knowledgeProfile],
 ] as const;
 
 test("every declared capability has at least one of its tools enabled", () => {

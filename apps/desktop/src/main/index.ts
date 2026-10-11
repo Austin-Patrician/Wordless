@@ -1,7 +1,14 @@
+import { randomUUID } from "node:crypto";
 import path from "node:path";
-import { writeFile } from "node:fs/promises";
+import { mkdir, readdir, rm, writeFile } from "node:fs/promises";
 import { app, BrowserWindow, dialog, Menu, nativeImage, nativeTheme, session, shell, Tray } from "electron";
-import { normalizeOcrPreferences, type AppPreferences } from "@wordless/domain";
+import {
+  DEFAULT_KNOWLEDGE_BASE_NAME,
+  DEFAULT_KNOWLEDGE_PREFERENCES,
+  knowledgeSettingsFor,
+  normalizeOcrPreferences,
+  type AppPreferences,
+} from "@wordless/domain";
 import { createDesktopRuntime } from "./bootstrap/create-runtime";
 import { prepareUserDataPath } from "./bootstrap/user-data";
 import { registerRuntimeIpc } from "./ipc/register-runtime-ipc";
@@ -22,6 +29,28 @@ import { registerDesignProtocol, registerDesignScheme } from "./protocols/design
 import { registerOcrProtocol, registerOcrScheme } from "./protocols/ocr";
 import { ElectronOcrRunner } from "./ocr/ocr-runner";
 import { OcrService } from "./ocr/ocr-service";
+import { DocumentService } from "./documents/document-service";
+import { KnowledgeService } from "./knowledge/knowledge-service";
+import {
+  knowledgeBundlePath,
+  looksLikeKnowledgeBundle,
+  normalizeKnowledgeBaseName,
+  resolveActiveKnowledgeBase,
+} from "./knowledge/knowledge-library";
+import { KNOWLEDGE_CHANGED_CHANNEL, KNOWLEDGE_PROCESSING_CHANNEL, registerKnowledgeIpc } from "./ipc/register-knowledge-ipc";
+import { KnowledgePoller } from "./knowledge/knowledge-poller";
+import type { KnowledgeRoundPlan } from "./knowledge/knowledge-service";
+import {
+  buildKnowledgeFilingPrompt,
+  buildKnowledgeLintPrompt,
+  buildKnowledgeRoundPrompt,
+  citedPagesOf,
+  promptTitle,
+  summarizeHealthReport,
+} from "./knowledge/knowledge-round-prompt";
+import { settleKnowledgeRound } from "./knowledge/knowledge-settle";
+import { isHealthReportClean } from "./knowledge/knowledge-lint";
+import { knowledgeSessionRequest } from "./knowledge/knowledge-session";
 import { createDesignHandlers } from "./design/handlers";
 import { NodeDesignExporter } from "./design/design-exporter";
 import { ElectronDesignClipboard } from "./design/design-clipboard";
@@ -104,6 +133,8 @@ let designStore: DesignStore | undefined;
 let designRaster: ElectronOffscreenRaster | undefined;
 /** OCR 运行器:一个常驻隐藏窗口 + 常热引擎。退出时要一起关掉。 */
 let ocrRunner: ElectronOcrRunner | undefined;
+/** 加工调度器。模块级是因为 `before-quit` 要停它,而它在引导函数里构造。 */
+let knowledgePoller: KnowledgePoller<KnowledgeRoundPlan> | undefined;
 /** 活体视图宿主。至多一个,所以只需要一个实例。 */
 let designViewHost: WebContentsViewDesignHost | undefined;
 let account: GoogleAccountService | undefined;
@@ -226,6 +257,15 @@ if (!hasSingleInstance) {
 
 app.whenReady().then(async () => {
   if (!hasSingleInstance) return;
+  /**
+   * 未打包运行时,dock 与**原生对话框**的图标是 Electron 自己的 —— 用户看到的就是那个
+   * (实测被指出过:知识库「移动进来」的确认弹窗)。打包后图标来自应用包(见
+   * electron-builder.yml 的 `icon`),所以这里只是把开发态补齐。
+   */
+  if (process.platform === "darwin" && app.dock !== undefined) {
+    const icon = nativeImage.createFromPath(path.join(__dirname, "wordless.png"));
+    if (!icon.isEmpty()) app.dock.setIcon(icon);
+  }
   await hydrateShellEnvironment(hostInfo);
   // Node 兜底(P2):没有可用 node 的机器上,把 Wordless 自带的那份放到 PATH 最前面(零字节 ——
   // Electron 本身就是 Node)。刻意不 await:命令是逐次 spawn 时才读 PATH 的,用户在窗口里点第一条
@@ -246,6 +286,219 @@ app.whenReady().then(async () => {
   registerPresentationProtocol(presentationArtifactsRoot);
   const dataAnalysis = new DesktopDataAnalysisService({ metadataRoot: path.join(userData.path, "analysis-metadata"), resourcesRoot, hostEnvironment });
   registerAnalysisProtocol(dataAnalysis);
+  // 文档抽取(本地 PDF / 网页 → 文本)。没有资产、没有协议、没有隐藏窗口:它只在被调用时
+  // 才读文件或出网,而两个上限与 SSRF 判定都在服务里(见 document-service.ts)。
+  const documents = new DocumentService();
+  // 知识库。**放在用户可见的位置而不是 userData**:一个知识库是一份能带走的资产
+  // (OKF bundle,含原始文件),埋进 app 容器就违背了这个目的。
+  // 库名与位置在 P1 里先固定;「新建/切换知识库」属于界面那一层(见设计文档 §13)。
+  //
+  // `onChange` 在**服务里**触发(不是 IPC 层):写入包括 agent 在会话里写页那条路,而它
+  // 不经过 IPC —— 界面因此不用轮询,也不会漏掉 agent 的改动。
+  /**
+   * 知识库的根目录:**每个子目录是一个库**。
+   *
+   * 清单**从文件系统推出来,不存注册表** —— 见 `knowledge-library.ts` 的文件头。
+   */
+  const knowledgeBaseRoot = path.join(app.getPath("documents"), "Wordless Knowledge");
+  const knowledgeStateDirectory = path.join(userData.path, "knowledge-state");
+  /** 建一个库的服务。服务只是路径持有者,所以按需构造、不必缓存。 */
+  const knowledgeServiceAt = (name: string): KnowledgeService =>
+    new KnowledgeService(knowledgeBundlePath(knowledgeBaseRoot, name), {
+      // 变更通知在**服务里**触发(不是 IPC 层):写入包括 agent 在会话里写页那条路。
+      onChange: () => sendToAppWindow(KNOWLEDGE_CHANGED_CHANNEL, undefined),
+      // 失败账本放应用数据目录,且**按 bundle 根分文件** —— 每个库各记各的账。
+      stateDirectory: knowledgeStateDirectory,
+      // 每轮预算**懒读**(设置随时可能改),而且按**这个服务自己那个库**读:
+      // 服务知道自己是谁,所以不必去问"当前是哪个库" —— 也就不会读到别的库的预算上。
+      readBudget: () =>
+        knowledgeSettingsFor(runtime?.getSnapshot().preferences.knowledge ?? DEFAULT_KNOWLEDGE_PREFERENCES, name).maxFilesPerRound,
+    });
+
+  /** 根目录下有哪些库:像库的才算(一个空目录不是库)。 */
+  const listKnowledgeBaseNames = async (): Promise<string[]> => {
+    const entries = await readdir(knowledgeBaseRoot, { withFileTypes: true }).catch(() => []);
+    const names: string[] = [];
+    for (const entry of entries) {
+      if (!entry.isDirectory() || entry.name.startsWith(".")) continue;
+      const children = await readdir(path.join(knowledgeBaseRoot, entry.name)).catch(() => []);
+      if (looksLikeKnowledgeBundle(children)) names.push(entry.name);
+    }
+    return names.sort((a, b) => a.localeCompare(b));
+  };
+
+  /**
+   * 当前在用的库。
+   *
+   * 记的那个名字可能已经不在了(用户在 Finder 里删了/改名了),那时**退到第一个可用的**;
+   * 一个都没有就建默认那个 —— 用户不该先"新建一个库"才能开始用。
+   */
+  const activeKnowledgeBaseName = async (): Promise<string> => {
+    const names = await listKnowledgeBaseNames();
+    const preferred = runtime?.getSnapshot().preferences.knowledge.activeKnowledgeBase ?? null;
+    const resolved = resolveActiveKnowledgeBase(names, preferred);
+    if (resolved !== null) return resolved;
+    await mkdir(knowledgeBundlePath(knowledgeBaseRoot, DEFAULT_KNOWLEDGE_BASE_NAME), { recursive: true });
+    return DEFAULT_KNOWLEDGE_BASE_NAME;
+  };
+
+  const activeKnowledge = async (): Promise<KnowledgeService> => knowledgeServiceAt(await activeKnowledgeBaseName());
+  /**
+   * 加工调度器。
+   *
+   * **手动与定时走同一条路**:「立即整理」与定时轮询都调 `organize`,区别只有一个入参。
+   * 两条路各写一遍"算待办 → 起会话 → 收尾",迟早会漂。
+   */
+  /**
+   * 起一个知识会话。**轮询与归档共用** —— 两条路各写一遍"怎么起会话",迟早会漂
+   * (工作类型、审批模式、模型解析都会分叉)。
+   */
+  const startKnowledgeSession = async (prompt: string, modelKey: string | null): Promise<string> => {
+    const messageId = randomUUID();
+    const { draft, options } = knowledgeSessionRequest({
+      bundleRoot: (await activeKnowledge()).root,
+      modelKey,
+      title: promptTitle(),
+      messageId,
+      submittedAt: Date.now(),
+    });
+    const session = await runtime!.createAndPrompt(draft, prompt, [], { messageId, submittedAt: Date.now() }, options);
+    return session.id;
+  };
+
+  /**
+   * **当前这个库**配置的加工模型键(没有就 null = 跟随会话默认)。
+   *
+   * 异步是因为"当前是哪个库"要读文件系统 —— 库的清单就是目录,没有缓存的副本可查。
+   */
+  const processingModelKey = async (): Promise<string | null> => {
+    const preferences = runtime?.getSnapshot().preferences.knowledge;
+    if (preferences === undefined) return null;
+    const model = knowledgeSettingsFor(preferences, await activeKnowledgeBaseName()).processingModel;
+    return model === null ? null : `${model.connectionId}/${model.modelId}`;
+  };
+
+  knowledgePoller = new KnowledgePoller({
+    readConfig: async () => {
+      const preferences = runtime?.getSnapshot().preferences.knowledge;
+      // **按当前在用的库**读间隔与模型:切了库,轮询就该跟着新库走(新库设成"只手动"就停)。
+      const settings = knowledgeSettingsFor(preferences ?? DEFAULT_KNOWLEDGE_PREFERENCES, await activeKnowledgeBaseName());
+      return {
+        enabled: preferences?.enabled !== false,
+        intervalMinutes: settings.autoProcessMinutes,
+        modelKey: settings.processingModel
+          ? `${settings.processingModel.connectionId}/${settings.processingModel.modelId}`
+          : null,
+      };
+    },
+    prepare: async (kind, now) => {
+      // **按当前在用的库**:用户随时可能在设置里切库,而加工轮是异步起来的。
+      const service = await activeKnowledge();
+      if (kind === "lint") {
+        // 体检:先把**算得出来**的问题算出来(死链、孤立页、无来源、标题撞车),
+        // 干净就不起会话。要判断的那些(矛盾、缺页、缺引用)交给模型。
+        const report = await service.healthReport();
+        if (isHealthReportClean(report)) return null;
+        return { kind, prompt: buildKnowledgeLintPrompt(report), summary: summarizeHealthReport(report), needsAgent: true };
+      }
+      const plan = await service.prepareRound(now);
+      // 什么都没发生 → 不起会话、也不收尾:否则定时加工会每 N 分钟往 log.md 里写一行
+      // "什么都没变",把真正发生过的事淹掉。
+      if (plan.empty) return null;
+      return {
+        kind,
+        prompt: buildKnowledgeRoundPrompt(plan),
+        summary: `+${plan.diff.added.length} ~${plan.diff.changed.length}`,
+        // 工程侧的动作(移动/删除/回收)不需要 agent;只有真有待办时才起会话。
+        needsAgent: plan.needsProcessing,
+        context: plan,
+      };
+    },
+    startSession: startKnowledgeSession,
+    finish: async (preparation, now) => {
+      // **收尾只有这一个入口**(见 `knowledge-settle.ts` 的文件头:它以前散在两条路上,
+      // 而失败对账只在其中一条里,于是会失败的那一轮从不记账)。
+      await settleKnowledgeRound({
+        service: await activeKnowledge(),
+        kind: preparation.kind,
+        needsAgent: preparation.needsAgent,
+        plan: preparation.context ?? null,
+        summary: preparation.summary,
+        now,
+      });
+    },
+    onProcessingChanged: (processing) => sendToAppWindow(KNOWLEDGE_PROCESSING_CHANNEL, processing),
+    logger: { info: (message) => console.log(`[knowledge] ${message}`), warn: (message) => console.warn(`[knowledge] ${message}`) },
+  });
+  registerKnowledgeIpc({
+    // **每次调用现解析**:用户可能刚切了库,而 IPC 处理器是长期注册的。
+    resolveService: activeKnowledge,
+    resolveLibraries: async () => ({
+      active: await activeKnowledgeBaseName(),
+      names: await listKnowledgeBaseNames(),
+    }),
+    // 界面上的「保留这一页」= 清孤儿标 + 去掉退役 + 标人工复核(三件事是一句话)。
+    restorePage: async (path, now) => await (await activeKnowledge()).restorePage(path, now),
+    deletePage: async (path, now) => await (await activeKnowledge()).deleteOrphanNow(path, now),
+    clearPages: async () => await (await activeKnowledge()).clearDerivedPages(),
+    createLibrary: async (name) => {
+      const normalized = normalizeKnowledgeBaseName(name);
+      // 具体规则在 `normalizeKnowledgeBaseName` 里(它同时挡路径逃逸与系统保留字符)。
+      if (normalized === null) throw new Error("这个知识库名不能用:不能为空,也不能含路径分隔符或系统保留字符");
+      await mkdir(knowledgeBundlePath(knowledgeBaseRoot, normalized), { recursive: true });
+      await knowledgeServiceAt(normalized).ensureBundle();
+      return normalized;
+    },
+    deleteLibrary: async (name) => {
+      // **只删这个库自己的目录**。用户要删的东西就在这里,而它整个都是我们的。
+      //
+      // 归一挡的是**路径逃逸**:这是个 `rm -r`,库名又是从渲染层来的,`../..` 之类必须
+      // 在这里就被挡掉 —— 归一之后再确认一次父目录,两道都要有。
+      const normalized = normalizeKnowledgeBaseName(name);
+      if (normalized === null) throw new Error("这个知识库名不能用:不能为空,也不能含路径分隔符或系统保留字符");
+      const target = knowledgeBundlePath(knowledgeBaseRoot, normalized);
+      if (path.dirname(target) !== knowledgeBaseRoot) throw new Error("拒绝删除知识库根目录之外的路径");
+      await rm(target, { recursive: true, force: true });
+    },
+    organize: async (kind) => (await knowledgePoller?.organize("manual", kind)) ?? { skipped: "disabled" },
+    pickDirectory: async () => {
+      const result = await dialog.showOpenDialog({ properties: ["openDirectory"] });
+      return result.canceled || !result.filePaths[0] ? null : result.filePaths[0];
+    },
+    fileAnswer: async ({ text, sourceTitle }) => {
+      // **引用页由工程抽**,不是让模型回忆:它回忆"我刚引了哪几页"不可靠,而 `sources` 是
+      // 这一页能不能被核对的依据。归档用当前配置的加工模型(没配就跟随会话默认 —— 用户就在旁边)。
+      const sessionId = await startKnowledgeSession(
+        buildKnowledgeFilingPrompt({
+          text,
+          citedPages: citedPagesOf(text),
+          ...(sourceTitle === undefined ? {} : { sourceTitle }),
+        }),
+        await processingModelKey(),
+      );
+      return { sessionId };
+    },
+    readUsage: async () => {
+      // 加工会话按 `entryId` 认。**只读最近若干轮**:每一轮的用量要读那个会话的 journal,
+      // 而一个跑了几百轮的知识库会把"打开视图"变成一次全库读盘。
+      const SAMPLE = 50;
+      const sessions = (runtime?.getSnapshot().sessions ?? [])
+        .filter((session) => session.entryId === "knowledge")
+        .sort((a, b) => b.updatedAt - a.updatedAt);
+      let totalTokens = 0;
+      let totalCost = 0;
+      for (const session of sessions.slice(0, SAMPLE)) {
+        const usage = await runtime!.getSessionUsage(session.id).catch(() => undefined);
+        if (usage === undefined) continue;
+        totalTokens += usage.chat.totalTokens;
+        totalCost += usage.chat.totalCost;
+      }
+      return { rounds: Math.min(sessions.length, SAMPLE), totalTokens, totalCost, totalRounds: sessions.length };
+    },
+    revealPath: async (target) => {
+      await shell.openPath(target);
+    },
+  });
   // 设计画布的协议。设计包路径**不进 URL**,只进注册表 —— 于是"从 URL 构造一个逃出
   // 设计包的路径"在结构上不可能(见 design-url.ts)。
   const designPaths = new WorkspacePathService();
@@ -428,8 +681,17 @@ app.whenReady().then(async () => {
       ? undefined
       : { store: designStore, raster: designRaster, evaluator: designRaster, builds: designBuilds },
     ocr,
+    documents,
+    // **解析器而不是实例**:用户在设置里切库之后,新会话的 KB 工具要落在新库上。
+    activeKnowledge,
+    // 懒读:工具按会话装配,而开关随时可能被改 —— 与 OCR 的 `readOptions` 同一做法。
+    { isKnowledgeEnabled: () => runtime?.getSnapshot().preferences.knowledge.enabled !== false },
   );
   await runtime.initialize();
+  // 会话事件转发给调度器:它据此判断"这一轮跑完了"。
+  runtime.subscribe((envelope) => knowledgePoller?.handleRuntimeEvent(envelope));
+  // 启动时按当前设置排一次(改设置时由 IPC 的偏好写入路径再排)。
+  void knowledgePoller.reload();
   registerAttachmentProtocol(async (sessionId, previewPath) => await runtime!.resolveSessionAttachmentPreview(sessionId, previewPath));
   // Built before the automation service because that service is handed a way to
   // report finished runs. The bus's own dependencies point back at `automation`,
@@ -536,6 +798,7 @@ app.whenReady().then(async () => {
     if (preferences) updateTitleBarOverlays(preferences);
   });
   registerRuntimeIpc(runtime, appearanceAssets, {
+    reloadKnowledgePoller: async () => await knowledgePoller?.reload(),
     hostInfo,
     getAppInfo: () => updateService.getAppInfo(),
     showApplicationMenu: (menuId, window) => applicationMenu.show(menuId, window),
@@ -702,6 +965,8 @@ app.on("window-all-closed", () => {
 });
 
 app.on("before-quit", (event) => {
+  // 停掉加工调度:一个还在跑的轮次不该拖住退出,也不该在退出过程中继续写页面。
+  knowledgePoller?.stop();
   // 断开远端链路,并把未领取的邀请撤回(它只在内存里,进程结束即作废)。
   void remoteAccess?.stop().catch(() => undefined);
   if (disposing) return;

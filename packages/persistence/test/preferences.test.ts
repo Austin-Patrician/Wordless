@@ -20,6 +20,9 @@ function defaults(overrides: Partial<AppPreferences> = {}): AppPreferences {
     entryModels: {},
     translation: { targetLanguage: null, model: null, bubbleMaxChars: 600 },
     shortcuts: { bindings: {} },
+    ocr: { cache: true, granularity: "text" },
+    knowledge: { enabled: true, activeKnowledgeBase: null, libraries: {} },
+    dismissedNotices: {},
     ...overrides,
   };
 }
@@ -103,5 +106,36 @@ test("stored preferences written before shortcuts existed fall back to no bindin
 
   const loaded = database.getPreferences(defaults());
   assert.deepEqual(loaded.shortcuts, { bindings: {} });
+  database.close();
+});
+
+test("多库之前那份扁平的 knowledge 偏好,读的时候被迁移到当前库名下", async (context) => {
+  const root = await mkdtemp(join(tmpdir(), "wordless-preferences-"));
+  context.after(async () => await rm(root, { recursive: true, force: true }));
+  const database = new WordlessDatabase(join(root, "wordless.db"));
+
+  // 老结构:没有 `libraries`,设置是扁平的。这里的合并是**浅合并**,所以不归一的话
+  // `libraries` 会是默认的空对象、老的 `autoProcessMinutes` 却还在顶层 ——
+  // 宿主侧(轮询、每轮预算、归档模型)读到的就全是默认值:用户配好的自动加工静默不再跑。
+  database.savePreferences({
+    ...defaults(),
+    knowledge: { enabled: true, activeKnowledgeBase: "工作", processingModel: { connectionId: "a", modelId: "b" }, autoProcessMinutes: 10, maxFilesPerRound: 20 },
+  } as unknown as AppPreferences);
+
+  const loaded = database.getPreferences(defaults());
+  assert.deepEqual(loaded.knowledge, {
+    enabled: true,
+    activeKnowledgeBase: "工作",
+    libraries: { 工作: { processingModel: { connectionId: "a", modelId: "b" }, autoProcessMinutes: 10, maxFilesPerRound: 20 } },
+  });
+  database.close();
+});
+
+test("全新的安装不会在偏好里凭空留一个库", async (context) => {
+  const root = await mkdtemp(join(tmpdir(), "wordless-preferences-"));
+  context.after(async () => await rm(root, { recursive: true, force: true }));
+  const database = new WordlessDatabase(join(root, "wordless.db"));
+
+  assert.deepEqual(database.getPreferences(defaults()).knowledge.libraries, {});
   database.close();
 });

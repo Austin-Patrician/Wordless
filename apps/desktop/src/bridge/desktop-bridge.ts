@@ -78,6 +78,15 @@ import type {
   SessionArtifactDiff,
   SessionArtifactPreview,
   SessionArtifactsSnapshot,
+  KnowledgeClearPlan,
+  KnowledgePageContent,
+  KnowledgeSnapshot,
+  KnowledgeOrganizeResult,
+  KnowledgeImportPlan,
+  KnowledgeLibraries,
+  KnowledgeUsageSummary,
+  MutateKnowledgeLibraryRequest,
+  ImportKnowledgeFilesResult,
   SessionContextSnapshot,
   SessionHistoryPage,
   SessionHistoryPageRequest,
@@ -137,7 +146,7 @@ import type {
 } from "@wordless/protocol";
 import type { ToolApprovalMode } from "@wordless/domain";
 
-export const DESKTOP_BRIDGE_VERSION = 59;
+export const DESKTOP_BRIDGE_VERSION = 72;
 
 /**
  * 只读探测的结果(**整份**)。
@@ -636,6 +645,78 @@ export interface DesktopBridge {
   ): Promise<void>;
   compactSession(sessionId: string): Promise<void>;
   getSessionContext(sessionId: string): Promise<SessionContextSnapshot>;
+  /**
+   * 知识库:看现状。
+   *
+   * 加工**不在这里** —— 整理知识库是开一个 `knowledge` 工作类型的会话,走 `createAndPrompt`。
+   */
+  getKnowledgeSnapshot(): Promise<KnowledgeSnapshot>;
+  /** 读一页的正文(预览用)。`null` = 这一页读不出来。 */
+  readKnowledgePage(path: string): Promise<KnowledgePageContent | null>;
+  /** 把一页从"待回收"里救回来。 */
+  restoreKnowledgePage(path: string): Promise<void>;
+  /** 立即删除一页(不等宽限期;只对已经标了孤儿的页开放)。 */
+  deleteKnowledgePage(path: string): Promise<void>;
+  /**
+   * 清空整理结果(保留原始文件)。**先不带参数看一遍会失去什么**,再带 `confirm: true` 真清。
+   */
+  clearKnowledgePages(options?: { confirm?: boolean }): Promise<KnowledgeClearPlan>;
+  /**
+   * 把文件放进投递箱。同名不覆盖,改成一个带序号的新名字。
+   *
+   * 收 `File[]` 而不是路径:路径只能在 preload 里用 `webUtils` 拿到,而 renderer 手里是
+   * 拖放/选择来的 `File`。与 `importMediaImages` 同一形状。
+   */
+  importKnowledgeFiles(files: File[], mode: "copy" | "move"): Promise<ImportKnowledgeFilesResult>;
+  /** 在系统文件管理器里打开知识库目录。 */
+  revealKnowledgeRoot(): Promise<void>;
+  /**
+   * 立即整理一轮。
+   *
+   * **与定时轮询走同一条路**:算待办(只有宿主手上有 hash)、起一个 `knowledge` 工作类型的
+   * 会话、跑完收尾 —— 全在宿主。界面只负责跳到那个会话,或显示为什么没起。
+   */
+  organizeKnowledge(kind?: "process" | "lint"): Promise<KnowledgeOrganizeResult>;
+  /**
+   * 把一段回答归档进知识库。
+   *
+   * 返回新建的**知识会话** id:归档由知识 agent 做(它才知道该放哪棵树、该打什么标签),
+   * 而这一页的 `sources` 由宿主从正文里抽出来。
+   */
+  fileKnowledgeAnswer(text: string, sourceTitle?: string): Promise<{ sessionId: string }>;
+  /**
+   * 有哪些知识库、当前用哪个。
+   *
+   * 清单**从文件系统推出来**,不存注册表 —— 用户在 Finder 里拷进来一份、删掉一份,目录就是真相。
+   */
+  getKnowledgeLibraries(): Promise<KnowledgeLibraries>;
+  /** 新建 / 删除一个库。删除删的是它自己的目录。 */
+  mutateKnowledgeLibrary(request: MutateKnowledgeLibraryRequest): Promise<{ active?: string }>;
+  /**
+   * 导入一份别人的 OKF bundle。
+   *
+   * 不带参数 = 让用户选目录并**返回计划**(什么都不写);带参数 = 就那份计划执行。
+   * 先看再导是刻意的:一份别人的库可能有几百页,盲目导进去之后才发现问题,而那时已经在库里了。
+   */
+  importKnowledgeBundle(request?: { directory: string; onConflict: "skip" | "rename" }): Promise<KnowledgeImportPlan | null>;
+  /**
+   * 知识库的累计用量(最近若干轮)。
+   *
+   * `totalRounds` 与 `rounds` 一起给:一个"看起来完整"的数字比一个说明了自己范围的数字
+   * 更容易误导人。
+   */
+  getKnowledgeUsage(): Promise<KnowledgeUsageSummary>;
+  /**
+   * 标记/取消一页的人工复核。
+   *
+   * 复核过的页**加工轮不再自动改写**,而是报出来让人自己决定 —— 所以这是"我的修改不会被
+   * agent 覆盖"的唯一开关。
+   */
+  setKnowledgeVerification(path: string, verified: boolean): Promise<void>;
+  /** 「正在整理」的状态变化。返回退订函数。 */
+  subscribeKnowledgeProcessing(listener: (processing: boolean) => void): () => void;
+  /** 库变了(导入、或 agent 在会话里写了页)。返回退订函数。 */
+  subscribeKnowledgeChanged(listener: () => void): () => void;
   getSessionArtifacts(sessionId: string): Promise<SessionArtifactsSnapshot>;
   readSessionArtifact(
     sessionId: string,
@@ -1055,6 +1136,22 @@ export const requiredMethods: Array<Exclude<keyof DesktopBridge, "version">> = [
   "compactSession",
   "getSessionContext",
   "getSessionArtifacts",
+  "getKnowledgeSnapshot",
+  "readKnowledgePage",
+  "restoreKnowledgePage",
+  "deleteKnowledgePage",
+  "clearKnowledgePages",
+  "importKnowledgeFiles",
+  "revealKnowledgeRoot",
+  "organizeKnowledge",
+  "fileKnowledgeAnswer",
+  "importKnowledgeBundle",
+  "getKnowledgeLibraries",
+  "mutateKnowledgeLibrary",
+  "getKnowledgeUsage",
+  "setKnowledgeVerification",
+  "subscribeKnowledgeProcessing",
+  "subscribeKnowledgeChanged",
   "readSessionArtifact",
   "openSessionArtifact",
   "revealSessionArtifact",

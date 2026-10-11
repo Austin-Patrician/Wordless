@@ -48,5 +48,12 @@ export function resolveSessionOpenTarget(workbenchId: string | null | undefined)
     return { collapseLeftSidebar: true, mainView: "thread", contextView: "design" };
   }
 
+  // **知识库加工轮次打开的是对话。** 这一条本该是默认值,仍然写出来:这张表的意义就是
+  // 把"点开会话去哪儿"变成可断言的事实,而默认值是最容易被后来的人改掉的东西。
+  // 加工会话从知识库页进入(它不在会话列表里),进来要看的是 agent 当时做了什么。
+  if (workbenchId === "knowledge") {
+    return { collapseLeftSidebar: false, mainView: "thread", contextView: null };
+  }
+
   return { collapseLeftSidebar: false, mainView: "thread", contextView: null };
 }

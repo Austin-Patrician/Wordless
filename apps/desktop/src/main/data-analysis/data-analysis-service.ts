@@ -1,11 +1,12 @@
 import { createHash, randomUUID } from "node:crypto";
 import { lookup } from "node:dns/promises";
 import { createReadStream } from "node:fs";
-import { isIP } from "node:net";
 import { mkdir, readFile, readdir, realpath, stat, writeFile } from "node:fs/promises";
 import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { spawn } from "node:child_process";
 import type { DataAnalysisService } from "@wordless/capability-data";
+import { extractHtmlText, extractHtmlTitle, isPdfBytes } from "../documents/document-text.ts";
+import { checkPublicHttpUrl, type PublicUrlFailure } from "../documents/public-url.ts";
 import {
   getHostEnvironmentService,
   PythonUnavailableError,
@@ -55,35 +56,15 @@ function fileKind(path: string): AnalysisOutputFile["kind"] {
   return "other";
 }
 
-function isPrivateAddress(address: string): boolean {
-  const normalized = address.toLowerCase();
-  if (isIP(normalized) === 4) {
-    const parts = normalized.split(".").map(Number);
-    const [a, b] = parts;
-    return a === 0 || a === 10 || a === 127 || (a === 169 && b === 254) || (a === 172 && b !== undefined && b >= 16 && b <= 31) || (a === 192 && b === 168) || (a === 100 && b !== undefined && b >= 64 && b <= 127) || a >= 224;
-  }
-  if (isIP(normalized) === 6) return normalized === "::1" || normalized === "::" || normalized.startsWith("fc") || normalized.startsWith("fd") || /^fe[89ab]/.test(normalized) || normalized.startsWith("ff") || normalized.startsWith("::ffff:127.") || normalized.startsWith("::ffff:10.") || normalized.startsWith("::ffff:192.168.");
-  return true;
-}
-
-function decodeHtml(value: string): string {
-  return value.replace(/&nbsp;/gi, " ").replace(/&amp;/gi, "&").replace(/&lt;/gi, "<").replace(/&gt;/gi, ">").replace(/&quot;/gi, "\"").replace(/&#39;|&apos;/gi, "'").replace(/&#(\d+);/g, (_match, code: string) => String.fromCodePoint(Number(code)));
-}
-
-function extractHtmlTitle(html: string): string | null {
-  const match = /<title\b[^>]*>([\s\S]*?)<\/title>/i.exec(html);
-  return match ? decodeHtml(match[1]!.replace(/<[^>]+>/g, " ")).replace(/\s+/g, " ").trim().slice(0, 500) || null : null;
-}
-
-function extractHtmlText(html: string): string {
-  const blockAware = html
-    .replace(/<!--[\s\S]*?-->/g, " ")
-    .replace(/<(script|style|noscript|svg|canvas|template)\b[^>]*>[\s\S]*?<\/\1>/gi, " ")
-    .replace(/<\s*br\s*\/?>/gi, "\n")
-    .replace(/<\/(?:p|div|article|section|main|header|footer|li|h[1-6]|tr)>/gi, "\n")
-    .replace(/<[^>]+>/g, " ");
-  return decodeHtml(blockAware).replace(/[ \t]+/g, " ").replace(/\n\s*\n\s*\n+/g, "\n\n").trim();
-}
+/** 准入失败的原因码 → 本模块的文案。文案是历史包袱,但改它要连着测试一起改,不值得。 */
+const RESEARCH_URL_FAILURE_MESSAGES: Record<PublicUrlFailure, string> = {
+  "invalid-url": "Research source URL is invalid",
+  "non-http": "Research sources must use HTTP or HTTPS",
+  credentials: "Research source URLs cannot contain credentials",
+  "private-host": "Private research source hosts are not allowed",
+  unresolved: "Research source host could not be resolved",
+  "private-address": "Private research source addresses are not allowed",
+};
 
 export class DesktopDataAnalysisService implements DataAnalysisService {
   private readonly metadataRoot: string;
@@ -449,18 +430,21 @@ export class DesktopDataAnalysisService implements DataAnalysisService {
     return canonical;
   }
 
+  /**
+   * 出网准入判定。
+   *
+   * 判定本身在 `../documents/public-url.ts`(`checkPublicHttpUrl`)—— 通用文档工具与这里
+   * 必须用**同一份**内网判定,否则哪天补一个网段只会补在一边。这里只做两件本地的事:
+   * 提供 DNS 解析,以及把原因码翻译成本模块的文案。
+   */
   private async assertPublicResearchUrl(value: string): Promise<string> {
-    let url: URL;
-    try { url = new URL(value); } catch { throw new Error("Research source URL is invalid"); }
-    if (url.protocol !== "http:" && url.protocol !== "https:") throw new Error("Research sources must use HTTP or HTTPS");
-    if (url.username || url.password) throw new Error("Research source URLs cannot contain credentials");
-    const hostname = url.hostname.toLowerCase().replace(/\.$/, "");
-    if (hostname === "localhost" || hostname.endsWith(".localhost") || hostname === "metadata.google.internal") throw new Error("Private research source hosts are not allowed");
-    const addresses = await lookup(hostname, { all: true, verbatim: true }).catch(() => []);
-    if (addresses.length === 0) throw new Error("Research source host could not be resolved");
-    if (addresses.some((entry) => isPrivateAddress(entry.address))) throw new Error("Private research source addresses are not allowed");
-    url.hash = "";
-    return url.toString();
+    const checked = await checkPublicHttpUrl(value, async (hostname) =>
+      await lookup(hostname, { all: true, verbatim: true })
+        .then((addresses) => addresses.map((entry) => entry.address))
+        .catch(() => []),
+    );
+    if (checked.ok) return checked.url;
+    throw new Error(RESEARCH_URL_FAILURE_MESSAGES[checked.code]);
   }
 
   private async fetchResearchSource(url: string, signal?: AbortSignal): Promise<{ title: string | null; text: string; contentHash: string }> {
@@ -491,7 +475,7 @@ export class DesktopDataAnalysisService implements DataAnalysisService {
       const bytes = Buffer.concat(chunks.map((chunk) => Buffer.from(chunk)));
       const contentHash = createHash("sha256").update(bytes).digest("hex");
       const contentType = response.headers.get("content-type")?.toLowerCase() ?? "";
-      const isPdf = contentType.includes("application/pdf") || bytes.subarray(0, 5).toString("ascii") === "%PDF-";
+      const isPdf = contentType.includes("application/pdf") || isPdfBytes(bytes);
       let title: string | null = null;
       let text: string;
       if (isPdf) {

@@ -42,10 +42,17 @@ import designStyleListIcon from "../../../icons/common-icons/design_style_list.s
 import deepThinkingIcon from "../../../icons/common-icons/深度思考.svg";
 import editIcon from "../../../icons/common-icons/edit.svg";
 import extractTextFromImageIcon from "../../../icons/common-icons/extract_text_from_image.svg";
+import extractTextFromDocxIcon from "../../../icons/common-icons/extract_text_from_docx.svg";
+import extractTextFromPdfIcon from "../../../icons/common-icons/extract_text_from_pdf.svg";
+import fetchUrlIcon from "../../../icons/common-icons/fetch_url.svg";
 import findIcon from "../../../icons/common-icons/find.svg";
 import folderIcon from "../../../icons/common-icons/floder.svg";
 import grepIcon from "../../../icons/common-icons/grep.svg";
 import innovationIcon from "../../../icons/common-icons/innovation.svg";
+import kbListTagsIcon from "../../../icons/common-icons/kb_list_tags.svg";
+import kbQueryIcon from "../../../icons/common-icons/kb_query.svg";
+import kbRetirePageIcon from "../../../icons/common-icons/kb_retire_page.svg";
+import kbWritePageIcon from "../../../icons/common-icons/kb_write_page.svg";
 import listIcon from "../../../icons/common-icons/list.svg";
 import loadSkillIcon from "../../../icons/common-icons/load_skill.svg";
 import modelRequestIcon from "../../../icons/common-icons/模型请求.svg";
@@ -153,8 +160,21 @@ const standardToolIconSources: Record<string, StandardToolIconSource> = {
     path: extractTextFromImageIcon,
     invertOnDark: true,
   },
+  extract_text_from_docx: {
+    path: extractTextFromDocxIcon,
+    invertOnDark: true,
+  },
+  extract_text_from_pdf: {
+    path: extractTextFromPdfIcon,
+    invertOnDark: true,
+  },
+  fetch_url: { path: fetchUrlIcon, invertOnDark: true },
   find: { path: findIcon, invertOnDark: true },
   grep: { path: grepIcon, invertOnDark: true },
+  kb_list_tags: { path: kbListTagsIcon, invertOnDark: true },
+  kb_query: { path: kbQueryIcon, invertOnDark: true },
+  kb_retire_page: { path: kbRetirePageIcon, invertOnDark: true },
+  kb_write_page: { path: kbWritePageIcon, invertOnDark: true },
   load_skill: { path: loadSkillIcon, invertOnDark: true },
   ls: { path: listIcon, invertOnDark: true },
   read: { path: readIcon, invertOnDark: true },

@@ -1121,19 +1121,25 @@ class AgentHarnessDriverSession implements AgentDriverSession {
       "ask_clarifying_question",
       "complete_clarification",
     ]);
+    // 画像声明的是一份**愿望清单**,而可选能力可能根本没装配出来:知识库开关关掉之后
+    // `create-runtime.ts` 就不给这几个工具,浏览器/文档服务不在时同理。不过滤的话
+    // `AgentHarness` 会拿"声明了却没有"直接抛错 —— 那不是一个工具少了,而是**整个会话起不来**
+    // (一个设置开关把应用弄坏)。所以这里只保留真的装上了的。
+    const registeredNames = new Set(tools.map((tool) => tool.name));
+    const declaredNames = context.profile.activeToolNames.filter((name) => registeredNames.has(name));
     const activeToolNames = clarificationMode
       ? tools
           .filter((tool) => clarificationToolNames.has(tool.name))
           .map((tool) => tool.name)
       : supportsToolUse
         ? [
-            ...context.profile.activeToolNames,
+            ...declaredNames,
             ...context.connectorTools.map((tool) => tool.name),
             ...skillTools.map((tool) => tool.name),
             ...(canRequestUserInput ? ["request_user_input"] : []),
           ]
         : [
-            ...context.profile.activeToolNames,
+            ...declaredNames,
             ...context.connectorTools.map((tool) => tool.name),
           ];
     this.staticContextTokens = estimateTextTokens(baseSystemPrompt);
