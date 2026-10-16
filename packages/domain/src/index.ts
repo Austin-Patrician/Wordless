@@ -406,6 +406,49 @@ export interface WorkspaceRecord {
   lastOpenedAt: number;
 }
 
+/**
+ * "这一轮是知识库加工"的会话标记 —— `SessionRecord.source` 的唯一约定值。
+ *
+ * 加工轮次**不是对话**:它们由 `main/knowledge/knowledge-session.ts` 那一个工厂创建
+ * (定时加工、"立即整理"、归档一段回答都走它),一轮一个会话。而这个标记正是"轮次"与
+ * "用户自己的会话"之间**唯一**的区分依据 —— 用户从新建页点那张"知识库整理"卡建出来的会话,
+ * 用的是同一个工作台、同一套工具,差别只有:它没有这个标记。
+ *
+ * 所以谁要判断"这是不是一轮加工",就该读这个字段,**不要**读 `workbenchId`:
+ * 曾经侧边栏按 `workbenchId` 隐藏"不是对话的东西",于是用户自己起的知识库会话一起被藏了
+ * (既不在会话列表里,又被知识库页当成加工轮次)。同一个事实两个判据,迟早会不一致。
+ *
+ * 放在 domain:写入方在主进程,读取方在渲染层与主进程两侧。
+ */
+export const KNOWLEDGE_ROUND_SOURCE = "knowledge";
+
+/** 这个会话是不是一轮加工(见 {@link KNOWLEDGE_ROUND_SOURCE})。 */
+export function isKnowledgeRound(session: { source?: string | null }): boolean {
+  return session.source === KNOWLEDGE_ROUND_SOURCE;
+}
+
+/**
+ * 这一轮加工**是不是某个库的**。
+ *
+ * 判据是 `runtimeRootPath`:加工会话的会话根就是它加工的那个库(`knowledge-session.ts` 里
+ * `sessionRootPath: bundleRoot` → 运行时写进 `runtimeRootPath`),所以这是轮次与库之间
+ * **唯一**的连接。多库之后必须按它筛:否则"最近整理"和"累计用量"会把别的库的轮次也算进来,
+ * 而它们显示在某个库的页面上 —— 数字是假的,而且看不出来。
+ */
+export function isKnowledgeRoundOfLibrary(
+  session: { source?: string | null; runtimeRootPath: string },
+  libraryRoot: string,
+): boolean {
+  return isKnowledgeRound(session) && session.runtimeRootPath === libraryRoot;
+}
+
+/** 某个库的加工轮次。**顺序交给调用方**(这里只做筛选)。 */
+export function knowledgeRoundSessionsForLibrary<
+  T extends { source?: string | null; runtimeRootPath: string },
+>(sessions: readonly T[], libraryRoot: string): T[] {
+  return sessions.filter((session) => isKnowledgeRoundOfLibrary(session, libraryRoot));
+}
+
 export interface SessionRecord {
   id: string;
   title: string;

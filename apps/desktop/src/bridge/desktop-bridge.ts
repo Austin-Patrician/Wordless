@@ -49,6 +49,8 @@ import type {
 import type {
   DesignSaveImageRequestDto,
   DesignSaveImageResultDto,
+  ExportSaveFileRequestDto,
+  ExportSaveFileResultDto,
   AccountSnapshot,
   AnalysisSessionSnapshot,
   AppSnapshot,
@@ -578,6 +580,14 @@ export interface DesktopBridge {
   saveDesignImage(input: DesignSaveImageRequestDto): Promise<DesignSaveImageResultDto>;
   /** 把一张合成图放进剪贴板。剪贴板被占用时返回 false。 */
   copyDesignImage(input: { data: string }): Promise<boolean>;
+  /**
+   * 保存一条聊天轮次的导出物(长图 PNG / Markdown)。载荷与 `saveDesignImage` 同一规矩:
+   * `input.data` 是 **base64**(`contextBridge` 上类型化数组不可靠)。取消返回
+   * `{ ok: false, reason: "cancelled" }` —— 那不是错误。
+   */
+  saveExportFile(input: ExportSaveFileRequestDto): Promise<ExportSaveFileResultDto>;
+  /** 把一张导出的长图放进剪贴板。剪贴板被占用时返回 false。 */
+  copyExportImage(input: { data: string }): Promise<boolean>;
   deleteWebhookEndpoint(id: string): Promise<void>;
   /** Sends through a stored endpoint; the text is supplied by the renderer. */
   testWebhookEndpoint(id: string, message: WebhookMessage): Promise<WebhookSendResult>;
@@ -1099,6 +1109,8 @@ export const requiredMethods: Array<Exclude<keyof DesktopBridge, "version">> = [
     "createDesign",
     "saveDesignImage",
     "copyDesignImage",
+    "saveExportFile",
+    "copyExportImage",
     "deleteWebhookEndpoint",
     "testWebhookEndpoint",
   "setBrowserPanelSession",

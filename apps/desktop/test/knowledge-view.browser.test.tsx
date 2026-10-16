@@ -12,10 +12,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
  *      显示"未加工",而用户找不到原因。
  */
 
+const ROOT = "/Users/someone/Documents/Wordless Knowledge/知识库";
+
 const snapshot = (overrides: Record<string, unknown> = {}) => ({
-  root: "/Users/someone/Documents/Wordless Knowledge/知识库",
+  root: ROOT,
   rawFiles: [
-    { path: "合同/2024.pdf", processed: true, bytes: 100 },
+    { path: "合同/2024.pdf", processed: true, bytes: 100, pagePath: "sources/2024合同.md" },
     { path: "新资料.docx", processed: false, bytes: 2_000_000 },
   ],
   pages: [
@@ -149,21 +151,39 @@ async function render(options: { onOpenSettings?: () => void } = {}): Promise<{
 /**
  * 打开「导入」弹层。
  *
- * 三种导入方式现在收在一颗按钮的弹层里(以前是三颗并排的按钮),所以任何碰到导入的测试
- * 都得先把它打开。
+ * 三种导入方式收在一颗按钮的弹层里(以前是三颗并排的按钮),所以任何碰到导入的测试
+ * 都得先把它打开。而那颗按钮在「资料与加工」tab 上 —— 导入是"把资料放进来",属于那个 tab。
  */
 async function openImportMenu(): Promise<void> {
+  await showMaterial();
   await act(async () => {
-    byText("导入")!.click();
+    byLabel("导入")!.click();
   });
 }
+
+/** 按 aria-label 找按钮 —— icon-only 的按钮上没有文字,但它的可访问名就是它的功能。 */
+const byLabel = (label: string): HTMLElement | null =>
+  [...document.querySelectorAll("button")].find((button) => button.getAttribute("aria-label") === label) ?? null;
 
 const byText = (text: string): HTMLElement | null =>
   [...document.querySelectorAll("button")].find((button) => button.textContent?.includes(text)) ?? null;
 
+/**
+ * 切到「资料与加工」tab。
+ *
+ * 导入、待整理、原始文件、最近整理、用量都在这个 tab 里 —— 它们是"输入与审计",不是每天
+ * 要看的东西,所以与「页面」互斥。碰到它们的用例都得先切过去。
+ */
+async function showMaterial(): Promise<void> {
+  await act(async () => {
+    byText("资料与加工")!.click();
+  });
+}
+
 describe("知识库视图", () => {
   it("把待加工与已加工分开显示", async () => {
     await render();
+    await showMaterial();
     const text = document.body.textContent ?? "";
     expect(text).toContain("新资料.docx");
     expect(text).toContain("待整理");
@@ -175,14 +195,19 @@ describe("知识库视图", () => {
   it("页面按类型分组,标题与描述都看得见", async () => {
     await render();
     const text = document.body.textContent ?? "";
-    expect(text).toContain("来源");
+    // 这一屏只放"知识":概念组在,来源组不在这(它跟原始文件 1:1,住在资料 tab)。
     expect(text).toContain("概念");
-    expect(text).toContain("2024 合同");
-    expect(text).toContain("采购框架。");
+    expect([...document.querySelectorAll("h3")].some((node) => node.textContent?.includes("来源"))).toBe(false);
+    expect(text).toContain("发票流程");
+    expect(text).toContain("开票到抵扣。");
+    // 来源页从它的原始文件行打开(资料 tab)。
+    await showMaterial();
+    expect(byLabel("打开它整理出的那一页")).not.toBeNull();
   });
 
   it("「立即整理」把整轮交给宿主,而且**不跳转** —— 整理是后台批处理,不是一次对话", async () => {
     const { opened } = await render();
+    await showMaterial();
     const button = byText("立即整理");
     expect(button).not.toBeNull();
 
@@ -200,14 +225,19 @@ describe("知识库视图", () => {
 
   it("跑过的轮次在知识库页有入口 —— 它们不在会话列表里,这里就是唯一的家", async () => {
     sessions = [
-      { id: "r1", title: "知识库整理", workbenchId: "knowledge", updatedAt: 300 },
-      { id: "r2", title: "知识库整理", workbenchId: "knowledge", updatedAt: 200 },
+      // `source` 是**"这是一轮加工"**的标记,`runtimeRootPath` 是**"它属于哪个库"** ——
+      // 两个都要对,轮次才出现在这个库的这一页上(见 domain 的 isKnowledgeRoundOfLibrary)。
+      { id: "r1", title: "知识库整理", workbenchId: "knowledge", source: "knowledge", runtimeRootPath: ROOT, updatedAt: 300 },
+      { id: "r2", title: "知识库整理", workbenchId: "knowledge", source: "knowledge", runtimeRootPath: ROOT, updatedAt: 200 },
       // 普通对话不该出现在「最近整理」里。
-      { id: "c1", title: "聊点别的", workbenchId: "conversation", updatedAt: 400 },
+      { id: "c1", title: "聊点别的", workbenchId: "conversation", source: null, runtimeRootPath: ROOT, updatedAt: 400 },
+      // **别的库的轮次也不该出现** —— 这一页显示的是这个库的记录。
+      { id: "other", title: "别的库整理", workbenchId: "knowledge", source: "knowledge", runtimeRootPath: "/kb/工作", updatedAt: 500 },
     ];
     const { opened } = await render();
+    await showMaterial();
     expect(document.body.textContent).toContain("最近整理");
-    const openButtons = [...document.querySelectorAll("button")].filter((node) => node.textContent === "打开这一轮");
+    const openButtons = [...document.querySelectorAll("button")].filter((node) => node.getAttribute("aria-label") === "打开这一轮");
     expect(openButtons).toHaveLength(2);
 
     await act(async () => {
@@ -225,6 +255,7 @@ describe("知识库视图", () => {
   it("还没有原始文件时不给整理(没有可加工的东西)", async () => {
     getKnowledgeSnapshot.mockImplementation(async () => snapshot({ rawFiles: [] }) as never);
     await render();
+    await showMaterial();
     expect(byText("立即整理")?.hasAttribute("disabled")).toBe(true);
     expect(document.body.textContent).toContain("把资料拖到这里");
   });
@@ -263,6 +294,7 @@ describe("知识库视图", () => {
   it("坏页显示出来并带上原因 —— 否则它们的源文件会永远显示未加工", async () => {
     getKnowledgeSnapshot.mockImplementation(async () => snapshot({ damaged: [{ path: "concepts/坏页.md", issue: "缺少 frontmatter" }] }) as never);
     await render();
+    await showMaterial();
     const text = document.body.textContent ?? "";
     expect(text).toContain("1 个页面读不出来");
     expect(text).toContain("concepts/坏页.md");
@@ -307,7 +339,7 @@ describe("知识库视图与设置的关系", () => {
     // 开启 = 改一个偏好;界面拿到新偏好就把内容交出来(这里用一次重渲染代替那次广播)。
     expect(setKnowledge).toHaveBeenCalledWith(expect.objectContaining({ enabled: true }));
     await rerender();
-    expect(document.body.textContent).toContain("2024 合同");
+    expect(document.body.textContent).toContain("发票流程");
     expect(document.body.textContent).not.toContain("知识库尚未开启");
   });
 
@@ -330,6 +362,7 @@ describe("知识库视图与设置的关系", () => {
   it("模型不由界面决定 —— 宿主才知道该用哪个(手动跟随会话、定时要求显式选)", async () => {
     knowledge = prefs({ libraries: { 知识库: librarySettings({ processingModel: { connectionId: "openai", modelId: "gpt-5-mini" } }) } });
     await render();
+    await showMaterial();
     await act(async () => {
       byText("立即整理")!.click();
     });
@@ -343,6 +376,7 @@ describe("一轮加工:宿主说为什么没起会话", () => {
   it("没活时不起会话,并说清楚", async () => {
     organizeResult = { skipped: "nothing-to-do" };
     await render();
+    await showMaterial();
     await act(async () => {
       byText("立即整理")!.click();
     });
@@ -351,6 +385,7 @@ describe("一轮加工:宿主说为什么没起会话", () => {
 
   it("四种「没起」的理由各有各的说法 —— 不能都只说「失败了」", async () => {
     await render();
+    await showMaterial();
     for (const [reason, expected] of [
       ["disabled", "知识库已停用"],
       ["no-model", "没选加工模型"],
@@ -369,6 +404,7 @@ describe("一轮加工:宿主说为什么没起会话", () => {
 describe("加工状态徽标", () => {
   it("宿主说在整理时就亮起来 —— 定时那一轮用户没点任何东西也要看得见", async () => {
     await render();
+    await showMaterial();
     expect(document.body.textContent).not.toContain("正在整理");
     await act(async () => {
       processingListener?.(true);
@@ -384,20 +420,22 @@ describe("加工状态徽标", () => {
 });
 
 describe("人工复核", () => {
-  it("每页一个复核开关,已复核的显示状态,过期显示提醒", async () => {
+  it("每页都有复核开关:概念页在页面 tab,源页跟着原始文件在资料 tab", async () => {
     await render();
     const text = document.body.textContent ?? "";
     // 概念页在 mock 里是"已复核 + 来源已变更"。
     expect(text).toContain("已复核");
     expect(text).toContain("来源已变更");
-    // 未复核的源页给的是"标记已复核"。
-    expect(text).toContain("标记已复核");
+    // 源页的开关跟着原始文件走(它保护的就是那个转写)。
+    await showMaterial();
+    expect(byLabel("标记已复核")).not.toBeNull();
   });
 
   it("点复核开关会落盘 —— 这是「我的改动不会被 agent 覆盖」的唯一开关", async () => {
     await render();
-    const button = [...document.querySelectorAll("button")].find((candidate) => candidate.textContent === "标记已复核");
-    expect(button).not.toBeUndefined();
+    await showMaterial();
+    const button = byLabel("标记已复核");
+    expect(button).not.toBeNull();
     await act(async () => {
       button!.click();
     });
@@ -408,7 +446,8 @@ describe("人工复核", () => {
 describe("体检", () => {
   it("体检按钮把 lint 交给宿主 —— 同一套调度,不同的准备", async () => {
     await render();
-    const button = byText("体检");
+    await showMaterial();
+    const button = byLabel("体检");
     expect(button).not.toBeNull();
     await act(async () => {
       button!.click();
@@ -419,8 +458,9 @@ describe("体检", () => {
   it("体检干净时说「干净」而不是「没什么可做的」", async () => {
     organizeResult = { skipped: "nothing-to-do" };
     await render();
+    await showMaterial();
     await act(async () => {
-      byText("体检")!.click();
+      byLabel("体检")!.click();
     });
     expect(document.body.textContent).toContain("体检干净");
   });
@@ -428,13 +468,15 @@ describe("体检", () => {
   it("库里一页都没有时不给体检(没什么可查的)", async () => {
     getKnowledgeSnapshot.mockImplementation(async () => snapshot({ pages: [] }) as never);
     await render();
-    expect(byText("体检")?.hasAttribute("disabled")).toBe(true);
+    await showMaterial();
+    expect(byLabel("体检")?.hasAttribute("disabled")).toBe(true);
   });
 });
 
 describe("成本与预算", () => {
   it("把待整理的规模说清楚 —— 文件数与体积是事实,不是估算", async () => {
     await render();
+    await showMaterial();
     const text = document.body.textContent ?? "";
     expect(text).toContain("1 个待整理");
     expect(text).toContain("1.9 MB");
@@ -443,11 +485,13 @@ describe("成本与预算", () => {
   it("设了每轮上限时,界面上说明本轮最多几个", async () => {
     knowledge = prefs({ libraries: { 知识库: librarySettings({ maxFilesPerRound: 5 }) } });
     await render();
+    await showMaterial();
     expect(document.body.textContent).toContain("本轮最多 5 个");
   });
 
   it("累计用量标明是**估算**,并给出每文件均价(那是经验的,不是猜的)", async () => {
     await render();
+    await showMaterial();
     const text = document.body.textContent ?? "";
     expect(text).toContain("累计 3/3 轮");
     expect(text).toContain("123.5k token");
@@ -612,6 +656,49 @@ describe("多库", () => {
   });
 });
 
+describe("页内 tab:页面 / 资料与加工", () => {
+  it("顶上先声明作用域(这是哪个库),再分 tab —— 底下每一块都绑在这个库上", async () => {
+    await render();
+    // 库名是正文(还能点开切换)……
+    expect(document.body.textContent).toContain("知识库");
+    expect(byText("页面")).not.toBeNull();
+    expect(byText("资料与加工")).not.toBeNull();
+  });
+
+  it("库在磁盘上的路径**不占正文**,只做标题的悬停提示", async () => {
+    // 它不可操作(可操作的是「打开文件夹」),而且前缀是产品定的、每个库都一样 —— 唯一有
+    // 区分度的尾段(库名)会被 `truncate` 裁掉。于是长路径下显示的是"所有库都相同"的那一截:
+    // 看起来是信息,实际区分不了任何东西。
+    await render();
+    expect(document.body.textContent).not.toContain(ROOT);
+    expect(document.querySelector("[data-knowledge-switcher]")?.getAttribute("title")).toBe(ROOT);
+  });
+
+  it("默认在「页面」:知识页在,原始文件与来源页都不在(两类不混在一处)", async () => {
+    await render();
+    expect(document.body.textContent).toContain("发票流程");
+    expect(document.body.textContent).not.toContain("2024 合同");
+    expect(document.body.textContent).not.toContain("合同/2024.pdf");
+  });
+
+  it("待整理的数目挂在 tab 上 —— 停在「页面」也看得见有活", async () => {
+    await render();
+    // 那条状态带在资料 tab 里,而"有活"这件事必须从页面 tab 就看得见(它是定时那轮的信号)。
+    expect(byText("资料与加工")!.textContent).toContain("1");
+    expect(document.body.textContent).not.toContain("1 个文件待整理");
+  });
+
+  it("空库不给 tab,直接给投递箱 —— 刚建出来的库只有一件事可做", async () => {
+    getKnowledgeSnapshot.mockImplementation(async () => snapshot({ rawFiles: [], pages: [] }) as never);
+    await render();
+    expect(byText("资料与加工")).toBeNull();
+    expect(byText("页面")).toBeNull();
+    expect(document.body.textContent).toContain("投递箱");
+    // 搜索框也一样:空库时它没有可筛的东西。
+    expect(document.querySelector('input[type="search"]')).toBeNull();
+  });
+});
+
 describe("版式:动作按重量分开", () => {
   /** 某个容器里有没有一颗按钮带这段文字。 */
   const hasButton = (root: Element, text: string): boolean =>
@@ -621,12 +708,15 @@ describe("版式:动作按重量分开", () => {
     // 这一页原来顶栏挂着八颗同样重的按钮,于是每一颗都不显眼,还挤掉了真正常用的那几颗。
     getKnowledgeLibraries.mockImplementation(async () => ({ active: "甲库", names: ["甲库", "乙库"] }));
     await render();
-    const header = document.querySelector("header")!;
+    // **动作在它有用的那个 tab 上**:页面 tab 只留刷新(导入/体检/立即整理都是对"资料"做的事)。
+    expect(hasButton(document.querySelector("header")!, "立即整理")).toBe(false);
+    expect(hasButton(document.querySelector("header")!, "体检")).toBe(false);
+    expect(document.querySelector("header")!.querySelector('button[aria-label="刷新"]')).not.toBeNull();
 
+    await showMaterial();
+    const header = document.querySelector("header")!;
     expect(hasButton(header, "立即整理")).toBe(true);
-    expect(hasButton(header, "体检")).toBe(true);
-    // 刷新退成图标按钮:常用,但不需要占一个词。
-    expect(header.querySelector('button[aria-label="刷新"]')).not.toBeNull();
+    expect(header.querySelector('button[aria-label="体检"]')).not.toBeNull();
 
     // 这四件事一年点不了几次,而且都属于"库本身" —— 不该和主按钮并排。
     for (const text of ["新建库", "删除这个库", "打开文件夹", "导入别人的库", "移动进来"]) {
@@ -638,54 +728,102 @@ describe("版式:动作按重量分开", () => {
     // 三颗并排("复制进来 / 移动进来 / 导入别人的库")是一堵同等重量的按钮墙,
     // 而它们本来是一件事的三种做法。
     await render();
+    await showMaterial();
     expect(byText("导入别人的库")).toBeNull();
     await act(async () => {
-      byText("导入")!.click();
+      byLabel("导入")!.click();
     });
     expect(byText("复制进来")).not.toBeNull();
     expect(byText("移动进来")).not.toBeNull();
     expect(byText("导入别人的库")).not.toBeNull();
   });
 
-  it("**页面在前、投递在后**:最该读的东西不该被压在下面", async () => {
-    // 这是重设计的那条判断:以前是 最近整理 → 投递箱 → 页面,于是每次进来都得先滚过
-    // 两张不常动的卡才看得见自己的知识。
+  it("顶栏的图标按钮**同一套外观** —— 灰着的那一颗看起来就是被停用了", async () => {
+    // 实测被问到过:「导入」那颗的图标是灰的,和旁边两颗(刷新、体检)不是一套颜色,
+    // 于是它看起来像被停用了 —— 而它是能点的。三颗都是 icon-only 的描边按钮,外观必须一套。
     await render();
-    // 只数**可见的**面板:折叠区里的东西虽然在 DOM 里,但它收着,不占首屏。
-    const details = document.querySelector("details")!;
-    const cards = [...document.querySelectorAll("section")].filter(
-      (section) => section.className.includes("bg-card") && !details.contains(section),
-    );
-    // 待整理那条状态带也是 section,但它不是"卡"(没有标题)。
-    const titled = cards.filter((card) => card.querySelector("h2") !== null);
-    expect(titled.map((card) => card.querySelector("h2")?.textContent)).toEqual(["页面"]);
-    // 而折叠区(管理与记录)在页面**之后**。
-    expect(titled[0]!.compareDocumentPosition(details) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    for (const card of titled) {
-      expect(card.className).toContain("rounded-2xl");
-      expect(card.className).toContain("border-border");
+    await showMaterial();
+    const header = document.querySelector("header")!;
+    const refresh = header.querySelector('button[aria-label="刷新"]')!;
+    for (const button of [header.querySelector('button[aria-label="导入"]')!, header.querySelector('button[aria-label="体检"]')!]) {
+      expect(button.className, button.getAttribute("aria-label")!).not.toContain("text-muted-foreground");
+      // 描边、底色、尺寸也照抄 `variant="outline" size="icon"` —— 裸 button 没有共享的
+      // 那一套,所以它自己抄错一个类,谁也不会报错。
+      expect(button.className).toContain("border-border");
+      expect(button.className).toContain("bg-card");
+      expect(button.className).toContain("h-8 w-8");
     }
+    expect(refresh.className).toContain("border-border");
   });
 
-  it("历史与维护收在一个折叠区里(默认收起)", async () => {
-    sessions = [{ id: "r1", title: "知识库整理", workbenchId: "knowledge", updatedAt: 300 }];
+  it("选了弹层里的一项,弹层就关掉 —— 否则弹窗关掉之后它还留在原地", async () => {
+    // 实测被问到过:点「导入」→ 选一项(它接着会开一个弹窗:选文件的那个系统弹窗、或移动
+    // 确认弹窗)→ 关掉弹窗,那个选项弹层还开着 —— 看起来像"我刚选的那一下没生效"。
+    // 弹层是"选一件事"的菜单:**选完就该走**,不靠"再点一下别处"来关。
     await render();
-    const details = document.querySelector("details");
-    expect(details).not.toBeNull();
-    expect(details!.hasAttribute("open")).toBe(false);
-    expect(details!.querySelector("summary")!.textContent).toContain("管理与记录");
-    // 三样都在里面:最近整理 / 原始文件 / 用量。
-    expect(details!.textContent).toContain("最近整理");
-    expect(details!.textContent).toContain("原始文件");
 
-    // **折叠区自己就是那张卡**:展开之后是小节 + 分隔线,不再套三张卡。
-    // 套卡会让"一张卡里长出三张卡",而它们本来是同一件事的三段。
-    expect(details!.className).toContain("rounded-2xl");
-    expect(details!.className).toContain("bg-card");
-    const nestedCards = [...details!.querySelectorAll("section")].filter((section) =>
-      section.className.includes("bg-card"),
+    await openImportMenu();
+    await act(async () => {
+      byText("复制进来")!.click();
+    });
+    // 这一步紧跟着就是系统选文件的那个弹窗(原生、不在 DOM 里,关掉时不会替我们关弹层)。
+    expect(byText("导入别人的库")).toBeNull();
+
+    await openImportMenu();
+    await act(async () => {
+      byText("移动进来")!.click();
+    });
+    expect(byText("导入别人的库")).toBeNull();
+
+    // 关掉确认弹窗之后仍然是关着的:弹层不是被弹窗盖住,而是真的关了。
+    const dialog = document.querySelector('[role="alertdialog"]')!;
+    await act(async () => {
+      [...dialog.querySelectorAll("button")].find((button) => button.textContent === "取消")!.click();
+    });
+    expect(document.querySelector('[role="alertdialog"]')).toBeNull();
+    expect(byText("导入别人的库")).toBeNull();
+  });
+
+  it("**页面是默认 tab**:最该读的东西不该被压在下面", async () => {
+    // 这是重设计的那条判断:以前是 最近整理 → 投递箱 → 页面,于是每次进来都得先滚过
+    // 两张不常动的卡才看得见自己的知识。现在页面是默认那一屏,其余在一次点击之外。
+    await render();
+    // **tab 底下不再套卡**:知识就是分组与行,直接躺在页面上。
+    expect(
+      [...document.querySelectorAll("section")].filter(
+        (section) => section.className.includes("bg-card") && section.querySelector("h2") !== null,
+      ),
+    ).toEqual([]);
+    // 知识在这一屏,资料那一套不在。
+    expect(document.body.textContent).toContain("发票流程");
+    expect(document.body.textContent).not.toContain("原始文件");
+    expect(byLabel("导入")).toBeNull();
+
+    await showMaterial();
+    expect(document.body.textContent).toContain("原始文件");
+    expect(document.body.textContent).not.toContain("发票流程");
+  });
+
+  it("历史与维护在「资料与加工」里 —— 不再是压在页面下面的折叠区", async () => {
+    sessions = [{ id: "r1", title: "知识库整理", workbenchId: "knowledge", source: "knowledge", runtimeRootPath: ROOT, updatedAt: 300 }];
+    await render();
+    // 页面 tab 上它们**不在 DOM 里**(不是"收起来了",是不在那一屏)。
+    expect(document.body.textContent).not.toContain("最近整理");
+    expect(document.body.textContent).not.toContain("原始文件");
+    expect(document.querySelector("details")).toBeNull();
+
+    await showMaterial();
+    const text = document.body.textContent ?? "";
+    // 三样都在:最近整理 / 原始文件 / 用量 —— 各自一个小节标题,平铺。
+    const sectionLabels = [...document.querySelectorAll("h3")].map((node) => node.textContent ?? "");
+    expect(sectionLabels.some((label) => label.includes("最近整理"))).toBe(true);
+    expect(sectionLabels.some((label) => label.includes("原始文件"))).toBe(true);
+    expect(text).toContain("累计");
+    // **tab 底下不再套卡**:这几段直接躺在页面上,不裹在一张 rounded-2xl 的卡里。
+    const wrapped = [...document.querySelectorAll("div")].filter(
+      (node) => node.className.includes("rounded-2xl") && node.className.includes("bg-card") && node.textContent?.includes("原始文件"),
     );
-    expect(nestedCards).toHaveLength(0);
+    expect(wrapped).toEqual([]);
   });
 
   it("空库时投递箱当首屏 —— 那时投递是唯一该做的事", async () => {
@@ -701,22 +839,19 @@ describe("版式:动作按重量分开", () => {
       async () =>
         snapshot({
           pages: [
-            { path: "sources/a.md", kind: "Source", title: "活页", description: "在。", tags: [], orphaned: false, verified: false, reviewStale: false },
+            { path: "concepts/a.md", kind: "Concept", title: "活页", description: "在。", tags: [], orphaned: false, verified: false, reviewStale: false },
             // 这一页已被 agent 退役(重复页)或原文已删 —— 下一轮会被回收。
-            { path: "sources/b.md", kind: "Source", title: "待回收", description: "重复页。", tags: [], orphaned: true, verified: false, reviewStale: false },
+            { path: "concepts/b.md", kind: "Concept", title: "待回收", description: "重复页。", tags: [], orphaned: true, verified: false, reviewStale: false },
           ],
         }) as never,
     );
     await render();
-    // 认卡片本身(`bg-card`),不是包着它的那层 —— 视图根也是个 section,它什么都包含。
-    const panel = [...document.querySelectorAll("section")].find(
-      (section) => section.className.includes("bg-card") && section.querySelector("h2")?.textContent?.includes("页面"),
-    )!;
-    // 计数 = 列出来的那一页(meta 是标题旁边那一段,不是 h2 里面)。
-    const head = panel.querySelector("header")!.textContent!;
-    expect(head).toContain("1 页");
+    // 卡片没了:分组标题自己带计数。
+    const heading = [...document.querySelectorAll("h3")].find((node) => node.textContent?.includes("概念"))!;
+    expect(heading.textContent).toContain("1");
     // 而待回收的那一页要说一声,否则用户会以为页丢了。
-    expect(head).toContain("1 个待回收");
+    const reaping = [...document.querySelectorAll("h3")].find((node) => node.textContent?.includes("待回收"))!;
+    expect(reaping.textContent).toContain("1");
     // 活页在正常分组里,待回收的在**它自己那一组**里 —— 两者分开数,不混。
     expect(byText("活页")).not.toBeNull();
     expect(byText("待回收")).not.toBeNull();
@@ -789,17 +924,20 @@ describe("版式:动作按重量分开", () => {
         }) as never,
     );
     await render();
-    // 它是活页:列在正常分组里,不在「待回收」里。
+    // 它被用户复核过、原文又没了 —— 回收会跳过它,而它也不在概念/实体的分组里。
+    // 所以它有自己的位置:「已保留」。
+    expect(document.body.textContent).toContain("已保留");
     expect(byText("我留着的")).not.toBeNull();
     expect(document.body.textContent).not.toContain("下一轮会被删除");
     expect(byText("保留")).toBeNull();
   });
 
-  it("有活时摆一条**待整理状态带**(数字与体积都是事实)", async () => {
+  it("有活时,数字与体积就在原始文件清单的标题里(不单独占一行)", async () => {
     await render();
-    const strip = [...document.querySelectorAll("section")].find((section) => section.textContent?.includes("待整理"));
-    expect(strip).not.toBeUndefined();
-    expect(strip!.textContent).toContain("1 个文件待整理");
+    await showMaterial();
+    const heading = [...document.querySelectorAll("h3")].find((node) => node.textContent?.includes("原始文件"))!;
+    expect(heading.textContent).toContain("1 个待整理");
+    expect(heading.textContent).toContain("1.9 MB");
   });
 
   it("标题是 h1 且能点开库管理 —— 标题语义与点击都留着", async () => {
@@ -825,23 +963,36 @@ describe("目录里搜索", () => {
     await render();
     const search = document.querySelector<HTMLInputElement>('input[type="search"]');
     expect(search).not.toBeNull();
-    expect(document.body.textContent).toContain("2024 合同");
+    expect(document.body.textContent).toContain("发票流程");
 
     await typeInto(search!, "发票");
 
     const text = document.body.textContent ?? "";
     expect(text).toContain("发票流程");
-    expect(text).not.toContain("2024 合同");
-    // 计数说的是**筛后**的页数,不是全库 —— 否则"筛出 1 页"和"共 2 页"会同时出现。
-    expect(text).toContain("1 页");
+    // 计数说的是**筛后**的页数,不是全库 —— 分组标题上的数目跟着筛走。
+    expect([...document.querySelectorAll("h3")].find((node) => node.textContent?.includes("概念"))!.textContent).toContain("1");
   });
 
-  it("也筛投递箱里的文件 —— 目录与投递箱是一个搜索框", async () => {
+  it("搜索框的作用域跟着 tab 走 —— 在资料 tab 上筛的是原始文件", async () => {
     await render();
+    await showMaterial();
     await typeInto(document.querySelector<HTMLInputElement>('input[type="search"]')!, "合同");
     const text = document.body.textContent ?? "";
     expect(text).toContain("合同/2024.pdf");
     expect(text).not.toContain("新资料.docx");
+  });
+
+  it("切 tab 会清空搜索 —— 上一个 tab 的关键词不该去筛另一份列表", async () => {
+    // 一个搜索框、两个作用域。不清空的话,用户会看到"结果莫名其妙少了",
+    // 而输入框里那个词看起来毫无关系。
+    await render();
+    await typeInto(document.querySelector<HTMLInputElement>('input[type="search"]')!, "发票");
+    expect(document.body.textContent).not.toContain("2024 合同");
+
+    await showMaterial();
+    expect((document.querySelector<HTMLInputElement>('input[type="search"]')!).value).toBe("");
+    expect(document.body.textContent).toContain("新资料.docx");
+    expect(document.body.textContent).toContain("合同/2024.pdf");
   });
 
   it("筛不到时说清是搜索没命中,而不是说库里是空的", async () => {
@@ -860,8 +1011,11 @@ describe("目录里搜索", () => {
     expect(document.body.textContent).not.toContain("2024 合同");
 
     await typeInto(search, "");
-    expect(document.body.textContent).toContain("2024 合同");
+    expect(document.body.textContent).toContain("发票流程");
+    // 原始文件那一侧同样:切过去就是全都在(切 tab 会清空搜索)。
+    await showMaterial();
     expect(document.body.textContent).toContain("新资料.docx");
+    expect(document.body.textContent).toContain("合同/2024.pdf");
   });
 });
 
@@ -885,8 +1039,9 @@ describe("界面上的四个动作(来自一次真实反馈)", () => {
   });
 
   it("每一轮整理都能删 —— 它们不在会话列表里,侧边栏那套删除够不着", async () => {
-    sessions = [{ id: "r1", title: "知识库整理", workbenchId: "knowledge", updatedAt: 300 }];
+    sessions = [{ id: "r1", title: "知识库整理", workbenchId: "knowledge", source: "knowledge", runtimeRootPath: ROOT, updatedAt: 300 }];
     await render();
+    await showMaterial();
     const remove = document.querySelector('[aria-label="删除这一轮"]') as HTMLButtonElement | null;
     expect(remove).not.toBeNull();
     await act(async () => {
@@ -910,7 +1065,7 @@ describe("界面上的四个动作(来自一次真实反馈)", () => {
     // 它正是修好这件事的东西(见 KnowledgeDialogs 的注释)。
     await render();
     await act(async () => {
-      byText("2024 合同")!.click();
+      byText("发票流程")!.click();
     });
     const content = document.querySelector('[role="dialog"]')!;
     // ① 弹窗自己封顶,并且不溢出。
@@ -928,21 +1083,46 @@ describe("界面上的四个动作(来自一次真实反馈)", () => {
   it("点一页就预览正文 —— 列表里唯一看不出来的就是「这一页写了什么」", async () => {
     await render();
     await act(async () => {
-      byText("2024 合同")!.click();
+      byText("发票流程")!.click();
     });
-    expect(readKnowledgePage).toHaveBeenCalledWith("sources/2024合同.md");
+    expect(readKnowledgePage).toHaveBeenCalledWith("concepts/发票流程.md");
     const dialog = document.querySelector('[role="dialog"]');
     expect(dialog).not.toBeNull();
     // 正文渲染出来(不是把 markdown 当纯文本印出来)。
     expect(dialog!.querySelector("h1")?.textContent).toContain("正文标题");
   });
 
+  it("预览里的库内链接在**同一个弹窗**里打开 —— 证据与结论之间要有那条路", async () => {
+    // 概念页的正文里写着指向源页的链接。应用没有导航守卫:不接管它,点了会把整个
+    // 渲染进程跳走(dev 下回落到 index.html = 视图重载)。
+    readKnowledgePage.mockImplementation(async () => ({
+      path: "concepts/发票流程.md",
+      body: "# 发票流程\n\n它是从 [AI概念测试：市场分析报告(五模块工作规范)](/sources/2024合同.md) 综合出来的。",
+    }) as never);
+    await render();
+    await act(async () => {
+      byText("发票流程")!.click();
+    });
+    const link = [...document.querySelectorAll('[role="dialog"] button')].find((node) =>
+      node.textContent?.includes("AI概念测试：市场分析报告"),
+    );
+    expect(link).not.toBeUndefined();
+    await act(async () => {
+      link!.click();
+    });
+    // 同一个弹窗换了内容:读的是那一页,标题也切过去(弹窗**没有**关掉又开)。
+    expect(readKnowledgePage).toHaveBeenLastCalledWith("sources/2024合同.md");
+    const dialog = document.querySelector('[role="dialog"]')!;
+    expect(dialog.textContent).toContain("AI概念测试：市场分析报告(五模块工作规范)");
+  });
+
   it("提示**不会自己消失**,但可以手动关掉", async () => {
     // 体检干净是一条要读的信息,不是一闪而过的反馈。
     organizeResult = { skipped: "nothing-to-do" };
     await render();
+    await showMaterial();
     await act(async () => {
-      byText("体检")!.click();
+      byLabel("体检")!.click();
     });
     const notice = document.querySelector('[role="status"]');
     expect(notice).not.toBeNull();

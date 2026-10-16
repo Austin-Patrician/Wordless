@@ -4,6 +4,8 @@ import { useEffect, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { usePreferences } from "../../shared/preferences";
+import { useRuntimeClient } from "../../shared/runtime";
+import { safeExternalUrl } from "../thread/message-markdown-policy";
 // 与对话共用同一套 markdown 排版(那个样式表由 MessageMarkdown 引入,这里显式引一次)。
 import "../thread/message-markdown.css";
 
@@ -153,16 +155,24 @@ export function KnowledgePromptDialog({
 export function KnowledgePreviewDialog({
   body,
   onClose,
+  onOpenPage,
   open,
   page,
 }: {
   /** `undefined` = 还在读;`""` = 读不出来。 */
   body: string | undefined;
   onClose: () => void;
+  /**
+   * 在**同一个弹窗**里打开另一页 —— 概念页正文里的 `/concepts/…`、`/sources/…` 链接就是
+   * 这么跟进的。**必须有**:这些链接指向的路径在应用里不存在,不接管它们的话,点下去会把
+   * 整个渲染进程跳走(没有导航守卫)。证据与结论之间的那条路,就是这个参数。
+   */
+  onOpenPage: (path: string) => void;
   open: boolean;
   page: { description: string; path: string; tags: string[]; title: string } | undefined;
 }) {
   const { t } = usePreferences();
+  const client = useRuntimeClient();
   if (page === undefined) return null;
   return (
     <Dialog
@@ -207,7 +217,53 @@ export function KnowledgePreviewDialog({
                 {t("knowledgeLoading")}
               </p>
             ) : (
-              <ReactMarkdown remarkPlugins={[remarkGfm]}>{body}</ReactMarkdown>
+              <ReactMarkdown
+                remarkPlugins={[remarkGfm]}
+                components={{
+                  // **内部链接必须在弹窗里跟进,其余一律降级。**
+                  // 对话里那套 markdown 的做法(见 MessageMarkdown 的 `a:`):不认识的链接
+                  // 不渲染成 `<a>` —— 否则点了会把整个渲染进程跳走(应用没有导航守卫)。
+                  a: ({ children, href }) => {
+                    const target = typeof href === "string" ? href.trim() : "";
+                    // 库内的页(bundle 相对路径):在同一个预览里打开它。
+                    // ReactMarkdown 会把 href 做 URL 编码,中文路径就成了 `%E6%A6%82…` ——
+                    // 进页面前要先解码,否则读不到(带 % 的路径没人有)。
+                    if (target.startsWith("/") && target.endsWith(".md")) {
+                      let decoded = target;
+                      try {
+                        decoded = decodeURIComponent(target);
+                      } catch {
+                        /* 解不开就按原样试 —— 读不到时预览会把错误如实说出来 */
+                      }
+                      return (
+                        <button
+                          className="font-medium text-[#587846] underline decoration-[#a8bb91] underline-offset-2 hover:text-[#3f5c30] dark:text-[#bad47a] dark:decoration-[#5f7546]"
+                          onClick={() => onOpenPage(decoded)}
+                          type="button"
+                        >
+                          {children}
+                        </button>
+                      );
+                    }
+                    const external = safeExternalUrl(target);
+                    if (external === null) {
+                      // 不是链接的(锚点、相对路径、javascript:…):当文字,不给它"能点"的样子。
+                      return <span className="text-muted-foreground underline decoration-dotted">{children}</span>;
+                    }
+                    return (
+                      <button
+                        className="font-medium text-[#587846] underline decoration-[#a8bb91] underline-offset-2 hover:text-[#3f5c30] dark:text-[#bad47a] dark:decoration-[#5f7546]"
+                        onClick={() => void client.openExternalUrl(external)}
+                        type="button"
+                      >
+                        {children}
+                      </button>
+                    );
+                  },
+                }}
+              >
+                {body}
+              </ReactMarkdown>
             )}
           </div>
         </div>

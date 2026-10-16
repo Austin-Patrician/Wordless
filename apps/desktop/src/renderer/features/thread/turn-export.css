@@ -1,0 +1,44 @@
+/*
+ * 导出预览的排版调整。
+ *
+ * 一条总原则:**图里没有滚动条 —— 被裁掉的内容就是丢失的内容**。所以现场那些"横着滚 / 折起来"
+ * 的地方,在导出预览里一律改成"换行 / 全部展开"。作用域严格限制在 `[data-turn-export-preview]`
+ * 子树,现场(线程正文)一行都不受影响。
+ */
+
+/*
+ * 代码块:现场是 `pre` 自己横向滚动 + 超过 16 行/1600 字折叠在 `max-h-96`,图里两样都不成立。
+ * 注意 `overflow-x: visible` 单独写是不够的 —— 它和 `overflow-y: auto` 同时存在时按 CSS 规则
+ * 会被算成 `auto`,照样是滚动容器(线程列表那次横向滚动条就是这个陷阱),所以这里两轴一起
+ * 改成 `visible`,并解除 `max-h`。
+ */
+[data-turn-export-preview] pre.message-code-scroll {
+  overflow: visible;
+  max-height: none;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/* 折叠按钮在导出物里没有意义(它只属于现场),而且会被截进图里。 */
+[data-turn-export-preview] [data-code-block-toggle] {
+  display: none;
+}
+
+/*
+ * 表格:现场的表格是 `min-w-max` + 外层 `overflow-x-auto`,列多了就横向滚。图里滚不了,
+ * 所以让表格**适应纸宽**、单元格内换行 —— 宁可挤,不可缺。
+ */
+[data-turn-export-preview] .message-markdown-table {
+  overflow-x: visible;
+}
+
+[data-turn-export-preview] .message-markdown-table table {
+  min-width: 0;
+  width: 100%;
+}
+
+[data-turn-export-preview] .message-markdown-table :is(th, td) {
+  max-width: none;
+  overflow-wrap: anywhere;
+  white-space: normal;
+}

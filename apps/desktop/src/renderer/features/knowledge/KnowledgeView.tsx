@@ -8,7 +8,9 @@ import {
   FolderOpen,
   ArchiveX,
   BookOpen,
-  ChevronRight,
+  ExternalLink,
+  BadgeCheck,
+  Link,
   MoveRight,
   Lightbulb,
   LoaderCircle,
@@ -24,10 +26,11 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import type { KnowledgeImportPlan, KnowledgeLibraries, KnowledgeSnapshot, KnowledgeUsageSummary } from "@wordless/protocol";
-import { Button, Popover, PopoverContent, PopoverTrigger, cn } from "@wordless/ui-kit";
+import { Button, Popover, PopoverContent, PopoverTrigger, TabButton, cn } from "@wordless/ui-kit";
 import { KnowledgeConfirmDialog, KnowledgePreviewDialog, KnowledgePromptDialog } from "./KnowledgeDialogs";
 import { KnowledgeHowItWorks } from "./KnowledgeHowItWorks";
-import { knowledgeSettingsFor } from "@wordless/domain";
+import { FileTypeIcon } from "../../shared/FileTypeIcon";
+import { knowledgeRoundSessionsForLibrary, knowledgeSettingsFor } from "@wordless/domain";
 import type { MessageKey } from "../../shared/i18n";
 import { usePreferences } from "../../shared/preferences";
 import { useRuntime, useRuntimeClient } from "../../shared/runtime";
@@ -73,8 +76,6 @@ type Status =
 const KIND_LABELS: Record<string, MessageKey> = { Source: "knowledgeKindSource", Concept: "knowledgeKindConcept", Entity: "knowledgeKindEntity" };
 /** 每类页面一个图标:同一组里的行不必再读文字,就知道是同一类东西。 */
 const KIND_ICONS: Record<string, LucideIcon> = { Source: FileText, Concept: Lightbulb, Entity: Boxes };
-/** 分组顺序固定:来源 → 概念 → 实体(事实、提炼、对象)。 */
-const PAGE_KINDS = ["Source", "Concept", "Entity"] as const;
 
 /** 未知类型直接显示原样 —— 它是宿主给的,编不出译名也别把它藏起来。 */
 function kindLabel(kind: string, t: (key: MessageKey) => string): string {
@@ -108,6 +109,14 @@ export function KnowledgeView({ onOpenSession, onOpenSettings }: KnowledgeViewPr
    */
   /** 「了解它如何工作」弹窗 —— 停用那一页的第三个出口。 */
   const [howItWorksOpen, setHowItWorksOpen] = useState(false);
+  /**
+   * 「导入」那颗按钮下面的选项弹层,**开关自己拿着**。
+   *
+   * 以前它是非受控的:选中一项之后弹层不关。其中两项会接着开一个弹窗(移动确认、选文件),
+   * 于是弹窗关掉之后弹层还留在原地 —— 看起来像"我刚选的那一下没生效"(实测被问到过)。
+   * 受控之后,选中即关:弹层是"选一件事"的菜单,选完就该走。
+   */
+  const [importMenuOpen, setImportMenuOpen] = useState(false);
   const [dialog, setDialog] = useState<
     { kind: "new-library" } | { kind: "remove-library" } | { kind: "move" } | { kind: "remove-round"; sessionId: string }
     | { kind: "preview"; path: string }
@@ -127,13 +136,48 @@ export function KnowledgeView({ onOpenSession, onOpenSettings }: KnowledgeViewPr
   /** 目录里的搜索词。**只筛不查**:宿主那份快照就是全量,再问一次是多余的一跳。 */
   const [query, setQuery] = useState("");
   /**
-   * 最近几轮加工。**按 `workbenchId` 认**(不是 `entryId`):它就是这个会话"是不是对话"的
-   * 判据,与侧边栏的过滤用的是同一个 —— 两处用两个判据迟早会不一致。
+   * 页内 tab:**页面**(日常主角)与**资料与加工**(输入与审计)。
+   *
+   * 切这一刀的依据是"互斥、不同时看":页面是每天要看的东西;导入、待整理、原始文件、
+   * 最近整理、用量是"偶尔看"的输入与审计。它们以前堆在同一列里,最后三样还挤在一个折叠区
+   * 里 —— 而折叠的语义是"次要",轮次与原始文件并不次要(轮次是"agent 到底干了什么"的
+   * 唯一入口)。
+   *
+   * 上面那条(库名 + 切库 + 加工中 + 搜索 + 刷新)不属于任何 tab:它是**作用域** ——
+   * 底下每一块都绑在这个库上。
    */
-  const rounds = (runtimeSnapshot?.sessions ?? [])
-    .filter((session) => session.workbenchId === "knowledge")
-    .sort((left, right) => right.updatedAt - left.updatedAt)
-    .slice(0, RECENT_ROUNDS);
+  const [tab, setTab] = useState<"pages" | "material">("pages");
+  /**
+   * 切 tab 时**清空搜索**。
+   *
+   * 搜索框只有一个(在顶上那条里),而它的作用域跟着 tab 走:页面 tab 筛页面、资料 tab 筛
+   * 原始文件。不清空的话,上一个 tab 的关键词会去筛另一份列表 —— 用户看到的是"结果莫名其妙
+   * 少了",而输入框里那个词看起来毫无关系。
+   */
+  const switchTab = useCallback((next: "pages" | "material") => {
+    setTab(next);
+    setQuery("");
+  }, []);
+
+  /**
+   * 打开一页的预览。**两处共用**:页面 tab 的行,与原始文件行上的"打开来源页" ——
+   * 预览只有一种打开方式,才不会出现两种行为不一致的入口。
+   *
+   * 路径归一:库内链接是 bundle 形状(带前导 `/`),而快照里的页面路径不带 —— 收进来就归一,
+   * 调用方不用关心自己手里是哪一种。
+   */
+  const openPage = useCallback(
+    (pagePath: string) => {
+      const path = pagePath.replace(/^\/+/, "");
+      setPreview(undefined);
+      setDialog({ kind: "preview", path });
+      void client
+        .readKnowledgePage(path)
+        .then((result) => setPreview(result?.body ?? ""))
+        .catch((error: unknown) => setPreview(error instanceof Error ? error.message : String(error)));
+    },
+    [client],
+  );
   /**
    * 按**宿主解析出来的那个库**读设置。
    *
@@ -164,20 +208,34 @@ export function KnowledgeView({ onOpenSession, onOpenSettings }: KnowledgeViewPr
       .catch(() => setLibraries(undefined));
   }, [client]);
 
-  // 用量与快照分开取:它是"历史",不需要跟着每次写入重算。
-  useEffect(() => {
-    void client
-      .getKnowledgeUsage()
-      .then(setUsage)
-      .catch(() => setUsage(undefined));
+  // 用量与快照分开取:它是"历史",不需要跟着每次写入重算 —— 但**切库要重取**(它是按库的),
+  // 加工跑完也要重取(那一轮刚花掉的钱还没算进来)。
+  const loadUsage = useCallback(async () => {
+    try {
+      setUsage(await client.getKnowledgeUsage());
+    } catch {
+      setUsage(undefined);
+    }
   }, [client]);
+
+  useEffect(() => {
+    void loadUsage();
+  }, [loadUsage]);
 
   // agent 在会话里写页、或别处导入了文件时,这里跟着更新 —— 否则视图停在打开那一刻的状态。
   // 走桥的专用订阅(功能级推送的既有做法,同 `subscribeBrowserViewState`),不掺进 runtime 事件。
   useEffect(() => client.subscribeKnowledgeChanged(() => void refresh()), [client, refresh]);
 
   // 加工中:订阅宿主的状态。它同时覆盖定时那一轮 —— 用户没点任何东西时也会亮起来。
-  useEffect(() => client.subscribeKnowledgeProcessing(setProcessing), [client]);
+  // **跑完要重取用量**:那一轮的花费只在 journal 里,不重取就会一直显示上一轮之前的数字。
+  useEffect(
+    () =>
+      client.subscribeKnowledgeProcessing((active) => {
+        setProcessing(active);
+        if (!active) void loadUsage();
+      }),
+    [client, loadUsage],
+  );
 
   const importFiles = useCallback(
     async (files: File[], mode: "copy" | "move") => {
@@ -242,10 +300,13 @@ export function KnowledgeView({ onOpenSession, onOpenSettings }: KnowledgeViewPr
   const pickLibrary = useCallback(
     (name: string) => {
       // 切换 = 改一个偏好。宿主那边每次调用现解析,所以这里不用通知谁。
-      void setKnowledge({ ...knowledge, activeKnowledgeBase: name }).then(() => refresh());
+      // **用量与快照都要重取**:两者都是按库的(用量按轮次的会话根筛)。
+      void setKnowledge({ ...knowledge, activeKnowledgeBase: name }).then(() =>
+        Promise.all([refresh(), loadUsage()]),
+      );
       void client.getKnowledgeLibraries().then(setLibraries).catch(() => undefined);
     },
-    [client, knowledge, refresh, setKnowledge],
+    [client, knowledge, loadUsage, refresh, setKnowledge],
   );
 
   const createLibrary = useCallback(async (name: string) => {
@@ -256,12 +317,14 @@ export function KnowledgeView({ onOpenSession, onOpenSettings }: KnowledgeViewPr
       if (active !== undefined) await setKnowledge({ ...knowledge, activeKnowledgeBase: active });
       setLibraries(await client.getKnowledgeLibraries());
       await refresh();
+      // 刚建出来的库还没有轮次,但**必须重取**:否则会留着上一个库的用量数字。
+      await loadUsage();
     } catch (error) {
       setNotice(error instanceof Error ? error.message : String(error));
     } finally {
       setBusy(undefined);
     }
-  }, [client, knowledge, refresh, setKnowledge]);
+  }, [client, knowledge, loadUsage, refresh, setKnowledge]);
 
   const removeLibrary = useCallback(
     async () => {
@@ -274,11 +337,12 @@ export function KnowledgeView({ onOpenSession, onOpenSettings }: KnowledgeViewPr
         // 删掉的正是当前这个 → 切到还在的那个(偏好里那个名字已经不存在了)。
         await setKnowledge({ ...knowledge, activeKnowledgeBase: next.active });
         await refresh();
+        await loadUsage();
       } finally {
         setBusy(undefined);
       }
     },
-    [client, knowledge, libraries, refresh, setKnowledge, t],
+    [client, knowledge, libraries, loadUsage, refresh, setKnowledge, t],
   );
 
   const importBundle = useCallback(async () => {
@@ -389,13 +453,6 @@ export function KnowledgeView({ onOpenSession, onOpenSettings }: KnowledgeViewPr
   /** 已加工的源页数 —— 算"每个文件平均花了多少"的分母。 */
   const sourcePages = snapshot.pages.filter((page) => page.kind === "Source" && !page.orphaned).length;
   /**
-   * **列出来的**页数(排除已标孤儿、等着回收的那些)。
-   *
-   * 列表本来就按这个判据筛,所以计数必须用同一个 —— 否则同一个面板里两个数字对不上:
-   * 「页面 2」而下面只列出 1 页(实测被问到过)。
-   */
-  const listedPages = snapshot.pages.filter(isLivePage).length;
-  /**
    * 已标孤儿、**下一轮真会被回收**的页。
    *
    * **要列出来,不能只报个数**:设计里那条"宽限期"就是给用户留的后路(宽限一轮再删),
@@ -406,23 +463,81 @@ export function KnowledgeView({ onOpenSession, onOpenSettings }: KnowledgeViewPr
    * 那种页算活页(`listedPages` 那一半),它的「已复核」标记本来就写着"不会再自动改写"。
    */
   const reapingPages = snapshot.pages.filter((page) => page.orphaned && !page.verified);
-  const grouped = PAGE_KINDS.map((kind) => ({
+  /**
+   * **复核过、但原始文件已经没了**的来源页。回收会跳过它们(所以不进"待回收"),而来源页
+   * 又不住在这一屏的任何分组里 —— 不给它们一个位置,这些被用户亲手留下的页就从界面上
+   * 消失了。放在这里:每行一枚「已复核」芯片,和一颗"取消复核"的开关(取消之后它会回到
+   * 待回收,由下一轮处理 —— 这是既有的语义,不是新造的)。
+   */
+  const keptSourcePages = snapshot.pages.filter(
+    (page) => page.kind === "Source" && page.orphaned && page.verified,
+  );
+  /**
+   * 最近几轮加工 —— **只列当前这个库的**。
+   *
+   * 判据是 `source` 标记(见 `isKnowledgeRound`),再加上**库**:加工会话的会话根就是它加工的
+   * 那个库,所以 `runtimeRootPath` 是轮次与库之间唯一的连接。少了这一半,多库时这一页会把
+   * 别的库的轮次列出来 —— 而它出现在"这个库"的页面上,看不出来是别人的。
+   *
+   * 这里只列轮次,不列用户自己从新建页起的知识库会话:那些会出现在侧边栏里(它们就是用户的
+   * 对话),再在这里冒充一轮加工只会把真正的轮次挤出去。
+   */
+  const rounds = knowledgeRoundSessionsForLibrary(runtimeSnapshot?.sessions ?? [], snapshot.root)
+    .sort((left, right) => right.updatedAt - left.updatedAt)
+    .slice(0, RECENT_ROUNDS);
+  /**
+   * 页面 tab 分**三类,但这一屏只放"知识"那两类**(Concept/Entity)。
+   *
+   * **来源页不在这里**:它与原始文件是 1:1 的(`sources[].resource` 指回去),所以它跟着
+   * 原始文件住在「资料与加工」tab —— 在原始文件那行上就能打开它。混在一起会让用户把
+   * "证据"当成另一堆要读的东西(实测:用户分不清 sources 与 concepts 的区别,而它们
+   * 本来就该住在不同的地方)。
+   *
+   * 分组顺序固定:概念 → 实体。
+   */
+  const grouped = (["Concept", "Entity"] as const).map((kind) => ({
     kind,
     pages: snapshot.pages.filter((page) => page.kind === kind && isLivePage(page)),
   }));
+  /**
+   * 页面 tab 上**这一屏**列出的页数(概念 + 实体,排除待回收)。
+   *
+   * 计数与列表必须同一个判据 —— 否则"说 2 页、只列出 1 页"(实测被问到过)。
+   * 来源页不算:它们不住在这一屏(见上面的说明)。
+   */
+  const listedPages = grouped.reduce((total, group) => total + group.pages.length, 0);
 
   // 搜索**在本地筛**:宿主那份快照已经是全量,而且目录是"看得见才找得到"的东西,
   // 每敲一个字问一次宿主只会让输入变卡。筛的字段就是页面上显示的字段 ——
   // 看得见的都能搜到,搜到的都看得见。
+  //
+  // **作用域跟着 tab 走**(切 tab 时会清空):页面 tab 筛页面,资料 tab 筛原始文件。
   const needle = query.trim().toLowerCase();
   const searching = needle.length > 0;
   const matches = (values: readonly string[]) => values.some((value) => value.toLowerCase().includes(needle));
-  const visibleRaws = searching ? snapshot.rawFiles.filter((file) => matches([file.path])) : snapshot.rawFiles;
+  const visibleRaws = searching && tab === "material" ? snapshot.rawFiles.filter((file) => matches([file.path])) : snapshot.rawFiles;
   const visibleGroups = grouped.map(({ kind, pages }) => ({
     kind,
     pages: searching ? pages.filter((page) => matches([page.title, page.description, page.path, ...page.tags])) : pages,
   }));
   const visiblePageCount = visibleGroups.reduce((total, group) => total + group.pages.length, 0);
+  /**
+   * 原始文件 → 它的**来源页**。**宿主直接给**(`rawFiles[].pagePath`,协议里的新字段):
+   * 1:1 的配对只有宿主算得出来(它握着全部页面),渲染层不该自己去拼路径 —— 以前想从
+   * 页面摘要反推,但摘要是给"读"的,不带 `sources`。
+   */
+  const claimedPagePaths = new Set(
+    snapshot.rawFiles.flatMap((file) => (file.pagePath === undefined ? [] : [file.pagePath])),
+  );
+  /**
+   * **没有对应原始文件**的来源页(`sources[].resource` 是 URL —— `KnowledgeSourceRef` 允许
+   * 绝对 URL)。它们在「原始文件」清单里没有行可挂,单独列出来:不列的话,这类页在界面上
+   * 就真的无处可去了。判据用**排除法**(来源页而没有任何原始文件指向它),因为页面摘要
+   * 不带 `sources`。
+   */
+  const urlSourcePages = snapshot.pages.filter(
+    (page) => page.kind === "Source" && isLivePage(page) && !claimedPagePaths.has(page.path),
+  );
   /**
    * 空库 = 既没有原始文件、也没有页面。
    *
@@ -448,14 +563,22 @@ export function KnowledgeView({ onOpenSession, onOpenSettings }: KnowledgeViewPr
       }}
     >
       <div className="min-h-0 flex-1 overflow-y-auto">
-        <div className="mx-auto w-full max-w-[1040px] px-5 pb-14 pt-7 sm:px-8 lg:px-10">
+        <div className="mx-auto w-full max-w-[1040px] px-5 pb-14 sm:px-8 lg:px-10">
+          {/*
+            **顶上这一条是"作用域",不是"这一页的标题"。**
+            左边回答"我在哪个库"(底下的页面、原始文件、轮次、用量**全都是这个库的**),
+            右边回答"我能对它做什么",再下面一行是 tab 条。它 sticky:滚到原始文件那一屏时
+            仍然看得见自己在哪个库、哪个 tab —— 否则底下的数字属于谁就无从判断了。
+            (负外边距是为了让底色铺满容器的左右留白,内容不会从旁边透出来。)
+          */}
+          <div className="sticky top-0 z-20 -mx-5 bg-[var(--wordless-shell-workspace)] px-5 pt-7 sm:-mx-8 sm:px-8 lg:-mx-10 lg:px-10">
           {/*
             标题那一行:**左边是"这是哪个库",右边是"我现在能对它做什么"**。
             以前标题本身是一个下拉框、右边挂着八颗同样重的按钮,于是既看不出这是哪一页,
             也看不出哪一颗才是主要的。
           */}
           <header className="flex flex-wrap items-start justify-between gap-4">
-            <div className="min-w-0">
+            <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
               <KnowledgeLibraryTitle
                 active={libraries?.active ?? knowledge.activeKnowledgeBase ?? t("knowledgeCurrentLibraryUnknown")}
                 busy={busy !== undefined}
@@ -464,22 +587,32 @@ export function KnowledgeView({ onOpenSession, onOpenSettings }: KnowledgeViewPr
                 onRemove={() => setDialog({ kind: "remove-library" })}
                 onReveal={() => void client.revealKnowledgeRoot()}
                 onSelect={pickLibrary}
+                root={snapshot.root}
               />
-              <p className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] text-muted-foreground">
-                <span className="max-w-[46ch] truncate font-mono" title={snapshot.root}>
-                  {snapshot.root}
+              {/*
+                加工中:定时那一轮用户没点任何东西,所以这个徽标必须在,而且要在标题旁。
+              */}
+              {processing && (
+                <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-accent/30 px-2 py-0.5 text-[11px] font-medium text-accent-foreground">
+                  <LoaderCircle className="h-3 w-3 animate-spin motion-reduce:animate-none" />
+                  {t("knowledgeProcessing")}
                 </span>
-                {/* 加工中:定时那一轮用户没点任何东西,所以这个徽标必须在,而且要在标题旁。 */}
-                {processing && (
-                  <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-accent/30 px-2 py-0.5 font-medium text-accent-foreground">
-                    <LoaderCircle className="h-3 w-3 animate-spin motion-reduce:animate-none" />
-                    {t("knowledgeProcessing")}
-                  </span>
-                )}
-              </p>
+              )}
             </div>
+            {/*
+              **库在磁盘上的路径不占正文。** 以前它作为一行 mono 小字挂在标题下面,而它:
+                - 不可操作 —— 同一件事的可操作形式是「打开文件夹」(标题菜单里、设置页里都有);
+                - 前缀是产品定的(`<文档>/Wordless Knowledge/`),**每个库都一样**,唯一有区分度的
+                  是最后一段(库名)—— 而它被 `truncate` 从尾部裁掉了。于是长路径下显示的是
+                  "所有库都相同"的那一截:**看起来是信息,实际区分不了任何东西**。
+                - 库名本来就在标题上(还能点开切换),设置页也有一行"当前库"。
+              所以它退成标题的悬停提示(见 KnowledgeLibraryTitle 的 `root`),要看随时看得到,
+              但不占版面、也不跟"加工中"抢那一行。
+            */}
 
             <div className="flex shrink-0 flex-wrap items-center gap-2">
+              {/* 空库时搜索框没有意义(底下只有投递箱),留着它只会让人以为"这里能搜什么"。 */}
+              {!isEmptyLibrary && (
               <label className="relative w-[190px]">
                 <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
                 <input
@@ -501,6 +634,7 @@ export function KnowledgeView({ onOpenSession, onOpenSettings }: KnowledgeViewPr
                   </button>
                 )}
               </label>
+              )}
               <Button
                 aria-label={t("knowledgeRefresh")}
                 disabled={busy !== undefined}
@@ -513,45 +647,46 @@ export function KnowledgeView({ onOpenSession, onOpenSettings }: KnowledgeViewPr
                 <RefreshCw className="h-3.5 w-3.5" />
               </Button>
               {/*
+                **动作只在它有用的那个 tab 上。** 导入 / 检查 / 立即整理都是对"资料"做的事
+                (投递、体检、按待办起一轮),所以它们属于资料 tab —— 页面 tab 上留一个刷新就够。
+                待整理的数目挂在资料 tab 的标签上,停在页面 tab 也看得见"有活"。
+              */}
+              {!isEmptyLibrary && tab === "material" && (
+                <>
+              {/*
                 **导入只有一颗按钮。** 三颗并排("复制进来 / 移动进来 / 导入别人的库")是一堵
                 同等重量的按钮墙,而它们本来是一件事的三种做法。投递箱那张卡因此也不必常驻 ——
                 它只在**空库**时当首屏(那时投递就是唯一该做的事)。
               */}
-              <Popover>
+              <Popover onOpenChange={setImportMenuOpen} open={importMenuOpen}>
                 <PopoverTrigger asChild>
                   {/*
                     **裸 button,不是 ui-kit 的 `Button`。** `Button` 没有 `forwardRef`,
                     而 Radix 的 `asChild` 要靠 ref 把 trigger 接上去 —— 用 Button 的话弹层
                     永远打不开(静默失败:点了没反应)。仓库里其它 `PopoverTrigger asChild`
                     也都是裸 button,原因就在这里。
+                    **所以类名必须和 `variant="outline" size="icon"` 那一套逐字对齐** ——
+                    尤其是不要自己加 `text-muted-foreground`:旁边两颗图标按钮用的是前景色,
+                    只有这一颗灰着,看起来就像被停用了(实测被问到过)。
                   */}
                   <button
-                    className="inline-flex h-8 items-center justify-center gap-1.5 whitespace-nowrap rounded-lg border border-border bg-card px-3 text-[0.7rem] font-medium shadow-sm outline-none transition-colors hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50"
+                    aria-label={t("knowledgeImport")}
+                    className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-border bg-card shadow-sm outline-none transition-colors hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:pointer-events-none disabled:opacity-50"
                     disabled={busy !== undefined}
                     title={t("knowledgeImportHint")}
                     type="button"
                   >
                     <Upload className="h-3.5 w-3.5" />
-                    {t("knowledgeImport")}
                   </button>
                 </PopoverTrigger>
                 <PopoverContent align="end" className="w-[260px] p-1.5">
-                  <input
-                    className="hidden"
-                    multiple
-                    onChange={(event) => {
-                      const files = [...(event.target.files ?? [])];
-                      const mode = pickMode.current;
-                      event.target.value = "";
-                      void importFiles(files, mode);
-                    }}
-                    ref={inputRef}
-                    type="file"
-                  />
+                  {/* 隐藏的文件输入在**页面顶层**常驻(见那里的注释):它被三处点,放在弹层里
+                      会随弹层卸载,另外两处就成了空点。 */}
                   <button
                     className={POPOVER_ITEM}
                     disabled={busy !== undefined}
                     onClick={() => {
+                      setImportMenuOpen(false);
                       pickMode.current = "copy";
                       inputRef.current?.click();
                     }}
@@ -563,7 +698,10 @@ export function KnowledgeView({ onOpenSession, onOpenSettings }: KnowledgeViewPr
                   <button
                     className={POPOVER_ITEM}
                     disabled={busy !== undefined}
-                    onClick={() => setDialog({ kind: "move" })}
+                    onClick={() => {
+                      setImportMenuOpen(false);
+                      setDialog({ kind: "move" });
+                    }}
                     type="button"
                   >
                     <MoveRight className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
@@ -573,7 +711,10 @@ export function KnowledgeView({ onOpenSession, onOpenSettings }: KnowledgeViewPr
                   <button
                     className={POPOVER_ITEM}
                     disabled={busy !== undefined || processing}
-                    onClick={() => void importBundle()}
+                    onClick={() => {
+                      setImportMenuOpen(false);
+                      void importBundle();
+                    }}
                     title={t("knowledgeImportBundleHelp")}
                     type="button"
                   >
@@ -585,9 +726,10 @@ export function KnowledgeView({ onOpenSession, onOpenSettings }: KnowledgeViewPr
               <Button
                 // **停用也一样不给点**:体检也要起一个知识会话,而那一轮的画像没有知识库工具
                 // (与「立即整理」同一条理由 —— 以前这里漏了,点了会得到一个莫名其妙的失败)。
+                aria-label={t("knowledgeLint")}
                 disabled={busy !== undefined || processing || snapshot.pages.length === 0 || !enabled}
                 onClick={() => void organize("lint")}
-                size="sm"
+                size="icon"
                 title={t("knowledgeLintHelp")}
                 type="button"
                 variant="outline"
@@ -597,7 +739,6 @@ export function KnowledgeView({ onOpenSession, onOpenSettings }: KnowledgeViewPr
                 ) : (
                   <Stethoscope className="h-3.5 w-3.5" />
                 )}
-                {t("knowledgeLint")}
               </Button>
               <Button
                 // 停用时不给点:那个会话跑起来会没有知识库工具,点下去只会得到一个莫名其妙的失败。
@@ -612,10 +753,59 @@ export function KnowledgeView({ onOpenSession, onOpenSettings }: KnowledgeViewPr
                 ) : (
                   <Sparkles className="h-3.5 w-3.5" />
                 )}
-                {t("knowledgeOrganize")}
-              </Button>
+                  {t("knowledgeOrganize")}
+                </Button>
+                </>
+              )}
             </div>
           </header>
+
+          {/*
+            tab 条。**空库时没有 tab**:一个刚建出来的库只有一件事可做(把文件放进来),
+            分成两个 tab 只会让"没有页面"和"该投递"分散在两处,用户还得来回切。
+          */}
+          {!isEmptyLibrary && (
+            <nav aria-label="Knowledge views" className="mt-3 flex items-center gap-1 border-b border-border">
+              <TabButton active={tab === "pages"} onClick={() => switchTab("pages")}>
+                {t("knowledgePages")}
+              </TabButton>
+              <TabButton active={tab === "material"} onClick={() => switchTab("material")}>
+                {t("knowledgeTabMaterial")}
+                {/*
+                  待整理的数目挂在 tab 上:它是"现在有活"的信号,而干活那颗按钮在资料 tab 里。
+                  不挂的话,停在页面 tab 的人看不出库里还有东西等着整理(以前那条状态带就是这个作用)。
+                */}
+                {pending.length > 0 && (
+                  <span
+                    className="ml-1.5 rounded-full bg-accent/30 px-1.5 py-0.5 font-mono text-[10px] tabular-nums text-accent-foreground"
+                    title={t("knowledgePendingStrip").replace("{count}", String(pending.length))}
+                  >
+                    {pending.length}
+                  </span>
+                )}
+              </TabButton>
+            </nav>
+          )}
+          </div>
+
+          {/*
+            **文件输入必须常驻,不能放在导入弹层里。** Radix 的弹层关闭时会卸载内容,而这个
+            input 被三处点:`导入`弹层里的两项、投递箱的「复制进来」、以及「移动进来」确认框 ——
+            后两处调用时弹层是关着的,于是 `inputRef.current` 是 null,点下去**什么都不发生**
+            (静默失败)。放在这一层:任何 tab、任何时刻都在。
+          */}
+          <input
+            className="hidden"
+            multiple
+            onChange={(event) => {
+              const files = [...(event.target.files ?? [])];
+              const mode = pickMode.current;
+              event.target.value = "";
+              void importFiles(files, mode);
+            }}
+            ref={inputRef}
+            type="file"
+          />
 
           {/*
             提示**不会自己消失**:它要么被下一个动作替换,要么用户点掉。体检结果、"为什么没起会话"
@@ -691,14 +881,10 @@ export function KnowledgeView({ onOpenSession, onOpenSettings }: KnowledgeViewPr
           )}
 
           <div className="mt-5 space-y-3.5">
-            {/*
-              **加工会话的家。** 它们不进侧边栏会话列表(那是"不是对话的东西不进"的同一条:与媒体画布
-              一样),所以得有地方能找到 —— 而且必须能找到,否则"agent 到底干了什么"就没有入口了。
-            */}
           {/*
             **空库时投递箱当首屏。** 一个刚建出来的库,唯一该做的事就是把文件放进来 ——
             那时页面列表是空的,把投递箱摆在最上面才是对的。库里有东西之后它就让位给页面,
-            只留一颗「导入」按钮(上面那行)。
+            只留一颗「导入」按钮(资料 tab 里那颗)。
           */}
           {isEmptyLibrary && (
             <Panel
@@ -739,8 +925,12 @@ export function KnowledgeView({ onOpenSession, onOpenSettings }: KnowledgeViewPr
             </Panel>
           )}
 
-            {snapshot.damaged.length > 0 && (
-              <section className="rounded-2xl border border-amber-500/40 bg-amber-500/10 p-4">
+            {/*
+              损坏页归**资料 tab**:它是**输入侧**的问题(文件读不进来),不是页面本身的问题。
+              压成一条左描边的警示,不再是圆角卡 —— 它是这一层最外的东西,不该再像一张"面板"。
+            */}
+            {!isEmptyLibrary && tab === "material" && snapshot.damaged.length > 0 && (
+              <section className="mt-5 border-l-2 border-amber-500/60 bg-amber-500/10 py-2.5 pl-3.5 pr-4">
                 <p className="flex items-center gap-1.5 text-[12px] font-semibold">
                   <AlertTriangle className="h-3.5 w-3.5" />
                   {t("knowledgeDamaged").replace("{count}", String(snapshot.damaged.length))}
@@ -755,44 +945,26 @@ export function KnowledgeView({ onOpenSession, onOpenSettings }: KnowledgeViewPr
               </section>
             )}
           {/*
-            **待整理 = 一条状态带,不是一张常驻的卡。** 它是"现在有活"的信号,没活的时候
-            什么都不该占位置。数字与体积都是事实(能算准),所以照实写。
+            **待整理不再单独占一行**:它的口径(几个文件、多大、本轮上限)就是原始文件清单的
+            口径,并进了那一节的小节标题 —— 单独一张卡只会在 tab 底下多一层。
           */}
-          {!isEmptyLibrary && pending.length > 0 && (
-            <section className="mt-5 flex flex-wrap items-center gap-x-3 gap-y-1.5 rounded-2xl border border-border bg-card px-4 py-2.5">
-              <span className="inline-flex items-center gap-1.5 text-[12px] font-medium">
-                <span className="h-1.5 w-1.5 rounded-full bg-[var(--wordless-accent)]" />
-                {t("knowledgePendingStrip").replace("{count}", String(pending.length))}
-              </span>
-              <span className="text-[11px] text-muted-foreground">
-                {formatBytes(pending.reduce((total, file) => total + file.bytes, 0))}
-                {settings.maxFilesPerRound > 0 &&
-                  ` · ${t("knowledgeBudgetApplies").replace("{files}", String(settings.maxFilesPerRound))}`}
-              </span>
-            </section>
-          )}
 
-            <Panel
-              meta={
-                <>
-                  {t("knowledgePageCount").replace("{count}", String(searching ? visiblePageCount : listedPages))}
-                  {/* 待回收的页在下面单独一组里列着,这里只是把数目先说出来。 */}
-                  {reapingPages.length > 0 && !searching && (
-                    <span className="text-muted-foreground/70">
-                      {" · "}
-                      {t("knowledgeReapingPages").replace("{count}", String(reapingPages.length))}
-                    </span>
-                  )}
-                </>
-              }
-              title={t("knowledgePages")}
-            >
-              {listedPages === 0 && reapingPages.length === 0 ? (
-                <EmptyState description={t("knowledgeEmptyPages")} icon={FileText} />
+            {/*
+              页面 tab = **知识**:概念与实体。来源页不在这里(它跟原始文件 1:1,住在资料 tab)。
+              不套卡:tab 底下直接是分组与行,一层是一层 —— 再套一层 card 只会让页面看起来
+              比实际复杂。
+            */}
+            {!isEmptyLibrary && tab === "pages" && (
+              listedPages === 0 && reapingPages.length === 0 && keptSourcePages.length === 0 ? (
+                <div className="mt-5">
+                  <EmptyState description={t("knowledgeEmptyPages")} icon={FileText} />
+                </div>
               ) : searching && visiblePageCount === 0 ? (
-                <EmptyState description={t("knowledgeSearchEmptyHelp")} icon={Search} title={t("knowledgeSearchEmpty")} />
+                <div className="mt-5">
+                  <EmptyState description={t("knowledgeSearchEmptyHelp")} icon={Search} title={t("knowledgeSearchEmpty")} />
+                </div>
               ) : (
-                <div className="space-y-3">
+                <div className="mt-5 space-y-6">
                   {visibleGroups.map(({ kind, pages }) =>
                     pages.length === 0 ? null : (
                       <div key={kind}>
@@ -806,14 +978,7 @@ export function KnowledgeView({ onOpenSession, onOpenSettings }: KnowledgeViewPr
                             <PageRow
                               busy={busy !== undefined}
                               key={page.path}
-                              onOpen={() => {
-                                setPreview(undefined);
-                                setDialog({ kind: "preview", path: page.path });
-                                void client
-                                  .readKnowledgePage(page.path)
-                                  .then((result) => setPreview(result?.body ?? ""))
-                                  .catch((error: unknown) => setPreview(error instanceof Error ? error.message : String(error)));
-                              }}
+                              onOpen={() => openPage(page.path)}
                               onToggle={() => {
                                 // 复核 = "我的改动不会被 agent 覆盖"的唯一开关,所以它值得一颗显式的按钮。
                                 setBusy(`verify:${page.path}`);
@@ -834,6 +999,8 @@ export function KnowledgeView({ onOpenSession, onOpenSettings }: KnowledgeViewPr
                     **待回收 = 一条后路,所以它必须看得见。**
                     设计里给孤儿留了一轮宽限期(下一轮才真删),而看不见的东西救不回来 ——
                     这一组就是那条后路的入口:列出每一页 + 一句"为什么它要被回收" + 一颗「保留」。
+                    **来源页也会出现在这里**(原文被删 → 它的源页标孤儿),所以来源页搬走之后,
+                    回收这条后路仍然兜得住它们。
                   */}
                   {reapingPages.length > 0 && (
                     <div>
@@ -920,124 +1087,294 @@ export function KnowledgeView({ onOpenSession, onOpenSettings }: KnowledgeViewPr
                       </ul>
                     </div>
                   )}
+
+                  {/*
+                    **被留下来的来源页**(复核过、原文没了)。回收跳过它们,而来源页又不住在
+                    这一屏的分组里 —— 没有这个分组,用户亲手留下的页就从界面上消失了。
+                    取消复核会把它们送回「待回收」,由下一轮处理(既有语义)。
+                  */}
+                  {keptSourcePages.length > 0 && !searching && (
+                    <div>
+                      <h3 className="mb-1 flex items-baseline gap-1.5 px-1.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
+                        {t("knowledgeKeptGroup")}
+                        <span className="font-mono tabular-nums text-muted-foreground/70">{keptSourcePages.length}</span>
+                      </h3>
+                      <ul className="-mx-1.5 space-y-0.5">
+                        {keptSourcePages.map((page) => (
+                          <li
+                            className="flex items-start gap-3 rounded-xl px-1.5 py-2 transition-colors hover:bg-muted/60"
+                            key={page.path}
+                          >
+                            <span className="mt-0.5 grid h-7 w-7 shrink-0 place-items-center rounded-lg bg-[#789347]/15 text-[#789347] dark:text-[#bad47a]">
+                              <BadgeCheck className="h-3.5 w-3.5" />
+                            </span>
+                            <button className="min-w-0 flex-1 text-left" onClick={() => openPage(page.path)} type="button">
+                              <span className="block truncate text-[13px] font-semibold" title={page.title}>
+                                {page.title}
+                              </span>
+                              <p className="mt-0.5 truncate text-[11px] text-muted-foreground">
+                                {t("knowledgeVerified")}
+                                {page.reviewStale ? ` · ${t("knowledgeReviewStale")}` : ""}
+                              </p>
+                            </button>
+                            <Button
+                              // 这颗胶囊与 PageRow 的复核开关同一套语义:显示当前状态(已复核),
+                              // 点一下就翻到另一面 —— 取消复核后它会回到「待回收」,由下一轮处理。
+                              disabled={busy !== undefined}
+                              onClick={() => {
+                                setBusy(`verify:${page.path}`);
+                                void client
+                                  .setKnowledgeVerification(page.path, false)
+                                  .then(() => refresh())
+                                  .finally(() => setBusy(undefined));
+                              }}
+                              size="sm"
+                              title={t("knowledgeVerifyHelp")}
+                              type="button"
+                              variant="outline"
+                            >
+                              {t("knowledgeVerified")}
+                            </Button>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
                 </div>
-              )}
-            </Panel>
+              )
+            )}
 
           {/*
-            **历史与维护收进一个折叠区。** 这三样(最近整理、原始文件清单、累计用量)都是
-            "偶尔要看"的东西,而它们以前各占一张常驻的卡 —— 于是真正要读的页面被压在最下面,
-            每次进来都得先滚过两张不常动的卡。折叠默认收起,要看时一键展开。
+            **资料与加工 = 输入 + 审计。** 原始文件(哪些加工过)、最近整理(agent 干了什么)、
+            累计用量(花了多少)是同一件事的三段:这个库进了什么、被怎么处理、代价是多少。
+            以前它们挤在一个折叠区里,然后又挤进一张卡 —— 卡会把"这几段是并列的"说成
+            "它们是一坨"。所以这三段平铺,用小节标题分开,不再嵌套。
           */}
+          {!isEmptyLibrary && tab === "material" && (
+            <>
           {/*
-            折叠区**自己就是那张卡**:展开之后里面是小节 + 分隔线,不再套三张卡。
-            套卡会让"一张卡里长出三张卡",而它们本来是同一件事(库的维护与历史)的三段。
+            **原始文件 = 输入侧的清单。** "待整理"那条状态带并进了小节标题 —— 它要说的
+            (几个文件、多大、本轮上限)本来就是这份清单的口径,单独占一行卡只会多一层。
+            **来源页跟着原始文件走**:每个已整理的文件,行上有一颗"打开来源页" ——
+            一份原始文件对应恰好一页,这个 1:1 在这里看得见,不用去页面 tab 里找。
           */}
-          <details className="group mt-3.5 rounded-2xl border border-border bg-card">
-            <summary className="flex cursor-pointer list-none items-center gap-1.5 px-4 py-2.5 text-[12px] font-medium text-muted-foreground transition-colors hover:text-foreground">
-              <ChevronRight className="h-3.5 w-3.5 transition-transform group-open:rotate-90" />
-              {t("knowledgeManagement")}
-              {rounds.length > 0 && (
-                <span className="font-mono text-[11px] tabular-nums text-muted-foreground/70">{rounds.length}</span>
+          <section className="mt-5">
+            <h3 className="mb-1 flex flex-wrap items-baseline gap-x-2.5 gap-y-0.5 px-1.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
+              {t("knowledgeRawFiles")}
+              <span className="font-mono tabular-nums text-muted-foreground/70">
+                {t("knowledgeRawCount")
+                  .replace("{total}", String(snapshot.rawFiles.length))
+                  .replace("{pending}", String(pending.length))}
+              </span>
+              {pending.length > 0 && (
+                <span className="font-mono tabular-nums text-muted-foreground/70">
+                  {formatBytes(pending.reduce((total, file) => total + file.bytes, 0))}
+                  {settings.maxFilesPerRound > 0 &&
+                    ` · ${t("knowledgeBudgetApplies").replace("{files}", String(settings.maxFilesPerRound))}`}
+                </span>
               )}
-            </summary>
-            <div className="space-y-3 border-t border-border px-4 py-3">
-              {rounds.length > 0 && (
-                <section>
-                  <h3 className="mb-1.5 text-[12px] font-semibold">{t("knowledgeRecentRounds")}</h3>
-                  <ul className="-mx-1.5 space-y-0.5">
-                    {rounds.map((round) => (
-                      <li
-                        className="flex items-center gap-3 rounded-lg px-1.5 py-1.5 transition-colors hover:bg-muted/60"
-                        key={round.id}
-                      >
-                        <span className="w-[124px] shrink-0 font-mono text-[11px] tabular-nums text-muted-foreground">
-                          {new Date(round.updatedAt).toLocaleString()}
-                        </span>
-                        <span className="min-w-0 flex-1 truncate text-[12px]">{round.title}</span>
-                        <Button className="shrink-0" onClick={() => onOpenSession(round.id)} size="sm" type="button" variant="ghost">
-                          {t("knowledgeOpenRound")}
-                        </Button>
-                        {/*
-                          **能删**。加工会话不在侧边栏的会话列表里(那里没有它们的位置,见文档 §13),
-                          所以侧边栏那套"删除会话"够不着它们 —— 这里必须给一个入口,否则它们只会
-                          一轮一轮地堆着。
-                        */}
+            </h3>
+            {snapshot.rawFiles.length === 0 ? (
+              <EmptyState description={t("knowledgeEmptyDropBox")} icon={Upload} />
+            ) : visibleRaws.length === 0 ? (
+              <EmptyState description={t("knowledgeSearchEmptyHelp")} icon={Search} title={t("knowledgeSearchEmpty")} />
+            ) : (
+              <ul className="-mx-1.5 space-y-0.5">
+                {visibleRaws.map((file) => (
+                  <li
+                    className="flex items-center gap-2.5 rounded-lg px-1.5 py-1.5 transition-colors hover:bg-muted/60"
+                    key={file.path}
+                  >
+                    {/*
+                      **按类型认文件**:docx 是 docx 的标、pdf 是 pdf 的标 —— 和对话里
+                      `@` 文件、附件芯片用的是同一张表(`FileTypeIcon`),同一份资料在这两处
+                      长得一样。不认识的扩展名给通用文件图标(它不猜)。
+                    */}
+                    <FileTypeIcon
+                      className="h-3.5 w-3.5 shrink-0 [&_svg]:h-3.5 [&_svg]:w-3.5"
+                      kind="file"
+                      name={file.path}
+                    />
+                    <span className="min-w-0 flex-1 truncate text-[12px]" title={file.path}>
+                      {file.path}
+                    </span>
+                    {/* 状态不只用颜色:芯片上有字,灰度屏与读屏都分得出来。 */}
+                    <span
+                      className={cn(
+                        "shrink-0 rounded-full px-2 py-0.5 text-[10px] font-medium",
+                        file.processed ? "bg-muted text-muted-foreground" : "bg-accent/30 text-accent-foreground",
+                      )}
+                    >
+                      {file.processed ? t("knowledgeProcessed") : t("knowledgePending")}
+                    </span>
+                    {(() => {
+                      // 1:1 的另一半:这份文件被整理成了哪一页(宿主算好的配对)。
+                      const pagePath = file.pagePath;
+                      return pagePath === undefined ? null : (
                         <button
-                          aria-label={t("knowledgeRemoveRound")}
+                          aria-label={t("knowledgeOpenSourcePage")}
                           className="shrink-0 rounded-lg p-1 text-muted-foreground hover:bg-muted hover:text-foreground"
-                          onClick={() => setDialog({ kind: "remove-round", sessionId: round.id })}
-                          title={t("knowledgeRemoveRound")}
+                          onClick={() => openPage(pagePath)}
+                          title={t("knowledgeOpenSourcePage")}
                           type="button"
                         >
-                          <Trash2 className="h-3.5 w-3.5" />
+                          <BookOpen className="h-3.5 w-3.5" />
                         </button>
-                      </li>
-                    ))}
-                  </ul>
-                </section>
-              )}
-
-              <section className="border-t border-border pt-3">
-                <h3 className="mb-1.5 text-[12px] font-semibold">
-                  {t("knowledgeRawFiles")}
-                  <span className="ml-2 font-normal text-muted-foreground">
-                    {t("knowledgeRawCount")
-                      .replace("{total}", String(snapshot.rawFiles.length))
-                      .replace("{pending}", String(pending.length))}
-                  </span>
-                </h3>
-                {snapshot.rawFiles.length === 0 ? (
-                  <EmptyState description={t("knowledgeEmptyDropBox")} icon={Upload} />
-                ) : visibleRaws.length === 0 ? (
-                  <EmptyState description={t("knowledgeSearchEmptyHelp")} icon={Search} title={t("knowledgeSearchEmpty")} />
-                ) : (
-                  <ul className="-mx-1.5 space-y-0.5">
-                    {visibleRaws.map((file) => (
-                      <li
-                        className="flex items-center gap-2.5 rounded-lg px-1.5 py-1.5 transition-colors hover:bg-muted/60"
-                        key={file.path}
-                      >
-                        <FileText className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-                        <span className="min-w-0 flex-1 truncate text-[12px]" title={file.path}>
-                          {file.path}
-                        </span>
-                        {/* 状态不只用颜色:芯片上有字,灰度屏与读屏都分得出来。 */}
-                        <span
+                      );
+                    })()}
+                    {(() => {
+                      /*
+                        **复核开关跟着原始文件走。** 它保护的正是"这个转写":复核过,加工轮就
+                        不再自动改写这一页。来源页搬出页面 tab 之后,这个开关跟着它的页面
+                        一起住到这里 —— 否则用户就再也无法说"这份我检查过了"。
+                        状态不只用颜色:复核过与来源已变更是**不同的图标**(对着 title 也能读出)。
+                      */
+                      const page = snapshot.pages.find((candidate) => candidate.path === file.pagePath);
+                      if (page === undefined) return null;
+                      const label = page.reviewStale
+                        ? t("knowledgeReviewStale")
+                        : page.verified
+                          ? t("knowledgeVerified")
+                          : t("knowledgeVerify");
+                      return (
+                        <button
+                          aria-label={label}
                           className={cn(
-                            "shrink-0 rounded-full px-2 py-0.5 text-[10px] font-medium",
-                            file.processed ? "bg-muted text-muted-foreground" : "bg-accent/30 text-accent-foreground",
+                            "shrink-0 rounded-lg p-1 transition-colors",
+                            page.verified
+                              ? "text-[#789347] dark:text-[#bad47a]"
+                              : "text-muted-foreground hover:bg-muted hover:text-foreground",
                           )}
+                          onClick={() => {
+                            setBusy(`verify:${page.path}`);
+                            void client
+                              .setKnowledgeVerification(page.path, !page.verified)
+                              .then(() => refresh())
+                              .finally(() => setBusy(undefined));
+                          }}
+                          title={label}
+                          type="button"
                         >
-                          {file.processed ? t("knowledgeProcessed") : t("knowledgePending")}
-                        </span>
-                        <span className="w-[62px] shrink-0 text-right font-mono text-[10px] tabular-nums text-muted-foreground">
-                          {formatBytes(file.bytes)}
-                        </span>
-                      </li>
-                    ))}
-                  </ul>
-                )}
-              </section>
+                          {page.reviewStale ? (
+                            <AlertTriangle className="h-3.5 w-3.5" />
+                          ) : (
+                            <BadgeCheck className="h-3.5 w-3.5" />
+                          )}
+                        </button>
+                      );
+                    })()}
+                    <span className="w-[62px] shrink-0 text-right font-mono text-[10px] tabular-nums text-muted-foreground">
+                      {formatBytes(file.bytes)}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            )}
+            {urlSourcePages.length > 0 && (
+              <div className="mt-3">
+                {/*
+                  没有对应原始文件的来源页(`sources[].resource` 是 URL)。它们在原始文件清单里
+                  没有行可挂 —— 不单独列出,这类页在界面上就无处可去了。
+                */}
+                <h3 className="mb-1 flex items-baseline gap-1.5 px-1.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
+                  {kindLabel("Source", t)}
+                  <span className="font-mono tabular-nums text-muted-foreground/70">{urlSourcePages.length}</span>
+                </h3>
+                <ul className="-mx-1.5 space-y-0.5">
+                  {urlSourcePages.map((page) => (
+                    <li
+                      className="flex items-center gap-2.5 rounded-lg px-1.5 py-1.5 transition-colors hover:bg-muted/60"
+                      key={page.path}
+                    >
+                      <Link className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                      <button
+                        className="min-w-0 flex-1 truncate text-left text-[12px] hover:text-foreground"
+                        onClick={() => openPage(page.path)}
+                        title={page.path}
+                        type="button"
+                      >
+                        {page.title}
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+          </section>
 
-              {usage !== undefined && usage.rounds > 0 && (
-                <p className="border-t border-border px-1 pt-3 text-[11px] leading-5 text-muted-foreground">
-                  {t("knowledgeUsage")
-                    .replace("{rounds}", String(usage.rounds))
-                    .replace("{totalRounds}", String(usage.totalRounds))
-                    .replace("{tokens}", formatTokens(usage.totalTokens))
-                    .replace("{cost}", formatCost(usage.totalCost))}
-                  {sourcePages > 0 && usage.totalCost > 0 && (
-                    <>
-                      {" · "}
-                      {t("knowledgeUsagePerFile").replace("{cost}", formatCost(usage.totalCost / sourcePages))}
-                    </>
-                  )}
-                  {usage.rounds < usage.totalRounds && ` · ${t("knowledgeUsageSampled")}`}
-                </p>
+          {rounds.length > 0 && (
+            <section className="mt-6">
+              <h3 className="mb-1.5 flex items-baseline gap-1.5 px-1.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
+                {t("knowledgeRecentRounds")}
+                <span className="font-mono tabular-nums text-muted-foreground/70">{rounds.length}</span>
+              </h3>
+              <ul className="-mx-1.5 space-y-0.5">
+                {rounds.map((round) => (
+                  <li
+                    className="flex items-center gap-3 rounded-lg px-1.5 py-1.5 transition-colors hover:bg-muted/60"
+                    key={round.id}
+                  >
+                    {/*
+                      **一行放全,不许换行。** 以前钉死 124px:zh-CN 的时间串(`2026/10/14 11:27:34`,
+                      19 字符)在 11px 的等宽字体里恰好放不下,于是折成两行 —— 而这一行右边
+                      还有大片空。宽度如今交给字符串自己(所有行的格式一致,列依旧对得齐),
+                      再加 `whitespace-nowrap` 兜底。
+                    */}
+                    <span className="shrink-0 whitespace-nowrap font-mono text-[11px] tabular-nums text-muted-foreground">
+                      {new Date(round.updatedAt).toLocaleString()}
+                    </span>
+                    <span className="min-w-0 flex-1 truncate text-[12px]">{round.title}</span>
+                    {/*
+                      icon-only:这是"看一眼那轮干了什么",标题就在它左边,不必再占一个词。
+                      (文案退成 aria-label 与悬停提示。)
+                    */}
+                    <button
+                      aria-label={t("knowledgeOpenRound")}
+                      className="shrink-0 rounded-lg p-1 text-muted-foreground hover:bg-muted hover:text-foreground"
+                      onClick={() => onOpenSession(round.id)}
+                      title={t("knowledgeOpenRound")}
+                      type="button"
+                    >
+                      <ExternalLink className="h-3.5 w-3.5" />
+                    </button>
+                    {/*
+                      **能删**。加工会话不在侧边栏的会话列表里(那里没有它们的位置,见文档 §13),
+                      所以侧边栏那套"删除会话"够不着它们 —— 这里必须给一个入口,否则它们只会
+                      一轮一轮地堆着。
+                    */}
+                    <button
+                      aria-label={t("knowledgeRemoveRound")}
+                      className="shrink-0 rounded-lg p-1 text-muted-foreground hover:bg-muted hover:text-foreground"
+                      onClick={() => setDialog({ kind: "remove-round", sessionId: round.id })}
+                      title={t("knowledgeRemoveRound")}
+                      type="button"
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            </section>
+          )}
+
+          {usage !== undefined && usage.rounds > 0 && (
+            <p className="mt-6 px-1.5 text-[11px] leading-5 text-muted-foreground">
+              {t("knowledgeUsage")
+                .replace("{rounds}", String(usage.rounds))
+                .replace("{totalRounds}", String(usage.totalRounds))
+                .replace("{tokens}", formatTokens(usage.totalTokens))
+                .replace("{cost}", formatCost(usage.totalCost))}
+              {sourcePages > 0 && usage.totalCost > 0 && (
+                <>
+                  {" · "}
+                  {t("knowledgeUsagePerFile").replace("{cost}", formatCost(usage.totalCost / sourcePages))}
+                </>
               )}
-            </div>
-          </details>
+              {usage.rounds < usage.totalRounds && ` · ${t("knowledgeUsageSampled")}`}
+            </p>
+          )}
+            </>
+          )}
           </div>
         </div>
       </div>
@@ -1142,6 +1479,7 @@ export function KnowledgeView({ onOpenSession, onOpenSettings }: KnowledgeViewPr
       <KnowledgePreviewDialog
         body={preview}
         onClose={() => setDialog(undefined)}
+        onOpenPage={openPage}
         open={dialog?.kind === "preview"}
         page={dialog?.kind === "preview" ? snapshot.pages.find((candidate) => candidate.path === dialog.path) : undefined}
       />
@@ -1166,6 +1504,7 @@ function KnowledgeLibraryTitle({
   onRemove,
   onReveal,
   onSelect,
+  root,
 }: {
   active: string;
   busy: boolean;
@@ -1174,6 +1513,8 @@ function KnowledgeLibraryTitle({
   onRemove: () => void;
   onReveal: () => void;
   onSelect: (name: string) => void;
+  /** 库在磁盘上的位置。**只做悬停提示**,不做正文 —— 见调用点那段注释。 */
+  root: string;
 }) {
   const { t } = usePreferences();
   const [open, setOpen] = useState(false);
@@ -1197,6 +1538,8 @@ function KnowledgeLibraryTitle({
           <button
             className="flex max-w-full items-center gap-1.5 rounded-lg px-2 py-1 text-left transition-colors hover:bg-muted/70"
             data-knowledge-switcher=""
+            // 库在磁盘哪儿:悬停才说。它不该占正文 —— 见调用点那段注释。
+            title={root}
             type="button"
           >
             <span className="truncate text-[22px] font-bold tracking-tight">{active}</span>

@@ -1,20 +1,10 @@
 import { Check, ChevronDown, CircleAlert, LoaderCircle } from "lucide-react";
 import { useCallback, useState } from "react";
 import { usePreferences } from "../../shared/preferences";
-import type { MessageKey } from "../../shared/i18n";
-import type {
-  ToolActivityCategory,
-  ToolActivityGroup,
+import {
+  formatToolGroupLabel,
+  type ToolActivityGroup,
 } from "./tool-activity-groups";
-
-const CATEGORY_KEYS: Record<ToolActivityCategory, MessageKey> = {
-  read: "threadGroupCategoryRead",
-  edit: "threadGroupCategoryEdit",
-  command: "threadGroupCategoryCommand",
-  research: "threadGroupCategoryResearch",
-  extension: "threadGroupCategoryExtension",
-  other: "threadGroupCategoryOther",
-};
 
 /**
  * A burst stays expanded for its whole live activity chain. Tool state updates
@@ -58,6 +48,13 @@ export function useToolActivityGroupCollapseState(
   return { isExpanded, toggle };
 }
 
+/**
+ * 工具组的一行摘要,如「已处理 · 编辑 3 · 读取 8 · 等 4 项」。
+ *
+ * 单独成函数而不是埋在头组件里:导出预览(`TurnExportDialog`)要给工具组起**一模一样**
+ * 的说法 —— 分叉出第二份实现,现场与导出迟早对不上。头组件的「N 个失败」尾巴不在这里,
+ * 那是它在界面上单独染色的展示层细节。
+ */
 export function ToolActivityGroupHeader({
   expanded,
   group,
@@ -68,34 +65,7 @@ export function ToolActivityGroupHeader({
   onToggle: (group: ToolActivityGroup) => void;
 }) {
   const { t } = usePreferences();
-  // Compact per-category summary, e.g. "已处理 · 编辑 3 · 读取 8 · 等其他 4 项".
-  const categoryLabel = (category: ToolActivityCategory, count: number) =>
-    t(CATEGORY_KEYS[category]).replaceAll("{count}", String(count));
-  let processedLabel = t("threadGroupProcessed");
-  const parts = group.breakdown.slice(0, 3);
-  if (parts.length > 0) {
-    const shownCount = parts.reduce((sum, part) => sum + part.count, 0);
-    const remainingCount = group.toolCount - shownCount;
-    let partsLabel = parts
-      .map((part) => categoryLabel(part.category, part.count))
-      .join(" · ");
-    if (remainingCount > 0) {
-      partsLabel +=
-        " · " + t("threadGroupMore").replaceAll("{count}", String(remainingCount));
-    }
-    processedLabel = t("threadGroupProcessedBreakdown").replaceAll(
-      "{parts}",
-      partsLabel,
-    );
-  }
-  const label = group.hasAwaiting
-    ? t("threadGroupAwaiting")
-    : group.processing
-      ? t("threadGroupProcessing")
-      : processedLabel;
-  const displayLabel = label
-    .replaceAll("{count}", String(group.toolCount))
-    .replaceAll("{rounds}", String(group.roundCount));
+  const displayLabel = formatToolGroupLabel(group, t);
   return (
     <button
       aria-expanded={expanded}

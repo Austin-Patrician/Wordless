@@ -10,6 +10,7 @@ import {
   SelectTrigger,
   SelectValue,
   Switch,
+  TabButton,
 } from "@wordless/ui-kit";
 import {
   AlertCircle,
@@ -653,25 +654,6 @@ export function AutomationView({
         </div>
       </div>
     </section>
-  );
-}
-
-function TabButton({
-  active,
-  children,
-  onClick,
-}: {
-  active: boolean;
-  children: React.ReactNode;
-  onClick: () => void;
-}) {
-  return (
-    <button
-      className={`border-b-2 px-4 pb-2 text-[13px] font-semibold transition-colors ${active ? "border-[#252624] text-[#252624] dark:border-foreground dark:text-foreground" : "border-transparent text-[#888881] hover:text-[#4a4a45] dark:text-muted-foreground dark:hover:text-foreground"}`}
-      onClick={onClick}
-    >
-      {children}
-    </button>
   );
 }
 

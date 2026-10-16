@@ -156,7 +156,7 @@ const CodeBlock = memo(function CodeBlock({ code, highlight = true, language }: 
         <IconAction label={copied ? locale === "zh-CN" ? "已复制" : "Copied" : locale === "zh-CN" ? "复制代码" : "Copy code"} onClick={() => void copy()}>{copied ? <Check className="h-3.5 w-3.5 text-[#66833d]" /> : <Copy className="h-3.5 w-3.5" />}</IconAction>
       </header>
       <pre className={cn("message-code-scroll m-0 overflow-auto px-3 py-3 font-mono text-[12px] leading-5 text-[#42423e] dark:text-[#d8dbd2]", !expanded && long && "max-h-96", wrap ? "whitespace-pre-wrap break-words" : "whitespace-pre")}><code className="hljs" data-wordless-language={normalizedLanguage || undefined} dangerouslySetInnerHTML={highlighted === null ? undefined : { __html: highlighted }}>{highlighted === null ? code : undefined}</code></pre>
-      {long ? <div className="flex h-7 items-center justify-center border-t border-[#e5e5e0] dark:border-border"><IconAction label={expanded ? locale === "zh-CN" ? "收起代码" : "Collapse code" : locale === "zh-CN" ? "展开代码" : "Expand code"} onClick={() => setExpanded((value) => !value)}>{expanded ? <ChevronUp className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}</IconAction></div> : null}
+      {long ? <div className="flex h-7 items-center justify-center border-t border-[#e5e5e0] dark:border-border" data-code-block-toggle><IconAction label={expanded ? locale === "zh-CN" ? "收起代码" : "Collapse code" : locale === "zh-CN" ? "展开代码" : "Expand code"} onClick={() => setExpanded((value) => !value)}>{expanded ? <ChevronUp className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}</IconAction></div> : null}
     </section>
   );
 });

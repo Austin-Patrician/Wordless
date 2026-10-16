@@ -616,15 +616,30 @@ export class KnowledgeService {
   }> {
     const [{ entries, damaged }, raws] = await Promise.all([this.scanPages(), this.rawSnapshots()]);
     const live = entries.filter((entry) => entry.page.private?.orphaned_at == null);
-    // 活页认领的来源(回答"这个文件加工过没有")。
-    const claimed = new Set(live.flatMap((entry) => (entry.page.sources ?? []).map((source) => source.resource)));
+    // 活页认领的来源(回答"这个文件加工过没有"),并带上**认领它的那页** —— 原始文件行的
+    // "打开整理出的那一页"要用。一个原文被多页引用是允许的(两个概念页都挂它),但**源页只有
+    // 一个**:这里取的正是那一页;两个源页指向同一个原文属于异常,取第一个(界面只会少一个
+    // 入口,不会错链)。
+    const claimed = new Map<string, string>();
+    for (const entry of live) {
+      if (entry.page.type !== "Source") continue;
+      const resource = entry.page.sources?.[0]?.resource;
+      if (resource !== undefined && !claimed.has(resource)) claimed.set(resource, entry.path);
+    }
     // **当前**原始文件的 hash(回答"复核过的那一页,它的来源还是复核时那一份吗")。
     // 注意是"当前文件的 hash",不是页面自己记的 hash —— 后者与自己比是恒等的,永远判不出过期。
     const currentRawHashes = new Map(raws.map((raw) => [raw.resource, raw.hash]));
-    const rawFiles: Array<{ path: string; processed: boolean; bytes: number }> = [];
+    const rawFiles: Array<{ path: string; processed: boolean; bytes: number; pagePath?: string }> = [];
     for (const path of await this.listRawFiles()) {
       const bytes = await stat(join(this.root, KNOWLEDGE_RAWS_DIR, path)).then((info) => info.size).catch(() => 0);
-      rawFiles.push({ path, processed: claimed.has(toBundleResource(join(KNOWLEDGE_RAWS_DIR, path))), bytes });
+      const resource = toBundleResource(join(KNOWLEDGE_RAWS_DIR, path));
+      const pagePath = claimed.get(resource);
+      rawFiles.push({
+        path,
+        processed: pagePath !== undefined,
+        bytes,
+        ...(pagePath === undefined ? {} : { pagePath }),
+      });
     }
     return {
       root: this.root,

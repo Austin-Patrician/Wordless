@@ -6,6 +6,7 @@ export { ProviderIcon } from "./components/provider-icon";
  * "按需加载"就成了空话。要它请走子路径:`@wordless/ui-kit/file-type-icon`。
  */
 export { Button } from "./components/button";
+export { TabButton } from "./components/tab-button";
 export {
   ContextMenu,
   ContextMenuContent,

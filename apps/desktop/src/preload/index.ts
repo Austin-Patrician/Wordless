@@ -12,6 +12,8 @@ import type {
   DesignListRequestDto,
   CreateDesignRequestDto,
   DesignCopyImageRequestDto,
+  ExportCopyImageRequestDto,
+  ExportSaveFileRequestDto,
   DesignSaveImageRequestDto,
   DesignLiveFrameRequestDto,
   DesignMoveFramesRequestDto,
@@ -245,6 +247,11 @@ const wordlessBridge: DesktopBridge = {
     ipcRenderer.invoke("wordless:design:save-image", input satisfies DesignSaveImageRequestDto),
   copyDesignImage: (input) =>
     ipcRenderer.invoke("wordless:design:copy-image", input satisfies DesignCopyImageRequestDto),
+  // 聊天轮次导出:与设计图导出同一规矩 —— 图在 data 里、base64(见 desktop-bridge.ts 注释)。
+  saveExportFile: (input) =>
+    ipcRenderer.invoke("wordless:export:save-file", input satisfies ExportSaveFileRequestDto),
+  copyExportImage: (input) =>
+    ipcRenderer.invoke("wordless:export:copy-image", input satisfies ExportCopyImageRequestDto),
   testWebhookEndpoint: (id, message) =>
     ipcRenderer.invoke("wordless:notifications:test", { id, message } satisfies WebhookTestRequestDto),
   setBrowserPanelSession: (sessionId) =>

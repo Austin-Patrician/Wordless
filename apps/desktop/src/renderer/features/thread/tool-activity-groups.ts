@@ -1,9 +1,59 @@
 import type { ConversationMessage } from "@wordless/protocol";
 import type { MessageToolBlock } from "@wordless/domain";
+import type { MessageKey } from "../../shared/i18n";
 import {
   groupResearchDelegationBlocks,
   type ResearchDelegationGroup,
-} from "../workbench/research-delegation";
+} from "../workbench/research-delegation.ts";
+
+const CATEGORY_KEYS: Record<ToolActivityCategory, MessageKey> = {
+  read: "threadGroupCategoryRead",
+  edit: "threadGroupCategoryEdit",
+  command: "threadGroupCategoryCommand",
+  research: "threadGroupCategoryResearch",
+  extension: "threadGroupCategoryExtension",
+  other: "threadGroupCategoryOther",
+};
+
+/**
+ * 工具组的一行摘要,如「已处理 · 编辑 3 · 读取 8 · 等 4 项」。
+ *
+ * 住在这个纯模块而不是头组件里:导出(`turn-export.ts` / `TurnExportDialog`)要给工具组
+ * 起**一模一样**的说法 —— 分叉出第二份实现,现场与导出迟早对不上。头组件的「N 个失败」
+ * 尾巴不在这里,那是它在界面上单独染色的展示层细节。
+ */
+export function formatToolGroupLabel(
+  group: ToolActivityGroup,
+  t: (key: MessageKey) => string,
+): string {
+  const categoryLabel = (category: ToolActivityCategory, count: number) =>
+    t(CATEGORY_KEYS[category]).replaceAll("{count}", String(count));
+  let processedLabel = t("threadGroupProcessed");
+  const parts = group.breakdown.slice(0, 3);
+  if (parts.length > 0) {
+    const shownCount = parts.reduce((sum, part) => sum + part.count, 0);
+    const remainingCount = group.toolCount - shownCount;
+    let partsLabel = parts
+      .map((part) => categoryLabel(part.category, part.count))
+      .join(" · ");
+    if (remainingCount > 0) {
+      partsLabel +=
+        " · " + t("threadGroupMore").replaceAll("{count}", String(remainingCount));
+    }
+    processedLabel = t("threadGroupProcessedBreakdown").replaceAll(
+      "{parts}",
+      partsLabel,
+    );
+  }
+  const label = group.hasAwaiting
+    ? t("threadGroupAwaiting")
+    : group.processing
+      ? t("threadGroupProcessing")
+      : processedLabel;
+  return label
+    .replaceAll("{count}", String(group.toolCount))
+    .replaceAll("{rounds}", String(group.roundCount));
+}
 
 export type ToolActivityGroupPhase =
   "open" | "sealed-by-text" | "sealed-by-artifact" | "sealed-by-error";

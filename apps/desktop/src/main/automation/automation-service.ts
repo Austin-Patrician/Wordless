@@ -17,6 +17,7 @@ import {
   validateAutomationClock,
 } from "./automation-schedule";
 import { formatDuration } from "../notifications/copy.ts";
+import { knowledgeSessionRootOption, type KnowledgeRootResolver } from "../knowledge/knowledge-session-root.ts";
 
 const MAX_CONCURRENT_RUNS = 3;
 const MAX_TIMER_DELAY = 2_147_000_000;
@@ -48,6 +49,11 @@ type AutomationServiceOptions = {
    * see `emitNotification`, which sits on the run-completion path.
    */
   notify?: (event: NotificationEvent) => void;
+  /**
+   * 当前知识库的根 —— 定时任务若选了 knowledge 入口,会话根必须是它,否则那一轮读不到库。
+   * 缺省 = 不注入(测试、以及没有知识库的宿主)。见 `knowledge-session-root.ts`。
+   */
+  resolveKnowledgeSessionRoot?: KnowledgeRootResolver;
 };
 
 export class AutomationService {
@@ -539,6 +545,9 @@ export class AutomationService {
           run.configuration.prompt,
           run.configuration.skillIds,
           { messageId: randomUUID(), submittedAt: Date.now() },
+          // 定时任务也可以选 knowledge 入口(那是一条"每天整理我的知识库"的正当用法)。
+          // 与渲染层那条路同一个缺口:会话根得由宿主补上,否则它读不到库。
+          await knowledgeSessionRootOption(draft, this.options.resolveKnowledgeSessionRoot),
         );
         sessionId = session.id;
       }

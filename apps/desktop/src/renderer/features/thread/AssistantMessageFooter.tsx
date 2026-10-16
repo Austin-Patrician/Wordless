@@ -5,7 +5,7 @@ import { useRuntimeClient } from "../../shared/runtime";
 import { assistantFooterVisibility } from "./assistant-message-footer";
 
 /**
- * 助手回复底部的操作行:**复制、用量详情、时间戳**每条回复都有;重做由调用方只在最新一轮传入。
+ * 助手回复底部的操作行:**复制、导出、用量详情、时间戳**每条回复都有;重做由调用方只在最新一轮传入。
  *
  * 单独成一个组件是为了能被直接渲染测试 —— 之前这段 JSX 埋在 `ThreadView` 里,唯一能判断它
  * 有没有出现的方式是看整棵树的测试,而它恰好就在那里退化成"只有最新一条才有"。
@@ -19,6 +19,7 @@ export function AssistantMessageFooter({
   retry,
   timestamp,
   usage,
+  exportTurn,
 }: {
   copyText: string;
   hasPendingInteraction: boolean;
@@ -30,6 +31,8 @@ export function AssistantMessageFooter({
   retry?: ReactNode;
   timestamp: number;
   usage?: ReactNode;
+  /** 导出这一轮的回复。操作行本身在 `ThreadView` 里就是一轮一次,所以传法天然只出现在轮尾。 */
+  exportTurn?: ReactNode;
 }) {
   const { knowledge, t } = usePreferences();
   const client = useRuntimeClient();
@@ -99,6 +102,12 @@ export function AssistantMessageFooter({
           )}
         </button>
       )}
+      {/*
+        导出放在**归档右边、最靠里**的位置:复制是就地拿走一句,归档是把结果留在知识库,
+        导出是把结果带出应用。整行的语义梯度正好是"重来 → 留下 → 带走"。带不带文字由
+        调用方决定:它是一个图标按钮,和这一行的其他动作一致。
+      */}
+      {exportTurn}
       <span className="ml-auto font-mono text-[11px] text-[#aaa9a1]">
         {new Date(timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })}
       </span>

@@ -81,6 +81,15 @@ import { parseExpertPortrait } from "../experts/avataaars-portrait";
 import type { MessageKey } from "../../shared/i18n";
 import { usePreferences } from "../../shared/preferences";
 import {
+  activityState,
+  formatMessage,
+  toolCompletedWarning,
+  toolDisplayName,
+  toolRowDetail,
+  toolRowSummary,
+  type Translate,
+} from "./tool-row-presentation";
+import {
   ClarificationBriefToolActivity,
   ClarificationQuestionToolActivity,
 } from "./ClarificationToolActivity";
@@ -104,19 +113,6 @@ import { hidesEmptySuccessfulBashOutput } from "./tool-output-visibility";
 type StandardToolIconSource =
   | { path: string; invertOnDark?: boolean }
   | { Icon: LucideIcon };
-
-type Translate = ReturnType<typeof usePreferences>["t"];
-
-function formatMessage(
-  t: Translate,
-  key: MessageKey,
-  values: Record<string, string | number>,
-): string {
-  return Object.entries(values).reduce(
-    (message, [name, value]) => message.replaceAll(`{${name}}`, String(value)),
-    t(key),
-  );
-}
 
 const standardToolIconSources: Record<string, StandardToolIconSource> = {
   ask_clarifying_question: { path: innovationIcon, invertOnDark: true },
@@ -285,7 +281,7 @@ function McpToolIcon({ source }: { source: MessageToolSource }) {
   );
 }
 
-function standardToolIcon(toolName: string): ReactNode | undefined {
+export function standardToolIcon(toolName: string): ReactNode | undefined {
   const source = standardToolIconSources[toolName];
   if (!source) return undefined;
   if ("Icon" in source) {
@@ -354,18 +350,6 @@ function activityIcon(block: MessageToolBlock, completedWarning = false) {
   return <CheckCircle2 className="h-3.5 w-3.5" />;
 }
 
-function activityState(
-  block: MessageToolBlock,
-  t: Translate,
-): string | undefined {
-  if (block.state === "awaiting-approval") return t("toolAwaitingApproval");
-  if (block.state === "awaiting-user-input") return t("toolAwaitingInput");
-  if (block.state === "running") return t("toolRunning");
-  if (block.state === "pending") return t("toolQueued");
-  if (block.state === "error") return t("toolFailed");
-  return undefined;
-}
-
 function activityStatusClass(
   block: MessageToolBlock,
   completedWarning = false,
@@ -381,7 +365,11 @@ function activityStatusClass(
   return "text-muted-foreground";
 }
 
-function ToolActivityRow({
+/**
+ * 一行工具活动:**线程里真实的那个行组件,导出预览也用它**。
+ * 导出自己画一套行样式,两边迟早长得不一样(用户就会问"为什么导出的和页面上的不一样")。
+ */
+export function ToolActivityRow({
   block,
   completedWarning = false,
   detail,
@@ -422,11 +410,10 @@ function ToolActivityRow({
     stateLabel ??
     (block.state === "complete" ? t("toolCompleted") : t("toolStatus"));
   const statusClass = activityStatusClass(block, completedWarning);
-  const displayName =
-    block.source?.kind === "mcp" ? block.source.connectorName : block.name;
+  const displayName = toolDisplayName(block);
 
   return (
-    <div className="flex min-h-5 items-center gap-3 text-[13px]">
+    <div className="flex min-h-5 items-center gap-3 text-[13px]" data-tool-activity-row>
       <span
         className={
           block.state === "error"
@@ -1108,9 +1095,7 @@ function CodeToolActivity({
   const changed = readRecord(details?.diff);
   const oldText = textValue(changed?.oldText);
   const newText = textValue(changed?.newText);
-  const exitCode =
-    typeof details?.exitCode === "number" ? details.exitCode : undefined;
-  const nonZeroExit = exitCode !== undefined && exitCode !== 0;
+  const nonZeroExit = toolCompletedWarning(block);
   const icon = standardToolIcon(block.name) ?? (
     <Code2 className="h-3.5 w-3.5" />
   );
@@ -1131,15 +1116,7 @@ function CodeToolActivity({
     );
   const grepHasMore =
     block.name === "grep" && textValue(details?.nextCursor) !== undefined;
-  const summary = nonZeroExit
-    ? formatMessage(t, "toolExitCode", { code: exitCode! })
-    : block.name === "read" && typeof details?.lineCount === "number"
-      ? formatMessage(t, "toolLinesRead", { count: details.lineCount })
-      : block.name === "grep" && typeof details?.count === "number"
-        ? `${formatMessage(t, "toolSearchMatches", { count: details.count })}${grepHasMore ? "+" : ""}`
-        : block.name === "find" && typeof details?.count === "number"
-          ? formatMessage(t, "toolFilesFound", { count: details.count })
-          : activityState(block, t);
+  const summary = toolRowSummary(block, t);
   const detail =
     block.name === "grep" && pattern ? (
       <>
@@ -1169,7 +1146,8 @@ function CodeToolActivity({
         ) : null}
       </>
     ) : (
-      (command ?? path)
+      // 其余一律走共享实现 —— 导出预览与 Markdown 用的是同一个函数。
+      toolRowDetail(block, t)
     );
 
   const changeDetails = readRecord(details?.change);

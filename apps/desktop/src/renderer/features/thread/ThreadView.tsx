@@ -113,6 +113,7 @@ import {
   useToolActivityGroupCollapseState,
 } from "./ToolActivityGroup";
 import { AssistantMessageFooter } from "./AssistantMessageFooter";
+import { TurnExportButton } from "./TurnExportDialog";
 import { TurnUsageFooter } from "./TurnUsageFooter";
 import { ThreadContentFrame } from "./ThreadContentFrame";
 import { MessageMarkdown } from "./MessageMarkdown";
@@ -2692,6 +2693,7 @@ function AssistantMessageBody({
           }
           timestamp={message.timestamp}
           usage={<TurnUsageFooter loadSessionUsage={loadSessionUsage} messages={messages} />}
+          exportTurn={<TurnExportButton messages={messages} timestamp={message.timestamp} />}
         />
         {showTurnTail &&
         !isStreaming &&

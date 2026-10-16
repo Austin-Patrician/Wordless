@@ -5,6 +5,7 @@ import { app, BrowserWindow, dialog, Menu, nativeImage, nativeTheme, session, sh
 import {
   DEFAULT_KNOWLEDGE_BASE_NAME,
   DEFAULT_KNOWLEDGE_PREFERENCES,
+  isKnowledgeRoundOfLibrary,
   knowledgeSettingsFor,
   normalizeOcrPreferences,
   type AppPreferences,
@@ -344,6 +345,21 @@ app.whenReady().then(async () => {
 
   const activeKnowledge = async (): Promise<KnowledgeService> => knowledgeServiceAt(await activeKnowledgeBaseName());
   /**
+   * "知识库整理"会话的会话根 —— 由宿主注入给渲染层那条路(新建页那张卡)与自动化任务。
+   *
+   * 会话根错了**不会报错**:agent 只会拿着 `raws/x.md` 去别处找、拿到 ENOENT,而它明明照着
+   * 说明书在做(见 `knowledge-session.ts`)。从知识库页发起的三条路(定时、立即整理、归档)一直
+   * 在主进程里直接传根;渲染层发起的两条路拿不到(协议里没有这个字段,界面也不知道库在哪)。
+   *
+   * `ensureBundle()` 与知识库页首次打开走同一条:库还不存在时先把骨架建出来,否则会话根会指向
+   * 一个不存在的目录(它幂等,重复调用安全)。
+   */
+  const resolveKnowledgeSessionRoot = async (): Promise<string | undefined> => {
+    const service = await activeKnowledge();
+    await service.ensureBundle();
+    return service.root;
+  };
+  /**
    * 加工调度器。
    *
    * **手动与定时走同一条路**:「立即整理」与定时轮询都调 `organize`,区别只有一个入参。
@@ -479,11 +495,14 @@ app.whenReady().then(async () => {
       return { sessionId };
     },
     readUsage: async () => {
-      // 加工会话按 `entryId` 认。**只读最近若干轮**:每一轮的用量要读那个会话的 journal,
-      // 而一个跑了几百轮的知识库会把"打开视图"变成一次全库读盘。
+      // 加工轮次按 `source` 标记认(见 KNOWLEDGE_ROUND_SOURCE)、**再按库筛** —— 轮次的会话根
+      // 就是它加工的库,而这一页显示的是"这个库花了多少"。少了后一半,多库时会把别的库的
+      // 花销算进来,数字是假的且看不出来。**只读最近若干轮**:每一轮的用量要读那个会话的
+      // journal,而一个跑了几百轮的知识库会把"打开视图"变成一次全库读盘。
       const SAMPLE = 50;
+      const libraryRoot = (await activeKnowledge()).root;
       const sessions = (runtime?.getSnapshot().sessions ?? [])
-        .filter((session) => session.entryId === "knowledge")
+        .filter((session) => isKnowledgeRoundOfLibrary(session, libraryRoot))
         .sort((a, b) => b.updatedAt - a.updatedAt);
       let totalTokens = 0;
       let totalCost = 0;
@@ -754,6 +773,8 @@ app.whenReady().then(async () => {
     // Synchronous by contract: this runs on the run-completion path, where a webhook
     // waiting on its 30s timeout would delay the run appearing as finished.
     notify: (event) => notificationBus?.emit(event),
+    // 定时任务选了 knowledge 入口时,会话根必须是当前库 —— 与渲染层那条路同一个缺口。
+    resolveKnowledgeSessionRoot,
   });
   automation.initialize();
   cloudSync = new CloudSyncService({
@@ -799,6 +820,8 @@ app.whenReady().then(async () => {
   });
   registerRuntimeIpc(runtime, appearanceAssets, {
     reloadKnowledgePoller: async () => await knowledgePoller?.reload(),
+    // 新建页那张"知识库整理"卡建的会话靠它才有会话根,见 knowledge-session-root.ts。
+    resolveKnowledgeSessionRoot,
     hostInfo,
     getAppInfo: () => updateService.getAppInfo(),
     showApplicationMenu: (menuId, window) => applicationMenu.show(menuId, window),

@@ -1,4 +1,12 @@
-import type { PromptSessionOptions, SessionDraft } from "@wordless/domain";
+import { KNOWLEDGE_ROUND_SOURCE, type PromptSessionOptions, type SessionDraft } from "@wordless/domain";
+
+/**
+ * "知识库整理"这个入口的 id —— 与 `packages/runtime` 的 entry 表里那一条同源。
+ *
+ * 加工轮次按它建会话,而宿主侧还有一处要按它判断(渲染层建的会话要补上会话根,见
+ * `knowledge-session-root.ts`)。写成常量是为了让两处一起走,不再各写一份字面量。
+ */
+export const KNOWLEDGE_SESSION_ENTRY_ID = "knowledge";
 
 /**
  * 一轮加工要怎么开会话。
@@ -35,9 +43,10 @@ export function knowledgeSessionRequest(input: KnowledgeSessionRequest): {
   return {
     draft: {
       mode: "everyday",
-      entryId: "knowledge",
+      entryId: KNOWLEDGE_SESSION_ENTRY_ID,
       title: input.title,
-      source: "knowledge",
+      // **轮次的标记**:侧边栏/知识库页/用量三处都按它认,见 KNOWLEDGE_ROUND_SOURCE。
+      source: KNOWLEDGE_ROUND_SOURCE,
       workspaceId: null,
       accessLevel: "default",
       model: modelFromKey(input.modelKey),

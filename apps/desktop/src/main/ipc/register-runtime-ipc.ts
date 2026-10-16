@@ -1,6 +1,6 @@
-import { copyFile } from "node:fs/promises";
+import { copyFile, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { app, BrowserWindow, clipboard, dialog, ipcMain, shell } from "electron";
+import { app, BrowserWindow, clipboard, dialog, ipcMain, nativeImage, shell } from "electron";
 import { Type } from "typebox";
 import { Value } from "typebox/value";
 import type { TSchema } from "typebox";
@@ -39,6 +39,8 @@ import {
   DeleteSessionSchema,
   DeleteSessionsSchema,
   DuplicateMediaAssetSchema,
+  ExportCopyImageRequestSchema,
+  ExportSaveFileRequestSchema,
   ImportSkillFileSchema,
   ImportMediaImagesSchema,
   ImportAppearanceBackgroundSchema,
@@ -121,6 +123,7 @@ import type { BrowserService } from "../browser/browser-service";
 import { McpRegistryService } from "../marketplace/mcp-registry-service";
 import { SkillsMpMarketplaceService } from "../marketplace/skillsmp-marketplace-service";
 import { OnboardingService } from "../onboarding/onboarding-service";
+import { knowledgeSessionRootOption, type KnowledgeRootResolver } from "../knowledge/knowledge-session-root.ts";
 
 function parsePayload<T>(schema: TSchema, payload: unknown): T {
   if (!Value.Check(schema, payload)) throw new Error("Invalid request payload");
@@ -340,6 +343,14 @@ type DesktopIpcOptions = {
   onboarding: OnboardingService;
   /** 偏好变化后重排知识库的定时加工。缺省 = 不重排(测试、以及没有知识库的宿主)。 */
   reloadKnowledgePoller?: () => Promise<void>;
+  /**
+   * 当前知识库的根。**渲染层建的"知识库整理"会话靠它才有会话根** —— 缺省 = 不注入
+   * (测试、以及没有知识库的宿主),那种情况下会话落到一次性临时目录,读不到库。
+   *
+   * 与 `reloadKnowledgePoller` 同一类:知识库是宿主的事实,渲染层拿不到,所以在 IPC 边界
+   * 并进调用。见 `knowledge-session-root.ts`。
+   */
+  resolveKnowledgeSessionRoot?: KnowledgeRootResolver;
   translation: DesktopTranslationService;
 };
 
@@ -835,7 +846,12 @@ export function registerRuntimeIpc(
         formatPromptWithSkillReferences(input.parts),
         selectedSkillIdsFromPromptParts(input.parts),
         input.submission,
-        input.attachments ? { attachments: input.attachments } : undefined,
+        {
+          ...(input.attachments ? { attachments: input.attachments } : {}),
+          // 渲染层发起的会话拿不到知识库根(协议里没有这个字段,界面上也不知道库在哪)——
+          // 在这里补上。见 `knowledge-session-root.ts`。
+          ...(await knowledgeSessionRootOption(input.draft, options.resolveKnowledgeSessionRoot)),
+        },
       );
     },
   );
@@ -1538,6 +1554,42 @@ export function registerRuntimeIpc(
       });
       if (!result.canceled && result.filePath)
         await copyFile(source, result.filePath);
+    },
+  );
+  /*
+   * 聊天轮次导出(长图 PNG / Markdown):入口与预览都在渲染层(`TurnExportDialog`),
+   * 主进程只落盘与进剪贴板。取消不是错误 —— 结果形状由 `ExportSaveFileResultSchema` 定,
+   * 渲染层据此决定报红还是什么都不做。
+   */
+  ipcMain.handle(
+    "wordless:export:save-file",
+    async (_event, payload: unknown) => {
+      const input = parsePayload<
+        { fileName: string; extension: "png" | "md"; data: string } 
+      >(ExportSaveFileRequestSchema, payload);
+      const result = await dialog.showSaveDialog({ defaultPath: input.fileName });
+      if (result.canceled || !result.filePath)
+        return { ok: false as const, reason: "cancelled" as const };
+      try {
+        await writeFile(result.filePath, Buffer.from(input.data, "base64"));
+        return { ok: true as const, path: result.filePath };
+      } catch {
+        return { ok: false as const, reason: "failed" as const };
+      }
+    },
+  );
+  ipcMain.handle(
+    "wordless:export:copy-image",
+    async (_event, payload: unknown) => {
+      const input = parsePayload<{ data: string } & object>(
+        ExportCopyImageRequestSchema,
+        payload,
+      );
+      // `createFromBuffer` 认 PNG 与 JPEG;空图说明载荷不是有效 PNG —— 返回 false 而不是抛。
+      const image = nativeImage.createFromBuffer(Buffer.from(input.data, "base64"));
+      if (image.isEmpty()) return false;
+      clipboard.writeImage(image);
+      return true;
     },
   );
   ipcMain.handle(

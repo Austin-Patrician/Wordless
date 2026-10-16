@@ -3348,6 +3348,63 @@ export const DesignCopyImageRequestSchema = Type.Object(
 export type DesignSaveImageRequestDto = Static<typeof DesignSaveImageRequestSchema>;
 export type DesignCopyImageRequestDto = Static<typeof DesignCopyImageRequestSchema>;
 export type DesignSaveImageResultDto = Static<typeof DesignSaveImageResultSchema>;
+
+/*
+ * ─── 聊天轮次导出(长图 PNG / Markdown)─────────────────────────────────────
+ *
+ * 入口在助手回复的操作行上,预览与导出全部在渲染层完成;主进程只做两件事:
+ * 把字节经保存对话框落盘、把字节放进系统剪贴板。与设计图导出同一规矩:**载荷里是 base64**
+ * —— 过 `contextBridge` 的类型化数组不可靠(见 `DesignSaveImageRequestSchema` 的说明)。
+ * 载荷上限对齐 `DESIGN_IMAGE_*`:一张超长轮次的长图(按 2 倍缩放)可到几十 MB。
+ */
+export const EXPORT_IMAGE_PAYLOAD_LIMIT = 64 * 1024 * 1024;
+
+/** base64 形式的上限:原始字节上限按 4/3 换算,再加补齐的余量。 */
+export const EXPORT_IMAGE_BASE64_MAX_LENGTH = Math.ceil((EXPORT_IMAGE_PAYLOAD_LIMIT * 4) / 3) + 4;
+
+export const ExportSaveFileRequestSchema = Type.Object(
+  {
+    /** 建议的文件名(含扩展名)。真正的落点由保存对话框决定。 */
+    fileName: Type.String({ minLength: 1, maxLength: 160 }),
+    extension: Type.Union([Type.Literal("png"), Type.Literal("md")]),
+    /** 文件字节,**base64**(PNG 是图本身,md 是 UTF-8 编码后的字节)。 */
+    data: Type.String({ minLength: 1, maxLength: EXPORT_IMAGE_BASE64_MAX_LENGTH }),
+  },
+  { additionalProperties: false },
+);
+
+export const ExportSaveFileResultSchema = Type.Union([
+  Type.Object(
+    {
+      ok: Type.Literal(true),
+      /** 文件落在哪 —— 界面要把它说出来,否则用户不知道东西去哪了。 */
+      path: Type.String({ minLength: 1 }),
+    },
+    { additionalProperties: false },
+  ),
+  Type.Object(
+    {
+      ok: Type.Literal(false),
+      reason: Type.Union([
+        /** 用户在对话框里取消了。**不是错误**,界面上不该报红。 */
+        Type.Literal("cancelled"),
+        /** 写盘失败(权限、磁盘满)。 */
+        Type.Literal("failed"),
+      ]),
+    },
+    { additionalProperties: false },
+  ),
+]);
+
+export const ExportCopyImageRequestSchema = Type.Object(
+  { data: Type.String({ minLength: 1, maxLength: EXPORT_IMAGE_BASE64_MAX_LENGTH }) },
+  { additionalProperties: false },
+);
+
+export type ExportSaveFileRequestDto = Static<typeof ExportSaveFileRequestSchema>;
+export type ExportSaveFileResultDto = Static<typeof ExportSaveFileResultSchema>;
+export type ExportCopyImageRequestDto = Static<typeof ExportCopyImageRequestSchema>;
+
 export type DesignExportRequestDto = Static<typeof DesignExportRequestSchema>;
 export type DesignExportResultDto = Static<typeof DesignExportResultSchema>;
 export type DesignUpdateFrameMetaRequestDto = Static<typeof DesignUpdateFrameMetaRequestSchema>;
@@ -3389,6 +3446,14 @@ export const KnowledgeRawFileSchema = Type.Object(
     /** 是否已经有活页指向它。false = 还没加工。 */
     processed: Type.Boolean(),
     bytes: Type.Number(),
+    /**
+     * 它**整理出的那一页**(`kind: Source`,1:1)。`undefined` = 还没加工,或者它是 URL 来源的
+     * 页(那种页在 `raws/` 里没有对应文件)。
+     *
+     * 界面靠它把"原始文件 ↔ 它的页面"配对:这个对应关系只有宿主算得出来(它握着全部页面),
+     * 而且渲染层不该自己去拼路径。
+     */
+    pagePath: Type.Optional(Type.String()),
   },
   { additionalProperties: false },
 );

@@ -48,6 +48,7 @@
     "@wordless/capability-ocr": "0.0.0",
     "@wordless/profile-knowledge": "0.0.0",
     "@wordless/remote-control": "0.0.0",
+    "@zumer/snapdom": "^3.3.4",
     "ajv": "^8.20.0",
     "ajv-formats": "^3.0.1",
     "lightningcss": "1.32.0",
