@@ -27,7 +27,7 @@ const MAX_RESPONSE_CHARACTERS = 5_000_000;
 const MAX_MODELS = 10_000;
 const VERTEX_PUBLISHERS = ["google", "openai", "meta", "qwen", "deepseek-ai", "moonshotai", "zai-org"];
 const NON_CHAT_MODEL_KEYWORDS = [
-  "embedding", "rerank", "whisper", "transcribe", "speech", "tts", "realtime", "sora", "dall-e", "imagen",
+  "embedding", "rerank", "whisper", "transcribe", "speech", "tts", "realtime", "sora", "dall-e", "gpt-image", "imagen",
 ];
 
 export async function discoverProviderModels(

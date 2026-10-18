@@ -83,6 +83,7 @@ import everydayOfficeIcon from "./icons/common-icons/日常办公.svg";
 import dataAnalysisIcon from "./icons/common-icons/数据分析.svg";
 import websiteIcon from "./icons/common-icons/网站.svg";
 import innovationIcon from "./icons/common-icons/innovation.svg";
+import knowledgeBaseIcon from "./icons/common-icons/knowledge-base.svg";
 import presentationIcon from "./icons/common-icons/presentation.svg";
 import { connectionStatus } from "./connection-status";
 import { THEME_OPTIONS, type ThemePreference } from "./theme";
@@ -3075,11 +3076,13 @@ const ENTRY_ICONS: Record<string, string> = {
 	code: codeDevelopmentIcon,
 	palette: websiteIcon,
 	image: innovationIcon,
+	knowledge: knowledgeBaseIcon,
 };
 
 /** 入口 id → 图标 key(新建页给的是 id,列表里只有 id)。 */
 const ENTRY_ICON_BY_ID: Record<string, string> = {
 	"general-work": "sparkles",
+	knowledge: "knowledge",
 	presentation: "presentation",
 	spreadsheet: "table",
 	"data-analysis": "chart",

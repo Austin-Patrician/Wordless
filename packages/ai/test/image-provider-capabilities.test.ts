@@ -20,7 +20,7 @@ describe("native image provider capabilities", () => {
 
 	it("matches OpenRouter's published GPT Image aspect-ratio sets", () => {
 		const nativeModels = openaiImagesProvider().getModels();
-		for (const id of ["gpt-image-1", "gpt-image-1-mini", "gpt-image-2"] as const) {
+		for (const id of ["gpt-image-1", "gpt-image-1-mini", "gpt-image-2", "gpt-image-2.5-flare", "gpt-image-2.5-sunburst"] as const) {
 			expect(modelById(nativeModels, id).capabilities?.aspectRatios).toEqual(IMAGE_MODELS.openrouter[`openai/${id}`].capabilities.aspectRatios);
 		}
 	});

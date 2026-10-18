@@ -41,7 +41,6 @@ const models = createModels();
 models.setProvider(openaiProvider());
 models.setProvider(cloudflareAIGatewayProvider());
 const model = models.getModel("openai", "gpt-5.5");
-// const model = models.getModel("cloudflare-ai-gateway", "claude-haiku-4-5");
 if (!model) {
 	console.log("Model not found");
 	process.exit(-1);

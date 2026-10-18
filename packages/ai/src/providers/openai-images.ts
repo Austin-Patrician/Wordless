@@ -4,6 +4,59 @@ import { createImagesProvider, type ImagesProvider } from "../images-models.ts";
 import type { ImagesModel } from "../types.ts";
 
 const OPENAI_IMAGE_MODELS: readonly ImagesModel<"openai-images">[] = [
+	/**
+	 * GPT Image 2.5 (2026-09-08) ships as two API models rather than one:
+	 * `flare` is the fast everyday tier and `sunburst` the quality tier.
+	 * Both take the same request, so the entries below differ only by id/name.
+	 *
+	 * Versus GPT Image 2 they add `xhigh`/`max` quality and documented
+	 * transparent-background support, and they are the models the current
+	 * OpenAI image guides describe. Sizes and reference limits are unchanged.
+	 */
+	{
+		id: "gpt-image-2.5-flare",
+		name: "GPT Image 2.5 Flare",
+		api: "openai-images",
+		provider: "openai",
+		baseUrl: "https://api.openai.com/v1",
+		input: ["text", "image"],
+		output: ["image"],
+		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+		capabilities: {
+			supportsTextToImage: true,
+			supportsReferenceImageEditing: true,
+			supportsMaskEditing: true,
+			supportsTransparentBackground: true,
+			maxReferenceImages: 16,
+			maxOutputImages: 10,
+			aspectRatios: ["1:1", "3:2", "2:3", "4:3", "3:4", "16:9", "9:16", "21:9", "auto"],
+			resolutions: ["1K", "2K", "4K"],
+			outputFormats: ["png", "jpeg", "webp"],
+			qualityLevels: ["auto", "low", "medium", "high", "xhigh", "max"],
+		},
+	},
+	{
+		id: "gpt-image-2.5-sunburst",
+		name: "GPT Image 2.5 Sunburst",
+		api: "openai-images",
+		provider: "openai",
+		baseUrl: "https://api.openai.com/v1",
+		input: ["text", "image"],
+		output: ["image"],
+		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+		capabilities: {
+			supportsTextToImage: true,
+			supportsReferenceImageEditing: true,
+			supportsMaskEditing: true,
+			supportsTransparentBackground: true,
+			maxReferenceImages: 16,
+			maxOutputImages: 10,
+			aspectRatios: ["1:1", "3:2", "2:3", "4:3", "3:4", "16:9", "9:16", "21:9", "auto"],
+			resolutions: ["1K", "2K", "4K"],
+			outputFormats: ["png", "jpeg", "webp"],
+			qualityLevels: ["auto", "low", "medium", "high", "xhigh", "max"],
+		},
+	},
 	{
 		id: "gpt-image-2",
 		name: "GPT Image 2",

@@ -40,6 +40,17 @@ describe.sequential("OpenAI Images adapter", () => {
 			.toEqual(["1:1", "3:2", "2:3", "auto"]);
 	});
 
+	it("advertises the GPT Image 2.5 capabilities the OpenAI docs list", () => {
+		for (const id of ["gpt-image-2.5-flare", "gpt-image-2.5-sunburst"]) {
+			const model = openaiImagesProvider().getModels().find((item) => item.id === id);
+			expect(model?.capabilities?.aspectRatios).toEqual(["1:1", "3:2", "2:3", "4:3", "3:4", "16:9", "9:16", "21:9", "auto"]);
+			expect(model?.capabilities?.qualityLevels).toEqual(["auto", "low", "medium", "high", "xhigh", "max"]);
+			expect(model?.capabilities?.supportsTransparentBackground).toBe(true);
+			expect(model?.capabilities?.maxReferenceImages).toBe(16);
+			expect(model?.capabilities?.maxOutputImages).toBe(10);
+		}
+	});
+
 	it("sends a generation request with the requested output count", async () => {
 		const requests: Request[] = [];
 		const fetchMock = vi.fn(async (input: unknown, init?: RequestInit): Promise<Response> => {
@@ -134,27 +145,59 @@ describe.sequential("OpenAI Images adapter", () => {
 		expect(form.get("mask")).toBeInstanceOf(Blob);
 	});
 
-	it("sends high input fidelity for GPT Image 2 masked edits", async () => {
-		const requests: Request[] = [];
-		vi.stubGlobal("fetch", async (input: unknown, init?: RequestInit): Promise<Response> => {
-			const request = new Request(input as string | URL | Request, init);
-			if (request.url !== "data:,") requests.push(request);
-			return jsonResponse({ created: 1, data: [{ b64_json: "ZWRpdGVk" }] });
-		});
+	/**
+	 * `input_fidelity` 的适用范围比看起来窄。官方类型定义写死了三条:
+	 * `high`/`low` 只在 `gpt-image-1` 与 `gpt-image-1.5` 上有效,`gpt-image-1-mini`
+	 * 只接受 `low`,`gpt-image-2` 要求 omit;GPT Image 2.5 则直接拒绝
+	 * (`does not support the 'input_fidelity' parameter`,400)。
+	 * 多发这一个字段 = 整条编辑请求失败,所以逐个型号钉住。
+	 */
+	it("omits input_fidelity for the models whose docs do not accept it", async () => {
+		for (const id of ["gpt-image-2", "gpt-image-2.5-flare", "gpt-image-2.5-sunburst"]) {
+			const requests: Request[] = [];
+			vi.stubGlobal("fetch", async (input: unknown, init?: RequestInit): Promise<Response> => {
+				const request = new Request(input as string | URL | Request, init);
+				if (request.url !== "data:,") requests.push(request);
+				return jsonResponse({ created: 1, data: [{ b64_json: "ZWRpdGVk" }] });
+			});
 
-		const response = await generateImages(
-			createModel("gpt-image-2"),
-			{
-				input: [{ type: "text", text: "Remove only the masked garment" }, imageContent("cmVm")],
-				edit: { mask: imageContent("bWFzaw=="), inputFidelity: "high" },
-			},
-			{ apiKey: "test-key" },
-		);
+			const response = await generateImages(
+				createModel(id),
+				{
+					input: [{ type: "text", text: "Remove only the masked garment" }, imageContent("cmVm")],
+					edit: { mask: imageContent("bWFzaw=="), inputFidelity: "high" },
+				},
+				{ apiKey: "test-key" },
+			);
 
-		expect(response.stopReason).toBe("stop");
-		const form = await requests[0].formData();
-		expect(form.get("model")).toBe("gpt-image-2");
-		expect(form.get("input_fidelity")).toBe("high");
+			expect(response.stopReason).toBe("stop");
+			const form = await requests[0]!.formData();
+			expect(form.get("model")).toBe(id);
+			expect(form.get("input_fidelity")).toBeNull();
+		}
+	});
+
+	it("sends low but never high for GPT Image 1 mini", async () => {
+		for (const [requested, expected] of [["low", "low"], ["high", null]] as const) {
+			const requests: Request[] = [];
+			vi.stubGlobal("fetch", async (input: unknown, init?: RequestInit): Promise<Response> => {
+				const request = new Request(input as string | URL | Request, init);
+				if (request.url !== "data:,") requests.push(request);
+				return jsonResponse({ created: 1, data: [{ b64_json: "ZWRpdGVk" }] });
+			});
+
+			await generateImages(
+				createModel("gpt-image-1-mini"),
+				{
+					input: [{ type: "text", text: "Remove only the masked garment" }, imageContent("cmVm")],
+					edit: { mask: imageContent("bWFzaw=="), inputFidelity: requested },
+				},
+				{ apiKey: "test-key" },
+			);
+
+			const form = await requests[0]!.formData();
+			expect(form.get("input_fidelity")).toBe(expected);
+		}
 	});
 
 	it("maps generation controls on edit requests", async () => {
@@ -207,6 +250,50 @@ describe.sequential("OpenAI Images adapter", () => {
 		expect(width % 16).toBe(0);
 		expect(height % 16).toBe(0);
 		expect(width / height).toBeCloseTo(16 / 9, 1);
+	});
+
+	it("maps GPT Image 2.5 resolution tiers to the same flexible dimensions as GPT Image 2", async () => {
+		const requests: Request[] = [];
+		vi.stubGlobal("fetch", async (input: unknown, init?: RequestInit): Promise<Response> => {
+			const request = new Request(input as string | URL | Request, init);
+			requests.push(request);
+			return jsonResponse({ created: 1, data: [{ b64_json: "MmstaW1hZ2U=" }] });
+		});
+
+		for (const id of ["gpt-image-2.5-flare", "gpt-image-2.5-sunburst"]) {
+			await generateImages({ ...createModel(), id }, {
+				input: [{ type: "text", text: "A wide editorial photograph" }],
+				generation: { resolution: "2K", aspectRatio: "16:9" },
+			}, { apiKey: "test-key" });
+		}
+
+		expect(requests).toHaveLength(2);
+		for (const request of requests) {
+			const body = await request.json() as { size?: string; model?: string };
+			expect(body.model).toMatch(/^gpt-image-2\.5-/);
+			expect(body.size).toMatch(/^\d+x\d+$/);
+			const [width, height] = body.size!.split("x").map(Number);
+			expect(width % 16).toBe(0);
+			expect(height % 16).toBe(0);
+			expect(width / height).toBeCloseTo(16 / 9, 1);
+		}
+	});
+
+	it("forwards the GPT Image 2.5 quality tiers that GPT Image 2 does not have", async () => {
+		const requests: Request[] = [];
+		vi.stubGlobal("fetch", async (input: unknown, init?: RequestInit): Promise<Response> => {
+			const request = new Request(input as string | URL | Request, init);
+			requests.push(request);
+			return jsonResponse({ created: 1, data: [{ b64_json: "eGhnaA==" }] });
+		});
+
+		await generateImages(
+			{ ...createModel(), id: "gpt-image-2.5-sunburst" },
+			{ input: [{ type: "text", text: "A polished product shot" }], generation: { quality: "xhigh" } },
+			{ apiKey: "test-key" },
+		);
+
+		expect(await requests[0]?.json()).toMatchObject({ quality: "xhigh", model: "gpt-image-2.5-sunburst" });
 	});
 
 	it("forwards automatic sizing for GPT Image models", async () => {

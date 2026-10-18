@@ -22,11 +22,18 @@ import designStatusIcon from "./icons/common-icons/design_status.svg";
 import designStyleApplyIcon from "./icons/common-icons/design_style_apply.svg";
 import designStyleListIcon from "./icons/common-icons/design_style_list.svg";
 import editIcon from "./icons/common-icons/edit.svg";
+import extractTextFromDocxIcon from "./icons/common-icons/extract_text_from_docx.svg";
 import extractTextFromImageIcon from "./icons/common-icons/extract_text_from_image.svg";
+import extractTextFromPdfIcon from "./icons/common-icons/extract_text_from_pdf.svg";
+import fetchUrlIcon from "./icons/common-icons/fetch_url.svg";
 import findIcon from "./icons/common-icons/find.svg";
 import folderIcon from "./icons/common-icons/floder.svg";
 import grepIcon from "./icons/common-icons/grep.svg";
 import innovationIcon from "./icons/common-icons/innovation.svg";
+import kbListTagsIcon from "./icons/common-icons/kb_list_tags.svg";
+import kbQueryIcon from "./icons/common-icons/kb_query.svg";
+import kbRetirePageIcon from "./icons/common-icons/kb_retire_page.svg";
+import kbWritePageIcon from "./icons/common-icons/kb_write_page.svg";
 import modelRequestIcon from "./icons/common-icons/模型请求.svg";
 import listIcon from "./icons/common-icons/list.svg";
 import loadSkillIcon from "./icons/common-icons/load_skill.svg";
@@ -86,9 +93,16 @@ const TOOL_ICONS: Record<string, ToolIconSource> = {
 	design_style_apply: image(designStyleApplyIcon),
 	design_style_list: image(designStyleListIcon),
 	edit: image(editIcon),
+	extract_text_from_docx: image(extractTextFromDocxIcon),
 	extract_text_from_image: image(extractTextFromImageIcon),
+	extract_text_from_pdf: image(extractTextFromPdfIcon),
+	fetch_url: image(fetchUrlIcon),
 	find: image(findIcon),
 	grep: image(grepIcon),
+	kb_list_tags: image(kbListTagsIcon),
+	kb_query: image(kbQueryIcon),
+	kb_retire_page: image(kbRetirePageIcon),
+	kb_write_page: image(kbWritePageIcon),
 	load_skill: image(loadSkillIcon),
 	ls: image(listIcon),
 	read: image(readIcon),

@@ -154,13 +154,13 @@ describe("openai-completions cacheControlFormat", () => {
 	});
 
 	it("preserves Anthropic-style cache markers for OpenRouter Anthropic models", async () => {
-		const model = getModel("openrouter", "anthropic/claude-sonnet-4");
+		const model = getModel("openrouter", "anthropic/claude-sonnet-5.5");
 		const params = await capturePayload(model);
 		expectAnthropicCacheMarkers(params);
 	});
 
 	it("moves the conversation cache marker to a tool result", async () => {
-		const model = getModel("openrouter", "anthropic/claude-sonnet-4");
+		const model = getModel("openrouter", "anthropic/claude-sonnet-5.5");
 		const timestamp = Date.now();
 		const params = await capturePayload(model, undefined, [
 			{ role: "user", content: "Read the file", timestamp },

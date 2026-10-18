@@ -53,6 +53,7 @@ export const generateImages: ImagesFunction<"openai-images", ImagesOptions> = as
 		const references = context.input.filter((item): item is Extract<typeof item, { type: "image" }> => item.type === "image");
 		let response: ImagesResponse;
 		if (references.length > 0) {
+			const inputFidelity = inputFidelityFor(model.id, context.edit?.inputFidelity);
 			let editParams: ImageEditParamsNonStreaming = {
 				model: model.id,
 				prompt,
@@ -76,9 +77,7 @@ export const generateImages: ImagesFunction<"openai-images", ImagesOptions> = as
 						}
 					: {}),
 				...(context.edit?.background ? { background: context.edit.background } : {}),
-				...(context.edit?.inputFidelity && supportsInputFidelity(model.id)
-					? { input_fidelity: context.edit.inputFidelity }
-					: {}),
+				...(inputFidelity ? { input_fidelity: inputFidelity } : {}),
 			};
 			const nextParams = await options.onPayload?.(editParams, model);
 			if (nextParams !== undefined) editParams = nextParams as ImageEditParamsNonStreaming;
@@ -145,8 +144,9 @@ type OpenAIImageParams = Record<string, unknown>;
 
 /**
  * Translate Wordless's provider-neutral image controls to the OpenAI image
- * request fields. GPT Image 2 accepts flexible dimensions, while earlier
- * GPT Image models accept the three documented fixed dimensions or `auto`.
+ * request fields. GPT Image 2 and the GPT Image 2.5 pair accept flexible
+ * dimensions, while earlier GPT Image models accept the three documented fixed
+ * dimensions or `auto`.
  */
 function buildCommonParams(
 	model: ImagesModel<"openai-images">,
@@ -172,10 +172,10 @@ function buildCommonParams(
 function resolveOpenAISize(modelId: string, generation: ImageGenerationOptions | undefined): string | undefined {
 	const explicit = generation?.size?.trim() || generation?.resolution?.trim();
 	const ratio = generation?.aspectRatio?.trim();
-	if (isGptImage2(modelId)) {
+	if (supportsArbitrarySize(modelId)) {
 		if (explicit === "auto") return "auto";
 		if (ratio === "auto") return "auto";
-		if (explicit && isValidGptImage2Size(explicit)) return explicit;
+		if (explicit && isValidArbitrarySize(explicit)) return explicit;
 		if (explicit && /^(?:1K|2K|4K)$/i.test(explicit)) return sizeForResolutionTier(explicit, ratio);
 		if (ratio) return sizeForResolutionTier("1K", ratio);
 		return undefined;
@@ -193,11 +193,17 @@ function isOpenAILegacySize(value: string): value is "auto" | "1024x1024" | "153
 	return value === "auto" || value === "1024x1024" || value === "1536x1024" || value === "1024x1536";
 }
 
-function isGptImage2(modelId: string): boolean {
-	return /(?:^|\/)gpt-image-2(?:-|$)/.test(modelId);
+/**
+ * Models that accept an arbitrary `WIDTHxHEIGHT` size rather than only the three
+ * fixed GPT Image dimensions: GPT Image 2 and both GPT Image 2.5 models, with or
+ * without their dated snapshots. `(?:\.\d+)?` is what admits `gpt-image-2.5-flare`
+ * without also matching `gpt-image-1.5`.
+ */
+function supportsArbitrarySize(modelId: string): boolean {
+	return /(?:^|\/)gpt-image-2(?:\.\d+)?(?:-|$)/.test(modelId);
 }
 
-function isValidGptImage2Size(value: string): boolean {
+function isValidArbitrarySize(value: string): boolean {
 	const match = value.match(/^(\d+)x(\d+)$/i);
 	if (!match) return false;
 	const width = Number(match[1]);
@@ -247,8 +253,20 @@ function mimeTypeForFormat(format: string): string {
 	return "image/png";
 }
 
-function supportsInputFidelity(modelId: string): boolean {
-	return isGptImage2(modelId) || /gpt-image-1(?:\.5)?$/.test(modelId);
+/**
+ * `input_fidelity` is only accepted by the GPT Image 1 line: `high`/`low` on
+ * `gpt-image-1` and `gpt-image-1.5`, `low` alone on `gpt-image-1-mini`.
+ *
+ * The docs say to omit it for `gpt-image-2`, and GPT Image 2.5 rejects the
+ * parameter outright (`does not support the 'input_fidelity' parameter`, 400),
+ * so sending a user-selected fidelity to those models would break every edit.
+ * Both 2.x models always read references at high fidelity anyway.
+ */
+function inputFidelityFor(modelId: string, value: "low" | "high" | undefined): "low" | "high" | undefined {
+	if (!value) return undefined;
+	if (/(?:^|\/)gpt-image-1(?:\.5)?$/.test(modelId)) return value;
+	if (/(?:^|\/)gpt-image-1-mini$/.test(modelId)) return value === "low" ? "low" : undefined;
+	return undefined;
 }
 
 async function resolveImagesResponse(

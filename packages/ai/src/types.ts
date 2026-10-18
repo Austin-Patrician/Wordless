@@ -528,7 +528,11 @@ export interface ImagesEditContext {
 }
 
 export type ImageOutputFormat = "png" | "jpeg" | "webp";
-export type ImageQuality = "auto" | "low" | "medium" | "high";
+/**
+ * `xhigh` / `max` exist because GPT Image 2.5 added them (see the OpenAI
+ * `quality` parameter docs); the older GPT Image models stop at `high`.
+ */
+export type ImageQuality = "auto" | "low" | "medium" | "high" | "xhigh" | "max";
 
 /** Provider-neutral image controls. Adapters translate these to vendor fields. */
 export interface ImagesGenerationOptions {

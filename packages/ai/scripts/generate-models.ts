@@ -196,12 +196,8 @@ const TOGETHER_TOGGLE_REASONING_EFFORT_COMPAT: OpenAICompletionsCompat = {
 	...TOGETHER_TOGGLE_REASONING_COMPAT,
 	supportsReasoningEffort: true,
 };
-const TOGETHER_REASONING_ONLY_MODELS = new Set([
-	"deepseek-ai/DeepSeek-R1",
-	"MiniMaxAI/MiniMax-M2.7",
-]);
-const TOGETHER_REASONING_EFFORT_MODELS = new Set(["openai/gpt-oss-20b", "openai/gpt-oss-120b"]);
-const TOGETHER_TOGGLE_REASONING_EFFORT_MODELS = new Set(["deepseek-ai/DeepSeek-V4-Pro"]);
+const TOGETHER_REASONING_ONLY_MODELS = new Set(["MiniMaxAI/MiniMax-M2.7"]);
+const TOGETHER_REASONING_EFFORT_MODELS = new Set(["openai/gpt-oss-120b"]);
 const TOGETHER_FIXED_REASONING_LEVEL_MAP = {
 	off: null,
 	minimal: null,
@@ -269,11 +265,6 @@ const OPENCODE_GO_GLM52_THINKING_LEVEL_MAP = {
 	high: "high",
 	max: "max",
 } as const;
-const EAGER_TOOL_INPUT_STREAMING_UNSUPPORTED_ANTHROPIC_MODELS = new Set([
-	"github-copilot:claude-haiku-4.5",
-	"github-copilot:claude-sonnet-4",
-	"github-copilot:claude-sonnet-4.5",
-]);
 const ANTHROPIC_ALLOWED_FALLBACK_MODELS = {
 	"claude-fable-5": ["claude-opus-4-8", "claude-opus-5"],
 	"claude-opus-5": ["claude-opus-4-8"],
@@ -351,7 +342,6 @@ const KIMI_CODING_IMPLIED_COSTS: Record<string, Model<Api>["cost"]> = {
 	k3: KIMI_K3_COST,
 	"kimi-for-coding": { input: 0.95, output: 4, cacheRead: 0.19, cacheWrite: 0 },
 	"kimi-for-coding-highspeed": { input: 1.9, output: 8, cacheRead: 0.38, cacheWrite: 0 },
-	"kimi-k2-thinking": { input: 0.6, output: 2.5, cacheRead: 0.15, cacheWrite: 0 },
 };
 const OPENROUTER_KIMI_K3_MODEL_IDS = new Set(["moonshotai/kimi-k3", "~moonshotai/kimi-latest"]);
 
@@ -365,6 +355,7 @@ const ANT_LING_RING_THINKING_LEVEL_MAP = {
 } as const;
 
 const BEDROCK_INFERENCE_PROFILE_ONLY_MODEL_IDS = new Set(["anthropic.claude-opus-5"]);
+// models.dev 仍把 gpt-5.6 这个别名列在 openai 下,但 OpenAI API 不接受它。
 const MODELS_DEV_OPENAI_UNSUPPORTED_MODEL_IDS = new Set(["gpt-5.6"]);
 const OPENAI_TOOL_SEARCH_MODEL_IDS = new Set([
 	"gpt-5.4",
@@ -434,12 +425,11 @@ const OPENAI_RESPONSES_NONE_REASONING_MODELS = new Set([
 	"gpt-5.6-terra",
 	"gpt-5.6-luna",
 ]);
+// models.dev 仍会列出这两个预览型号,但它们不在我们要发布的 xai 目录里。
+// 已从上游消失的 grok-3 / grok-3-fast / grok-code-fast-1 条目随之删除。
 const XAI_BUILTIN_EXCLUDED_MODEL_IDS = new Set([
-	"grok-3",
-	"grok-3-fast",
 	"grok-4.20-0309-non-reasoning",
 	"grok-4.20-0309-reasoning",
-	"grok-code-fast-1",
 ]);
 const XAI_RESPONSES_COMPAT: OpenAIResponsesCompat = {
 	supportsLongCacheRetention: false,
@@ -451,7 +441,9 @@ const OPENCODE_OPENAI_COMPLETIONS_LONG_CACHE_RETENTION_UNSUPPORTED_MODELS = new 
 	"opencode:kimi-k2.5",
 	"opencode:kimi-k2.6",
 	"opencode:minimax-m2.7",
-	"opencode-go:kimi-k2.6",
+	// Retired upstream; the routed Kimi on OpenCode Go is the same gateway, so the
+	// limitation follows the model line rather than the id.
+	"opencode-go:kimi-k2.7-code",
 ]);
 
 // GitHub's "Models with extended capabilities" table lists these Copilot models as supporting
@@ -522,7 +514,6 @@ function applyModelsDevReasoningOptionMetadata(model: Model<Api>): void {
 function getTogetherCompat(modelId: string, reasoning: boolean): OpenAICompletionsCompat {
 	if (!reasoning) return TOGETHER_BASE_COMPAT;
 	if (TOGETHER_REASONING_EFFORT_MODELS.has(modelId)) return TOGETHER_REASONING_EFFORT_COMPAT;
-	if (TOGETHER_TOGGLE_REASONING_EFFORT_MODELS.has(modelId)) return TOGETHER_TOGGLE_REASONING_EFFORT_COMPAT;
 	if (TOGETHER_REASONING_ONLY_MODELS.has(modelId)) return TOGETHER_BASE_COMPAT;
 	return TOGETHER_TOGGLE_REASONING_COMPAT;
 }
@@ -533,7 +524,6 @@ function getTogetherThinkingLevelMap(
 ): NonNullable<Model<any>["thinkingLevelMap"]> | undefined {
 	if (!reasoning) return undefined;
 	if (TOGETHER_REASONING_EFFORT_MODELS.has(modelId)) return { ...TOGETHER_REASONING_EFFORT_LEVEL_MAP };
-	if (TOGETHER_TOGGLE_REASONING_EFFORT_MODELS.has(modelId)) return { ...TOGETHER_DEEPSEEK_V4_THINKING_LEVEL_MAP };
 	if (TOGETHER_REASONING_ONLY_MODELS.has(modelId)) return { ...TOGETHER_FIXED_REASONING_LEVEL_MAP };
 	return { ...TOGETHER_TOGGLE_REASONING_LEVEL_MAP };
 }
@@ -930,13 +920,15 @@ function applyThinkingLevelMetadata(model: Model<any>): void {
 	if (model.api === "anthropic-messages" && isAnthropicTemperatureUnsupportedModel(model.id)) {
 		mergeAnthropicMessagesCompat(model, { supportsTemperature: false });
 	}
-	if (model.api === "openai-completions" && model.id.includes("deepseek-v4")) {
+	// `deepseek-flash` is the V4.1 name for the Flash line, so it takes the same
+	// thinking-level map even though it does not carry the `deepseek-v4` prefix.
+	if (model.api === "openai-completions" && (model.id.includes("deepseek-v4") || model.id === "deepseek-flash")) {
 		mergeThinkingLevelMap(
 			model,
 			model.provider === "openrouter"
 				? { ...DEEPSEEK_V4_THINKING_LEVEL_MAP, xhigh: "xhigh", max: null }
 				: (model.provider === "deepseek" || model.provider === "opencode" || model.provider === "opencode-go") &&
-					model.id.includes("deepseek-v4-flash")
+					(model.id.includes("deepseek-v4-flash") || model.id === "deepseek-flash")
 					? DEEPSEEK_V4_FLASH_THINKING_LEVEL_MAP
 					: DEEPSEEK_V4_THINKING_LEVEL_MAP,
 		);
@@ -1000,6 +992,10 @@ function applyThinkingLevelMetadata(model: Model<any>): void {
 		}
 	}
 }
+
+// github-copilot 上仍在售的 Claude 型号不支持 eager tool 流式;退役的
+// claude-sonnet-4 / claude-sonnet-4.5 条目已随上游下线删除。
+const EAGER_TOOL_INPUT_STREAMING_UNSUPPORTED_ANTHROPIC_MODELS = new Set(["github-copilot:claude-haiku-4.5"]);
 
 function getAnthropicMessagesCompat(provider: string, modelId: string): AnthropicMessagesCompat | undefined {
 	const compat: AnthropicMessagesCompat = {};
@@ -1482,6 +1478,8 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 			for (const [modelId, model] of Object.entries(data.anthropic.models)) {
 				const m = model as ModelsDevModel;
 				if (m.tool_call !== true) continue;
+				// models.dev lists this alias, but it is not accepted by OpenAI APIs.
+				if (MODELS_DEV_OPENAI_UNSUPPORTED_MODEL_IDS.has(modelId)) continue;
 
 				models.push({
 					id: modelId,
@@ -1614,6 +1612,8 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 			for (const [modelId, model] of Object.entries(data.groq.models)) {
 				const m = model as ModelsDevModel;
 				if (m.tool_call !== true) continue;
+				// models.dev lists this alias, but it is not accepted by OpenAI APIs.
+				if (MODELS_DEV_OPENAI_UNSUPPORTED_MODEL_IDS.has(modelId)) continue;
 
 				models.push({
 					id: modelId,
@@ -1641,6 +1641,8 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 			for (const [modelId, model] of Object.entries(data.cerebras.models)) {
 				const m = model as ModelsDevModel;
 				if (m.tool_call !== true) continue;
+				// models.dev lists this alias, but it is not accepted by OpenAI APIs.
+				if (MODELS_DEV_OPENAI_UNSUPPORTED_MODEL_IDS.has(modelId)) continue;
 
 				models.push({
 					id: modelId,
@@ -1668,6 +1670,8 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 			for (const [modelId, model] of Object.entries(data["cloudflare-workers-ai"].models)) {
 				const m = model as ModelsDevModel;
 				if (m.tool_call !== true) continue;
+				// models.dev lists this alias, but it is not accepted by OpenAI APIs.
+				if (MODELS_DEV_OPENAI_UNSUPPORTED_MODEL_IDS.has(modelId)) continue;
 
 				models.push({
 					id: modelId,
@@ -1753,6 +1757,8 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 			for (const [modelId, model] of Object.entries(data.xai.models)) {
 				const m = model as ModelsDevModel;
 				if (m.tool_call !== true) continue;
+				// models.dev lists this alias, but it is not accepted by OpenAI APIs.
+				if (MODELS_DEV_OPENAI_UNSUPPORTED_MODEL_IDS.has(modelId)) continue;
 
 				models.push({
 					id: modelId,
@@ -1783,6 +1789,8 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 			for (const [modelId, model] of Object.entries(data.mistral.models)) {
 				const m = model as ModelsDevModel;
 				if (m.tool_call !== true) continue;
+				// models.dev lists this alias, but it is not accepted by OpenAI APIs.
+				if (MODELS_DEV_OPENAI_UNSUPPORTED_MODEL_IDS.has(modelId)) continue;
 
 				models.push({
 					id: modelId,
@@ -1810,6 +1818,8 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 			for (const [modelId, model] of Object.entries(data.huggingface.models)) {
 				const m = model as ModelsDevModel;
 				if (m.tool_call !== true) continue;
+				// models.dev lists this alias, but it is not accepted by OpenAI APIs.
+				if (MODELS_DEV_OPENAI_UNSUPPORTED_MODEL_IDS.has(modelId)) continue;
 
 				models.push({
 					id: modelId,
@@ -2104,9 +2114,13 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 			}
 		}
 
-		// Process Kimi For Coding models
-		if (data["kimi-for-coding"]?.models) {
-			const kimiModels = data["kimi-for-coding"].models as Record<string, ModelsDevModel>;
+		// Process Kimi For Coding models. models.dev renamed this provider
+		// (`kimi-for-coding` → `kimi-code-plan-cn` / `kimi-code-plan-global`); we keep our
+		// own `kimi-coding` id and its kimi.com base URL, which is the CN plan. The old key
+		// stays as a fallback in case the upstream catalog lags or renames back.
+		const kimiForCodingSource = data["kimi-code-plan-cn"] ?? data["kimi-for-coding"];
+		if (kimiForCodingSource?.models) {
+			const kimiModels = kimiForCodingSource.models as Record<string, ModelsDevModel>;
 			const hasCanonicalModel = Object.prototype.hasOwnProperty.call(kimiModels, "kimi-for-coding");
 
 			const kimiAliases = new Set(["k2p5", "k2p6", "k2p7"]);
@@ -2514,6 +2528,28 @@ async function generateModels() {
 		thinkingFormat: "deepseek",
 	};
 	const deepseekV4Models: Model<"openai-completions">[] = [
+		{
+			// DeepSeek renamed the Flash line: V4.1 Flash ships as `deepseek-flash`
+			// (2026-09-10) and the retired `deepseek-v4-flash` /
+			// `deepseek-v4-flash-vision-exp` ids are routed to it. Vision input is
+			// native here, which is why this entry is text+image.
+			id: "deepseek-flash",
+			name: "DeepSeek V4.1 Flash",
+			api: "openai-completions",
+			baseUrl: "https://api.deepseek.com",
+			provider: "deepseek",
+			reasoning: true,
+			input: ["text", "image"],
+			cost: {
+				input: 0.15,
+				output: 0.6,
+				cacheRead: 0.003,
+				cacheWrite: 0,
+			},
+			contextWindow: 1000000,
+			maxTokens: 384000,
+			compat: deepseekCompat,
+		},
 		{
 			id: "deepseek-v4-flash",
 			name: "DeepSeek V4 Flash",

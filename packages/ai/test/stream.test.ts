@@ -542,8 +542,8 @@ describe("Generate E2E Tests", () => {
 		});
 	});
 
-	describe.skipIf(!process.env.XAI_API_KEY)("xAI Provider (grok-code-fast-1 via OpenAI Completions)", () => {
-		const llm = getModel("xai", "grok-code-fast-1");
+	describe.skipIf(!process.env.XAI_API_KEY)("xAI Provider (grok-4.7 via OpenAI Completions)", () => {
+		const llm = getModel("xai", "grok-4.7");
 
 		it("should complete basic text generation", { retry: 3 }, async () => {
 			await basicTextGeneration(llm);
@@ -641,33 +641,6 @@ describe("Generate E2E Tests", () => {
 		},
 	);
 
-	describe.skipIf(!hasCloudflareAiGatewayCredentials())(
-		"Cloudflare AI Gateway → Workers AI (Kimi K2.6 via /compat)",
-		() => {
-			const llm = getModel("cloudflare-ai-gateway", "workers-ai/@cf/moonshotai/kimi-k2.6");
-
-			it("should complete basic text generation", { retry: 3 }, async () => {
-				await basicTextGeneration(llm);
-			});
-
-			it("should handle tool calling", { retry: 3 }, async () => {
-				await handleToolCall(llm);
-			});
-
-			it("should handle streaming", { retry: 3 }, async () => {
-				await handleStreaming(llm);
-			});
-
-			it("should handle thinking mode", { retry: 3 }, async () => {
-				await handleThinking(llm, { reasoningEffort: "medium" });
-			});
-
-			it("should handle multi-turn with thinking and tools", { retry: 3 }, async () => {
-				await multiTurn(llm, { reasoningEffort: "medium" });
-			});
-		},
-	);
-
 	describe.skipIf(!hasCloudflareAiGatewayCredentials() || !process.env.OPENAI_API_KEY)(
 		"Cloudflare AI Gateway → OpenAI BYOK (gpt-5.1 via /openai responses)",
 		() => {
@@ -704,7 +677,7 @@ describe("Generate E2E Tests", () => {
 	describe.skipIf(!hasCloudflareAiGatewayCredentials() || !process.env.ANTHROPIC_API_KEY)(
 		"Cloudflare AI Gateway → Anthropic BYOK (claude-sonnet-4-5 via /anthropic messages)",
 		() => {
-			const llm = getModel("cloudflare-ai-gateway", "claude-sonnet-4-5");
+			const llm = getModel("cloudflare-ai-gateway", "claude-sonnet-5.5");
 			const options = { headers: { Authorization: `Bearer ${process.env.ANTHROPIC_API_KEY}` } };
 			const thinkingOptions = {
 				...options,
@@ -758,8 +731,8 @@ describe("Generate E2E Tests", () => {
 		});
 	});
 
-	describe.skipIf(!process.env.TOGETHER_API_KEY)("Together AI Provider (Kimi-K2.6 via OpenAI Completions)", () => {
-		const llm = getModel("together", "moonshotai/Kimi-K2.6");
+	describe.skipIf(!process.env.TOGETHER_API_KEY)("Together AI Provider (Kimi-K3 via OpenAI Completions)", () => {
+		const llm = getModel("together", "moonshotai/Kimi-K3");
 
 		it("should complete basic text generation", { retry: 3 }, async () => {
 			await basicTextGeneration(llm);
@@ -786,8 +759,8 @@ describe("Generate E2E Tests", () => {
 		});
 	});
 
-	describe.skipIf(!process.env.NVIDIA_API_KEY)("NVIDIA NIM Provider (Nemotron 3 Super via OpenAI Completions)", () => {
-		const llm = getModel("nvidia", "nvidia/nemotron-3-super-120b-a12b");
+	describe.skipIf(!process.env.NVIDIA_API_KEY)("NVIDIA NIM Provider (Nemotron 3.5 Super VL via OpenAI Completions)", () => {
+		const llm = getModel("nvidia", "nvidia/nemotron-3.5-super-vl-120b-a12b");
 
 		it("should complete basic text generation", { retry: 3 }, async () => {
 			await basicTextGeneration(llm);
@@ -919,8 +892,8 @@ describe("Generate E2E Tests", () => {
 		},
 	);
 
-	describe.skipIf(!process.env.ZAI_API_KEY)("zAI Provider (glm-5.1 via OpenAI Completions)", () => {
-		const llm = getModel("zai", "glm-5.1");
+	describe.skipIf(!process.env.ZAI_API_KEY)("zAI Provider (glm-5.3 via OpenAI Completions)", () => {
+		const llm = getModel("zai", "glm-5.3");
 
 		it("should complete basic text generation", { retry: 3 }, async () => {
 			await basicTextGeneration(llm);
@@ -1020,7 +993,7 @@ describe("Generate E2E Tests", () => {
 	describe.skipIf(!process.env.KIMI_API_KEY)(
 		"Kimi For Coding Provider (kimi-k2-thinking via Anthropic Messages)",
 		() => {
-			const llm = getModel("kimi-coding", "kimi-k2-thinking");
+			const llm = getModel("kimi-coding", "kimi-for-coding");
 
 			it("should complete basic text generation", { retry: 3 }, async () => {
 				await basicTextGeneration(llm);
@@ -1047,7 +1020,7 @@ describe("Generate E2E Tests", () => {
 	describe.skipIf(!process.env.XIAOMI_API_KEY)(
 		"Xiaomi MiMo (API billing) Provider (Xiaomi MiMo-V2.5-Pro via Anthropic Messages)",
 		() => {
-			const llm = getModel("xiaomi", "mimo-v2.5-pro");
+			const llm = getModel("xiaomi", "mimo-v2.6-pro");
 			const thinkingOptions = {
 				thinkingEnabled: true,
 				reasoningEffort: "high",
@@ -1078,7 +1051,7 @@ describe("Generate E2E Tests", () => {
 	describe.skipIf(!process.env.XIAOMI_TOKEN_PLAN_CN_API_KEY)(
 		"Xiaomi MiMo Token Plan Provider (Xiaomi MiMo-V2.5-Pro via Anthropic Messages, CN region)",
 		() => {
-			const llm = getModel("xiaomi-token-plan-cn", "mimo-v2.5-pro");
+			const llm = getModel("xiaomi-token-plan-cn", "mimo-v2.6-pro");
 			const thinkingOptions = {
 				thinkingEnabled: true,
 				reasoningEffort: "high",
@@ -1109,7 +1082,7 @@ describe("Generate E2E Tests", () => {
 	describe.skipIf(!process.env.XIAOMI_TOKEN_PLAN_AMS_API_KEY)(
 		"Xiaomi MiMo Token Plan Provider (Xiaomi MiMo-V2.5-Pro via Anthropic Messages, AMS region)",
 		() => {
-			const llm = getModel("xiaomi-token-plan-ams", "mimo-v2.5-pro");
+			const llm = getModel("xiaomi-token-plan-ams", "mimo-v2.6-pro");
 			const thinkingOptions = {
 				thinkingEnabled: true,
 				reasoningEffort: "high",
@@ -1140,7 +1113,7 @@ describe("Generate E2E Tests", () => {
 	describe.skipIf(!process.env.XIAOMI_TOKEN_PLAN_SGP_API_KEY)(
 		"Xiaomi MiMo Token Plan Provider (Xiaomi MiMo-V2.5-Pro via Anthropic Messages, SGP region)",
 		() => {
-			const llm = getModel("xiaomi-token-plan-sgp", "mimo-v2.5-pro");
+			const llm = getModel("xiaomi-token-plan-sgp", "mimo-v2.6-pro");
 			const thinkingOptions = {
 				thinkingEnabled: true,
 				reasoningEffort: "high",

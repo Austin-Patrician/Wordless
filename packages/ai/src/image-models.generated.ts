@@ -864,6 +864,90 @@ export const IMAGE_MODELS = {
 	  "supportsWatermark": false
 	}
 		} satisfies ImagesModel<"openrouter-images">,
+		"openai/gpt-image-2.5-flare": {
+			id: "openai/gpt-image-2.5-flare",
+			name: "OpenAI: GPT Image 2.5 Flare",
+			api: "openrouter-images",
+			provider: "openrouter",
+			baseUrl: "https://openrouter.ai/api/v1",
+			input: ["text","image"],
+			output: ["image"],
+			cost: 	{
+	  "input": 8,
+	  "output": 8,
+	  "cacheRead": 2,
+	  "cacheWrite": 0
+	},
+			capabilities: 	{
+	  "supportsTextToImage": true,
+	  "supportsReferenceImageEditing": true,
+	  "supportsMaskEditing": false,
+	  "supportsTransparentBackground": true,
+	  "maxReferenceImages": 16,
+	  "maxOutputImages": 10,
+	  "aspectRatios": [
+	    "1:1",
+	    "3:2",
+	    "2:3",
+	    "4:3",
+	    "3:4",
+	    "16:9",
+	    "9:16",
+	    "21:9",
+	    "auto"
+	  ],
+	  "qualityLevels": [
+	    "auto",
+	    "low",
+	    "medium",
+	    "high"
+	  ],
+	  "supportsSeed": false,
+	  "supportsWatermark": false
+	}
+		} satisfies ImagesModel<"openrouter-images">,
+		"openai/gpt-image-2.5-sunburst": {
+			id: "openai/gpt-image-2.5-sunburst",
+			name: "OpenAI: GPT Image 2.5 Sunburst",
+			api: "openrouter-images",
+			provider: "openrouter",
+			baseUrl: "https://openrouter.ai/api/v1",
+			input: ["text","image"],
+			output: ["image"],
+			cost: 	{
+	  "input": 8,
+	  "output": 8,
+	  "cacheRead": 2,
+	  "cacheWrite": 0
+	},
+			capabilities: 	{
+	  "supportsTextToImage": true,
+	  "supportsReferenceImageEditing": true,
+	  "supportsMaskEditing": false,
+	  "supportsTransparentBackground": true,
+	  "maxReferenceImages": 16,
+	  "maxOutputImages": 10,
+	  "aspectRatios": [
+	    "1:1",
+	    "3:2",
+	    "2:3",
+	    "4:3",
+	    "3:4",
+	    "16:9",
+	    "9:16",
+	    "21:9",
+	    "auto"
+	  ],
+	  "qualityLevels": [
+	    "auto",
+	    "low",
+	    "medium",
+	    "high"
+	  ],
+	  "supportsSeed": false,
+	  "supportsWatermark": false
+	}
+		} satisfies ImagesModel<"openrouter-images">,
 		"qwen/qwen-image-3": {
 			id: "qwen/qwen-image-3",
 			name: "Qwen: Qwen Image 3",

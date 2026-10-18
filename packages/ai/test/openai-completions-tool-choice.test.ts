@@ -196,7 +196,7 @@ describe("openai-completions tool_choice", () => {
 	});
 
 	it("maps groq qwen3 reasoning levels to default reasoning_effort", async () => {
-		const model = getModel("groq", "qwen/qwen3-32b")!;
+		const model = getModel("groq", "qwen/qwen3.6-27b")!;
 		let payload: unknown;
 
 		await streamSimple(
@@ -252,7 +252,7 @@ describe("openai-completions tool_choice", () => {
 	});
 
 	it("enables tool_stream for supported z.ai models with tools", async () => {
-		const model = getModel("zai", "glm-5.1")!;
+		const model = getModel("zai", "glm-5.3")!;
 		const tools: Tool[] = [
 			{
 				name: "ping",
@@ -289,11 +289,11 @@ describe("openai-completions tool_choice", () => {
 	});
 
 	it("stores z.ai tool_stream support in model compat metadata", () => {
-		expect(getModel("zai", "glm-5.1")?.compat?.zaiToolStream).toBe(true);
+		expect(getModel("zai", "glm-5.3")?.compat?.zaiToolStream).toBe(true);
 		expect(getModel("zai", "glm-4.7")?.compat?.zaiToolStream).toBe(true);
 		expect(getModel("zai", "glm-4.7")?.compat?.zaiToolStream).toBe(true);
 		expect(getModel("zai", "glm-5-turbo")?.compat?.zaiToolStream).toBe(true);
-		expect(getModel("zai", "glm-4.5-air")?.compat?.zaiToolStream).toBeUndefined();
+		expect(getModel("zai", "glm-5.3")?.compat?.zaiToolStream).toBeUndefined();
 	});
 
 	it("stores z.ai GLM-5.2 effort metadata", () => {
@@ -437,7 +437,7 @@ describe("openai-completions tool_choice", () => {
 	});
 
 	it("omits tool_stream for unsupported z.ai models", async () => {
-		const model = getModel("zai", "glm-4.5-air")!;
+		const model = getModel("zai", "glm-5.3")!;
 		const tools: Tool[] = [
 			{
 				name: "ping",
@@ -474,7 +474,7 @@ describe("openai-completions tool_choice", () => {
 	});
 
 	it("respects explicit z.ai tool_stream compat override", async () => {
-		const baseModel = getModel("zai", "glm-4.5-air")!;
+		const baseModel = getModel("zai", "glm-5.3")!;
 		const model = {
 			...baseModel,
 			compat: {
@@ -518,7 +518,7 @@ describe("openai-completions tool_choice", () => {
 	});
 
 	it("omits tool_stream when no tools are provided", async () => {
-		const model = getModel("zai", "glm-5.1")!;
+		const model = getModel("zai", "glm-5.3")!;
 		let payload: unknown;
 
 		await streamSimple(
@@ -560,7 +560,7 @@ describe("openai-completions tool_choice", () => {
 			},
 		];
 
-		const model = getModel("zai", "glm-5.1")!;
+		const model = getModel("zai", "glm-5.3")!;
 		const response = await streamSimple(
 			model,
 			{
@@ -1080,7 +1080,7 @@ describe("openai-completions tool_choice", () => {
 		const providers = ["xiaomi", "xiaomi-token-plan-cn", "xiaomi-token-plan-ams", "xiaomi-token-plan-sgp"] as const;
 
 		for (const provider of providers) {
-			const model = getModel(provider, "mimo-v2.5-pro")!;
+			const model = getModel(provider, "mimo-v2.6-pro")!;
 			expect(model.compat?.requiresReasoningContentOnAssistantMessages).toBe(true);
 			expect(model.compat?.thinkingFormat).toBe("deepseek");
 			expect(model.compat?.maxTokensField).toBeUndefined();
@@ -1089,12 +1089,12 @@ describe("openai-completions tool_choice", () => {
 	});
 
 	it("replays Xiaomi MiMo assistant tool calls with empty reasoning_content when thinking is missing", async () => {
-		const model = getModel("xiaomi", "mimo-v2.5-pro")!;
+		const model = getModel("xiaomi", "mimo-v2.6-pro")!;
 		const assistantMessage: AssistantMessage = {
 			role: "assistant",
 			api: "openai-completions",
 			provider: "xiaomi",
-			model: "mimo-v2.5-pro",
+			model: "mimo-v2.6-pro",
 			content: [{ type: "toolCall", id: "call_1", name: "read", arguments: { path: "README.md" } }],
 			usage: {
 				input: 0,
@@ -1154,7 +1154,7 @@ describe("openai-completions tool_choice", () => {
 			},
 		];
 
-		const { compat: _compat, ...baseModel } = getModel("opencode-go", "kimi-k2.6")!;
+		const { compat: _compat, ...baseModel } = getModel("opencode-go", "kimi-k2.7-code")!;
 		const model = { ...baseModel, api: "openai-completions" } as const;
 		const response = await streamSimple(
 			model,
@@ -1201,7 +1201,7 @@ describe("openai-completions tool_choice", () => {
 	});
 
 	it("replays OpenCode Go reasoning thinking blocks as reasoning_content", () => {
-		const { compat: _compat, ...baseModel } = getModel("opencode-go", "kimi-k2.6")!;
+		const { compat: _compat, ...baseModel } = getModel("opencode-go", "kimi-k2.7-code")!;
 		const model = { ...baseModel, api: "openai-completions" } as Model<"openai-completions">;
 		const messages = convertMessages(
 			model,
@@ -1211,7 +1211,7 @@ describe("openai-completions tool_choice", () => {
 						role: "assistant",
 						api: "openai-completions",
 						provider: "opencode-go",
-						model: "kimi-k2.6",
+						model: "kimi-k2.7-code",
 						content: [
 							{ type: "thinking", thinking: "think", thinkingSignature: "reasoning" },
 							{ type: "toolCall", id: "call_1", name: "read", arguments: { path: "README.md" } },
@@ -1256,8 +1256,8 @@ describe("openai-completions tool_choice", () => {
 		expect(messages[0]).not.toHaveProperty("reasoning");
 	});
 
-	it("sends thinking disabled for OpenCode Go Kimi K2.6 when thinking is off", async () => {
-		const model = getModel("opencode-go", "kimi-k2.6")!;
+	it("sends thinking disabled for OpenCode Kimi K2.6 when thinking is off", async () => {
+		const model = getModel("opencode", "kimi-k2.6")!;
 		let payload: unknown;
 
 		await streamSimple(
@@ -1278,8 +1278,8 @@ describe("openai-completions tool_choice", () => {
 		expect(params.reasoning_effort).toBeUndefined();
 	});
 
-	it("sends thinking enabled for OpenCode Go Kimi K2.6 when thinking is enabled", async () => {
-		const model = getModel("opencode-go", "kimi-k2.6")!;
+	it("sends thinking enabled for OpenCode Kimi K2.6 when thinking is enabled", async () => {
+		const model = getModel("opencode", "kimi-k2.6")!;
 		let payload: unknown;
 
 		await streamSimple(
@@ -1350,7 +1350,7 @@ describe("openai-completions tool_choice", () => {
 	});
 
 	it("sends max_tokens for OpenCode completions models", async () => {
-		const cases = [getModel("opencode-go", "kimi-k2.6")!, getModel("opencode", "grok-build-0.1")!] as const;
+		const cases = [getModel("opencode-go", "kimi-k2.7-code")!, getModel("opencode", "grok-build-0.1")!] as const;
 
 		for (const model of cases) {
 			let payload: unknown;
