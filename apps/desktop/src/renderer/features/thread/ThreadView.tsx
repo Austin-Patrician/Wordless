@@ -53,6 +53,7 @@ import type {
   SessionSnapshot,
 } from "@wordless/protocol";
 import {
+  isBlankAssistantMessage,
   type ContextCompactionRecord,
   type ExpertPortrait as ExpertPortraitDefinition,
   type MessageArtifactBlock,
@@ -2476,7 +2477,14 @@ function PlanResultActions({
   );
 }
 
-function AssistantMessageBody({
+/**
+ * 一轮助手回复的那一行:身份行 + 正文/工具 + 底部操作行。
+ *
+ * **导出是为了能直接渲染它做测试**(同 `AssistantMessageFooter` 的理由):这一行判断最多、
+ * 出过的事也最多 —— "操作行只在最新一条底下出现"、"取消之后留下一条空壳"都发生在这里,
+ * 而整棵 ThreadView 又太重,测不动。
+ */
+export function AssistantMessageBody({
   assistantIdentity,
   messages,
   onEnableAutoApprove,
@@ -2584,6 +2592,20 @@ function AssistantMessageBody({
     (candidate) => candidate.status === "streaming",
   );
   const showRunStatus = shouldShowAssistantRunStatus(messages, runPresentation);
+  /**
+   * 重做 / 版本切换。**只有最新一轮**才给(重做是"以这一轮为末端重写之后的历史")。
+   *
+   * 提出来是因为它现在有两个挂点:正常回复的底部操作行,和"这一轮没有产生任何内容"的
+   * 收尾行 —— 后者没有操作行,但**必须有重做**:误按停止之后,这是唯一不用重新打字的出路。
+   */
+  const retryActions =
+    showTurnTail && turnUserMessageId && onRetryTurn && onSelectTurnVersion ? (
+      <AssistantRetryActions
+        onRetry={(instruction) => onRetryTurn(turnUserMessageId, instruction)}
+        onSelectVersion={(version) => onSelectTurnVersion(turnUserMessageId, version)}
+        versions={turnVersions ?? null}
+      />
+    ) : undefined;
   const isCollapsedActivityContinuation = (candidate: ConversationMessage) =>
     candidate.blocks.length > 0 &&
     candidate.blocks.every((block, blockIndex) => {
@@ -2598,14 +2620,48 @@ function AssistantMessageBody({
           group.startBlockIndex !== blockIndex),
       );
     });
+  /*
+   * 没有消息也没有运行状态:这一轮**什么都没留下**(取消得太早 —— 连一条空消息都没写下来,
+   * 或者发送失败被撤掉)。**整行不渲染**:曾经这里留下一个只有头像与名字的空壳。
+   *
+   * 还有运行状态时照旧显示它 —— "还没出声"的时候,那正是该看的东西。
+   */
   if (!message)
+    return runPresentation ? (
+      <article>
+        <AssistantIdentityHeader identity={assistantIdentity} />
+        <div className="mt-2 min-w-0">
+          <AssistantRunStatus activity={runPresentation.activity} />
+        </div>
+      </article>
+    ) : null;
+  /*
+   * 已经有消息、但这一轮**没有任何可显示的内容**,而且它已经停了(用户在助手回话之前
+   * 点了停止):只留一句「已停止」+ 这一轮自己的重做入口与时间戳。
+   *
+   * 不留空正文,也不摆那排"回复的操作行"—— 复制空串、0 用量、点了没反应的归档、禁用的
+   * 导出,它们会让一个空壳看起来像一条真回复。判据在领域层(`isBlankAssistantMessage`):
+   * 已经吐了一部分正文/思考、或者起过工具的那一轮**不是**空白,照常渲染下面那一大段 ——
+   * 取消之前干过的事必须看得见。
+   */
+  if (runPresentation === null && isBlankAssistantMessage(message))
     return (
       <article>
         <AssistantIdentityHeader identity={assistantIdentity} />
         <div className="mt-2 min-w-0">
-          {runPresentation ? (
-            <AssistantRunStatus activity={runPresentation.activity} />
-          ) : null}
+          <div className="flex items-center gap-2 text-[11px] text-muted-foreground">
+            <span data-thread-stopped-turn>
+              {t("assistantStoppedWithoutReply")}
+            </span>
+            {retryActions}
+            <span className="ml-auto font-mono text-[11px] text-[#aaa9a1]">
+              {new Date(message.timestamp).toLocaleTimeString([], {
+                hour: "2-digit",
+                minute: "2-digit",
+                second: "2-digit",
+              })}
+            </span>
+          </div>
         </div>
       </article>
     );
@@ -2682,15 +2738,7 @@ function AssistantMessageBody({
           isStreaming={isStreaming}
           isTurnRunning={isTurnRunning}
           messageCount={messages.length}
-          retry={
-            showTurnTail && turnUserMessageId && onRetryTurn && onSelectTurnVersion ? (
-              <AssistantRetryActions
-                onRetry={(instruction) => onRetryTurn(turnUserMessageId, instruction)}
-                onSelectVersion={(version) => onSelectTurnVersion(turnUserMessageId, version)}
-                versions={turnVersions ?? null}
-              />
-            ) : undefined
-          }
+          retry={retryActions}
           timestamp={message.timestamp}
           usage={<TurnUsageFooter loadSessionUsage={loadSessionUsage} messages={messages} />}
           exportTurn={<TurnExportButton messages={messages} timestamp={message.timestamp} />}

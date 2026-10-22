@@ -375,6 +375,11 @@ export const messages = {
     assistantWaitingDetail: "思路来了，Wordless 正在跟上它",
     assistantResponseFailed: "模型响应失败",
     assistantResponseFailedHelp: "本次请求未返回完整内容。",
+    /*
+     * 用户在助手回话之前点了停止:这一轮没有产生任何内容。所以这里说的是**停止**,不是
+     * "失败了",也不摆一条空回复 —— 那会被读成"回复丢了"。
+     */
+    assistantStoppedWithoutReply: "已停止,这一轮没有回复",
     assistantGeneratingResponse: "正在生成回复",
     assistantReadingFiles: "正在读取文件",
     assistantSearchingWorkspace: "正在搜索工作区",
@@ -2754,6 +2759,7 @@ export const messages = {
     assistantResponseFailed: "Model response failed",
     assistantResponseFailedHelp:
       "This request did not return a complete response.",
+    assistantStoppedWithoutReply: "Stopped before replying",
     assistantGeneratingResponse: "Generating response",
     assistantReadingFiles: "Reading files",
     assistantSearchingWorkspace: "Searching the workspace",

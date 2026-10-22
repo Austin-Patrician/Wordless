@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { join } from "node:path";
 import test from "node:test";
-import { summarizeTokenUsage } from "@wordless/domain";
+import { SESSION_HISTORY_TURN_PAGE, summarizeTokenUsage } from "@wordless/domain";
 import { createSessionHistoryPage, createSessionHistoryProjection } from "../src/session-history.ts";
 import { summarizeSessionUsage } from "../src/usage-report.ts";
 import { withService, writeJournal } from "./support/usage-fixtures.ts";
@@ -85,7 +85,8 @@ test("对账:journal 聚合与应用级报表(usage_events 聚合)逐字段相�
 
 test("对账:渲染层窗口内的求和 ≤ 总计,差额正好是窗口外的条目", async () => {
   await withService(async ({ service, session }) => {
-    // 30 轮,每轮一条用户消息 + 一条助手回复。默认分页只加载最近 24 轮 —— 和渲染层拿到的形状一致。
+    // 30 轮,每轮一条用户消息 + 一条助手回复。默认分页只加载最近 `SESSION_HISTORY_TURN_PAGE` 轮
+    // —— 和渲染层拿到的形状一致。
     const entries: Array<{ id: string; role?: "assistant" | "user"; usage?: ReturnType<typeof usageOf> }> = [];
     for (let turn = 0; turn < 30; turn += 1) {
       entries.push({ id: `u${turn}`, role: "user" });
@@ -109,24 +110,25 @@ test("对账:渲染层窗口内的求和 ≤ 总计,差额正好是窗口外的�
     const windowed = page.items.flatMap((item) =>
       item.type === "turn" ? item.turn.messages.flatMap((message) => (message.usage ? [message.usage] : [])) : [],
     );
-    // 窗口里应当是最近 24 轮那 24 次调用。
-    assert.equal(windowed.length, 24);
+    // 窗口里应当是最近那一页的调用数。
+    assert.equal(windowed.length, SESSION_HISTORY_TURN_PAGE);
     const windowTotal = summarizeTokenUsage(windowed, { primaryCalls: windowed.length, delegatedCalls: 0 });
     assert.ok(windowTotal);
 
     // ① 窗口内确实是**少算**的(这正是"不能拿窗口求和当会话总计"的原因)……
     assert.ok(windowTotal.totalTokens < total.totalTokens, "窗口内求和应当小于总计");
-    // ……② 而差额**正好**等于窗口外那 6 轮,不是"凭空少一点"。
+    // ……② 而差额**正好**等于窗口外那几轮,不是"凭空少一点"。
+    const outsideTurns = 30 - SESSION_HISTORY_TURN_PAGE;
     const outside = summarizeTokenUsage(
-      collection.records.slice(0, 6).map((record) => record.usage),
-      { primaryCalls: 6, delegatedCalls: 0 },
+      collection.records.slice(0, outsideTurns).map((record) => record.usage),
+      { primaryCalls: outsideTurns, delegatedCalls: 0 },
     );
     assert.ok(outside);
     assert.equal(windowTotal.totalTokens + outside.totalTokens, total.totalTokens);
     assert.equal(windowTotal.promptTokens + outside.promptTokens, total.promptTokens);
     assert.equal(windowTotal.totalCost.toFixed(6), (total.totalCost - outside.totalCost).toFixed(6));
     // 每次都上报了缓存 ⇒ 观测调用数也各自对得上。
-    assert.equal(windowTotal.cacheReadObservedCalls, 24);
-    assert.equal(outside.cacheReadObservedCalls, 6);
+    assert.equal(windowTotal.cacheReadObservedCalls, SESSION_HISTORY_TURN_PAGE);
+    assert.equal(outside.cacheReadObservedCalls, outsideTurns);
   });
 });

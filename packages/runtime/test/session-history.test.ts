@@ -59,6 +59,38 @@ test("loads an exact turn neighborhood and supports forward paging", () => {
   assert.equal(newer.hasMoreAfter, false);
 });
 
+test("默认分页 = 首屏那一页(SESSION_HISTORY_TURN_PAGE 轮),更早的仍可往前翻", () => {
+  /*
+   * 这个数是**首屏成本的总开关**,所以钉死在这里,而且钉的是字面量 12 而不是那个常量本身:
+   * 只断言"等于常量"的话,把常量改成 24 测试照样绿 —— 那等于没测。
+   *
+   * 实测依据(真实会话,29MB / 33 轮 / 1187 条消息):最近 24 轮 = 729 条消息 / 1.91M 字符,
+   * 最近 12 轮 = 328 条 / 0.86M。首帧要背的东西直接减半。
+   */
+  const turns = Array.from({ length: 30 }, (_, index) => [
+    user(`u${index}`, index * 2, `question ${index}`),
+    assistant(`a${index}`, index * 2 + 1, `answer ${index}`),
+  ]).flat();
+  const projection = createSessionHistoryProjection(turns, []);
+
+  const first = createSessionHistoryPage(projection, "revision");
+  assert.equal(first.items.filter((item) => item.type === "turn").length, 12);
+  assert.equal(first.hasMoreBefore, true, "30 轮里只装 12 轮,前面必须还有得翻");
+
+  // 往前翻用的是同一个数(渲染层的 loadOlder 也引这个常量),所以两页正好把 30 轮里的 24 轮装完。
+  const older = createSessionHistoryPage(projection, "revision", {
+    before: first.nextBeforeCursor,
+    limit: 12,
+  });
+  assert.equal(older.items.filter((item) => item.type === "turn").length, 12);
+  assert.equal(older.hasMoreBefore, true);
+
+  // 一页装得下时就不该再假装还有更早的。
+  const everything = createSessionHistoryPage(projection, "revision", { limit: 48 });
+  assert.equal(everything.items.filter((item) => item.type === "turn").length, 30);
+  assert.equal(everything.hasMoreBefore, false);
+});
+
 test("history pages preview oversized tool output while retaining the complete output", () => {
   const output = "x".repeat(5_000);
   const projection = createSessionHistoryProjection([

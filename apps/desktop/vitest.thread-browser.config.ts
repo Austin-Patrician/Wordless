@@ -105,6 +105,8 @@ export default defineConfig({
       provider: playwright(),
     },
     include: [
+      // 「取消之后没有产生任何内容」的那一行 —— 空壳不许冒充一条回复(见文件头)。
+      "test/assistant-blank-turn.browser.test.tsx",
       "test/thread-production-row.browser.test.tsx",
       "test/turn-token-usage.browser.test.tsx",
       "test/turn-export.browser.test.tsx",

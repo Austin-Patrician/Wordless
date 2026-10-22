@@ -1,7 +1,12 @@
 import type { ContextCompactionRecord, ConversationMessage, MessageBlock, MessageToolBlock } from "@wordless/domain";
+import { SESSION_HISTORY_TURN_PAGE } from "@wordless/domain";
 import type { SessionHistoryPage, SessionHistoryPageRequest, SessionHistoryTimelineItem, SessionHistoryTurn, SessionMessageSearchRequest, SessionMessageSearchResponse, SessionTurnSummary } from "@wordless/protocol";
 
-const DEFAULT_HISTORY_TURN_LIMIT = 24;
+/**
+ * 首屏装多少轮。**从 `@wordless/domain` 引,不在这里另写一个数**(理由见那个常量的注释:
+ * 渲染层的翻页请求用同一份)。
+ */
+const DEFAULT_HISTORY_TURN_LIMIT = SESSION_HISTORY_TURN_PAGE;
 const TOOL_OUTPUT_PREVIEW_CHARS = 4_096;
 const SEARCH_SNIPPET_CHARS = 220;
 

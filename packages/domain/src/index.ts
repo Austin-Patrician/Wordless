@@ -1328,6 +1328,34 @@ export const SIDEBAR_PINNED_LIMIT_MAX = 6;
  */
 export const SIDEBAR_PINNED_LIMIT_DEFAULT = 5;
 
+/**
+ * 会话历史一页装多少**轮**(打开会话时的首屏就是这一页)。
+ *
+ * 这个数字是"首屏成本"的总开关:打开会话时,这一页的消息要全部过一次 IPC、全部排版一次。
+ * 轮数和消息数不是一个量级 —— 实测一个 29MB 的会话共 33 轮 1187 条消息,最近 24 轮就有
+ * 729 条 / 1.91M 字符,最近 12 轮是 328 条 / 0.86M。所以 24 → 12 不是"少一点点",是首帧减半。
+ *
+ * **运行时的默认分页与渲染层的翻页请求引同一个数**:两处各写一个字面量,迟早一边 12 一边 24,
+ * 而"为什么向上滚一屏比打开时还慢"这种问题没人查得动。
+ *
+ * 放在 domain 而不是 protocol:渲染层今天只从 protocol 取类型,取一个值会把整套 schema 拖进
+ * 渲染层的包;而 domain 本来就是渲染层与运行时共同的值依赖。
+ */
+export const SESSION_HISTORY_TURN_PAGE = 12;
+
+/**
+ * 会话历史一页装多少**轮**(打开会话时的首屏就是这一页)。
+ *
+ * 这个数字是"首屏成本"的总开关:打开会话时,这一页的消息要全部过一次 IPC、全部排版一次。
+ * 轮数和消息数不是一个量级 —— 实测一个 29MB 的会话共 33 轮 1187 条消息,最近 24 轮就有
+ * 729 条 / 1.91M 字符,最近 12 轮是 328 条 / 0.86M。所以 24 → 12 不是"少一点点",是首帧减半。
+ *
+ * **运行时的默认分页与渲染层的翻页请求引同一个数**:两处各写一个字面量,迟早一边 12 一边 24,
+ * 而"为什么向上滚一屏比打开时还慢"这种问题没人查得动。
+ *
+ * 放在 domain 而不是 protocol:渲染层今天只从 protocol 取类型,取一个值会把整套 schema 拖进
+ * 渲染层的包;而 domain 本来就是渲染层与运行时共同的值依赖。
+ */
 /** Keys are entries of the interface catalog; only their arrangement is stored. */
 const SIDEBAR_LOCKED_KEYS: ReadonlySet<string> = new Set([SIDEBAR_PINNED_ANCHOR]);
 
@@ -2487,6 +2515,49 @@ export interface ConversationMessage {
   /** 只有助手消息有:这次模型调用的时间事实(见 `ModelCallTiming`)。 */
   timing?: ModelCallTiming;
   errorMessage?: string;
+}
+
+/**
+ * 这条助手消息里**有没有可显示的内容**。
+ *
+ * 只有两种块"可能为空"且空得没有意义:空文本、空思考(工具循环里的占位)。其余块
+ * (工具、附件、引用、制品……)一律算内容 —— 判据要**只把确知是空的那些当空白**,
+ * 不认识的块按"有内容"处理:认错的代价是不显示一条真回复,比多显示一条空壳严重得多。
+ */
+export function hasVisibleAssistantBlocks(blocks: readonly MessageBlock[]): boolean {
+  return blocks.some((block) =>
+    block.type === "text" || block.type === "reasoning"
+      ? block.text.trim() !== ""
+      : true,
+  );
+}
+
+/**
+ * 空白助手消息:这一轮**没有产生任何内容**,而它已经结束了。
+ *
+ * 这是"用户在助手回话之前点了停止"留下的那一条。宿主**照常把它写进 journal**
+ * (`message_end` 是落盘的时刻,abort 也走它),只是内容为空 —— 模型边界早就把它当
+ * 非消息处理(适配层会跳过空助手消息,否则请求会被拒)。
+ *
+ * 所以"要不要展示它"是**展示层的判据**,而不是"要不要写它"的问题(journal 是事实,
+ * 界面上不该出现一条冒充回复的空壳:它没有正文,底下却挂着复制、用量、导出、时间戳)。
+ *
+ * 三条排除,每一条都必要:
+ * - `streaming` 的空白是**正常**的(还没等到第一个 token),那时要看的是运行状态;
+ * - **失败**的那一条有话说:它有 `errorMessage`,而界面真的会把它显示出来
+ *   (`shouldShowAssistantResponseError` 只认 `status === "error"`)。所以它不算空白;
+ * - 有内容(部分正文、思考、工具块)当然不算空白。取消之前已经干过的事必须看得见。
+ *
+ * `errorMessage` 那一半**必须带上 `status === "error"`**:宿主造的中止消息
+ * (`createFailureMessage`)同样带 `errorMessage`(内容是 "Request was aborted." 这种给
+ * 模型/日志看的话),而那条错误行**永远不会**被显示 —— 把它当成"有话说",用户看到的就是
+ * 一个只有头像、底下什么都没有的空壳(实测报过)。
+ */
+export function isBlankAssistantMessage(message: ConversationMessage): boolean {
+  if (message.role !== "assistant") return false;
+  if (message.status === "streaming") return false;
+  if (message.status === "error" && message.errorMessage) return false;
+  return !hasVisibleAssistantBlocks(message.blocks);
 }
 
 export interface ModelRetryState {

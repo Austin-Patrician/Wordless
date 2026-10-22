@@ -1533,8 +1533,16 @@ export function registerRuntimeIpc(
         WorkspaceFileRequestSchema,
         payload,
       );
+      /*
+       * **按"一项"解析,不是按"文件"**:文件树里每个文件夹也有这颗菜单项,而在 Finder 里
+       * 选中一个文件夹是成立的。用 `resolveSessionWorkspaceFile` 的话,目录会被
+       * "Selected path is not a file" 挡掉 —— 那正是报给用户看的那句错。
+       */
       shell.showItemInFolder(
-        await runtime.resolveSessionWorkspaceFile(input.sessionId, input.path),
+        await runtime.resolveSessionWorkspacePath(
+          input.sessionId,
+          input.path,
+        ),
       );
     },
   );

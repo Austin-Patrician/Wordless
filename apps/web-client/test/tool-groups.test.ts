@@ -4,6 +4,7 @@ import {
 	buildToolGroupLayout,
 	buildToolGroups,
 	groupDurationMs,
+	isBlankAssistantMessage,
 	isGroupExpanded,
 	planMessages,
 } from "../src/tool-groups.ts";
@@ -272,5 +273,53 @@ describe("一轮的边界就是突发的边界", () => {
 		assert.deepEqual(plan.map((entry) => entry.blocks.map((block) => block.type)), [["text"], ["compaction"], ["text"]]);
 		// 分组只认工具与"工具前的思考":压缩块既不是工具,也不该把分组拆开。
 		assert.equal(plan.some((entry) => entry.blocks.some((block) => block.type === "group")), false);
+	});
+});
+
+/**
+ * 空白助手消息 —— 用户在助手回话之前点了停止留下的那一条。
+ *
+ * 与桌面端同一套规则(见 `packages/domain` 的 `isBlankAssistantMessage`):它只影响观感,
+ * 判宽了会把"取消之前已经干过的事"从界面上抹掉,判窄了会留下一条空壳(空身份行 + 复制空串)。
+ */
+describe("空白助手消息", () => {
+	const blank = (status: "aborted" | "streaming" | "error" | "complete") => ({
+		role: "assistant" as const,
+		text: "",
+		at: 1,
+		status,
+		blocks: [] as never,
+	});
+
+	it("画完什么都没有、而且已经结束了:算空白 —— 界面不该留一条空壳", () => {
+		const messages = [blank("aborted")];
+		assert.equal(isBlankAssistantMessage(messages[0]!, planMessages(messages)[0]!), true);
+	});
+
+	it("还在流式中不算空白:那时该看的是运行状态", () => {
+		const messages = [blank("streaming")];
+		assert.equal(isBlankAssistantMessage(messages[0]!, planMessages(messages)[0]!), false);
+	});
+
+	it("失败的那一条不算空白:它有话说(这一端拿不到 errorMessage,按 status 判)", () => {
+		const messages = [blank("error")];
+		assert.equal(isBlankAssistantMessage(messages[0]!, planMessages(messages)[0]!), false);
+	});
+
+	it("有任何一块内容就不算空白:空文本 + 一次工具调用也不算", () => {
+		const messages = [
+			{
+				...blank("aborted"),
+				blocks: [{ type: "text", text: "" }, tool("c1", "read")] as never,
+			},
+		];
+		assert.equal(isBlankAssistantMessage(messages[0]!, planMessages(messages)[0]!), false);
+	});
+
+	it("用户消息永远不是空白:取消不抹掉用户发出去的东西", () => {
+		const messages = [
+			{ role: "user" as const, text: "", at: 1, status: "complete" as const, blocks: [] as never },
+		];
+		assert.equal(isBlankAssistantMessage(messages[0]!, planMessages(messages)[0]!), false);
 	});
 });

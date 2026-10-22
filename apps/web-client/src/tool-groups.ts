@@ -316,6 +316,28 @@ export interface PlannedMessage {
 }
 
 /**
+ * 这一条是不是"**没有产生任何内容就结束了**"的助手消息 —— 与桌面端同一套规则
+ * (`isBlankAssistantMessage`,见 `packages/domain`)。
+ *
+ * 它是"用户在助手回话之前点了停止"留下的那一条:宿主照常把它写进 journal(内容为空),
+ * 而界面上不该出现一条冒充回复的空壳 —— 空正文、底下却挂着复制(复制空串)、用量(0)。
+ *
+ * 判据落在**画出来的块**上(而不是原始 `blocks`):网页端本来就会把空文本/空思考丢掉,
+ * 所以"画完什么都没有"正是这条消息的真实样子。三条排除与桌面端一致:
+ * 还在流式中(还没等到第一个 token)、失败了(那一行有话说)、有任何一块内容(工具也算)。
+ * 远端拿不到 `errorMessage`,所以这里用 `status === "error"` 等价地把失败那一档排除掉。
+ */
+export function isBlankAssistantMessage(
+	message: RemoteSessionMessage,
+	planned: Pick<PlannedMessage, "blocks">,
+): boolean {
+	if (message.role !== "assistant") return false;
+	if (message.status === "streaming") return false;
+	if (message.status === "error") return false;
+	return planned.blocks.length === 0;
+}
+
+/**
  * 把消息列表变成"怎么画":工具分组只在**它第一次出现的位置**画一次,其余工具块跳过。
  *
  * 抽成纯函数是因为这一个映射决定了整个视图的结构(哪儿是文字、哪儿是折叠块),

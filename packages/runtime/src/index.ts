@@ -1554,7 +1554,7 @@ type ActiveRun = {
 };
 
 type CachedSessionHistory = {
-  /** 按 `HISTORY_BYTES_PER_FILE_BYTE` 折算后的估算占用,用来守 64MB 那条预算。 */
+  /** 按 `HISTORY_BYTES_PER_FILE_BYTE` 折算后的估算占用,用来守 `HISTORY_CACHE_LIMITS.maxBytes` 那条预算。 */
   bytes: number;
   projection: SessionHistoryProjection;
   revision: string;
@@ -3270,6 +3270,27 @@ export class WordlessRuntime {
     );
   }
 
+  /**
+   * 工作区里的**任意一项**(文件或目录)的绝对路径。
+   *
+   * 「在 Finder 里显示」对目录同样成立(在它的父目录里选中它),而 `resolveSessionWorkspaceFile`
+   * 要求 `isFile()` —— 拿它去解析目录会抛 "Selected path is not a file",于是文件树里**每一个
+   * 文件夹**的「Reveal in Finder」都点不动(实测报过)。
+   *
+   * 这里只解析路径、不读写它,所以**运行中也照样能给**:那个"跑着的时候别动工作区"的限制
+   * 属于会改东西的操作(移进废纸篓、改名),不属于"帮我打开 Finder"。见下面那个入口。
+   */
+  async resolveSessionWorkspacePath(
+    sessionId: string,
+    path: string,
+  ): Promise<string> {
+    const record = this.requireWorkspaceSession(sessionId);
+    return await this.pathService.resolveWorkspaceEntry(
+      record.runtimeRootPath,
+      path,
+    );
+  }
+
   async resolveSessionWorkspaceEntry(
     sessionId: string,
     path: string,
@@ -3278,11 +3299,7 @@ export class WordlessRuntime {
       throw new Error(
         "Workspace entries cannot be moved to Trash while the agent is running",
       );
-    const record = this.requireWorkspaceSession(sessionId);
-    return await this.pathService.resolveWorkspaceEntry(
-      record.runtimeRootPath,
-      path,
-    );
+    return await this.resolveSessionWorkspacePath(sessionId, path);
   }
 
   async createManagedWorkspace(name: string): Promise<WorkspaceRecord> {

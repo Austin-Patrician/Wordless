@@ -107,6 +107,7 @@ import {
 	formatDuration,
 	groupDurationMs,
 	groupSummaryParts,
+	isBlankAssistantMessage,
 	isGroupExpanded,
 	planMessages,
 	type ToolCategory,
@@ -3205,6 +3206,41 @@ function MessageRow({
 		.map((block) => block.text)
 		.join("")
 		.trim();
+	/*
+	 * 这一轮**没有产生任何内容**就结束了(用户在助手回话之前点了停止):不留一条"空的回答"。
+	 *
+	 * 空身份行会被读成"回复丢了",而底下那排动作(复制空串、用量 0)全是假的。判据与桌面端
+	 * 同一套(`isBlankAssistantMessage`,见 `tool-groups.ts`)。重做仍然留着 —— 误按停止之后,
+	 * 这是唯一不用重新打字的出路。
+	 */
+	if (isBlankAssistantMessage(message, planned)) {
+		return (
+			<article
+				className="flex min-w-0 max-w-full justify-start"
+				data-message-role="assistant"
+				data-blank-turn="stopped"
+			>
+				<div className="min-w-0 flex-1 text-[13px] leading-5 text-foreground">
+					<AssistantIdentityHeader name={identityName} />
+					<div className="mt-2 flex min-w-0 items-center gap-1 text-[11px] text-muted-foreground">
+						<span>已停止,这一轮没有回复</span>
+						{showFooter && isLatestTurn && turnId !== undefined ? (
+							<button
+								aria-label="重新生成"
+								className="grid h-7 w-7 shrink-0 place-items-center rounded-[5px] text-muted-foreground hover:bg-muted hover:text-foreground"
+								onClick={() => void onRetryTurn(turnId)}
+								title="重新生成"
+								type="button"
+							>
+								<RefreshCw className="h-3.5 w-3.5" />
+							</button>
+						) : null}
+						<span className="ml-auto shrink-0 font-mono text-[10px]">{clockTime(message.at)}</span>
+					</div>
+				</div>
+			</article>
+		);
+	}
 	return (
 		// 助手消息**占满宽度**:它是"回答",不是"某人说的话"。桌面端也是直接排在背景上,没有气泡。
 		<article

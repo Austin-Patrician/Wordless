@@ -12,7 +12,7 @@ import type {
   ModelRetryState,
   ToolApprovalMode,
 } from "@wordless/domain";
-import { calculateCurrentTurnUsage } from "@wordless/domain";
+import { calculateCurrentTurnUsage, SESSION_HISTORY_TURN_PAGE } from "@wordless/domain";
 import type { RuntimeClient } from "../../bridge/runtime-client";
 import type { MessageKey } from "../../shared/i18n";
 import type { PendingThreadTurn } from "./pending-thread-turn";
@@ -549,7 +549,7 @@ export class ThreadSessionStore {
       const previousLength = this.timelineSnapshot.items.length;
       const page = await this.client.getSessionHistoryPage(this.sessionId, {
         before: this.historySnapshot.nextBeforeCursor,
-        limit: 24,
+        limit: SESSION_HISTORY_TURN_PAGE,
       });
       // 装载期间被挂起/重新水合过:这一页属于**上一份**投影,装进去就是混两份历史。
       if (this.disposed || generation !== this.recoveryGeneration) return 0;
@@ -569,7 +569,7 @@ export class ThreadSessionStore {
       const previousLength = this.timelineSnapshot.items.length;
       const page = await this.client.getSessionHistoryPage(this.sessionId, {
         after: this.historySnapshot.nextAfterCursor,
-        limit: 24,
+        limit: SESSION_HISTORY_TURN_PAGE,
       });
       if (this.disposed || generation !== this.recoveryGeneration) return 0;
       this.transaction(() => this.installHistoryPage(page, "append"));
@@ -637,7 +637,7 @@ export class ThreadSessionStore {
     const generation = this.recoveryGeneration;
     const page = await this.client.getSessionHistoryPage(this.sessionId, {
       aroundTurnId: turnId,
-      limit: 24,
+      limit: SESSION_HISTORY_TURN_PAGE,
     });
     if (this.disposed || generation !== this.recoveryGeneration) return 0;
     this.installHistoryPage(page, "merge");
